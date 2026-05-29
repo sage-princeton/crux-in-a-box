@@ -8,9 +8,15 @@ This repository is designed to facilitate creating the architecture for [CRUX-st
 
 ## Getting started
 
-## External services
+1. Run `start.sh`. This will configure a significant portion of the CRUX system automatically.
+2. TK set up Telegram (TODO: why tg?)
+3. Authenticate any external services your agent will use
+
+## External services for your agent to use
 
 Installed by default:
+
+TODO: make this a table with: service | how it's configured | how to authenticate
 
 - GitHub: `gh` CLI
 - AWS: `aws` CLI
