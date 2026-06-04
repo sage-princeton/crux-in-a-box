@@ -134,12 +134,12 @@ sudo -u "$REAL_USER" bash -c \
 
 # Copy exec-approvals config (unrestricted access for the agent)
 sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
-cp "$SCRIPT_DIR/src/exec-approvals.json" "$REAL_HOME/.openclaw/exec-approvals.json"
+cp "$SCRIPT_DIR/exec-approvals.json" "$REAL_HOME/.openclaw/exec-approvals.json"
 chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
 
 
 # ====== MONITORING ======
-cp "$SCRIPT_DIR/src/monitor.sh" "$REAL_HOME/monitor.sh"
+cp "$SCRIPT_DIR/monitor.sh" "$REAL_HOME/monitor.sh"
 chown "$REAL_USER:$REAL_USER" "$REAL_HOME/monitor.sh"
 chmod +x "$REAL_HOME/monitor.sh"
 

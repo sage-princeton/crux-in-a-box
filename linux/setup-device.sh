@@ -224,8 +224,8 @@ ok "Files copied"
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
-  "chmod +x ~/crux-in-a-box-linux/start.sh ~/crux-in-a-box-linux/src/monitor.sh \
-   && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' bash ~/crux-in-a-box-linux/start.sh"
+  "chmod +x ~/crux-in-a-box-linux/src/start.sh ~/crux-in-a-box-linux/src/monitor.sh \
+   && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' bash ~/crux-in-a-box-linux/src/start.sh"
 ok "Remote bootstrap complete"
 
 # ====== 9. CONNECTION INFO ======
@@ -263,3 +263,7 @@ cat <<'EOF'
   ─────────────────────────────────────────────
 EOF
 
+# ====== 10. RUN STATUS CHECK ======
+info "Running status check..."
+ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+  "bash ~/crux-in-a-box-linux/status.sh"
