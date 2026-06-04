@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ==========================================================================
+# setup-device.sh
+# ==========================================================================
+# Run this on your LOCAL machine (macOS / Linux) to provision and bootstrap
+# an AWS EC2 instance with a full GUI desktop ready for CRUX experiments.
+#
+# Prerequisites on the invoking machine:
+#   - AWS CLI v2 authenticated (`aws sts get-caller-identity` works)
+#   - ssh / ssh-keygen available
+#   - jq installed (brew install jq / apt install jq)
+#
+# What this script does:
+#   1. Creates (or reuses) an EC2 key-pair and security group.
+#   2. Launches an Ubuntu 22.04 instance (configurable).
+#   3. Waits for the instance to be reachable via SSH.
+#   4. Copies the linux/ directory to the instance.
+#   5. Runs the remote bootstrap (start.sh) which installs a desktop
+#      environment, VNC server, openclaw, monitoring, services, etc.
+#   6. Prints connection details (SSH + VNC).
+# ==========================================================================
+
+# ====== CONFIGURATION (override via env vars) ======
+REGION="${AWS_REGION:-us-east-1}"
+INSTANCE_TYPE="${CRUX_INSTANCE_TYPE:-t3.xlarge}"
+AMI_ID="${CRUX_AMI_ID:-}"
+KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
+SG_NAME="${CRUX_SG_NAME:-crux-in-a-box-sg}"
+INSTANCE_NAME="${CRUX_INSTANCE_NAME:-crux-in-a-box}"
+SSH_USER="ubuntu"
+DISK_SIZE_GB="${CRUX_DISK_SIZE_GB:-80}"
+VNC_PORT=5901
+
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+# ====== HELPERS ======
+info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
+ok()    { printf "\033[1;32m✔ %s\033[0m\n" "$*"; }
+warn()  { printf "\033[1;33m⚠ %s\033[0m\n" "$*"; }
+die()   { printf "\033[1;31m✘ %s\033[0m\n" "$*" >&2; exit 1; }
+
+require_cmd() {
+  command -v "$1" &>/dev/null || die "'$1' is required but not found."
+}
+
+# ====== PREFLIGHT ======
+require_cmd aws
+require_cmd jq
+require_cmd ssh
+require_cmd scp
+
+aws sts get-caller-identity &>/dev/null \
+  || die "AWS CLI is not authenticated. Run 'aws configure' first."
+
+info "Region: $REGION | Instance type: $INSTANCE_TYPE | Disk: ${DISK_SIZE_GB}GB"
+
+# ====== 1. KEY PAIR ======
+KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
+
+if aws ec2 describe-key-pairs --key-names "$KEY_NAME" \
+     --region "$REGION" &>/dev/null; then
+  ok "Key pair '$KEY_NAME' already exists"
+else
+  info "Creating key pair '$KEY_NAME'..."
+  aws ec2 create-key-pair \
+    --key-name "$KEY_NAME" --region "$REGION" \
+    --query 'KeyMaterial' --output text > "$KEY_FILE"
+  chmod 600 "$KEY_FILE"
+  ok "Key pair created → $KEY_FILE"
+fi
+
+[ -f "$KEY_FILE" ] \
+  || die "Key file $KEY_FILE not found. Delete the AWS key pair and re-run."
+
+# ====== 2. SECURITY GROUP ======
+SG_ID=$(aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=$SG_NAME" \
+  --region "$REGION" \
+  --query 'SecurityGroups[0].GroupId' \
+  --output text 2>/dev/null || true)
+
+if [ "$SG_ID" = "None" ] || [ -z "$SG_ID" ]; then
+  info "Creating security group '$SG_NAME'..."
+  SG_ID=$(aws ec2 create-security-group \
+    --group-name "$SG_NAME" \
+    --description "CRUX in a box - SSH + VNC" \
+    --region "$REGION" \
+    --query 'GroupId' --output text)
+
+  aws ec2 authorize-security-group-ingress \
+    --group-id "$SG_ID" --region "$REGION" \
+    --protocol tcp --port 22 --cidr 0.0.0.0/0
+  aws ec2 authorize-security-group-ingress \
+    --group-id "$SG_ID" --region "$REGION" \
+    --protocol tcp --port "$VNC_PORT" --cidr 0.0.0.0/0
+
+  ok "Security group created: $SG_ID"
+else
+  ok "Security group '$SG_NAME' already exists: $SG_ID"
+fi
+
+# ====== 3. RESOLVE AMI ======
+if [ -z "$AMI_ID" ]; then
+  info "Resolving latest Ubuntu 22.04 AMI..."
+  AMI_ID=$(aws ec2 describe-images \
+    --region "$REGION" --owners 099720109477 \
+    --filters \
+      "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+      "Name=state,Values=available" \
+    --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+    --output text)
+fi
+
+[ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
+  && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
+ok "AMI: $AMI_ID"
+
+# ====== 4. LAUNCH INSTANCE ======
+EXISTING_ID=$(aws ec2 describe-instances \
+  --region "$REGION" \
+  --filters \
+    "Name=tag:Name,Values=$INSTANCE_NAME" \
+    "Name=instance-state-name,Values=running,pending" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
+  --output text 2>/dev/null || true)
+
+if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
+  warn "Re-using existing instance $EXISTING_ID tagged '$INSTANCE_NAME'."
+  INSTANCE_ID="$EXISTING_ID"
+else
+  info "Launching EC2 instance..."
+  INSTANCE_ID=$(aws ec2 run-instances \
+    --region "$REGION" \
+    --image-id "$AMI_ID" \
+    --instance-type "$INSTANCE_TYPE" \
+    --key-name "$KEY_NAME" \
+    --security-group-ids "$SG_ID" \
+    --block-device-mappings \
+      "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\"}}]" \
+    --tag-specifications \
+      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME}]" \
+    --query 'Instances[0].InstanceId' --output text)
+  ok "Instance launched: $INSTANCE_ID"
+fi
+
+# ====== 5. WAIT FOR INSTANCE ======
+info "Waiting for instance to enter 'running' state..."
+aws ec2 wait instance-running \
+  --instance-ids "$INSTANCE_ID" --region "$REGION"
+
+PUBLIC_IP=$(aws ec2 describe-instances \
+  --instance-ids "$INSTANCE_ID" --region "$REGION" \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+[ "$PUBLIC_IP" = "None" ] || [ -z "$PUBLIC_IP" ] \
+  && die "Instance has no public IP. Check your VPC/subnet settings."
+ok "Instance running at $PUBLIC_IP"
+
+# ====== 6. WAIT FOR SSH ======
+info "Waiting for SSH to become available (this can take 1-2 min)..."
+MAX_RETRIES=30
+for i in $(seq 1 $MAX_RETRIES); do
+  if ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o BatchMode=yes \
+       -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" "echo ok" &>/dev/null; then
+    break
+  fi
+  [ "$i" -eq "$MAX_RETRIES" ] \
+    && die "SSH did not become available after $MAX_RETRIES attempts."
+  sleep 10
+done
+ok "SSH is up"
+
+# ====== 7. COPY FILES ======
+info "Copying linux/ directory to instance..."
+scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
+  "$SCRIPT_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux"
+ok "Files copied"
+
+# ====== 8. RUN REMOTE BOOTSTRAP ======
+info "Running remote bootstrap (start.sh) — this will take several minutes..."
+ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+  "chmod +x ~/crux-in-a-box-linux/start.sh ~/crux-in-a-box-linux/src/monitor.sh \
+   && sudo bash ~/crux-in-a-box-linux/start.sh"
+ok "Remote bootstrap complete"
+
+# ====== 9. CONNECTION INFO ======
+cat <<EOF
+
+============================================
+  CRUX-in-a-box Linux instance is ready!
+============================================
+
+  Instance ID : $INSTANCE_ID
+  Public IP   : $PUBLIC_IP
+  SSH         : ssh -i $KEY_FILE ${SSH_USER}@${PUBLIC_IP}
+  VNC         : connect to ${PUBLIC_IP}:${VNC_PORT}
+               (password was set during bootstrap)
+
+  To check status:
+    ssh -i $KEY_FILE ${SSH_USER}@${PUBLIC_IP} 'bash ~/crux-in-a-box-linux/status.sh'
+
+  To stop the instance:
+    aws ec2 stop-instances --instance-ids $INSTANCE_ID --region $REGION
+
+  To terminate the instance:
+    aws ec2 terminate-instances --instance-ids $INSTANCE_ID --region $REGION
+============================================
+EOF
+
