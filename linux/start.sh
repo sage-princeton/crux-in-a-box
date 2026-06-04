@@ -29,6 +29,9 @@ apt-get install -y \
 apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
 apt-get install -y tigervnc-standalone-server tigervnc-common
 
+# Set a default login password for the user (for VNC desktop / sudo prompts)
+echo "$REAL_USER:cruxbox1" | chpasswd
+
 # Configure VNC for the real user
 sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.vnc"
 
