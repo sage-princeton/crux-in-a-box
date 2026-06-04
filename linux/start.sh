@@ -48,6 +48,28 @@ XSTARTUP
 chmod +x "$REAL_HOME/.vnc/xstartup"
 chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.vnc/xstartup"
 
+# Create a wrapper script that starts Xtigervnc + XFCE properly
+cat > /usr/local/bin/crux-vnc-start <<'WRAPPER'
+#!/bin/bash
+# Start the raw Xtigervnc server (stays in foreground) and launch XFCE on it.
+DISPLAY_NUM="${1:-1}"
+PORT=$((5900 + DISPLAY_NUM))
+
+# Launch XFCE once the X server is ready (backgrounded)
+(
+  sleep 2
+  export DISPLAY=":${DISPLAY_NUM}"
+  /home/ubuntu/.vnc/xstartup
+) &
+
+exec /usr/bin/Xtigervnc ":${DISPLAY_NUM}" \
+  -geometry 1920x1080 -depth 24 \
+  -rfbauth /home/ubuntu/.vnc/passwd \
+  -rfbport "$PORT" \
+  -pn -localhost=0
+WRAPPER
+chmod +x /usr/local/bin/crux-vnc-start
+
 # Create a systemd service so VNC survives reboots
 cat > /etc/systemd/system/vncserver@.service <<'VNCUNIT'
 [Unit]
@@ -58,10 +80,10 @@ After=syslog.target network.target
 Type=simple
 User=ubuntu
 PAMName=login
-PIDFile=/home/%u/.vnc/%H:%i.pid
-ExecStartPre=/usr/bin/vncserver -kill :%i > /dev/null 2>&1 || :
-ExecStart=/usr/bin/vncserver :%i -geometry 1920x1080 -depth 24 -localhost no
-ExecStop=/usr/bin/vncserver -kill :%i
+ExecStartPre=-/usr/bin/vncserver -kill :%i > /dev/null 2>&1
+ExecStart=/usr/local/bin/crux-vnc-start %i
+ExecStop=-/usr/bin/vncserver -kill :%i
+Restart=on-failure
 
 [Install]
 WantedBy=multi-user.target
@@ -123,16 +145,17 @@ sudo -u "$REAL_USER" bash -c \
 # ====== TELEMETRY ======
 sudo -u "$REAL_USER" bash -c "
   cd $REAL_HOME
-  git clone https://github.com/schwartzadev/openclaw-telemetry-hal
+  git clone https://github.com/schwartzadev/openclaw-telemetry-hal 2>/dev/null || (cd openclaw-telemetry-hal && git pull)
   curl -fsSL https://get.pnpm.io/install.sh | sh -
-  source $REAL_HOME/.bashrc
-  cd openclaw-telemetry-hal
+  export PNPM_HOME=\"$REAL_HOME/.local/share/pnpm\"
+  export PATH=\"\$PNPM_HOME:\$PNPM_HOME/bin:\$PATH\"
+  cd $REAL_HOME/openclaw-telemetry-hal
   pnpm install
   pnpm run build
-  openclaw plugins install --link .
+  $REAL_HOME/.npm-global/bin/openclaw plugins install --link .
 "
 # TODO: update the openclaw.json file's json itself
-sudo -u "$REAL_USER" openclaw gateway restart || true
+sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== UNRESTRICTED ACCESS ======
 # TODO: add the part about overrides
