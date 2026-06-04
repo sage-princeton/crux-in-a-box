@@ -22,6 +22,48 @@ set -euo pipefail
 #   6. Prints connection details (SSH + VNC).
 # ==========================================================================
 
+# ====== USAGE ======
+usage() {
+  cat <<USAGE
+Usage: $0 --telegram-bot-token <TOKEN>
+
+Required:
+  --telegram-bot-token <TOKEN>   Telegram bot token from @BotFather
+
+Optional (override via env vars):
+  AWS_REGION                     AWS region (default: us-east-1)
+  CRUX_INSTANCE_TYPE             EC2 instance type (default: t3.xlarge)
+  CRUX_AMI_ID                    AMI ID (default: latest Ubuntu 22.04)
+  CRUX_KEY_NAME                  EC2 key pair name (default: crux-in-a-box)
+  CRUX_SG_NAME                   Security group name (default: crux-in-a-box-sg)
+  CRUX_INSTANCE_NAME             Instance Name tag (default: crux-in-a-box)
+  CRUX_DISK_SIZE_GB              Root volume size in GB (default: 80)
+USAGE
+  exit 1
+}
+
+# ====== PARSE ARGS ======
+TELEGRAM_BOT_TOKEN=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --telegram-bot-token)
+      [ -z "${2:-}" ] && { echo "Error: --telegram-bot-token requires a value" >&2; usage; }
+      TELEGRAM_BOT_TOKEN="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage
+      ;;
+  esac
+done
+
+[ -z "$TELEGRAM_BOT_TOKEN" ] && { echo "Error: --telegram-bot-token is required" >&2; usage; }
+
 # ====== CONFIGURATION (override via env vars) ======
 REGION="${AWS_REGION:-us-east-1}"
 INSTANCE_TYPE="${CRUX_INSTANCE_TYPE:-t3.xlarge}"
@@ -183,7 +225,7 @@ ok "Files copied"
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
   "chmod +x ~/crux-in-a-box-linux/start.sh ~/crux-in-a-box-linux/src/monitor.sh \
-   && sudo bash ~/crux-in-a-box-linux/start.sh"
+   && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' bash ~/crux-in-a-box-linux/start.sh"
 ok "Remote bootstrap complete"
 
 # ====== 9. CONNECTION INFO ======
@@ -208,5 +250,16 @@ cat <<EOF
   To terminate the instance:
     aws ec2 terminate-instances --instance-ids $INSTANCE_ID --region $REGION
 ============================================
+EOF
+
+cat <<'EOF'
+
+  ── Telegram setup ──────────────────────────
+  DM your bot on Telegram, then approve the
+  pairing from the instance:
+
+    openclaw pairing list telegram
+    openclaw pairing approve telegram <CODE>
+  ─────────────────────────────────────────────
 EOF
 

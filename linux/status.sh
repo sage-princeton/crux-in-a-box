@@ -59,6 +59,32 @@ else
   fail "openclaw: not installed"
 fi
 
+# ----- Telegram bot token -----
+OPENCLAW_CONFIG="$HOME/.openclaw/openclaw.json"
+if [ -f "$OPENCLAW_CONFIG" ] && command -v jq &>/dev/null; then
+  BOT_TOKEN=$(jq -r '.channels.telegram.botToken // empty' "$OPENCLAW_CONFIG" 2>/dev/null)
+  if [ -n "$BOT_TOKEN" ]; then
+    pass "Telegram bot token: configured"
+  else
+    fail "Telegram bot token: NOT configured in openclaw.json"
+  fi
+else
+  fail "Telegram bot token: openclaw.json not found or jq missing"
+fi
+
+# ----- Telegram pairing -----
+TELEGRAM_ALLOW="$HOME/.openclaw/credentials/telegram-allowFrom.json"
+if [ -f "$TELEGRAM_ALLOW" ]; then
+  PAIRED_COUNT=$(jq 'length' "$TELEGRAM_ALLOW" 2>/dev/null || echo "0")
+  if [ "$PAIRED_COUNT" -gt 0 ] 2>/dev/null; then
+    pass "Telegram pairing: $PAIRED_COUNT sender(s) approved"
+  else
+    warn "Telegram pairing: allowlist exists but empty — DM the bot and run: openclaw pairing approve telegram <CODE>"
+  fi
+else
+  warn "Telegram pairing: no senders paired yet — DM the bot and run: openclaw pairing approve telegram <CODE>"
+fi
+
 # ----- Telemetry plugin -----
 if [ -d "$HOME/openclaw-telemetry-hal" ]; then
   pass "Telemetry plugin repo present"

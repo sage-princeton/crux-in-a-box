@@ -132,6 +132,11 @@ XFCEWALL
 sudo -u "$REAL_USER" bash -c \
   'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'
 
+# Copy exec-approvals config (unrestricted access for the agent)
+sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
+cp "$SCRIPT_DIR/src/exec-approvals.json" "$REAL_HOME/.openclaw/exec-approvals.json"
+chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
+
 
 # ====== MONITORING ======
 cp "$SCRIPT_DIR/src/monitor.sh" "$REAL_HOME/monitor.sh"
@@ -157,7 +162,31 @@ sudo -u "$REAL_USER" bash -c "
   pnpm run build
   $REAL_HOME/.npm-global/bin/openclaw plugins install --link .
 "
-# TODO: update the openclaw.json file's json itself
+# ====== TELEGRAM ======
+# If a Telegram bot token was provided, configure it in openclaw.json
+if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
+  OPENCLAW_CONFIG="$REAL_HOME/.openclaw/openclaw.json"
+  sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
+
+  # Create the config file if it doesn't exist yet
+  if [ ! -f "$OPENCLAW_CONFIG" ]; then
+    echo '{}' > "$OPENCLAW_CONFIG"
+    chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
+  fi
+
+  # Merge the Telegram channel config into the existing config
+  TMP_CONFIG=$(mktemp)
+  jq --arg token "$TELEGRAM_BOT_TOKEN" '
+    .channels.telegram.enabled = true |
+    .channels.telegram.botToken = $token |
+    .channels.telegram.dmPolicy = "pairing" |
+    .channels.telegram.groups."*".requireMention = true
+  ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
+    && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
+  chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
+  echo "✔ Telegram bot token configured in openclaw.json"
+fi
+
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== UNRESTRICTED ACCESS ======
