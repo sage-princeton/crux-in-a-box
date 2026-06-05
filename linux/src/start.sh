@@ -189,9 +189,47 @@ fi
 
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
-# ====== UNRESTRICTED ACCESS ======
-# TODO: add the part about overrides
+# ====== AI Provider and Model ======
+# Requires ANTHROPIC_MODEL and ANTHROPIC_API_KEY to be set as env vars
+# (passed in by setup-device.sh).
 
+if [ -z "${ANTHROPIC_MODEL:-}" ]; then
+  echo "Error: ANTHROPIC_MODEL is required (e.g. anthropic/claude-opus-4-6)" >&2
+  exit 1
+fi
+
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "Error: ANTHROPIC_API_KEY is required" >&2
+  exit 1
+fi
+
+# Set agents.defaults.model.primary in openclaw.json
+OPENCLAW_CONFIG="$REAL_HOME/.openclaw/openclaw.json"
+sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
+
+if [ ! -f "$OPENCLAW_CONFIG" ]; then
+  echo '{}' > "$OPENCLAW_CONFIG"
+  chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
+fi
+
+TMP_CONFIG=$(mktemp)
+jq --arg model "$ANTHROPIC_MODEL" '
+  .agents.defaults.model.primary = $model
+' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
+  && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
+chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
+echo "✔ Model configured: $ANTHROPIC_MODEL"
+
+# Append ANTHROPIC_API_KEY to ~/.openclaw/.env for daemon/gateway use
+OPENCLAW_ENV="$REAL_HOME/.openclaw/.env"
+# Remove any existing ANTHROPIC_API_KEY line to avoid duplicates
+if [ -f "$OPENCLAW_ENV" ]; then
+  sed -i '/^ANTHROPIC_API_KEY=/d' "$OPENCLAW_ENV"
+fi
+echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$OPENCLAW_ENV"
+chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
+chmod 600 "$OPENCLAW_ENV"
+echo "✔ Anthropic API key written to ~/.openclaw/.env"
 
 # ====== SERVICES ======
 

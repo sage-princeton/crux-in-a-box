@@ -25,10 +25,12 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-token <TOKEN>
+Usage: $0 --telegram-bot-token <TOKEN> --anthropic-model <MODEL> --anthropic-api-key <KEY>
 
 Required:
   --telegram-bot-token <TOKEN>   Telegram bot token from @BotFather
+  --anthropic-model <MODEL>      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
+  --anthropic-api-key <KEY>      Anthropic API key
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
@@ -44,12 +46,24 @@ USAGE
 
 # ====== PARSE ARGS ======
 TELEGRAM_BOT_TOKEN=""
+ANTHROPIC_MODEL=""
+ANTHROPIC_API_KEY=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --telegram-bot-token)
       [ -z "${2:-}" ] && { echo "Error: --telegram-bot-token requires a value" >&2; usage; }
       TELEGRAM_BOT_TOKEN="$2"
+      shift 2
+      ;;
+    --anthropic-model)
+      [ -z "${2:-}" ] && { echo "Error: --anthropic-model requires a value" >&2; usage; }
+      ANTHROPIC_MODEL="$2"
+      shift 2
+      ;;
+    --anthropic-api-key)
+      [ -z "${2:-}" ] && { echo "Error: --anthropic-api-key requires a value" >&2; usage; }
+      ANTHROPIC_API_KEY="$2"
       shift 2
       ;;
     -h|--help)
@@ -63,6 +77,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [ -z "$TELEGRAM_BOT_TOKEN" ] && { echo "Error: --telegram-bot-token is required" >&2; usage; }
+[ -z "$ANTHROPIC_MODEL" ] && { echo "Error: --anthropic-model is required (e.g. anthropic/claude-opus-4-6)" >&2; usage; }
+[ -z "$ANTHROPIC_API_KEY" ] && { echo "Error: --anthropic-api-key is required" >&2; usage; }
 
 # ====== CONFIGURATION (override via env vars) ======
 REGION="${AWS_REGION:-us-east-1}"
@@ -225,7 +241,10 @@ ok "Files copied"
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
   "chmod +x ~/crux-in-a-box-linux/src/start.sh ~/crux-in-a-box-linux/src/monitor.sh \
-   && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' bash ~/crux-in-a-box-linux/src/start.sh"
+   && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' \
+          ANTHROPIC_MODEL='${ANTHROPIC_MODEL}' \
+          ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}' \
+          bash ~/crux-in-a-box-linux/src/start.sh"
 ok "Remote bootstrap complete"
 
 # ====== 9. CONNECTION INFO ======
