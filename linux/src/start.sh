@@ -162,6 +162,27 @@ sudo -u "$REAL_USER" bash -c "
   pnpm run build
   $REAL_HOME/.npm-global/bin/openclaw plugins install --link .
 "
+
+# Patch the telemetry plugin manifest to ensure activation on startup
+# (upstream repo may be missing the activation block, which leaves the
+# plugin registered but dormant — OpenClaw's lazy loader never fires it)
+TELEMETRY_MANIFEST="$REAL_HOME/openclaw-telemetry-hal/openclaw.plugin.json"
+if [ -f "$TELEMETRY_MANIFEST" ] && command -v jq &>/dev/null; then
+  HAS_ACTIVATION=$(jq 'has("activation")' "$TELEMETRY_MANIFEST" 2>/dev/null)
+  if [ "$HAS_ACTIVATION" != "true" ]; then
+    TMP_MANIFEST=$(mktemp)
+    jq '
+      .name = "OpenClaw Telemetry for HAL" |
+      .description = "Captures tool calls, LLM usage, and message events to JSONL" |
+      .activation = { "onStartup": true }
+    ' "$TELEMETRY_MANIFEST" > "$TMP_MANIFEST" \
+      && mv "$TMP_MANIFEST" "$TELEMETRY_MANIFEST"
+    chown "$REAL_USER:$REAL_USER" "$TELEMETRY_MANIFEST"
+    echo "✔ Patched telemetry plugin manifest with activation.onStartup"
+  else
+    echo "✔ Telemetry plugin manifest already has activation block"
+  fi
+fi
 # ====== TELEGRAM ======
 # If a Telegram bot token was provided, configure it in openclaw.json
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -251,14 +272,14 @@ unzip -qo /tmp/awscliv2.zip -d /tmp
 /tmp/aws/install --update
 rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# install gogcli
+# install gogcli - note fails silently
 sudo -u "$REAL_USER" bash -c \
   'brew install openclaw/tap/gogcli' || true
 
 
 # set up gateway
-openclaw gateway install
-openclaw gateway restart
+sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
+sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ======
 
