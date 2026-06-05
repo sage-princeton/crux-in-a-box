@@ -85,6 +85,19 @@ else
   warn "Telegram pairing: no senders paired yet — DM the bot and run: openclaw pairing approve telegram <CODE>"
 fi
 
+# ----- Telegram pairing (config) -----
+if [ -f "$OPENCLAW_CONFIG" ] && command -v jq &>/dev/null; then
+  OWNER_ALLOW_FROM=$(jq -r '.commands.ownerAllowFrom // empty' "$OPENCLAW_CONFIG" 2>/dev/null)
+  OWNER_ALLOW_COUNT=$(jq -r '.commands.ownerAllowFrom | if type == "array" then length else 0 end' "$OPENCLAW_CONFIG" 2>/dev/null || echo "0")
+  if [ "$OWNER_ALLOW_COUNT" -gt 0 ] 2>/dev/null; then
+    pass "Telegram pairing (config): complete ($OWNER_ALLOW_COUNT owner(s) in ownerAllowFrom)"
+  else
+    warn "Telegram pairing (config): ownerAllowFrom is empty or missing — pairing not yet complete"
+  fi
+else
+  fail "Telegram pairing (config): openclaw.json not found or jq missing"
+fi
+
 # ----- Telemetry plugin -----
 if [ -d "$HOME/openclaw-telemetry-hal" ]; then
   pass "Telemetry plugin repo present"
