@@ -217,6 +217,11 @@ rm -rf /tmp/aws /tmp/awscliv2.zip
 sudo -u "$REAL_USER" bash -c \
   'brew install openclaw/tap/gogcli' || true
 
+
+# set up gateway
+openclaw gateway install
+openclaw gateway restart
+
 # ======
 
 # # Log in to GitHub
