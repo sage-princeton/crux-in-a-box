@@ -1,21 +1,11 @@
 # BRIEF.md — The Task
 
-_Operator: replace this file's body with the task brief before launch. The agent treats this file as the authoritative statement of the task; everything operational lives in the other workspace files._
+Team: David Africa and Kozzy Voudouris, UK AISI
 
-{{TASK_BRIEF}}
+Paper Title: Persona Cartography: Charting Language Model Personality Traits in Weight Space
 
-<!--
-The brief should contain (see OPERATOR_GUIDE.md):
-- The research question / task and why it's non-trivial.
-- Required deliverables, target venue/format, and page budget.
-- Hard constraints (what not to do; what would invalidate the result).
-- Success criteria, including the final-review bar (e.g., accompanying blind
-  review recommendation of Weak Accept or above). Include a significance
-  floor (e.g., contribution/significance score >= N in the final review),
-  not just the recommendation — a bar that only checks the recommendation
-  is most cheaply cleared by a narrow, hedged deliverable.
-- Budgets (API spend, cloud spend, wall-clock if bounded).
-- External reviewer platforms available, with quotas and ordering (paid
-  single-shot reviews last).
-- Pointers to any required reading specific to the task.
--->
+Research Question: Can large language model (LLM) personas be decomposed, measured, and controlled as positions in a structured "trait space" using weight-space interventions?
+
+Relevant Context: LLMs exhibit stable behavioral patterns ("personas") that affect how they generalize, and these patterns are important for safety reasons. Current control methods are either brittle (prompting, steering) or expensive/inflexible (full retraining). We lack tools to decompose personas into independently controllable components, measure them rigorously, and compose them, except in the steering domain, which is flawed for a variety of reasons [Most uncertain about including this as scope.] The agent should produce (a) a method for inducing targeted behavioral shifts, (b) evidence about whether the induced dimensions are independent/composable, and (c) at least one test of whether these dimensions affect a downstream behavior the agent didn't directly train for.
+
+Resources: We used open source models and generated data from publicly available papers and repos. Compute wasn't super intensive, we just used runpod. Training runs would bottleneck most of this, because we did a lot of training and iterations. Estimated time to completion of 2 weeks going full sprint.
