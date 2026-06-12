@@ -122,6 +122,8 @@ AMI_ID="${CRUX_AMI_ID:-}"
 KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
 SG_NAME="${CRUX_SG_NAME:-crux-in-a-box-sg}"
 INSTANCE_NAME="${CRUX_INSTANCE_NAME:-crux-in-a-box}"
+IAM_ROLE_NAME="${CRUX_IAM_ROLE:-crux-in-a-box-role}"
+INSTANCE_PROFILE_NAME="${CRUX_INSTANCE_PROFILE:-crux-in-a-box-profile}"
 SSH_USER="ubuntu"
 DISK_SIZE_GB="${CRUX_DISK_SIZE_GB:-80}"
 VNC_PORT=5901
@@ -194,6 +196,56 @@ else
   ok "Security group '$SG_NAME' already exists: $SG_ID"
 fi
 
+# ====== 2b. IAM ROLE + INSTANCE PROFILE (PowerUserAccess) ======
+# Gives the instance permanent AWS credentials via IMDS — no keys to expire.
+ROLE_EXISTS=$(aws iam get-role --role-name "$IAM_ROLE_NAME" \
+  --query 'Role.RoleName' --output text 2>/dev/null || true)
+
+if [ "$ROLE_EXISTS" = "$IAM_ROLE_NAME" ]; then
+  ok "IAM role '$IAM_ROLE_NAME' already exists"
+else
+  info "Creating IAM role '$IAM_ROLE_NAME'..."
+  aws iam create-role \
+    --role-name "$IAM_ROLE_NAME" \
+    --assume-role-policy-document '{
+      "Version": "2012-10-17",
+      "Statement": [{
+        "Effect": "Allow",
+        "Principal": {"Service": "ec2.amazonaws.com"},
+        "Action": "sts:AssumeRole"
+      }]
+    }' \
+    --description "CRUX-in-a-box EC2 role - PowerUserAccess" \
+    --query 'Role.Arn' --output text >/dev/null
+  ok "IAM role created: $IAM_ROLE_NAME"
+fi
+
+# Ensure PowerUserAccess is attached (idempotent)
+aws iam attach-role-policy \
+  --role-name "$IAM_ROLE_NAME" \
+  --policy-arn "arn:aws:iam::aws:policy/PowerUserAccess" 2>/dev/null || true
+ok "PowerUserAccess policy attached to $IAM_ROLE_NAME"
+
+# Instance profile
+PROFILE_EXISTS=$(aws iam get-instance-profile \
+  --instance-profile-name "$INSTANCE_PROFILE_NAME" \
+  --query 'InstanceProfile.InstanceProfileName' --output text 2>/dev/null || true)
+
+if [ "$PROFILE_EXISTS" = "$INSTANCE_PROFILE_NAME" ]; then
+  ok "Instance profile '$INSTANCE_PROFILE_NAME' already exists"
+else
+  info "Creating instance profile '$INSTANCE_PROFILE_NAME'..."
+  aws iam create-instance-profile \
+    --instance-profile-name "$INSTANCE_PROFILE_NAME" >/dev/null
+  aws iam add-role-to-instance-profile \
+    --instance-profile-name "$INSTANCE_PROFILE_NAME" \
+    --role-name "$IAM_ROLE_NAME"
+  # IAM is eventually consistent — the profile needs a moment before EC2 can use it
+  info "Waiting for instance profile to propagate..."
+  sleep 10
+  ok "Instance profile created: $INSTANCE_PROFILE_NAME"
+fi
+
 # ====== 3. RESOLVE AMI ======
 if [ -z "$AMI_ID" ]; then
   info "Resolving latest Ubuntu 22.04 AMI..."
@@ -230,6 +282,7 @@ else
     --instance-type "$INSTANCE_TYPE" \
     --key-name "$KEY_NAME" \
     --security-group-ids "$SG_ID" \
+    --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
     --block-device-mappings \
       "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\"}}]" \
     --tag-specifications \
