@@ -25,10 +25,11 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-token <TOKEN> --anthropic-model <MODEL> --anthropic-api-key <KEY>
+Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY>
 
 Required:
   --telegram-bot-token <TOKEN>   Telegram bot token from @BotFather
+  --telegram-owner-id <ID>       Telegram user ID for commands.ownerAllowFrom
   --anthropic-model <MODEL>      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
   --anthropic-api-key <KEY>      Anthropic API key
 
@@ -46,6 +47,7 @@ USAGE
 
 # ====== PARSE ARGS ======
 TELEGRAM_BOT_TOKEN=""
+TELEGRAM_OWNER_ID=""
 ANTHROPIC_MODEL=""
 ANTHROPIC_API_KEY=""
 
@@ -54,6 +56,11 @@ while [[ $# -gt 0 ]]; do
     --telegram-bot-token)
       [ -z "${2:-}" ] && { echo "Error: --telegram-bot-token requires a value" >&2; usage; }
       TELEGRAM_BOT_TOKEN="$2"
+      shift 2
+      ;;
+    --telegram-owner-id)
+      [ -z "${2:-}" ] && { echo "Error: --telegram-owner-id requires a value" >&2; usage; }
+      TELEGRAM_OWNER_ID="$2"
       shift 2
       ;;
     --anthropic-model)
@@ -77,6 +84,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [ -z "$TELEGRAM_BOT_TOKEN" ] && { echo "Error: --telegram-bot-token is required" >&2; usage; }
+[ -z "$TELEGRAM_OWNER_ID" ] && { echo "Error: --telegram-owner-id is required" >&2; usage; }
 [ -z "$ANTHROPIC_MODEL" ] && { echo "Error: --anthropic-model is required (e.g. anthropic/claude-opus-4-6)" >&2; usage; }
 [ -z "$ANTHROPIC_API_KEY" ] && { echo "Error: --anthropic-api-key is required" >&2; usage; }
 
@@ -242,6 +250,7 @@ info "Running remote bootstrap (start.sh) — this will take several minutes..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
   "chmod +x ~/crux-in-a-box-linux/src/start.sh ~/crux-in-a-box-linux/src/monitor.sh \
    && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' \
+          TELEGRAM_OWNER_ID='${TELEGRAM_OWNER_ID}' \
           ANTHROPIC_MODEL='${ANTHROPIC_MODEL}' \
           ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}' \
           bash ~/crux-in-a-box-linux/src/start.sh"

@@ -208,6 +208,25 @@ if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
   echo "✔ Telegram bot token configured in openclaw.json"
 fi
 
+# If a Telegram owner ID was provided, set commands.ownerAllowFrom in openclaw.json
+if [ -n "${TELEGRAM_OWNER_ID:-}" ]; then
+  OPENCLAW_CONFIG="$REAL_HOME/.openclaw/openclaw.json"
+  sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
+
+  if [ ! -f "$OPENCLAW_CONFIG" ]; then
+    echo '{}' > "$OPENCLAW_CONFIG"
+    chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
+  fi
+
+  TMP_CONFIG=$(mktemp)
+  jq --arg owner "telegram:$TELEGRAM_OWNER_ID" '
+    .commands.ownerAllowFrom = [$owner]
+  ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
+    && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
+  chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
+  echo "✔ commands.ownerAllowFrom configured: telegram:$TELEGRAM_OWNER_ID"
+fi
+
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== AI Provider and Model ======
@@ -235,11 +254,13 @@ fi
 
 TMP_CONFIG=$(mktemp)
 jq --arg model "$ANTHROPIC_MODEL" '
-  .agents.defaults.model.primary = $model
+  .agents.defaults.model.primary = $model |
+  .tools.profile = "full"
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
 echo "✔ Model configured: $ANTHROPIC_MODEL"
+echo "✔ Tools profile set to full"
 
 # Append ANTHROPIC_API_KEY to ~/.openclaw/.env for daemon/gateway use
 OPENCLAW_ENV="$REAL_HOME/.openclaw/.env"
