@@ -8,7 +8,7 @@ How to set up, launch, and live with a run of this harness. Every mechanism exis
 
 ### Step 1: Run `setup-device.sh`
 
-This provisions an EC2 instance and bootstraps the full environment automatically: desktop + VNC, OpenClaw, Telegram, monitoring, telemetry, services (GitHub CLI, AWS CLI, gog), and the harness workspace. It also configures `openclaw.json` with the model, tools profile, heartbeat, subagent limits, Telegram channel, and owner authorization.
+This provisions an EC2 instance and bootstraps the full environment automatically: desktop + VNC, OpenClaw, Telegram, monitoring, telemetry, services (GitHub CLI, AWS CLI), and the harness workspace. It also configures `openclaw.json` with the model, tools profile, heartbeat, subagent limits, Telegram channel, and owner authorization.
 
 ```bash
 cd linux/
@@ -52,7 +52,6 @@ All verified working before launch, by you — not the agent:
 
 - **GitHub:** `gh auth login` + confirm `gh auth status`. Create an empty project remote if needed.
 - **Telegram pairing:** DM your bot on Telegram, then from the instance: `openclaw pairing list telegram` → `openclaw pairing approve telegram <CODE>`.
-- **Email CLI:** `gog` authenticated (see https://gogcli.sh/quickstart.html).
 - **External reviewer platforms** (Stanford agentic reviewer, CMU paper reviewer, refine.ink or equivalents): confirm login/submission works _now_. The final milestone is gated on external review, so a broken login discovered mid-run becomes a Tier-3 block.
 - **Cloud quotas pre-approved, long-lived credentials.** Quota approvals can take longer than the run, and short-lived SSO tokens expire mid-run and silently kill scheduled jobs.
 
