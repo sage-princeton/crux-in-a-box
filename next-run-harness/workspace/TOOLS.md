@@ -13,16 +13,27 @@ Single source of environment facts. `MEMORY.md` must NOT duplicate anything here
 
 ## Accounts (verify, then keep current)
 
-- **GitHub:** `gh` as `{{GITHUB_USER}}`; project remote `{{GITHUB_REMOTE}}`.
-- **Email:** `gog` CLI (`gog gmail list "in:inbox"`).
+- **GitHub:** `gh` as `{{GITHUB_USER}}`
+<!-- - **Email:** `gog` CLI (`gog gmail list "in:inbox"`). Note: not included for now. -->
 - **Telegram:** operator channel via OpenClaw; main session is the only session bound to it (see Footguns).
-- **Cloud:** `{{CLOUD_ACCOUNT_DETAILS}}` — credentials type, account id, region, spend cap. (Operator pre-approves quotas before launch; if a quota is 0, that's a Tier-3 setup defect, not yours to wait on silently.)
+- **Cloud:** AWS; you are logged in currently and have PowerUser access to this account. Your AWS spend limit is {{CLOUD_SPEND_LIMIT}}
 - **External reviewers:** {{EXTERNAL_REVIEWER_ACCESS|platform → how to submit → quota, one line each}}.
 
 ## Spend measurement
 
 - **API:** `python3 scripts/telemetry_costs.py` (telemetry at `{{TELEMETRY_PATH}}`). Canonical — it deduplicates by responseId; naive telemetry sums overcount severely. Never hand-estimate.
-- **Cloud:** `{{CLOUD_SPEND_COMMAND}}`.
+- **Cloud:**
+
+```
+aws ce get-cost-and-usage \
+  --time-period Start=$START_DATE,End=$END_DATE \
+  --granularity DAILY \
+  --metrics "UnblendedCost" \
+  --query "ResultsByTime[*].Total.UnblendedCost.Amount" \
+  --output text | tr '\t' '\n' | awk '{sum+=$1} END {print sum}'
+```
+
+NB: use the start date from when openclaw first started
 
 ## OpenClaw footguns (follow exactly)
 

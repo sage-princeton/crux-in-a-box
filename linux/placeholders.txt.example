@@ -1,0 +1,24 @@
+# placeholders.txt — workspace placeholder map for setup-device.sh
+#
+# Usage: ./setup-device.sh ... --placeholder-map placeholders.txt
+#
+# Lines are KEY=VALUE. Comments (#) and blank lines are ignored.
+# Placeholders with defaults (e.g. PAGE_BUDGET) are auto-populated
+# if not specified here, so only fill in what you need to override.
+
+# ── Required (no defaults — must be set here or manually post-launch) ──
+
+TASK_BRIEF=Replace this with your task brief, or edit BRIEF.md directly after launch.
+GITHUB_USER=your-github-username
+CLOUD_SPEND_LIMIT=$500
+
+# ── Optional (have sensible defaults — uncomment to override) ──
+
+# PAGE_BUDGET=9
+# SNAPSHOT_TIMES=10:00 and 19:00
+# VENUE=NeurIPS
+# PREFLIGHT_COST=50
+# PREFLIGHT_HOURS=2
+# DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + venue template — installed and building from day 1, see PLAN.md milestone 1
+# EXTERNAL_REVIEWER_ACCESS=platform → how to submit → quota, one line each
+# EXTERNAL_REVIEWERS=e.g. Stanford agentic reviewer; CMU paper reviewer; refine.ink

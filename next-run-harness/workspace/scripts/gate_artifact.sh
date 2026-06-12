@@ -44,7 +44,7 @@ gate "internal-vocab" $([ -z "$HITS" ] && echo 0 || echo 1) "author-internal voc
 $HITS"
 
 # --- 4. Deanonymization ---------------------------------------------------
-DEANON='{{AGENT_NAME}}|{{OPERATOR_NAME}}|{{GITHUB_ORG_OR_USER}}'
+DEANON='{{AGENT_NAME}}|{{OPERATOR_NAME}}'
 HITS=$(grep -rniE "$DEANON" "$SRC" --include='*.tex' 2>/dev/null | head -20)
 gate "deanonymize" $([ -z "$HITS" ] && echo 0 || echo 1) "deanonymising strings:
 $HITS"

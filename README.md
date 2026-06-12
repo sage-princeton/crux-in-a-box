@@ -20,6 +20,6 @@ TODO: make this a table with: service | how it's configured | how to authenticat
 
 - GitHub: `gh` CLI
 - AWS: `aws` CLI
-- Gmail: `gog` CLI via [gogcli.sh](https://gogcli.sh/)
+<!-- - Gmail: `gog` CLI via [gogcli.sh](https://gogcli.sh/) -->
 
 _NB: none of these are authenticated upon install; you will need to authenticate them separately._

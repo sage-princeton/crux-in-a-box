@@ -31,12 +31,9 @@ SSH into the instance and edit the workspace files under `~/.openclaw/workspace/
 | ------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------- |
 | `{{TASK_BRIEF}}`                      | `BRIEF.md`                 | Paste the full task brief (see the comment block in the file for what it must contain) |
 | `{{GITHUB_USER}}`                     | `TOOLS.md`                 | GitHub username for `gh`                                                               |
-| `{{GITHUB_REMOTE}}`                   | `TOOLS.md`                 | Project remote URL                                                                     |
-| `{{GITHUB_ORG_OR_USER}}`              | `scripts/gate_artifact.sh` | GitHub org or username (for deanonymization gate)                                      |
 | `{{PAGE_BUDGET\|9}}`                  | `scripts/gate_artifact.sh` | Main-body page limit (default 9 if left as-is)                                         |
 | `{{SNAPSHOT_TIMES\|10:00 and 19:00}}` | `USER.md`, `HEARTBEAT.md`  | Daily snapshot times (default 10:00 and 19:00 if left as-is)                           |
-| `{{CLOUD_ACCOUNT_DETAILS}}`           | `TOOLS.md`                 | Credentials type, account id, region, spend cap                                        |
-| `{{CLOUD_SPEND_COMMAND}}`             | `TOOLS.md`                 | One-liner returning current cloud spend                                                |
+| `{{CLOUD_SPEND_LIMIT}}`               | `TOOLS.md`                 | Spend limit, e.g., $500                                                                |
 | `{{EXTERNAL_REVIEWER_ACCESS\|...}}`   | `TOOLS.md`                 | Platform → how to submit → quota, one line each                                        |
 | `{{EXTERNAL_REVIEWERS\|...}}`         | `playbooks/review.md`      | External reviewer platforms available                                                  |
 | `{{VENUE\|NeurIPS}}`                  | `playbooks/review.md`      | Target venue (default NeurIPS if left as-is)                                           |

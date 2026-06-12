@@ -333,34 +333,51 @@ if [ -d "$HARNESS_SRC" ]; then
   # Make scripts executable
   chmod +x "$OPENCLAW_WORKSPACE/scripts/"*.sh 2>/dev/null || true
 
-  # Resolve known placeholders
+  # --- Step 1: Resolve user-supplied placeholders (from --placeholder-map) ---
+  # These run first so they take priority over built-in defaults.
+  if [ -n "${PLACEHOLDERS:-}" ]; then
+    IFS='|||' read -ra PAIRS <<< "$PLACEHOLDERS"
+    for PAIR in "${PAIRS[@]}"; do
+      [ -z "$PAIR" ] && continue
+      KEY="${PAIR%%=*}"
+      VALUE="${PAIR#*=}"
+      # Replace both {{KEY}} and {{KEY|default}} forms
+      find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec sed -i \
+        -e "s#{{${KEY}}}#${VALUE}#g" \
+        -e "s#{{${KEY}|[^}]*}}#${VALUE}#g" \
+        {} +
+      echo "✔ Placeholder resolved: ${KEY}=${VALUE}"
+    done
+  fi
+
+  # --- Step 2: Resolve environment-derived placeholders ---
+  # Use '#' as sed delimiter to avoid clashes with '|' in placeholder defaults.
   AGENT_NAME="${AGENT_NAME:-crux}"
   OPERATOR_NAME="${OPERATOR_NAME:-operator}"
-  OPERATOR_SHORT="$OPERATOR_NAME"
-  WORKSPACE_PATH="$OPENCLAW_WORKSPACE"
-  TELEMETRY_PATH="$REAL_HOME/.openclaw/telemetry/telemetry.jsonl"
-  HOST_DESCRIPTION="Ubuntu 22.04 EC2, amd64"
-
-  # sed all known placeholders across workspace files
-  # Use '#' as sed delimiter to avoid clashes with '|' in placeholder defaults
   find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec sed -i \
     -e "s#{{AGENT_NAME}}#${AGENT_NAME}#g" \
     -e "s#{{OPERATOR_NAME}}#${OPERATOR_NAME}#g" \
-    -e "s#{{OPERATOR_SHORT}}#${OPERATOR_SHORT}#g" \
-    -e "s#{{WORKSPACE_PATH}}#${WORKSPACE_PATH}#g" \
-    -e "s#{{TELEMETRY_PATH}}#${TELEMETRY_PATH}#g" \
-    -e "s#{{HOST_DESCRIPTION|[^}]*}}#${HOST_DESCRIPTION}#g" \
-    -e "s#{{PYTHON_SETUP|[^}]*}}#use uv + a pinned 3.11+ venv under code/; system python is old#g" \
+    -e "s#{{OPERATOR_SHORT}}#${OPERATOR_NAME}#g" \
+    -e "s#{{WORKSPACE_PATH}}#${OPENCLAW_WORKSPACE}#g" \
+    -e "s#{{TELEMETRY_PATH}}#${REAL_HOME}/.openclaw/telemetry/telemetry.jsonl#g" \
+    -e "s#{{HOST_DESCRIPTION|[^}]*}}#Ubuntu 22.04 EC2, amd64#g" \
     {} +
+  echo "✔ Environment placeholders resolved (AGENT_NAME=$AGENT_NAME, OPERATOR_NAME=$OPERATOR_NAME)"
+
+  # --- Step 3: Auto-populate remaining {{KEY|default}} with their defaults ---
+  # Any placeholder with a pipe-delimited default that wasn't resolved above
+  # gets replaced with its default value (the part after the |).
+  find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec \
+    sed -i -E 's#\{\{[A-Z_]+\|([^}]+)\}\}#\1#g' {} +
+  echo "✔ Remaining defaults auto-populated"
 
   echo "✔ Harness workspace copied to $OPENCLAW_WORKSPACE"
-  echo "✔ Known placeholders resolved (AGENT_NAME=$AGENT_NAME, OPERATOR_NAME=$OPERATOR_NAME)"
 
-  # Report remaining unresolved placeholders
+  # Report any remaining unresolved placeholders (those without defaults)
   REMAINING=$(grep -rn '{{' "$OPENCLAW_WORKSPACE" --include='*.md' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'grep for {{' | head -20)
   if [ -n "$REMAINING" ]; then
     echo ""
-    echo "⚠ Unresolved placeholders (resolve manually before launch):"
+    echo "⚠ Unresolved placeholders (resolve manually or via --placeholder-map before launch):"
     echo "$REMAINING"
   fi
 else

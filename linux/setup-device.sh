@@ -25,13 +25,18 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY>
+Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> [options]
 
 Required:
   --telegram-bot-token <TOKEN>   Telegram bot token from @BotFather
   --telegram-owner-id <ID>       Telegram user ID for commands.ownerAllowFrom
   --anthropic-model <MODEL>      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
   --anthropic-api-key <KEY>      Anthropic API key
+
+Optional:
+  --placeholder-map <FILE>       Resolve workspace placeholders from a KEY=VALUE file
+                                   (one per line; # comments and blank lines ignored).
+                                   See placeholders.txt.example for the full list.
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
@@ -50,8 +55,7 @@ TELEGRAM_BOT_TOKEN=""
 TELEGRAM_OWNER_ID=""
 ANTHROPIC_MODEL=""
 ANTHROPIC_API_KEY=""
-AGENT_NAME="crux"
-OPERATOR_NAME="operator"
+PLACEHOLDERS=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -73,6 +77,27 @@ while [[ $# -gt 0 ]]; do
     --anthropic-api-key)
       [ -z "${2:-}" ] && { echo "Error: --anthropic-api-key requires a value" >&2; usage; }
       ANTHROPIC_API_KEY="$2"
+      shift 2
+      ;;
+    --placeholder-map)
+      [ -z "${2:-}" ] && { echo "Error: --placeholder-map requires a file path" >&2; usage; }
+      [ -f "$2" ] || { echo "Error: placeholder map file not found: $2" >&2; exit 1; }
+      while IFS= read -r line || [ -n "$line" ]; do
+        # Skip comments and blank lines
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+        # Strip inline comments
+        line="${line%%#*}"
+        # Trim whitespace
+        line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+        [ -z "$line" ] && continue
+        [[ "$line" == *=* ]] || { echo "Error: invalid line in placeholder map (expected KEY=VALUE): $line" >&2; exit 1; }
+        if [ -n "$PLACEHOLDERS" ]; then
+          PLACEHOLDERS="${PLACEHOLDERS}|||${line}"
+        else
+          PLACEHOLDERS="$line"
+        fi
+      done < "$2"
       shift 2
       ;;
     -h|--help)
@@ -265,8 +290,7 @@ ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
           TELEGRAM_OWNER_ID='${TELEGRAM_OWNER_ID}' \
           ANTHROPIC_MODEL='${ANTHROPIC_MODEL}' \
           ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}' \
-          AGENT_NAME='${AGENT_NAME}' \
-          OPERATOR_NAME='${OPERATOR_NAME}' \
+          PLACEHOLDERS='${PLACEHOLDERS}' \
           bash ~/crux-in-a-box-linux/src/start.sh"
 ok "Remote bootstrap complete"
 
