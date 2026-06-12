@@ -255,12 +255,18 @@ fi
 TMP_CONFIG=$(mktemp)
 jq --arg model "$ANTHROPIC_MODEL" '
   .agents.defaults.model.primary = $model |
-  .tools.profile = "full"
+  .tools.profile = "full" |
+  .agents.defaults.heartbeat.every = "30m" |
+  .agents.defaults.heartbeat.skipWhenBusy = true |
+  .agents.defaults.heartbeat.target = "none" |
+  .agents.defaults.subagents.maxConcurrent = 5
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
 echo "✔ Model configured: $ANTHROPIC_MODEL"
 echo "✔ Tools profile set to full"
+echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
+echo "✔ Subagents maxConcurrent: 5"
 
 # Append ANTHROPIC_API_KEY to ~/.openclaw/.env for daemon/gateway use
 OPENCLAW_ENV="$REAL_HOME/.openclaw/.env"
@@ -312,6 +318,54 @@ sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # Set up gog
 # see: https://gogcli.sh/quickstart.html
+
+# ====== HARNESS WORKSPACE ======
+# Copy the next-run-harness workspace into the agent's OpenClaw workspace
+# and resolve placeholders that are known at provisioning time.
+HARNESS_SRC="$REAL_HOME/crux-in-a-box-harness/workspace"
+OPENCLAW_WORKSPACE="$REAL_HOME/.openclaw/workspace"
+
+if [ -d "$HARNESS_SRC" ]; then
+  sudo -u "$REAL_USER" mkdir -p "$OPENCLAW_WORKSPACE"
+  sudo -u "$REAL_USER" cp -r "$HARNESS_SRC"/* "$OPENCLAW_WORKSPACE/"
+  chown -R "$REAL_USER:$REAL_USER" "$OPENCLAW_WORKSPACE"
+
+  # Make scripts executable
+  chmod +x "$OPENCLAW_WORKSPACE/scripts/"*.sh 2>/dev/null || true
+
+  # Resolve known placeholders
+  AGENT_NAME="${AGENT_NAME:-crux}"
+  OPERATOR_NAME="${OPERATOR_NAME:-operator}"
+  OPERATOR_SHORT="$OPERATOR_NAME"
+  WORKSPACE_PATH="$OPENCLAW_WORKSPACE"
+  TELEMETRY_PATH="$REAL_HOME/.openclaw/telemetry/telemetry.jsonl"
+  HOST_DESCRIPTION="Ubuntu 22.04 EC2, amd64"
+
+  # sed all known placeholders across workspace files
+  # Use '#' as sed delimiter to avoid clashes with '|' in placeholder defaults
+  find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec sed -i \
+    -e "s#{{AGENT_NAME}}#${AGENT_NAME}#g" \
+    -e "s#{{OPERATOR_NAME}}#${OPERATOR_NAME}#g" \
+    -e "s#{{OPERATOR_SHORT}}#${OPERATOR_SHORT}#g" \
+    -e "s#{{WORKSPACE_PATH}}#${WORKSPACE_PATH}#g" \
+    -e "s#{{TELEMETRY_PATH}}#${TELEMETRY_PATH}#g" \
+    -e "s#{{HOST_DESCRIPTION|[^}]*}}#${HOST_DESCRIPTION}#g" \
+    -e "s#{{PYTHON_SETUP|[^}]*}}#use uv + a pinned 3.11+ venv under code/; system python is old#g" \
+    {} +
+
+  echo "✔ Harness workspace copied to $OPENCLAW_WORKSPACE"
+  echo "✔ Known placeholders resolved (AGENT_NAME=$AGENT_NAME, OPERATOR_NAME=$OPERATOR_NAME)"
+
+  # Report remaining unresolved placeholders
+  REMAINING=$(grep -rn '{{' "$OPENCLAW_WORKSPACE" --include='*.md' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'grep for {{' | head -20)
+  if [ -n "$REMAINING" ]; then
+    echo ""
+    echo "⚠ Unresolved placeholders (resolve manually before launch):"
+    echo "$REMAINING"
+  fi
+else
+  echo "⚠ Harness workspace not found at $HARNESS_SRC — skipping workspace setup"
+fi
 
 echo ""
 echo "✔ Linux CRUX-in-a-box bootstrap complete."

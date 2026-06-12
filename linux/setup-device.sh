@@ -50,6 +50,8 @@ TELEGRAM_BOT_TOKEN=""
 TELEGRAM_OWNER_ID=""
 ANTHROPIC_MODEL=""
 ANTHROPIC_API_KEY=""
+AGENT_NAME="crux"
+OPERATOR_NAME="operator"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -243,7 +245,17 @@ ok "SSH is up"
 info "Copying linux/ directory to instance..."
 scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
   "$SCRIPT_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux"
-ok "Files copied"
+ok "Linux files copied"
+
+HARNESS_DIR="$SCRIPT_DIR/../next-run-harness"
+if [ -d "$HARNESS_DIR" ]; then
+  info "Copying next-run-harness/ to instance..."
+  scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
+    "$HARNESS_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-harness"
+  ok "Harness files copied"
+else
+  warn "next-run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
+fi
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
@@ -253,6 +265,8 @@ ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
           TELEGRAM_OWNER_ID='${TELEGRAM_OWNER_ID}' \
           ANTHROPIC_MODEL='${ANTHROPIC_MODEL}' \
           ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}' \
+          AGENT_NAME='${AGENT_NAME}' \
+          OPERATOR_NAME='${OPERATOR_NAME}' \
           bash ~/crux-in-a-box-linux/src/start.sh"
 ok "Remote bootstrap complete"
 
