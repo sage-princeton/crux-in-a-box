@@ -25,18 +25,15 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> [options]
+Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --placeholder-map <FILE>
 
 Required:
   --telegram-bot-token <TOKEN>   Telegram bot token from @BotFather
   --telegram-owner-id <ID>       Telegram user ID for commands.ownerAllowFrom
   --anthropic-model <MODEL>      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
   --anthropic-api-key <KEY>      Anthropic API key
-
-Optional:
-  --placeholder-map <FILE>       Resolve workspace placeholders from a KEY=VALUE file
-                                   (one per line; # comments and blank lines ignored).
-                                   See placeholders.txt.example for the full list.
+  --placeholder-map <FILE>       Workspace placeholders file (KEY=VALUE, one per line).
+                                   Copy placeholders.txt.example and fill it in.
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
@@ -114,6 +111,7 @@ done
 [ -z "$TELEGRAM_OWNER_ID" ] && { echo "Error: --telegram-owner-id is required" >&2; usage; }
 [ -z "$ANTHROPIC_MODEL" ] && { echo "Error: --anthropic-model is required (e.g. anthropic/claude-opus-4-6)" >&2; usage; }
 [ -z "$ANTHROPIC_API_KEY" ] && { echo "Error: --anthropic-api-key is required" >&2; usage; }
+[ -z "$PLACEHOLDERS" ] && { echo "Error: --placeholder-map is required (copy placeholders.txt.example)" >&2; usage; }
 
 # ====== CONFIGURATION (override via env vars) ======
 REGION="${AWS_REGION:-us-east-1}"
