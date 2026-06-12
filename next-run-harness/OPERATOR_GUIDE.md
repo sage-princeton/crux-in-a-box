@@ -27,19 +27,18 @@ The script will print connection details (SSH + VNC) and a list of any remaining
 
 SSH into the instance and edit the workspace files under `~/.openclaw/workspace/`. The bootstrap auto-resolved agent name, operator name, workspace path, telemetry path, host description, and Python setup. The following are task-specific and must be resolved manually:
 
-| Placeholder                           | File(s)                    | What to fill in                                                                        |
-| ------------------------------------- | -------------------------- | -------------------------------------------------------------------------------------- |
-| `{{TASK_BRIEF}}`                      | `BRIEF.md`                 | Paste the full task brief (see the comment block in the file for what it must contain) |
-| `{{GITHUB_USER}}`                     | `TOOLS.md`                 | GitHub username for `gh`                                                               |
-| `{{PAGE_BUDGET\|9}}`                  | `scripts/gate_artifact.sh` | Main-body page limit (default 9 if left as-is)                                         |
-| `{{SNAPSHOT_TIMES\|10:00 and 19:00}}` | `USER.md`, `HEARTBEAT.md`  | Daily snapshot times (default 10:00 and 19:00 if left as-is)                           |
-| `{{CLOUD_SPEND_LIMIT}}`               | `TOOLS.md`                 | Spend limit, e.g., $500                                                                |
-| `{{EXTERNAL_REVIEWER_ACCESS\|...}}`   | `TOOLS.md`                 | Platform → how to submit → quota, one line each                                        |
-| `{{EXTERNAL_REVIEWERS\|...}}`         | `playbooks/review.md`      | External reviewer platforms available                                                  |
-| `{{VENUE\|NeurIPS}}`                  | `playbooks/review.md`      | Target venue (default NeurIPS if left as-is)                                           |
-| `{{DELIVERABLE_TOOLCHAIN\|...}}`      | `TOOLS.md`                 | LaTeX toolchain details (default provided if left as-is)                               |
-| `{{PREFLIGHT_COST\|50}}`              | `AGENTS.md`                | Pre-flight cost gate in $ (default 50 if left as-is)                                   |
-| `{{PREFLIGHT_HOURS\|2}}`              | `AGENTS.md`                | Pre-flight time gate in hours (default 2 if left as-is)                                |
+| Placeholder                           | File(s)                    | What to fill in                                              |
+| ------------------------------------- | -------------------------- | ------------------------------------------------------------ |
+| `{{GITHUB_USER}}`                     | `TOOLS.md`                 | GitHub username for `gh`                                     |
+| `{{PAGE_BUDGET\|9}}`                  | `scripts/gate_artifact.sh` | Main-body page limit (default 9 if left as-is)               |
+| `{{SNAPSHOT_TIMES\|10:00 and 19:00}}` | `USER.md`, `HEARTBEAT.md`  | Daily snapshot times (default 10:00 and 19:00 if left as-is) |
+| `{{CLOUD_SPEND_LIMIT}}`               | `TOOLS.md`                 | Spend limit, e.g., $500                                      |
+| `{{EXTERNAL_REVIEWER_ACCESS\|...}}`   | `TOOLS.md`                 | Platform → how to submit → quota, one line each              |
+| `{{EXTERNAL_REVIEWERS\|...}}`         | `playbooks/review.md`      | External reviewer platforms available                        |
+| `{{VENUE\|NeurIPS}}`                  | `playbooks/review.md`      | Target venue (default NeurIPS if left as-is)                 |
+| `{{DELIVERABLE_TOOLCHAIN\|...}}`      | `TOOLS.md`                 | LaTeX toolchain details (default provided if left as-is)     |
+| `{{PREFLIGHT_COST\|50}}`              | `AGENTS.md`                | Pre-flight cost gate in $ (default 50 if left as-is)         |
+| `{{PREFLIGHT_HOURS\|2}}`              | `AGENTS.md`                | Pre-flight time gate in hours (default 2 if left as-is)      |
 
 Placeholders with defaults (the `|value` part) can be left as-is if the default is acceptable — the agent's hour-0 verification duty will catch and correct stale values.
 

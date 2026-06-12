@@ -8,7 +8,6 @@
 
 # ── Required (no defaults — must be set here or manually post-launch) ──
 
-TASK_BRIEF=Replace this with your task brief, or edit BRIEF.md directly after launch.
 GITHUB_USER=your-github-username
 CLOUD_SPEND_LIMIT=$500
 
