@@ -10,13 +10,17 @@ How to set up, launch, and live with a run of this harness. Every mechanism exis
 
 This provisions an EC2 instance and bootstraps the full environment automatically: desktop + VNC, OpenClaw, Telegram, monitoring, telemetry, services (GitHub CLI, AWS CLI, gog), and the harness workspace. It also configures `openclaw.json` with the model, tools profile, heartbeat, subagent limits, Telegram channel, and owner authorization.
 
+The script tags the instance with `AnthropicKeySuffix` (last 6 chars of the API key) and `AnthropicSpendAtCreation` (API spend at launch time, queried from the cost-tracking Lambda). It warns if another running instance already uses the same API key.
+
 ```bash
 cd linux/
 ./setup-device.sh \
-  --telegram-bot-token <TOKEN> \
+  --telegram-bot-name <NAME> \
   --telegram-owner-id <ID> \
   --anthropic-model anthropic/claude-sonnet-4-20250514 \
-  --anthropic-api-key <KEY>
+  --anthropic-api-key <KEY> \
+  --cost-tracker-url <URL> \
+  --placeholder-map placeholders.txt
 ```
 
 Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `setup-device.sh --help` for optional env-var overrides (region, instance type, disk size, etc.).
@@ -54,7 +58,9 @@ All verified working before launch, by you — not the agent:
 
 ### Step 4: Verify telemetry
 
-State the caps (API $, cloud $, deadline) in `BRIEF.md`. Verify `scripts/telemetry_costs.py` runs against the live telemetry file before launch. **Once, around hour 12:** compare the script's output against actual console billing; if they disagree materially, tell the agent the true number — it will record the correction factor in `TOOLS.md`. After that, the script is the agent's source of truth (it deduplicates by responseId; the threshold ladder in `AGENTS.md` acts on it).
+State the caps (API $, cloud $, deadline) in `BRIEF.md`. Verify `scripts/telemetry_costs.py` returns a number (it queries the cost-tracking Lambda, which uses the Anthropic Admin API). **Once, around hour 12:** compare the script's output against the Anthropic console billing page; if they disagree materially, tell the agent the true number — it will record the correction factor in `TOOLS.md`. After that, the script is the agent's source of truth (the threshold ladder in `AGENTS.md` acts on it).
+
+**Pre-requisite:** Deploy the cost-tracking Lambda first (`lambda/cost_tracker/deploy.sh`) and pass the URL via `--cost-tracker-url`.
 
 ### Step 5: Launch
 
@@ -121,4 +127,4 @@ To compare regimes, log per run: fraction of beats that took a forward action; m
 | Under one-directional hostile review, headline claims shrink monotonically until the deliverable is over-pruned — every truth mechanism punishes overclaiming, nothing punishes hedging                                                                                      | Symmetric claim discipline: Claim ledger (`REGISTRY.md`) — no narrowing without a triggered falsifier or cost argument; underclaim audit (`playbooks/review.md` §1b); base + stretch claims in `PLAN.md`; significance floor in the `BRIEF.md` success bar                                                             |
 | A polished deliverable can answer a different question than assigned: scope drift happens in locally-reasonable, honestly-evidenced steps, and PDF-only reviewers structurally cannot catch it — the brief's semantic constraints erode while every numeric constraint holds | Brief constraints registered with a checking mechanism each (`REGISTRY.md`); brief-fidelity review at every milestone gate and before the endgame, with DIVERGED forcing the pivot procedure (`playbooks/review.md` §3)                                                                                                |
 | Single-candidate commitment makes reconsideration unaffordable: when the only idea dies, re-framing around surviving artifacts is cheaper than starting over, and mechanism-level failures get treated as code bugs until the only exit is re-scoping the question           | Candidate portfolio with staged commitment — headline requires scouts from ≥2 candidates (`PLAN.md`); failure-level taxonomy (implementation / mechanism / question) in the stuck/pivot procedure (`playbooks/decisions.md`)                                                                                           |
-| Budget tracking degenerates two ways: naive telemetry sums overcount severely until hand-corrected, and a ledger updated every heartbeat becomes informational ritual that never gates a decision; meanwhile agents start with no model of how long anything takes           | Scripted measurement only (`scripts/telemetry_costs.py`, deduped; cloud via one command); numbers live in the overwritten state capsule, not a ledger; 70/90/100 threshold ladder wired to the decision tiers + pre-flight cost gate (`AGENTS.md` § Resources); predicted-vs-actual wall-clock logged at every harvest |
+| Budget tracking degenerates two ways: naive telemetry sums overcount severely until hand-corrected, and a ledger updated every heartbeat becomes informational ritual that never gates a decision; meanwhile agents start with no model of how long anything takes           | Scripted measurement only (`scripts/telemetry_costs.py` via cost-tracking Lambda + Anthropic Admin API; cloud via one command); numbers live in the overwritten state capsule, not a ledger; 70/90/100 threshold ladder wired to the decision tiers + pre-flight cost gate (`AGENTS.md` § Resources); predicted-vs-actual wall-clock logged at every harvest |

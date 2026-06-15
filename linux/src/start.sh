@@ -362,6 +362,8 @@ if [ -d "$HARNESS_SRC" ]; then
     -e "s#{{WORKSPACE_PATH}}#${OPENCLAW_WORKSPACE}#g" \
     -e "s#{{TELEMETRY_PATH}}#${REAL_HOME}/.openclaw/telemetry/telemetry.jsonl#g" \
     -e "s#{{HOST_DESCRIPTION|[^}]*}}#Ubuntu 22.04 EC2, amd64#g" \
+    -e "s#{{COST_TRACKER_URL}}#${COST_TRACKER_URL:-}#g" \
+    -e "s#{{API_KEY_SUFFIX}}#${API_KEY_SUFFIX:-}#g" \
     {} +
   echo "✔ Environment placeholders resolved (AGENT_NAME=$AGENT_NAME, OPERATOR_NAME=$OPERATOR_NAME)"
 
