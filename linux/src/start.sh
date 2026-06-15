@@ -300,9 +300,9 @@ unzip -qo /tmp/awscliv2.zip -d /tmp
 /tmp/aws/install --update
 rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# # install gogcli - not needed for now
-# sudo -u "$REAL_USER" bash -c \
-#   'brew install openclaw/tap/gogcli' || true
+# install gogcli - note fails silently
+sudo -u "$REAL_USER" bash -c \
+  'brew install openclaw/tap/gogcli' || true
 
 
 # set up gateway

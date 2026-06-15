@@ -44,13 +44,13 @@ else
   fail "aws CLI: not installed"
 fi
 
-# # ----- gogcli ----- (not needed for now)
-# if command -v gog &>/dev/null; then
-#   pass "gog CLI: installed"
-#   # TODO: confirm gog logged in
-# else
-#   warn "gog CLI: not installed"
-# fi
+# ----- gogcli -----
+if command -v gog &>/dev/null; then
+  pass "gog CLI: installed"
+  # TODO: confirm gog logged in
+else
+  warn "gog CLI: not installed"
+fi
 
 # ----- openclaw -----
 if command -v openclaw &>/dev/null; then
