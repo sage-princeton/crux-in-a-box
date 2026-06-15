@@ -106,28 +106,29 @@ else
   fail "Telemetry plugin repo NOT found"
 fi
 
-# ----- monitor.sh -----
-if pgrep -f "monitor.sh" > /dev/null; then
-  pass "monitor.sh is running ($(pgrep -cf 'monitor.sh') process(es))"
-else
-  fail "monitor.sh is NOT running"
-fi
+# # ----- monitor.sh -----
+# # Commented out — monitoring was filling up the disk.
+# if pgrep -f "monitor.sh" > /dev/null; then
+#   pass "monitor.sh is running ($(pgrep -cf 'monitor.sh') process(es))"
+# else
+#   fail "monitor.sh is NOT running"
+# fi
 
-# ----- Monitor output -----
-MONITOR_DIR="$HOME/monitor_output"
-if [ -d "$MONITOR_DIR" ]; then
-  SCREENSHOTS=$(find "$MONITOR_DIR" -name 'screen_*.png' 2>/dev/null | wc -l)
-  BACKUPS=$(find "$MONITOR_DIR" -name 'backup_*.tar.gz' 2>/dev/null | wc -l)
-  HEALTH_FILE="$HOME/last_update.txt"
-  if [ -f "$HEALTH_FILE" ]; then
-    LAST_UPDATE=$(cat "$HEALTH_FILE")
-    pass "Monitor output: $SCREENSHOTS screenshots, $BACKUPS backups (last update: $LAST_UPDATE)"
-  else
-    warn "Monitor output: $SCREENSHOTS screenshots, $BACKUPS backups (no health file yet)"
-  fi
-else
-  warn "Monitor output directory not found yet"
-fi
+# # ----- Monitor output -----
+# MONITOR_DIR="$HOME/monitor_output"
+# if [ -d "$MONITOR_DIR" ]; then
+#   SCREENSHOTS=$(find "$MONITOR_DIR" -name 'screen_*.png' 2>/dev/null | wc -l)
+#   BACKUPS=$(find "$MONITOR_DIR" -name 'backup_*.tar.gz' 2>/dev/null | wc -l)
+#   HEALTH_FILE="$HOME/last_update.txt"
+#   if [ -f "$HEALTH_FILE" ]; then
+#     LAST_UPDATE=$(cat "$HEALTH_FILE")
+#     pass "Monitor output: $SCREENSHOTS screenshots, $BACKUPS backups (last update: $LAST_UPDATE)"
+#   else
+#     warn "Monitor output: $SCREENSHOTS screenshots, $BACKUPS backups (no health file yet)"
+#   fi
+# else
+#   warn "Monitor output directory not found yet"
+# fi
 
 echo ""
 echo "============================================="

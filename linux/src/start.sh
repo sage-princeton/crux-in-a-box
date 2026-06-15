@@ -138,16 +138,17 @@ cp "$SCRIPT_DIR/exec-approvals.json" "$REAL_HOME/.openclaw/exec-approvals.json"
 chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
 
 
-# ====== MONITORING ======
-cp "$SCRIPT_DIR/monitor.sh" "$REAL_HOME/monitor.sh"
-chown "$REAL_USER:$REAL_USER" "$REAL_HOME/monitor.sh"
-chmod +x "$REAL_HOME/monitor.sh"
-
-# Install scrot for screenshots (Linux equivalent of macOS screencapture)
-apt-get install -y scrot
-
-sudo -u "$REAL_USER" bash -c \
-  "nohup $REAL_HOME/monitor.sh > /dev/null 2>&1 &"
+# # ====== MONITORING ======
+# # Commented out — screenshots + workspace backups were filling up the disk.
+# cp "$SCRIPT_DIR/monitor.sh" "$REAL_HOME/monitor.sh"
+# chown "$REAL_USER:$REAL_USER" "$REAL_HOME/monitor.sh"
+# chmod +x "$REAL_HOME/monitor.sh"
+#
+# # Install scrot for screenshots (Linux equivalent of macOS screencapture)
+# apt-get install -y scrot
+#
+# sudo -u "$REAL_USER" bash -c \
+#   "nohup $REAL_HOME/monitor.sh > /dev/null 2>&1 &"
 
 
 # ====== TELEMETRY ======
@@ -374,7 +375,7 @@ if [ -d "$HARNESS_SRC" ]; then
   echo "✔ Harness workspace copied to $OPENCLAW_WORKSPACE"
 
   # Report any remaining unresolved placeholders (those without defaults)
-  REMAINING=$(grep -rn '{{' "$OPENCLAW_WORKSPACE" --include='*.md' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'grep for {{' | head -20)
+  REMAINING=$(grep -rn '{{' "$OPENCLAW_WORKSPACE" --include='*.md' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'grep for {{' | head -20 || true)
   if [ -n "$REMAINING" ]; then
     echo ""
     echo "⚠ Unresolved placeholders (resolve manually or via --placeholder-map before launch):"

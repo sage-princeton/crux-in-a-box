@@ -336,7 +336,7 @@ fi
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
-  "chmod +x ~/crux-in-a-box-linux/src/start.sh ~/crux-in-a-box-linux/src/monitor.sh \
+  "chmod +x ~/crux-in-a-box-linux/src/start.sh \
    && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' \
           TELEGRAM_OWNER_ID='${TELEGRAM_OWNER_ID}' \
           ANTHROPIC_MODEL='${ANTHROPIC_MODEL}' \
