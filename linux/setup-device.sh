@@ -25,10 +25,11 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --placeholder-map <FILE> [--instance-suffix <SUFFIX>]
+Usage: $0 --telegram-bot-name <NAME> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --placeholder-map <FILE> [--instance-suffix <SUFFIX>]
 
 Required:
-  --telegram-bot-token <TOKEN>   Telegram bot token from @BotFather
+  --telegram-bot-name <NAME>     Bot name as defined in telegram_bots.json
+                                   (e.g. cruxlinuxtest). The token is looked up automatically.
   --telegram-owner-id <ID>       Telegram user ID for commands.ownerAllowFrom
   --anthropic-model <MODEL>      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
   --anthropic-api-key <KEY>      Anthropic API key
@@ -53,7 +54,7 @@ USAGE
 }
 
 # ====== PARSE ARGS ======
-TELEGRAM_BOT_TOKEN=""
+TELEGRAM_BOT_NAME=""
 TELEGRAM_OWNER_ID=""
 ANTHROPIC_MODEL=""
 ANTHROPIC_API_KEY=""
@@ -67,9 +68,9 @@ while [[ $# -gt 0 ]]; do
       INSTANCE_SUFFIX="$2"
       shift 2
       ;;
-    --telegram-bot-token)
-      [ -z "${2:-}" ] && { echo "Error: --telegram-bot-token requires a value" >&2; usage; }
-      TELEGRAM_BOT_TOKEN="$2"
+    --telegram-bot-name)
+      [ -z "${2:-}" ] && { echo "Error: --telegram-bot-name requires a value" >&2; usage; }
+      TELEGRAM_BOT_NAME="$2"
       shift 2
       ;;
     --telegram-owner-id)
@@ -118,11 +119,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -z "$TELEGRAM_BOT_TOKEN" ] && { echo "Error: --telegram-bot-token is required" >&2; usage; }
+[ -z "$TELEGRAM_BOT_NAME" ] && { echo "Error: --telegram-bot-name is required" >&2; usage; }
 [ -z "$TELEGRAM_OWNER_ID" ] && { echo "Error: --telegram-owner-id is required" >&2; usage; }
 [ -z "$ANTHROPIC_MODEL" ] && { echo "Error: --anthropic-model is required (e.g. anthropic/claude-opus-4-6)" >&2; usage; }
 [ -z "$ANTHROPIC_API_KEY" ] && { echo "Error: --anthropic-api-key is required" >&2; usage; }
 [ -z "$PLACEHOLDERS" ] && { echo "Error: --placeholder-map is required (copy placeholders.txt.example)" >&2; usage; }
+
+# ====== RESOLVE TELEGRAM BOT TOKEN ======
+SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+TELEGRAM_BOTS_FILE="$SCRIPT_DIR/../telegram_bots.json"
+[ -f "$TELEGRAM_BOTS_FILE" ] \
+  || { echo "Error: telegram_bots.json not found at $TELEGRAM_BOTS_FILE" >&2; exit 1; }
+
+TELEGRAM_BOT_TOKEN=$(jq -r --arg name "$TELEGRAM_BOT_NAME" '.[$name] // empty' "$TELEGRAM_BOTS_FILE")
+[ -n "$TELEGRAM_BOT_TOKEN" ] \
+  || { echo "Error: bot name '$TELEGRAM_BOT_NAME' not found in $TELEGRAM_BOTS_FILE" >&2
+       echo "  Available bots: $(jq -r 'keys | join(", ")' "$TELEGRAM_BOTS_FILE")" >&2
+       exit 1; }
 
 # ====== CONFIGURATION (override via env vars) ======
 REGION="${AWS_REGION:-us-east-1}"
@@ -139,8 +152,6 @@ INSTANCE_PROFILE_NAME="${CRUX_INSTANCE_PROFILE:-crux-in-a-box-profile}"
 SSH_USER="ubuntu"
 DISK_SIZE_GB="${CRUX_DISK_SIZE_GB:-80}"
 VNC_PORT=5901
-
-SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 # ====== HELPERS ======
 info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
