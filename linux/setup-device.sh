@@ -25,7 +25,7 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --placeholder-map <FILE>
+Usage: $0 --telegram-bot-token <TOKEN> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --placeholder-map <FILE> [--instance-suffix <SUFFIX>]
 
 Required:
   --telegram-bot-token <TOKEN>   Telegram bot token from @BotFather
@@ -34,6 +34,11 @@ Required:
   --anthropic-api-key <KEY>      Anthropic API key
   --placeholder-map <FILE>       Workspace placeholders file (KEY=VALUE, one per line).
                                    Copy placeholders.txt.example and fill it in.
+
+Optional:
+  --instance-suffix <SUFFIX>     Suffix appended to the instance name
+                                   (e.g. --instance-suffix 2 → crux-in-a-box-2).
+                                   Allows running multiple instances in parallel.
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
@@ -53,9 +58,15 @@ TELEGRAM_OWNER_ID=""
 ANTHROPIC_MODEL=""
 ANTHROPIC_API_KEY=""
 PLACEHOLDERS=""
+INSTANCE_SUFFIX=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --instance-suffix)
+      [ -z "${2:-}" ] && { echo "Error: --instance-suffix requires a value" >&2; usage; }
+      INSTANCE_SUFFIX="$2"
+      shift 2
+      ;;
     --telegram-bot-token)
       [ -z "${2:-}" ] && { echo "Error: --telegram-bot-token requires a value" >&2; usage; }
       TELEGRAM_BOT_TOKEN="$2"
@@ -120,6 +131,9 @@ AMI_ID="${CRUX_AMI_ID:-}"
 KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
 SG_NAME="${CRUX_SG_NAME:-crux-in-a-box-sg}"
 INSTANCE_NAME="${CRUX_INSTANCE_NAME:-crux-in-a-box}"
+if [ -n "$INSTANCE_SUFFIX" ]; then
+  INSTANCE_NAME="${INSTANCE_NAME}-${INSTANCE_SUFFIX}"
+fi
 IAM_ROLE_NAME="${CRUX_IAM_ROLE:-crux-in-a-box-role}"
 INSTANCE_PROFILE_NAME="${CRUX_INSTANCE_PROFILE:-crux-in-a-box-profile}"
 SSH_USER="ubuntu"
@@ -270,8 +284,17 @@ EXISTING_ID=$(aws ec2 describe-instances \
   --output text 2>/dev/null || true)
 
 if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
-  warn "Re-using existing instance $EXISTING_ID tagged '$INSTANCE_NAME'."
-  INSTANCE_ID="$EXISTING_ID"
+  warn "WARNING: An EC2 instance '$INSTANCE_NAME' is already running ($EXISTING_ID)."
+  warn "Continuing will re-provision this existing instance (SSH + bootstrap)."
+  warn "If you want a separate instance instead, re-run with --instance-suffix <SUFFIX>."
+  printf "\033[1;33m   Continue with existing instance %s? [y/N]: \033[0m" "$EXISTING_ID"
+  read -r REPLY
+  if [[ "$REPLY" =~ ^[Yy]$ ]]; then
+    INSTANCE_ID="$EXISTING_ID"
+    ok "Re-using existing instance $INSTANCE_ID"
+  else
+    die "Aborted. To launch a parallel instance, re-run with --instance-suffix <SUFFIX>."
+  fi
 else
   info "Launching EC2 instance..."
   INSTANCE_ID=$(aws ec2 run-instances \
