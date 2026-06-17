@@ -34,19 +34,24 @@ Environment variables (set on the Lambda):
 import json
 import os
 import sys
-import urllib.parse
-import urllib.request
-import urllib.error
 from datetime import datetime
+import urllib.request
+import urllib.parse
 
 ANTHROPIC_API = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
 
-# ---------------------------------------------------------------------------
+
+def _response(status: int, body: dict) -> dict:
+    return {
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body),
+    }
+
+
 # Per-model pricing in USD per million tokens (MTok), standard (global) rates.
-# Ported verbatim from new.py. Source: claude.com/pricing.
-# Opus 4.7 and Opus 4.8 share the same rates.
-# ---------------------------------------------------------------------------
+# Source: claude.com/pricing. Opus 4.7 and Opus 4.8 share the same rates.
 PRICING = {
     "claude-opus-4-7": {
         "input": 5.0,  # base input tokens
@@ -65,88 +70,6 @@ PRICING = {
 }
 
 
-def _headers() -> dict:
-    return {
-        "x-api-key": os.environ["ANTHROPIC_ADMIN_KEY"],
-        "anthropic-version": ANTHROPIC_VERSION,
-        "content-type": "application/json",
-    }
-
-
-def _get(path: str, params: dict | None = None) -> dict:
-    """GET request to the Anthropic Admin API."""
-    url = f"{ANTHROPIC_API}{path}"
-    if params:
-        # Build query string preserving literal [] in param names
-        # (the Anthropic API requires unencoded [] for array params).
-        # A list value emits one occurrence per element (e.g. group_by[]).
-        parts = []
-        for k, v in params.items():
-            if v is None:
-                continue
-            values = v if isinstance(v, (list, tuple)) else [v]
-            for item in values:
-                encoded_v = urllib.parse.quote(str(item), safe="")
-                parts.append(f"{k}={encoded_v}")
-        url = f"{url}?{'&'.join(parts)}"
-    req = urllib.request.Request(url, headers=_headers(), method="GET")
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        return json.loads(resp.read())
-
-
-def _hint_matches_key(hint: str, api_key: str) -> bool:
-    """Return True if *api_key* is consistent with *partial_key_hint*.
-
-    The Admin API returns ``partial_key_hint`` like ``sk-ant-api03-m0V...GwAA``
-    where ``...`` masks the middle, exposing a visible prefix *and* suffix.
-    Matching the full key against both ends is effectively unique, unlike
-    matching the 4-char suffix alone (which collides across keys).
-    """
-    if "..." not in hint:
-        return False
-    prefix, suffix = hint.split("...", 1)
-    return bool(api_key.startswith(prefix) and api_key.endswith(suffix))
-
-
-def _find_matching_keys(api_key: str) -> list[dict]:
-    """Walk paginated API-key list and return all keys matching *api_key*.
-
-    Matches the full key against each key's ``partial_key_hint`` (visible
-    prefix + suffix).  We collect all matches to detect (and reject) ambiguity.
-
-    Returns a list of ``{"id": ..., "name": ..., "hint": ...}`` dicts.
-    """
-    matches: list[dict] = []
-    after_id = None
-    while True:
-        params: dict = {"limit": "100", "status": "active"}
-        if after_id:
-            params["after_id"] = after_id
-        data = _get("/v1/organizations/api_keys", params)
-        for key in data.get("data", []):
-            hint = key.get("partial_key_hint", "")
-            if _hint_matches_key(hint, api_key):
-                matches.append(
-                    {
-                        "id": key["id"],
-                        "name": key.get("name", ""),
-                        "hint": hint,
-                        "created_at": key.get("created_at", ""),
-                    }
-                )
-        if not data.get("has_more"):
-            break
-        items = data.get("data", [])
-        if items:
-            after_id = items[-1]["id"]
-        else:
-            break
-    return matches
-
-
-# ---------------------------------------------------------------------------
-# Cost computation \u2014 ported verbatim from new.py.
-# ---------------------------------------------------------------------------
 def cost_for_result(result, pricing):
     """Return the USD cost for a single grouped result given its model pricing."""
     cache_creation = result.get("cache_creation", {})
@@ -161,11 +84,11 @@ def cost_for_result(result, pricing):
 
 def cost_breakdown(data, target_day=None):
     """Return {model: {input,cache_write_5m,cache_write_1h,cache_read,output,total}}
-    USD costs, plus the set of unpriced models seen.
+    USD costs, plus a "TOTAL" key summing across all priced models.
 
     If ``target_day`` is provided, only buckets on that day (YYYY-MM-DD prefix)
     are counted; otherwise all buckets are summed. Models without an entry in
-    ``PRICING`` are SILENTLY skipped (and reported separately).
+    ``PRICING`` are skipped (and reported separately).
     """
     costs = {}
     unpriced_models = set()
@@ -218,68 +141,12 @@ def cost_breakdown(data, target_day=None):
     return costs, unpriced_models
 
 
-def _get_spend(api_key_id: str, start_date: str, debug: bool = False):
-    """Fetch token usage for *api_key_id* since *start_date* and sum to dollars.
-
-    Uses new.py's exact request semantics: hourly buckets
-    (bucket_width="1h"), group_by model, limit=168, starting_at=start_date.
-    Cost is computed via new.py's cost_breakdown (silent skip of unpriced
-    models). Returns the grand total (rounded), or (total, debug_info) when
-    *debug* is set.
-
-    The usage report is paginated: each call returns at most ``limit`` hourly
-    buckets plus ``has_more``/``next_page``.  We follow the ``next_page``
-    cursor and accumulate every bucket before pricing, so ranges longer than
-    one page (168 hours) are fully counted.
-    """
-    base_params: dict = {
-        "starting_at": start_date,
-        "group_by[]": ["model"],
-        "bucket_width": "1h",
-        "api_key_ids[]": [api_key_id],
-        "limit": 168,
-    }
-
-    data: list = []
-    pages = 0
-    next_page = None
-    while True:
-        params = dict(base_params)
-        if next_page:
-            params["page"] = next_page
-        response = _get("/v1/organizations/usage_report/messages", params)
-        data.extend(response.get("data", []))
-        pages += 1
-
-        if not response.get("has_more"):
-            break
-        next_page = response.get("next_page")
-        if not next_page:
-            break
-
-    costs, unpriced_models = cost_breakdown(data)
-    grand_total = sum(c["total"] for c in costs.values())
-
-    if debug:
-        dbg = {
-            "request": base_params,
-            "pages": pages,
-            "buckets": len(data),
-            "models_priced": {m: round(c["total"], 6) for m, c in costs.items()},
-            "unpriced_models_skipped": sorted(m for m in unpriced_models if m),
-            "per_model": costs,
-        }
-        return round(grand_total, 2), dbg
-
+def calculate_total(costs):
+    grand_total = 0.0
+    for model in sorted(costs):
+        c = costs[model]
+        grand_total += c["total"]
     return round(grand_total, 2)
-
-
-def _response(status: int, body: dict) -> dict:
-    return {
-        "statusCode": status,
-        "headers": {"Content-Type": "application/json"},
-        "body": json.dumps(body),
-    }
 
 
 def lambda_handler(event, context):
@@ -290,100 +157,25 @@ def lambda_handler(event, context):
             body = json.loads(body)
         api_key = body.get("api_key", "").strip()
         start_date = body.get("start_date", "").strip()
-        debug = bool(body.get("debug", False))
     except (json.JSONDecodeError, AttributeError):
         return _response(400, {"error": "Invalid JSON body"})
 
     if not api_key or not api_key.startswith("sk-ant-"):
-        return _response(400, {"error": "api_key is required (full Anthropic key, sk-ant-...)"})
+        return _response(
+            400, {"error": "api_key is required (full Anthropic key, sk-ant-...)"}
+        )
 
     if not start_date:
         return _response(400, {"error": "start_date is required (format: YYYY-MM-DD)"})
     try:
         datetime.strptime(start_date, "%Y-%m-%d")
     except ValueError:
-        return _response(400, {"error": f"start_date must be YYYY-MM-DD, got '{start_date}'"})
+        return _response(
+            400, {"error": f"start_date must be YYYY-MM-DD, got '{start_date}'"}
+        )
 
     # Never echo the secret back; identify it by its last 4 chars in messages.
     key_tail = api_key[-4:]
-
-    # ---- Resolve key ----
-    try:
-        matches = _find_matching_keys(api_key)
-    except urllib.error.HTTPError as exc:
-        err_body = exc.read().decode(errors="replace")
-        return _response(502, {
-            "error": f"Anthropic Admin API error (key lookup): HTTP {exc.code}",
-            "detail": err_body,
-        })
-    except urllib.error.URLError as exc:
-        return _response(502, {
-            "error": f"Anthropic Admin API unreachable (key lookup): {exc.reason}",
-        })
-
-    if not matches:
-        return _response(404, {"error": f"No active API key matching ...{key_tail}"})
-
-    if len(matches) > 1:
-        descriptions = [f"{m['name']} ({m['hint']})" for m in matches]
-        return _response(409, {
-            "error": f"Ambiguous: {len(matches)} active API keys match ...{key_tail}",
-            "matching_keys": descriptions,
-        })
-
-    matched = matches[0]
-    api_key_id = matched["id"]
-
-    # ---- Fetch spend ----
-    try:
-        result = _get_spend(api_key_id, start_date, debug=debug)
-    except urllib.error.HTTPError as exc:
-        err_body = exc.read().decode(errors="replace")
-        return _response(502, {
-            "error": f"Anthropic Admin API error (usage report): HTTP {exc.code}",
-            "detail": err_body,
-        })
-    except urllib.error.URLError as exc:
-        return _response(502, {
-            "error": f"Anthropic Admin API unreachable (usage report): {exc.reason}",
-        })
-
-    if debug:
-        total, dbg = result
-        return _response(200, {
-            "total_spend": total,
-            "matched_key": {"id": api_key_id, "name": matched.get("name", ""), "hint": matched.get("hint", "")},
-            "debug": dbg,
-        })
-
-    return _response(200, {"total_spend": result})
-
-
-# ---------------------------------------------------------------------------
-# Local CLI — run the same handler from your terminal without deploying.
-#
-#   export ANTHROPIC_ADMIN_KEY=sk-ant-admin...
-#   python3 lambda_function.py --key sk-ant-api03-... --start 2026-06-01 --debug
-#
-# (--key may also be read from ANTHROPIC_TARGET_KEY to keep it off the shell
-#  history / process list.)
-#
-# This calls lambda_handler() with a synthetic event so the local path and the
-# deployed Lambda path exercise identical code.
-# ---------------------------------------------------------------------------
-def _main(argv: list[str] | None = None) -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="Query total Anthropic API spend for a key (local runner)."
-    )
-    parser.add_argument(
-        "--key", default=os.environ.get("ANTHROPIC_TARGET_KEY", ""),
-        help="full Anthropic API key (sk-ant-...); defaults to $ANTHROPIC_TARGET_KEY",
-    )
-    parser.add_argument("--start", required=True, help="start date, YYYY-MM-DD")
-    parser.add_argument("--debug", action="store_true", help="include diagnostic detail")
-    args = parser.parse_args(argv)
 
     if not os.environ.get("ANTHROPIC_ADMIN_KEY"):
         print(
@@ -393,25 +185,46 @@ def _main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    if not args.key:
-        print(
-            "ERROR: provide the target key via --key or $ANTHROPIC_TARGET_KEY",
-            file=sys.stderr,
-        )
-        return 2
+    # FIXME: look up API ID!
+    API_KEY_ID = "apikey_01Rd5CB8L75PqRgoHjAxSSSY"
 
-    event = {
-        "body": json.dumps({
-            "api_key": args.key,
-            "start_date": args.start,
-            "debug": args.debug,
-        })
+    # (Assuming start_date and API_KEY_ID are already defined in your scope)
+
+    url = "https://api.anthropic.com/v1/organizations/usage_report/messages"
+
+    params = {
+        "starting_at": start_date,
+        "group_by[]": ["model"],
+        "bucket_width": "1h",
+        "api_key_ids[]": [API_KEY_ID],
+        "limit": 168,
     }
-    resp = lambda_handler(event, None)
-    print(f"HTTP {resp['statusCode']}")
-    print(json.dumps(json.loads(resp["body"]), indent=2))
-    return 0 if resp["statusCode"] == 200 else 1
 
+    headers = {
+        "anthropic-version": "2023-06-01",
+        "x-api-key": os.environ.get("ANTHROPIC_ADMIN_KEY"),
+    }
 
-if __name__ == "__main__":
-    raise SystemExit(_main())
+    # 1. Encode the URL parameters
+    # doseq=True is crucial here because your params dictionary contains lists (e.g., ["model"])
+    query_string = urllib.parse.urlencode(params, doseq=True)
+    full_url = f"{url}?{query_string}"
+
+    # 2. Build the request object
+    req = urllib.request.Request(full_url, headers=headers, method="GET")
+
+    # 3. Execute the request
+    with urllib.request.urlopen(req) as response:
+        # 1. Get the raw bytes
+        response_bytes = response.read()
+
+        # 2. Decode the bytes into a string (Equivalent to response.text)
+        response_text = response_bytes.decode("utf-8")
+
+        # 3. Parse the JSON string and extract the "data" key
+        data = json.loads(response_text)["data"]
+
+    range_costs, _ = cost_breakdown(data)
+    print(calculate_total(range_costs))
+
+    return _response(200, {"total_spend": calculate_total(range_costs)})
