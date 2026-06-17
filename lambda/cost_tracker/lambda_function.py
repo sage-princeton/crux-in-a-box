@@ -205,24 +205,36 @@ def lambda_handler(event, context):
         "x-api-key": os.environ.get("ANTHROPIC_ADMIN_KEY"),
     }
 
-    # 1. Encode the URL parameters
-    # doseq=True is crucial here because your params dictionary contains lists (e.g., ["model"])
-    query_string = urllib.parse.urlencode(params, doseq=True)
-    full_url = f"{url}?{query_string}"
+    # Walk every page of the usage report. The Admin API returns at most
+    # `limit` buckets per response together with `has_more` (bool) and
+    # `next_page` (an opaque cursor token). To fetch the following page we
+    # re-issue the same request with the `page` query parameter set to that
+    # token, accumulating each page's `data` buckets until `has_more` is false.
+    data = []
+    next_page = None
+    while True:
+        page_params = dict(params)
+        if next_page is not None:
+            page_params["page"] = next_page
 
-    # 2. Build the request object
-    req = urllib.request.Request(full_url, headers=headers, method="GET")
+        # doseq=True is crucial here because page_params contains lists
+        # (e.g., ["model"]).
+        query_string = urllib.parse.urlencode(page_params, doseq=True)
+        full_url = f"{url}?{query_string}"
 
-    # 3. Execute the request
-    with urllib.request.urlopen(req) as response:
-        # 1. Get the raw bytes
-        response_bytes = response.read()
+        req = urllib.request.Request(full_url, headers=headers, method="GET")
+        with urllib.request.urlopen(req) as response:
+            response_text = response.read().decode("utf-8")
 
-        # 2. Decode the bytes into a string (Equivalent to response.text)
-        response_text = response_bytes.decode("utf-8")
+        payload = json.loads(response_text)
+        data.extend(payload.get("data", []))
 
-        # 3. Parse the JSON string and extract the "data" key
-        data = json.loads(response_text)["data"]
+        if not payload.get("has_more"):
+            break
+        next_page = payload.get("next_page")
+        if not next_page:
+            # Defensive: has_more was true but no cursor was returned.
+            break
 
     range_costs, _ = cost_breakdown(data)
     print(calculate_total(range_costs))
