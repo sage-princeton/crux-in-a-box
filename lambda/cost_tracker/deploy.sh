@@ -225,7 +225,7 @@ cat <<EOF
   Test it:
     curl -s -X POST $INVOKE_URL \\
       -H 'Content-Type: application/json' \\
-      -d '{"api_key_suffix": "<last 6 chars>"}'
+      -d '{"api_key": "sk-ant-api03-...", "start_date": "2026-01-01"}'
 
   Use this URL as --cost-tracker-url when running setup-device.sh.
 ============================================
