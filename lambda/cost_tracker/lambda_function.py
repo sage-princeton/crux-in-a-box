@@ -1,6 +1,6 @@
 """Cost-tracking Lambda \u2014 returns total Anthropic API spend for a given key.
 
-Contract:
+Contract (unchanged API structure):
     POST  {
             "api_key":    "<full Anthropic API key, sk-ant-...>",
             "start_date": "YYYY-MM-DD"   # required: oldest day to include
@@ -17,12 +17,15 @@ Uses the Anthropic Admin API to:
 The full key is only used to identify which org key it is (matched against the
 hint) and is never logged or echoed back.
 
-start_date is required: the usage API only supports daily buckets, so a
-caller-supplied start keeps the scanned range (and the number of paginated
-round-trips) bounded and avoids Lambda/API-Gateway timeouts.
+Usage is requested in
+HOURLY buckets (bucket_width="1h", limit=168) grouped by model, and dollars
+are computed with new.py's PRICING table + cost_for_result(). Models without
+an entry in PRICING are SILENTLY skipped (and reported separately in debug),
+matching new.py's behavior.
 
-Only Opus 4.7 and 4.8 are supported.  Usage of any other model is treated
-as an error so that unexpected charges are never silently swallowed.
+The HTTP call is issued through urllib (not requests) because the deployed
+Lambda bundles only lambda_function.py with no dependency layer; the request
+URL, headers and params are otherwise identical to new.py.
 
 Environment variables (set on the Lambda):
     ANTHROPIC_ADMIN_KEY   \u2013 org-level Admin API key (sk-ant-admin\u2026)
@@ -34,29 +37,32 @@ import sys
 import urllib.parse
 import urllib.request
 import urllib.error
-from datetime import date, datetime, timedelta
+from datetime import datetime
 
 ANTHROPIC_API = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
 
 # ---------------------------------------------------------------------------
-# Pricing per 1 million tokens ($ / MTok).  Only supported models listed.
-# Source: https://docs.anthropic.com/en/docs/about-claude/pricing
-#
-# cache_write_5m = 1.25\u00d7 base input  (5-minute TTL)
-# cache_write_1h = 2\u00d7 base input     (1-hour TTL)
-# cache_read     = 0.1\u00d7 base input
+# Per-model pricing in USD per million tokens (MTok), standard (global) rates.
+# Ported verbatim from new.py. Source: claude.com/pricing.
+# Opus 4.7 and Opus 4.8 share the same rates.
 # ---------------------------------------------------------------------------
-MODEL_PRICING: dict[str, dict[str, float]] = {
-    "claude-opus-4-8":          {"input": 5.00, "cache_write_5m": 6.25, "cache_write_1h": 10.00, "cache_read": 0.50, "output": 25.00},
-    "claude-opus-4-7":          {"input": 5.00, "cache_write_5m": 6.25, "cache_write_1h": 10.00, "cache_read": 0.50, "output": 25.00},
-    "claude-opus-4-20250514":   {"input": 5.00, "cache_write_5m": 6.25, "cache_write_1h": 10.00, "cache_read": 0.50, "output": 25.00},
-    "claude-sonnet-4-5-20250929": {"input": 3.00, "cache_write_5m": 3.75, "cache_write_1h": 6.00, "cache_read": 0.30, "output": 15.00},
+PRICING = {
+    "claude-opus-4-7": {
+        "input": 5.0,  # base input tokens
+        "cache_write_5m": 6.25,
+        "cache_write_1h": 10.0,
+        "cache_read": 0.50,  # cache hits & refreshes
+        "output": 25.0,
+    },
+    "claude-opus-4-8": {
+        "input": 5.0,
+        "cache_write_5m": 6.25,
+        "cache_write_1h": 10.0,
+        "cache_read": 0.50,
+        "output": 25.0,
+    },
 }
-
-
-class UnsupportedModelError(Exception):
-    """Raised when usage contains a model we don't have pricing for."""
 
 
 def _headers() -> dict:
@@ -73,12 +79,15 @@ def _get(path: str, params: dict | None = None) -> dict:
     if params:
         # Build query string preserving literal [] in param names
         # (the Anthropic API requires unencoded [] for array params).
+        # A list value emits one occurrence per element (e.g. group_by[]).
         parts = []
         for k, v in params.items():
             if v is None:
                 continue
-            encoded_v = urllib.parse.quote(str(v), safe="")
-            parts.append(f"{k}={encoded_v}")
+            values = v if isinstance(v, (list, tuple)) else [v]
+            for item in values:
+                encoded_v = urllib.parse.quote(str(item), safe="")
+                parts.append(f"{k}={encoded_v}")
         url = f"{url}?{'&'.join(parts)}"
     req = urllib.request.Request(url, headers=_headers(), method="GET")
     with urllib.request.urlopen(req, timeout=30) as resp:
@@ -117,12 +126,14 @@ def _find_matching_keys(api_key: str) -> list[dict]:
         for key in data.get("data", []):
             hint = key.get("partial_key_hint", "")
             if _hint_matches_key(hint, api_key):
-                matches.append({
-                    "id": key["id"],
-                    "name": key.get("name", ""),
-                    "hint": hint,
-                    "created_at": key.get("created_at", ""),
-                })
+                matches.append(
+                    {
+                        "id": key["id"],
+                        "name": key.get("name", ""),
+                        "hint": hint,
+                        "created_at": key.get("created_at", ""),
+                    }
+                )
         if not data.get("has_more"):
             break
         items = data.get("data", [])
@@ -133,133 +144,134 @@ def _find_matching_keys(api_key: str) -> list[dict]:
     return matches
 
 
-def _get_pricing(model: str) -> dict[str, float]:
-    """Look up pricing for *model*.  Raises UnsupportedModelError if unknown.
-
-    Matches an exact key, or a dated variant that starts with a known key
-    (e.g. "claude-opus-4-8-20260301" -> "claude-opus-4-8").  An empty or
-    unrecognized model is rejected so unexpected usage is never priced silently.
-    """
-    pricing = MODEL_PRICING.get(model)
-    if not pricing and model:
-        # Dated variant: model starts with a known key (+ "-<date>").
-        for key, val in MODEL_PRICING.items():
-            if model.startswith(key):
-                pricing = val
-                break
-    if not pricing:
-        raise UnsupportedModelError(
-            f"Unsupported model: {model!r}. "
-            f"Only {', '.join(sorted(MODEL_PRICING))} are supported."
-        )
-    return pricing
-
-
-def _result_to_dollars(result: dict, pricing: dict[str, float]) -> float:
-    """Convert one usage-report result object to dollars.
-
-    Handles the Admin API response shape::
-
-        {
-            "uncached_input_tokens": 878,
-            "cache_creation": {
-                "ephemeral_1h_input_tokens": 0,
-                "ephemeral_5m_input_tokens": 3376039
-            },
-            "cache_read_input_tokens": 36590071,
-            "output_tokens": 328893,
-            ...
-        }
-    """
-    uncached = result.get("uncached_input_tokens", 0)
+# ---------------------------------------------------------------------------
+# Cost computation \u2014 ported verbatim from new.py.
+# ---------------------------------------------------------------------------
+def cost_for_result(result, pricing):
+    """Return the USD cost for a single grouped result given its model pricing."""
     cache_creation = result.get("cache_creation", {})
-    cache_write_5m = cache_creation.get("ephemeral_5m_input_tokens", 0)
-    cache_write_1h = cache_creation.get("ephemeral_1h_input_tokens", 0)
-    cache_read = result.get("cache_read_input_tokens", 0)
-    output = result.get("output_tokens", 0)
-
-    cost = (
-        uncached * pricing["input"]
-        + cache_write_5m * pricing["cache_write_5m"]
-        + cache_write_1h * pricing["cache_write_1h"]
-        + cache_read * pricing["cache_read"]
-        + output * pricing["output"]
+    return (
+        result.get("uncached_input_tokens", 0) * pricing["input"]
+        + cache_creation.get("ephemeral_5m_input_tokens", 0) * pricing["cache_write_5m"]
+        + cache_creation.get("ephemeral_1h_input_tokens", 0) * pricing["cache_write_1h"]
+        + result.get("cache_read_input_tokens", 0) * pricing["cache_read"]
+        + result.get("output_tokens", 0) * pricing["output"]
     ) / 1_000_000
 
-    return cost
+
+def cost_breakdown(data, target_day=None):
+    """Return {model: {input,cache_write_5m,cache_write_1h,cache_read,output,total}}
+    USD costs, plus the set of unpriced models seen.
+
+    If ``target_day`` is provided, only buckets on that day (YYYY-MM-DD prefix)
+    are counted; otherwise all buckets are summed. Models without an entry in
+    ``PRICING`` are SILENTLY skipped (and reported separately).
+    """
+    costs = {}
+    unpriced_models = set()
+    for bucket in data:
+        if target_day is not None and not bucket.get("starting_at", "").startswith(
+            target_day
+        ):
+            continue
+        for result in bucket.get("results", []):
+            model = result.get("model")
+            pricing = PRICING.get(model)
+            if pricing is None:
+                unpriced_models.add(model)
+                continue
+            cache_creation = result.get("cache_creation", {})
+            c = costs.setdefault(
+                model,
+                {
+                    "input": 0.0,
+                    "cache_write_5m": 0.0,
+                    "cache_write_1h": 0.0,
+                    "cache_read": 0.0,
+                    "output": 0.0,
+                    "total": 0.0,
+                },
+            )
+            c["input"] += (
+                result.get("uncached_input_tokens", 0) * pricing["input"] / 1_000_000
+            )
+            c["cache_write_5m"] += (
+                cache_creation.get("ephemeral_5m_input_tokens", 0)
+                * pricing["cache_write_5m"]
+                / 1_000_000
+            )
+            c["cache_write_1h"] += (
+                cache_creation.get("ephemeral_1h_input_tokens", 0)
+                * pricing["cache_write_1h"]
+                / 1_000_000
+            )
+            c["cache_read"] += (
+                result.get("cache_read_input_tokens", 0)
+                * pricing["cache_read"]
+                / 1_000_000
+            )
+            c["output"] += (
+                result.get("output_tokens", 0) * pricing["output"] / 1_000_000
+            )
+            c["total"] += cost_for_result(result, pricing)
+
+    return costs, unpriced_models
 
 
-def _get_spend(api_key_id: str, start_date: str, debug: bool = False) -> float:
+def _get_spend(api_key_id: str, start_date: str, debug: bool = False):
     """Fetch token usage for *api_key_id* since *start_date* and sum to dollars.
 
-    *start_date* is a "YYYY-MM-DD" string supplied by the caller.  The usage
-    API only supports daily buckets ('1d'), so a bounded start keeps the number
-    of paginated round-trips small enough to finish inside the Lambda timeout.
-    We also request the max page size (31 daily buckets) per call.
+    Uses new.py's exact request semantics: hourly buckets
+    (bucket_width="1h"), group_by model, limit=168, starting_at=start_date.
+    Cost is computed via new.py's cost_breakdown (silent skip of unpriced
+    models). Returns the grand total (rounded), or (total, debug_info) when
+    *debug* is set.
 
-    Raises UnsupportedModelError if any usage is from an unsupported model.
-    If *debug* is set, returns (total, debug_info) instead of just total.
+    The usage report is paginated: each call returns at most ``limit`` hourly
+    buckets plus ``has_more``/``next_page``.  We follow the ``next_page``
+    cursor and accumulate every bucket before pricing, so ranges longer than
+    one page (168 hours) are fully counted.
     """
-    start = f"{start_date}T00:00:00Z"
-    end = (date.today() + timedelta(days=1)).strftime("%Y-%m-%dT00:00:00Z")
-
-    total = 0.0
-    next_page = None
-    dbg = {
-        "request": {"starting_at": start, "ending_at": end, "api_key_id": api_key_id},
-        "pages": 0, "buckets": 0, "results": 0, "models_seen": {},
-        "first_result": None, "first_response_keys": None, "first_bucket": None,
+    base_params: dict = {
+        "starting_at": start_date,
+        "group_by[]": ["model"],
+        "bucket_width": "1h",
+        "api_key_ids[]": [api_key_id],
+        "limit": 168,
     }
 
+    data: list = []
+    pages = 0
+    next_page = None
     while True:
-        params: dict = {
-            "starting_at": start,
-            "ending_at": end,
-            "api_key_ids[]": api_key_id,
-            "group_by[]": "model",
-            "bucket_width": "1d",
-        }
+        params = dict(base_params)
         if next_page:
             params["page"] = next_page
-        data = _get("/v1/organizations/usage_report/messages", params)
+        response = _get("/v1/organizations/usage_report/messages", params)
+        data.extend(response.get("data", []))
+        pages += 1
 
-        if dbg["first_response_keys"] is None:
-            dbg["first_response_keys"] = sorted(data.keys())
-            buckets0 = data.get("data", [])
-            dbg["first_bucket"] = buckets0[0] if buckets0 else None
-
-        dbg["pages"] += 1
-        for bucket in data.get("data", []):
-            dbg["buckets"] += 1
-            for result in bucket.get("results", []):
-                dbg["results"] += 1
-                if dbg["first_result"] is None:
-                    dbg["first_result"] = result
-                model = result.get("model", "")
-                dbg["models_seen"][model] = dbg["models_seen"].get(model, 0) + 1
-                if debug:
-                    # In debug mode, don't raise on unsupported models — record
-                    # them so we can see the full picture in one call.
-                    try:
-                        pricing = _get_pricing(model)
-                        total += _result_to_dollars(result, pricing)
-                    except UnsupportedModelError:
-                        dbg.setdefault("unsupported", {})[model] = (
-                            dbg.setdefault("unsupported", {}).get(model, 0) + 1
-                        )
-                else:
-                    pricing = _get_pricing(model)
-                    total += _result_to_dollars(result, pricing)
-
-        if not data.get("has_more"):
+        if not response.get("has_more"):
             break
-        next_page = data.get("next_page")
+        next_page = response.get("next_page")
         if not next_page:
             break
 
+    costs, unpriced_models = cost_breakdown(data)
+    grand_total = sum(c["total"] for c in costs.values())
+
     if debug:
-        return round(total, 2), dbg
-    return round(total, 2)
+        dbg = {
+            "request": base_params,
+            "pages": pages,
+            "buckets": len(data),
+            "models_priced": {m: round(c["total"], 6) for m, c in costs.items()},
+            "unpriced_models_skipped": sorted(m for m in unpriced_models if m),
+            "per_model": costs,
+        }
+        return round(grand_total, 2), dbg
+
+    return round(grand_total, 2)
 
 
 def _response(status: int, body: dict) -> dict:
@@ -325,8 +337,6 @@ def lambda_handler(event, context):
     # ---- Fetch spend ----
     try:
         result = _get_spend(api_key_id, start_date, debug=debug)
-    except UnsupportedModelError as exc:
-        return _response(400, {"error": str(exc)})
     except urllib.error.HTTPError as exc:
         err_body = exc.read().decode(errors="replace")
         return _response(502, {
