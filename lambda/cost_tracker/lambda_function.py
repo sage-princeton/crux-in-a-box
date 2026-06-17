@@ -37,6 +37,7 @@ import sys
 from datetime import datetime
 import urllib.request
 import urllib.parse
+import urllib.error
 
 ANTHROPIC_API = "https://api.anthropic.com"
 ANTHROPIC_VERSION = "2023-06-01"
@@ -68,6 +69,61 @@ PRICING = {
         "output": 25.0,
     },
 }
+
+
+def _key_matches_hint(api_key: str, partial_key_hint: str) -> bool:
+    """Return True if ``api_key`` is the full key for ``partial_key_hint``.
+
+    Anthropic never returns full keys; instead each key carries a
+    ``partial_key_hint`` of the form ``<visible-prefix>...<visible-suffix>``
+    (e.g. ``sk-ant-api03-pgi...0wAA``). A full key matches a hint when it
+    starts with the prefix and ends with the suffix. Using both ends makes the
+    match effectively unique, unlike comparing only a short 4-char suffix which
+    can collide across keys.
+    """
+    if not partial_key_hint or "..." not in partial_key_hint:
+        return False
+    prefix, _, suffix = partial_key_hint.partition("...")
+    return api_key.startswith(prefix) and api_key.endswith(suffix)
+
+
+def find_api_key_id(api_key: str, admin_key: str):
+    """Resolve the org-internal API key id (``apikey_...``) for ``api_key``.
+
+    Lists active organization API keys via the Admin API (paginating with the
+    ``after_id`` cursor) and matches the supplied full key against each key's
+    ``partial_key_hint``. Returns the matching key's ``id`` or ``None`` if no
+    active key matches.
+    """
+    url = "https://api.anthropic.com/v1/organizations/api_keys"
+    headers = {
+        "anthropic-version": ANTHROPIC_VERSION,
+        "x-api-key": admin_key,
+    }
+
+    after_id = None
+    while True:
+        params = {"status": "active", "limit": 1000}
+        if after_id is not None:
+            params["after_id"] = after_id
+
+        query_string = urllib.parse.urlencode(params, doseq=True)
+        req = urllib.request.Request(
+            f"{url}?{query_string}", headers=headers, method="GET"
+        )
+        with urllib.request.urlopen(req) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        keys = payload.get("data", [])
+        for key in keys:
+            if _key_matches_hint(api_key, key.get("partial_key_hint", "")):
+                return key.get("id")
+
+        if not payload.get("has_more"):
+            return None
+        after_id = payload.get("last_id")
+        if not after_id:
+            return None
 
 
 def cost_for_result(result, pricing):
@@ -177,18 +233,27 @@ def lambda_handler(event, context):
     # Never echo the secret back; identify it by its last 4 chars in messages.
     key_tail = api_key[-4:]
 
-    if not os.environ.get("ANTHROPIC_ADMIN_KEY"):
+    admin_key = os.environ.get("ANTHROPIC_ADMIN_KEY")
+    if not admin_key:
         print(
             "ERROR: set ANTHROPIC_ADMIN_KEY in your environment first, e.g.\n"
             "  export ANTHROPIC_ADMIN_KEY=sk-ant-admin...",
             file=sys.stderr,
         )
-        return 2
+        return _response(500, {"error": "server is missing ANTHROPIC_ADMIN_KEY"})
 
-    # FIXME: look up API ID!
-    API_KEY_ID = "apikey_01Rd5CB8L75PqRgoHjAxSSSY"
+    # Resolve the supplied full key to its org-internal API key id by matching
+    # it against each active key's partial_key_hint (prefix...suffix).
+    try:
+        API_KEY_ID = find_api_key_id(api_key, admin_key)
+    except urllib.error.HTTPError as exc:
+        print(f"ERROR listing API keys: {exc.code} {exc.reason}", file=sys.stderr)
+        return _response(502, {"error": "failed to look up API keys"})
 
-    # (Assuming start_date and API_KEY_ID are already defined in your scope)
+    if not API_KEY_ID:
+        return _response(
+            404, {"error": f"no active API key matches the provided key (...{key_tail})"}
+        )
 
     url = "https://api.anthropic.com/v1/organizations/usage_report/messages"
 
