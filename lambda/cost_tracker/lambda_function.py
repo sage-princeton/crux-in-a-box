@@ -1,0 +1,307 @@
+"""Cost-tracking Lambda \u2014 returns total Anthropic API spend for a given key.
+
+Contract (unchanged API structure):
+    POST  {
+            "api_key":    "<full Anthropic API key, sk-ant-...>",
+            "start_date": "YYYY-MM-DD"   # required: oldest day to include
+          }
+    \u2192     { "total_spend": 123.45 }
+
+Uses the Anthropic Admin API to:
+  1. List active API keys and match the full key against each key's
+     partial_key_hint (visible prefix + suffix) -- unique, unlike a bare
+     4-char suffix which collides across keys.
+  2. Pull token usage for that key from start_date onward, grouped by model.
+  3. Convert tokens \u2192 dollars using per-model pricing and return the total.
+
+The full key is only used to identify which org key it is (matched against the
+hint) and is never logged or echoed back.
+
+Usage is requested in
+HOURLY buckets (bucket_width="1h", limit=168) grouped by model, and dollars
+are computed with new.py's PRICING table + cost_for_result(). Models without
+an entry in PRICING are SILENTLY skipped (and reported separately in debug),
+matching new.py's behavior.
+
+The HTTP call is issued through urllib (not requests) because the deployed
+Lambda bundles only lambda_function.py with no dependency layer; the request
+URL, headers and params are otherwise identical to new.py.
+
+Environment variables (set on the Lambda):
+    ANTHROPIC_ADMIN_KEY   \u2013 org-level Admin API key (sk-ant-admin\u2026)
+"""
+
+import json
+import os
+import sys
+from datetime import datetime
+import urllib.request
+import urllib.parse
+import urllib.error
+
+ANTHROPIC_API = "https://api.anthropic.com"
+ANTHROPIC_VERSION = "2023-06-01"
+
+
+def _response(status: int, body: dict) -> dict:
+    return {
+        "statusCode": status,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(body),
+    }
+
+
+# Per-model pricing in USD per million tokens (MTok), standard (global) rates.
+# Source: claude.com/pricing. Opus 4.7 and Opus 4.8 share the same rates.
+PRICING = {
+    "claude-opus-4-7": {
+        "input": 5.0,  # base input tokens
+        "cache_write_5m": 6.25,
+        "cache_write_1h": 10.0,
+        "cache_read": 0.50,  # cache hits & refreshes
+        "output": 25.0,
+    },
+    "claude-opus-4-8": {
+        "input": 5.0,
+        "cache_write_5m": 6.25,
+        "cache_write_1h": 10.0,
+        "cache_read": 0.50,
+        "output": 25.0,
+    },
+}
+
+
+def _key_matches_hint(api_key: str, partial_key_hint: str) -> bool:
+    """Return True if ``api_key`` is the full key for ``partial_key_hint``.
+
+    Anthropic never returns full keys; instead each key carries a
+    ``partial_key_hint`` of the form ``<visible-prefix>...<visible-suffix>``
+    (e.g. ``sk-ant-api03-pgi...0wAA``). A full key matches a hint when it
+    starts with the prefix and ends with the suffix. Using both ends makes the
+    match effectively unique, unlike comparing only a short 4-char suffix which
+    can collide across keys.
+    """
+    if not partial_key_hint or "..." not in partial_key_hint:
+        return False
+    prefix, _, suffix = partial_key_hint.partition("...")
+    return api_key.startswith(prefix) and api_key.endswith(suffix)
+
+
+def find_api_key_id(api_key: str, admin_key: str):
+    """Resolve the org-internal API key id (``apikey_...``) for ``api_key``.
+
+    Lists active organization API keys via the Admin API (paginating with the
+    ``after_id`` cursor) and matches the supplied full key against each key's
+    ``partial_key_hint``. Returns the matching key's ``id`` or ``None`` if no
+    active key matches.
+    """
+    url = "https://api.anthropic.com/v1/organizations/api_keys"
+    headers = {
+        "anthropic-version": ANTHROPIC_VERSION,
+        "x-api-key": admin_key,
+    }
+
+    after_id = None
+    while True:
+        params = {"status": "active", "limit": 1000}
+        if after_id is not None:
+            params["after_id"] = after_id
+
+        query_string = urllib.parse.urlencode(params, doseq=True)
+        req = urllib.request.Request(
+            f"{url}?{query_string}", headers=headers, method="GET"
+        )
+        with urllib.request.urlopen(req) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+
+        keys = payload.get("data", [])
+        for key in keys:
+            if _key_matches_hint(api_key, key.get("partial_key_hint", "")):
+                return key.get("id")
+
+        if not payload.get("has_more"):
+            return None
+        after_id = payload.get("last_id")
+        if not after_id:
+            return None
+
+
+def cost_for_result(result, pricing):
+    """Return the USD cost for a single grouped result given its model pricing."""
+    cache_creation = result.get("cache_creation", {})
+    return (
+        result.get("uncached_input_tokens", 0) * pricing["input"]
+        + cache_creation.get("ephemeral_5m_input_tokens", 0) * pricing["cache_write_5m"]
+        + cache_creation.get("ephemeral_1h_input_tokens", 0) * pricing["cache_write_1h"]
+        + result.get("cache_read_input_tokens", 0) * pricing["cache_read"]
+        + result.get("output_tokens", 0) * pricing["output"]
+    ) / 1_000_000
+
+
+def cost_breakdown(data, target_day=None):
+    """Return {model: {input,cache_write_5m,cache_write_1h,cache_read,output,total}}
+    USD costs, plus a "TOTAL" key summing across all priced models.
+
+    If ``target_day`` is provided, only buckets on that day (YYYY-MM-DD prefix)
+    are counted; otherwise all buckets are summed. Models without an entry in
+    ``PRICING`` are skipped (and reported separately).
+    """
+    costs = {}
+    unpriced_models = set()
+    for bucket in data:
+        if target_day is not None and not bucket.get("starting_at", "").startswith(
+            target_day
+        ):
+            continue
+        for result in bucket.get("results", []):
+            model = result.get("model")
+            pricing = PRICING.get(model)
+            if pricing is None:
+                unpriced_models.add(model)
+                continue
+            cache_creation = result.get("cache_creation", {})
+            c = costs.setdefault(
+                model,
+                {
+                    "input": 0.0,
+                    "cache_write_5m": 0.0,
+                    "cache_write_1h": 0.0,
+                    "cache_read": 0.0,
+                    "output": 0.0,
+                    "total": 0.0,
+                },
+            )
+            c["input"] += (
+                result.get("uncached_input_tokens", 0) * pricing["input"] / 1_000_000
+            )
+            c["cache_write_5m"] += (
+                cache_creation.get("ephemeral_5m_input_tokens", 0)
+                * pricing["cache_write_5m"]
+                / 1_000_000
+            )
+            c["cache_write_1h"] += (
+                cache_creation.get("ephemeral_1h_input_tokens", 0)
+                * pricing["cache_write_1h"]
+                / 1_000_000
+            )
+            c["cache_read"] += (
+                result.get("cache_read_input_tokens", 0)
+                * pricing["cache_read"]
+                / 1_000_000
+            )
+            c["output"] += (
+                result.get("output_tokens", 0) * pricing["output"] / 1_000_000
+            )
+            c["total"] += cost_for_result(result, pricing)
+
+    return costs, unpriced_models
+
+
+def calculate_total(costs):
+    grand_total = 0.0
+    for model in sorted(costs):
+        c = costs[model]
+        grand_total += c["total"]
+    return round(grand_total, 2)
+
+
+def lambda_handler(event, context):
+    # ---- Parse input ----
+    try:
+        body = event.get("body", "{}")
+        if isinstance(body, str):
+            body = json.loads(body)
+        api_key = body.get("api_key", "").strip()
+        start_date = body.get("start_date", "").strip()
+    except (json.JSONDecodeError, AttributeError):
+        return _response(400, {"error": "Invalid JSON body"})
+
+    if not api_key or not api_key.startswith("sk-ant-"):
+        return _response(
+            400, {"error": "api_key is required (full Anthropic key, sk-ant-...)"}
+        )
+
+    if not start_date:
+        return _response(400, {"error": "start_date is required (format: YYYY-MM-DD)"})
+    try:
+        datetime.strptime(start_date, "%Y-%m-%d")
+    except ValueError:
+        return _response(
+            400, {"error": f"start_date must be YYYY-MM-DD, got '{start_date}'"}
+        )
+
+    # Never echo the secret back; identify it by its last 4 chars in messages.
+    key_tail = api_key[-4:]
+
+    admin_key = os.environ.get("ANTHROPIC_ADMIN_KEY")
+    if not admin_key:
+        print(
+            "ERROR: set ANTHROPIC_ADMIN_KEY in your environment first, e.g.\n"
+            "  export ANTHROPIC_ADMIN_KEY=sk-ant-admin...",
+            file=sys.stderr,
+        )
+        return _response(500, {"error": "server is missing ANTHROPIC_ADMIN_KEY"})
+
+    # Resolve the supplied full key to its org-internal API key id by matching
+    # it against each active key's partial_key_hint (prefix...suffix).
+    try:
+        API_KEY_ID = find_api_key_id(api_key, admin_key)
+    except urllib.error.HTTPError as exc:
+        print(f"ERROR listing API keys: {exc.code} {exc.reason}", file=sys.stderr)
+        return _response(502, {"error": "failed to look up API keys"})
+
+    if not API_KEY_ID:
+        return _response(
+            404, {"error": f"no active API key matches the provided key (...{key_tail})"}
+        )
+
+    url = "https://api.anthropic.com/v1/organizations/usage_report/messages"
+
+    params = {
+        "starting_at": start_date,
+        "group_by[]": ["model"],
+        "bucket_width": "1h",
+        "api_key_ids[]": [API_KEY_ID],
+        "limit": 168,
+    }
+
+    headers = {
+        "anthropic-version": "2023-06-01",
+        "x-api-key": os.environ.get("ANTHROPIC_ADMIN_KEY"),
+    }
+
+    # Walk every page of the usage report. The Admin API returns at most
+    # `limit` buckets per response together with `has_more` (bool) and
+    # `next_page` (an opaque cursor token). To fetch the following page we
+    # re-issue the same request with the `page` query parameter set to that
+    # token, accumulating each page's `data` buckets until `has_more` is false.
+    data = []
+    next_page = None
+    while True:
+        page_params = dict(params)
+        if next_page is not None:
+            page_params["page"] = next_page
+
+        # doseq=True is crucial here because page_params contains lists
+        # (e.g., ["model"]).
+        query_string = urllib.parse.urlencode(page_params, doseq=True)
+        full_url = f"{url}?{query_string}"
+
+        req = urllib.request.Request(full_url, headers=headers, method="GET")
+        with urllib.request.urlopen(req) as response:
+            response_text = response.read().decode("utf-8")
+
+        payload = json.loads(response_text)
+        data.extend(payload.get("data", []))
+
+        if not payload.get("has_more"):
+            break
+        next_page = payload.get("next_page")
+        if not next_page:
+            # Defensive: has_more was true but no cursor was returned.
+            break
+
+    range_costs, _ = cost_breakdown(data)
+    print(calculate_total(range_costs))
+
+    return _response(200, {"total_spend": calculate_total(range_costs)})

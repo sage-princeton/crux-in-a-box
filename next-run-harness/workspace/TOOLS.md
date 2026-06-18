@@ -25,7 +25,7 @@ Single source of environment facts. `MEMORY.md` must NOT duplicate anything here
 
 ## Spend measurement
 
-- **API:** `python3 scripts/telemetry_costs.py` (telemetry at `{{TELEMETRY_PATH}}`). Canonical — it deduplicates by responseId; naive telemetry sums overcount severely. Never hand-estimate.
+- **API:** `python3 scripts/telemetry_costs.py` — queries the cost-tracking service (Anthropic Admin API via Lambda). Canonical source of API spend. Never hand-estimate.
 - **Cloud (RunPod):** RunPod has no Cost Explorer. Track spend as the drop in account credit since launch — record `clientBalance` at run start, then spend ≈ `start_balance − current clientBalance`. Query via the RunPod GraphQL API:
 
 ```

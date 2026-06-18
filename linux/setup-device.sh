@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# TODO: prevent dupe telegram bots on instances
 
 # ==========================================================================
 # setup-device.sh
@@ -25,7 +26,7 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-name <NAME> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --placeholder-map <FILE> [--instance-suffix <SUFFIX>]
+Usage: $0 --telegram-bot-name <NAME> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --cost-tracker-url <URL> --placeholder-map <FILE> [--instance-suffix <SUFFIX>]
 
 Required:
   --telegram-bot-name <NAME>     Bot name as defined in telegram_bots.json
@@ -33,6 +34,7 @@ Required:
   --telegram-owner-id <ID>       Telegram user ID for commands.ownerAllowFrom
   --anthropic-model <MODEL>      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
   --anthropic-api-key <KEY>      Anthropic API key
+  --cost-tracker-url <URL>       Cost-tracking Lambda URL (from lambda/cost_tracker/deploy.sh).
   --placeholder-map <FILE>       Workspace placeholders file (KEY=VALUE, one per line).
                                    Copy placeholders.txt.example and fill it in.
 
@@ -59,6 +61,7 @@ TELEGRAM_OWNER_ID=""
 ANTHROPIC_MODEL=""
 ANTHROPIC_API_KEY=""
 PLACEHOLDERS=""
+COST_TRACKER_URL=""
 INSTANCE_SUFFIX=""
 
 while [[ $# -gt 0 ]]; do
@@ -86,6 +89,11 @@ while [[ $# -gt 0 ]]; do
     --anthropic-api-key)
       [ -z "${2:-}" ] && { echo "Error: --anthropic-api-key requires a value" >&2; usage; }
       ANTHROPIC_API_KEY="$2"
+      shift 2
+      ;;
+    --cost-tracker-url)
+      [ -z "${2:-}" ] && { echo "Error: --cost-tracker-url requires a value" >&2; usage; }
+      COST_TRACKER_URL="$2"
       shift 2
       ;;
     --placeholder-map)
@@ -123,6 +131,7 @@ done
 [ -z "$TELEGRAM_OWNER_ID" ] && { echo "Error: --telegram-owner-id is required" >&2; usage; }
 [ -z "$ANTHROPIC_MODEL" ] && { echo "Error: --anthropic-model is required (e.g. anthropic/claude-opus-4-6)" >&2; usage; }
 [ -z "$ANTHROPIC_API_KEY" ] && { echo "Error: --anthropic-api-key is required" >&2; usage; }
+[ -z "$COST_TRACKER_URL" ] && { echo "Error: --cost-tracker-url is required (deploy the Lambda first, see lambda/cost_tracker/)" >&2; usage; }
 [ -z "$PLACEHOLDERS" ] && { echo "Error: --placeholder-map is required (copy placeholders.txt.example)" >&2; usage; }
 
 # ====== RESOLVE TELEGRAM BOT TOKEN ======
@@ -285,6 +294,48 @@ fi
   && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
 ok "AMI: $AMI_ID"
 
+# ====== 3b. DUPLICATE API KEY CHECK ======
+API_KEY_SUFFIX="${ANTHROPIC_API_KEY: -6}"
+DUPE_IDS=$(aws ec2 describe-instances --region "$REGION" \
+  --filters \
+    "Name=tag:AnthropicKeySuffix,Values=$API_KEY_SUFFIX" \
+    "Name=instance-state-name,Values=running,pending" \
+  --query 'Reservations[].Instances[].InstanceId' \
+  --output text 2>/dev/null | tr '\t' ' ' | xargs)
+
+if [ -n "$DUPE_IDS" ] && [ "$DUPE_IDS" != "None" ]; then
+  warn "WARNING: Instance(s) already using this API key (suffix ...$API_KEY_SUFFIX): $DUPE_IDS"
+  printf "\033[1;33m   Are you sure you want to continue? [y/N]: \033[0m"
+  read -r REPLY
+  if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
+    die "Aborted. Re-use an existing instance or use a different API key."
+  fi
+fi
+
+# ====== 3c. SNAPSHOT INITIAL API SPEND ======
+info "Querying current API spend for key ...$API_KEY_SUFFIX..."
+INITIAL_SPEND=$(curl -sf -X POST "$COST_TRACKER_URL" \
+  -H "Content-Type: application/json" \
+  -d "{\"api_key_suffix\": \"$API_KEY_SUFFIX\"}" \
+  | jq -r '.total_spend' 2>/dev/null || echo "")
+
+if [ -z "$INITIAL_SPEND" ] || [ "$INITIAL_SPEND" = "null" ]; then
+  die "Could not query spend from cost tracker at $COST_TRACKER_URL — cannot establish baseline. Fix the Lambda or check the API key suffix (…$API_KEY_SUFFIX)."
+fi
+
+ok "Current API spend: \$INITIAL_SPEND"
+
+# If there's already money on this key, make the operator acknowledge the baseline.
+if [ "$(echo "$INITIAL_SPEND > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
+  warn "This API key already has \$INITIAL_SPEND of spend on it."
+  warn "Instance-attributable cost = current spend minus this baseline (\$INITIAL_SPEND)."
+  printf "\033[1;33m   Continue with this baseline? [y/N]: \033[0m"
+  read -r REPLY
+  if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
+    die "Aborted. Use a fresh API key or verify the baseline is expected."
+  fi
+fi
+
 # ====== 4. LAUNCH INSTANCE ======
 EXISTING_ID=$(aws ec2 describe-instances \
   --region "$REGION" \
@@ -303,6 +354,11 @@ if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
   if [[ "$REPLY" =~ ^[Yy]$ ]]; then
     INSTANCE_ID="$EXISTING_ID"
     ok "Re-using existing instance $INSTANCE_ID"
+    # Tag the existing instance with API key info
+    aws ec2 create-tags --resources "$INSTANCE_ID" --region "$REGION" \
+      --tags \
+        "Key=AnthropicKeySuffix,Value=$API_KEY_SUFFIX" \
+        "Key=AnthropicSpendAtCreation,Value=$INITIAL_SPEND"
   else
     die "Aborted. To launch a parallel instance, re-run with --instance-suffix <SUFFIX>."
   fi
@@ -318,7 +374,7 @@ else
     --block-device-mappings \
       "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\"}}]" \
     --tag-specifications \
-      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME}]" \
+      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=AnthropicKeySuffix,Value=$API_KEY_SUFFIX},{Key=AnthropicSpendAtCreation,Value=$INITIAL_SPEND}]" \
     --query 'Instances[0].InstanceId' --output text)
   ok "Instance launched: $INSTANCE_ID"
 fi
@@ -375,6 +431,8 @@ ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
           TELEGRAM_OWNER_ID='${TELEGRAM_OWNER_ID}' \
           ANTHROPIC_MODEL='${ANTHROPIC_MODEL}' \
           ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}' \
+          COST_TRACKER_URL='${COST_TRACKER_URL}' \
+          API_KEY_SUFFIX='${API_KEY_SUFFIX}' \
           PLACEHOLDERS='${PLACEHOLDERS}' \
           bash ~/crux-in-a-box-linux/src/start.sh"
 ok "Remote bootstrap complete"
