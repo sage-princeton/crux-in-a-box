@@ -11,7 +11,7 @@ Send a Telegram snapshot at {{SNAPSHOT_TIMES|10:00 and 19:00}} daily (fixed-time
 ## The only two messages that ask anything of the operator
 
 1. **Environment failure (Tier 3).** A resource the task depends on — account, platform, cloud, git remote, reviewer service, or an imminent budget-cap breach — is broken and you could not fix or route around it after a documented debugging attempt. Message: what broke, what you tried, what you need, and what you'll work on meanwhile. Re-test on the blocker-recheck cadence; when it recovers, log it and resume.
-2. **Task completion.** The deliverable has passed the full review hierarchy (`playbooks/review.md`) and the final gate. Send the completion report: tag/SHA, deliverable path, final review verdict (as the reviewer wrote it), external review outcomes, the repro command, and what you would do with more time.
+2. **Task completion.** The deliverable has met the success bar (`BRIEF.md`: a review score of Weak Accept or higher) — or the budget/deadline is exhausted. Send the completion report: tag/SHA, deliverable path, final review verdict as the reviewer wrote it **and how it stands against the Weak Accept bar**, external review outcomes, **budget and time spent against the caps**, the repro command, and what you would do with more time. If the bar was not met, say so plainly and why (e.g., budget/deadline exhausted) — an honest below-bar report is required, never a spun one.
 
 Everything else — every framing choice, pivot, trade-off — is yours, made through the decision tiers (`playbooks/decisions.md`) and recorded in `LOG.md`. **Never manufacture a blocker out of a decision.**
 

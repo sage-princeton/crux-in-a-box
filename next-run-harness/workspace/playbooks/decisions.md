@@ -28,7 +28,7 @@ A decision is Tier 2 when getting it wrong would change the project's contributi
 
 ## Stuck / Pivot procedure
 
-Tripwire (from `AGENTS.md`): same blocker >2h, or 3 failed attempts at the same approach, or accumulating evidence that the current hypothesis is dead.
+Tripwire (from `AGENTS.md`): same blocker >2h, or 3 failed attempts at the same approach, or accumulating evidence that the current hypothesis is dead — including a **central-claim rejection recurring across ≥2 blind-review rounds** (`playbooks/review.md` §2a), a **DIVERGED** brief-fidelity verdict (`playbooks/review.md` §3), or a headline whose pre-registered falsifier is **vacuous**.
 
 ### Failure levels (diagnose before deciding)
 
@@ -39,6 +39,8 @@ Persist-vs-pivot is not a mood; classify what actually broke:
 - **Question-level** — the portfolio is exhausted, or the evidence genuinely re-scopes the brief's question. Tier-2 memo (it changes the contribution), with the brief-fidelity review (`playbooks/review.md` §3) run on the re-scoped direction before committing.
 
 The misclassification risk runs one way in practice: mechanism-level failures get treated as implementation-level (endless local repair), then jump straight to question-level (re-frame the deliverable around surviving artifacts) without ever passing through "advance the next candidate." The portfolio exists to make that middle step the cheap default.
+
+A **recurring central-claim rejection in blind review** is mechanism-level by definition — reviewers are rejecting the headline's *premise*, which presentation fixes, more datasets, and claim-narrowing cannot repair. Resolve it by **advancing the next portfolio candidate**. Re-scoping around surviving audited artifacts (the failed direction becomes an honest negative result / appendix, not discarded) is the question-level move, taken only once the portfolio is exhausted; a full restart from scratch is the last resort, when neither a surviving candidate nor a re-scope salvages. Every step is the Tier-2 memo + critic pass below, and the menu is bounded by the portfolio — so the fork resolves in one decision and cannot thrash.
 
 1. **Write the decision memo to yourself first** (in `LOG.md`): current approach, evidence it's failing, 2–3 alternatives (including "narrow the claim" and "pivot the method"), cost of each, and the kill criterion that would settle it.
 2. **Spawn one critic subagent per live option** (isolated context; give each the memo + pointers to `LOG.md`/`PLAN.md`/relevant artifacts). Each critic's brief: argue *for its assigned option and against the others*, grounded in the artifacts — no new experiments, 30–45 min budget.

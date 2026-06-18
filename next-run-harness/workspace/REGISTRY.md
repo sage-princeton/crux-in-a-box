@@ -27,6 +27,24 @@ _One block per method claim. Every claim in `PLAN.md` § Current approach has a 
 - **Executed on:** [experiment / artifact paths]
 - **Status:**
 
+## Headline substance (drafting-entry certification)
+
+_Checked by `scripts/gate_artifact.sh` (`REQUIRE_HEADLINE_SUBSTANCE=1`) at the skeleton/drafting milestone gate. Drafting cannot begin until the locked headline clears it. Add exactly one line, e.g.:_
+
+`HEADLINE-SUBSTANCE: non-vacuous=yes; not-by-construction=yes; certified-by=MEMO-x / <subagent>`
+
+- **non-vacuous=yes** — a runnable experiment could falsify the headline (its pre-registered falsifier above is *not* "Vacuously not triggered"). A vacuous falsifier means the claim is true by construction → Stuck/Pivot (`AGENTS.md` § Pre-registration), not a claim to draft around.
+- **not-by-construction=yes** — required (not `n/a`) when the headline is a negative/impossibility/boundary result: an *independent isolated subagent* answered "is this claim true by construction given its own definitions?" → **NO**. Record the subagent/LOG ref in `certified-by`.
+
+## Exploration adequacy (drafting-entry certification)
+
+_Checked by `scripts/gate_artifact.sh` (`REQUIRE_EXPLORATION_ADEQUATE=1`) at the dossier milestone and the drafting-entry milestone. Prose drafting cannot begin until exploration is critic-certified adequate (`playbooks/exploration.md` §4–§5). Add exactly one line, e.g.:_
+
+`EXPLORATION-ADEQUATE: settled-candidates=2; lit-coverage=yes; certified-by=<critic subagent / LOG ref>`
+
+- **settled-candidates=N** — N ≥ 2 candidates settled by a *clean* PASS/FAIL against their pre-registered criterion (a clean FAIL counts — killing an alternative is settled exploration; AMBIGUOUS/single-seed does not count, per `PLAN.md` scout-depth). For a genuinely single-viable-idea run, use `exhaustion-memo=<id>` instead — a critic-affirmed honest convergence (`playbooks/decisions.md` § Failure levels).
+- **lit-coverage=yes** — written only after the isolated exploration-sufficiency critic returns **ADEQUATE** (not THIN-LIT / STOP-EARLY / FABRICATED-OR-VACUOUS). The critic, not any self-assessment, authorizes this line.
+
 ## Claim ledger
 
 _The headline claim is locked at plan time like any other definition (base + stretch forms, see `PLAN.md`). Every subsequent narrowing gets a row here. **Rule (AGENTS.md evidence rule 7): a claim may not shrink without a triggered falsifier or a logged cost argument.** A demotion row citing neither is a hedging defect — restore the claim or produce the evidence. If cumulative demotions change the contribution, that's a Tier-2 memo._
@@ -50,7 +68,7 @@ _One row per load-bearing statistic, added the first time the number appears in 
 
 ## Review ledger
 
-_Endgame blind rounds only (`playbooks/review.md` §2a). Stop after 2 consecutive clean rounds or round 6._
+_Endgame blind rounds only (`playbooks/review.md` §2a). Stop after 2 consecutive clean rounds or round 6. A central-claim rejection recurring across ≥2 rounds forks to Stuck/Pivot — mark the `central-claim hit?` column Y and do not spawn the next round._
 
-| round | date | verdict | clean? (0 soundness/claim findings) |
-|---|---|---|---|
+| round | date | verdict | clean? (0 soundness/claim findings) | central-claim hit? (Y/N) |
+|---|---|---|---|---|

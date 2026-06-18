@@ -9,31 +9,30 @@ Single source of environment facts. `MEMORY.md` must NOT duplicate anything here
 - Workspace path: `{{WORKSPACE_PATH}}`
 - Host: `{{HOST_DESCRIPTION|macOS VM, arm64}}`
 - Python: `{{PYTHON_SETUP|use uv + a pinned 3.11+ venv under code/; system python is old}}`
-- Deliverable toolchain: `{{DELIVERABLE_TOOLCHAIN|LaTeX via tectonic + venue template — installed and building from day 1, see PLAN.md milestone 1}}`
+- Deliverable toolchain: `{{DELIVERABLE_TOOLCHAIN|LaTeX via tectonic + the NeurIPS 2026 template at templates/paper_template.zip (neurips_2026.tex/.sty + checklist.tex) — unzip into paper/ and build the Milestone-1 skeleton from it on day 1 (see PLAN.md milestone 1); complete checklist.tex before camera-ready}}`
 
 ## Accounts (verify, then keep current)
 
 - **GitHub:** `gh` as `{{GITHUB_USER}}`
-<!-- - **Email:** `gog` CLI (`gog gmail list "in:inbox"`). Note: not included for now. -->
+- **Email (review retrieval):** `gog` CLI (https://gogcli.sh) authenticated to the dedicated review Gmail. Find and read the CMU/Stanford review emails with `gog gmail` (e.g. `gog gmail list "in:inbox"`; see gogcli.sh for read/attachment syntax) and save each into `reviews/external/`. Confirm `gog` is authenticated hour-0 (`OPERATOR_GUIDE.md` Step 3); this inbox exists only to receive portal reviews.
 - **Telegram:** operator channel via OpenClaw; main session is the only session bound to it (see Footguns).
-- **Cloud:** AWS; you are logged in currently and have PowerUser access to this account. Your AWS spend limit is {{CLOUD_SPEND_LIMIT}}
-- **External reviewers:** {{EXTERNAL_REVIEWER_ACCESS|platform → how to submit → quota, one line each}}.
+- **Cloud (GPU compute):** RunPod — cheap on-demand GPUs via the RunPod REST + GraphQL API. The API key is provided for this run in env `RUNPOD_API_KEY` (verify it works hour-0). You create and tear down pods yourself; the agent host is separate (see § Workspace & runtime). Your RunPod spend limit is {{CLOUD_SPEND_LIMIT}}. **Pod access is non-obvious — read § RunPod (GPU pods) before launching one.**
+- **External reviewers (`playbooks/review.md` §2b — submit the camera-ready PDF, save each returned review into `reviews/external/`):**
+  1. **CMU Paper Reviewer** — portal `https://prometheus-eval.github.io/cmu-paper-reviewer/`. Submit via the browser (Chrome/Playwright, see § Browser); give the delivery address as the `gog`-authenticated review Gmail. The review comes back **by email** — retrieve it with the `gog` CLI (`gog gmail`; see § Email). Asynchronous: submission and result are decoupled — submit, then poll the inbox on a heartbeat cadence; never block waiting.
+  2. **Stanford Agentic Reviewer** — portal `https://paperreview.ai/`. Same pattern: browser-submit with delivery to the review Gmail, then `gog gmail` to pull the emailed review.
+  3. **refine.ink** — programmatic REST API; key in env `REFINE_INK_API_KEY`. Submit the PDF and fetch the review via the API — **read refine.ink's API docs hour-0 for the exact endpoints/shape and verify the key works before relying on it.** If it is metered/paid, run it LAST (the §2b ordering: paid single-shot reviews go after internal rounds are clean).
+  Hour-0 dry run (do this before launch, per `OPERATOR_GUIDE.md` Step 3): confirm each portal accepts a submission, the email arrives at the review Gmail and is readable via `gog`, and the refine.ink key works. A reviewer that's broken when first needed mid-run is a Tier-3 block (`USER.md`).
 
 ## Spend measurement
 
 - **API:** `python3 scripts/telemetry_costs.py` (telemetry at `{{TELEMETRY_PATH}}`). Canonical — it deduplicates by responseId; naive telemetry sums overcount severely. Never hand-estimate.
-- **Cloud:**
+- **Cloud (RunPod):** RunPod has no Cost Explorer. Track spend as the drop in account credit since launch — record `clientBalance` at run start, then spend ≈ `start_balance − current clientBalance`. Query via the RunPod GraphQL API:
 
 ```
-aws ce get-cost-and-usage \
-  --time-period Start=$START_DATE,End=$END_DATE \
-  --granularity DAILY \
-  --metrics "UnblendedCost" \
-  --query "ResultsByTime[*].Total.UnblendedCost.Amount" \
-  --output text | tr '\t' '\n' | awk '{sum+=$1} END {print sum}'
+query { myself { clientBalance pods { id costPerHr runtime { uptimeInSeconds } } } }
 ```
 
-NB: use the start date from when openclaw first started
+For a live burn-rate, sum `costPerHr` over running pods. **Verify the exact field names against the RunPod API hour-0** and reconcile against the RunPod console once early. Idle pods bill while running, not just while in use — terminate them the moment a job's results are off the pod.
 
 ## OpenClaw footguns (follow exactly)
 
@@ -42,6 +41,15 @@ NB: use the start date from when openclaw first started
 3. **Spawning subagents from cron turns** needs an explicit persistent `sessionTarget` (`session:<id>`), not `current` — the cron session isn't persistent. Prefer dispatching subagents from main-session turns; prefer background `nohup` processes for experiments.
 4. **Background experiments:** launch with `nohup ... > runs/<exp>/out.log 2>&1 &`, write the PID to `runs/<exp>/pid`, and record both in the state capsule. The harvest reads the `.out` file — never a memory of what it should say.
 5. **Subagent context:** subagents receive only `AGENTS.md` + `TOOLS.md` + the spawn prompt. Anything else they need goes in the brief (`playbooks/subagent.md`).
+
+## RunPod (GPU pods) — follow exactly
+
+GPU experiments run on RunPod pods (key in env `RUNPOD_API_KEY`). Two hard-won facts; ignoring either wastes a pod and burns budget:
+
+1. **`runpod/pytorch:*-devel` images do not auto-start sshd.** To get a shell, set `dockerStartCmd` **at pod-create time** to: write `$PUBLIC_KEY` into `/root/.ssh/authorized_keys`, then launch `/usr/sbin/sshd -p 22`. `PUBLIC_KEY` must be in the pod's env **at create time** — PATCHing env on a live pod does **not** restart sshd, so you cannot add SSH access after the fact. If you forgot, recreate the pod; don't try to patch it.
+2. **There is no logs API.** `/v1/pods/<id>/logs` 404s and GraphQL `pod { logs }` is invalid — you cannot pull pod stdout through the API. Get results out by (a) SSHing in and reading them, or (b) having the job push its own output off the pod — `scp`/`rsync` back to the agent host is the default (AWS/S3 is no longer available this run), or a webhook / object store you've set up. **Design every job to ship its own results; never plan to read pod logs later.**
+
+Launch discipline: one `create` call carrying `PUBLIC_KEY` + the `dockerStartCmd` above → SSH in to drive the job (or let it self-exfiltrate) → **terminate the pod the instant its results are off it.** Idle GPU pods bill continuously against the {{CLOUD_SPEND_LIMIT}} cap.
 
 ## When commands hang (macOS)
 

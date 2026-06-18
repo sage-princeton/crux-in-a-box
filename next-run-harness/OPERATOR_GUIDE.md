@@ -33,12 +33,13 @@ SSH into the instance and edit the workspace files under `~/.openclaw/workspace/
 | `{{PAGE_BUDGET\|9}}`                  | `scripts/gate_artifact.sh` | Main-body page limit (default 9 if left as-is)               |
 | `{{SNAPSHOT_TIMES\|10:00 and 19:00}}` | `USER.md`, `HEARTBEAT.md`  | Daily snapshot times (default 10:00 and 19:00 if left as-is) |
 | `{{CLOUD_SPEND_LIMIT}}`               | `TOOLS.md`                 | Spend limit, e.g., $500                                      |
-| `{{EXTERNAL_REVIEWER_ACCESS\|...}}`   | `TOOLS.md`                 | Platform → how to submit → quota, one line each              |
-| `{{EXTERNAL_REVIEWERS\|...}}`         | `playbooks/review.md`      | External reviewer platforms available                        |
 | `{{VENUE\|NeurIPS}}`                  | `playbooks/review.md`      | Target venue (default NeurIPS if left as-is)                 |
 | `{{DELIVERABLE_TOOLCHAIN\|...}}`      | `TOOLS.md`                 | LaTeX toolchain details (default provided if left as-is)     |
 | `{{PREFLIGHT_COST\|50}}`              | `AGENTS.md`                | Pre-flight cost gate in $ (default 50 if left as-is)         |
 | `{{PREFLIGHT_HOURS\|2}}`              | `AGENTS.md`                | Pre-flight time gate in hours (default 2 if left as-is)      |
+| `{{EXPLORE_FLOOR_FRACTION\|0.25}}`    | `HEARTBEAT.md`             | Earliest fraction of the horizon drafting may start without a sufficiency waiver (soft backstop; default 0.25). The evidence gate is the real authorization — see `playbooks/exploration.md`. |
+| `{{DEADLINE\|two weeks from launch}}` | `BRIEF.md`                 | Time budget / deadline for the run (default two weeks if left as-is)         |
+| `{{API_BUDGET}}`                      | `BRIEF.md`                 | Anthropic API spend cap (e.g., $500) — no default, must be set               |
 
 Placeholders with defaults (the `|value` part) can be left as-is if the default is acceptable — the agent's hour-0 verification duty will catch and correct stale values.
 
@@ -48,8 +49,8 @@ All verified working before launch, by you — not the agent:
 
 - **GitHub:** `gh auth login` + confirm `gh auth status`. Create an empty project remote if needed.
 - **Telegram pairing:** DM your bot on Telegram, then from the instance: `openclaw pairing list telegram` → `openclaw pairing approve telegram <CODE>`.
-- **Email CLI:** `gog` authenticated (see https://gogcli.sh/quickstart.html).
-- **External reviewer platforms** (Stanford agentic reviewer, CMU paper reviewer, refine.ink or equivalents): confirm login/submission works _now_. The final milestone is gated on external review, so a broken login discovered mid-run becomes a Tier-3 block.
+- **Email CLI (`gog`):** authenticated to the dedicated review Gmail (see https://gogcli.sh/quickstart.html). Confirm `gog gmail list "in:inbox"` works.
+- **External reviewer platforms — dry-run now, not at the gate.** Submit a throwaway PDF to (1) **CMU** `https://prometheus-eval.github.io/cmu-paper-reviewer/` and (2) **Stanford** `https://paperreview.ai/` with delivery to the review Gmail, and confirm the review email arrives and is readable via `gog`. (3) **refine.ink:** confirm `REFINE_INK_API_KEY` works against its API. The final milestone is gated on external review (`gate_artifact.sh` requires an artifact in `reviews/external/`), so a reviewer or inbox that's broken when first needed mid-run becomes a Tier-3 block.
 - **Cloud quotas pre-approved, long-lived credentials.** Quota approvals can take longer than the run, and short-lived SSO tokens expire mid-run and silently kill scheduled jobs.
 
 ### Step 4: Verify telemetry
