@@ -1,47 +1,56 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # ==========================================================================
-# backup-openclaw.sh  –  runs ON the CRUX-in-a-box dev EC2 instance
+# backup-openclaw.sh  –  run this on your LOCAL machine (like setup-device.sh)
 # ==========================================================================
-# Tars up the agent's ~/.openclaw directory and uploads a single timestamped
-# archive to S3. Intended to capture the full OpenClaw state (config, env,
-# credentials, workspace, sessions) before stopping or terminating the box.
+# Backs up the ~/.openclaw directory of a CRUX-in-a-box EC2 instance to S3.
 #
-# Auth: relies on the instance's IAM role (crux-in-a-box-role, PowerUserAccess
-# attached by setup-device.sh) for S3 access via IMDS — no AWS keys needed.
+# The --instance-suffix selects WHICH instance is backed up (matching
+# setup-device.sh): crux-in-a-box[-<SUFFIX>]. The script finds that instance
+# by its Name tag, SSHes in, tars ~/.openclaw, and uploads the archive to
+# S3 from the instance itself (the instance has the IAM role / S3 access via
+# IMDS — your laptop does not need AWS S3 permissions for the upload).
 #
 # Fixed config:
 #   Bucket : hal-crux-backups
 #   Region : us-east-1
 #
+# Prerequisites on the invoking machine:
+#   - AWS CLI v2 authenticated (`aws sts get-caller-identity` works)
+#   - ssh available, and the key at ~/.ssh/crux-in-a-box.pem
+#
 # Usage:
 #   ./backup-openclaw.sh [--instance-suffix <SUFFIX>]
 #
 # Optional:
-#   --instance-suffix <SUFFIX>   Matches setup-device.sh. The instance name is
-#                                  crux-in-a-box[-<SUFFIX>]; the backup is stored
-#                                  under that name's prefix in the bucket.
+#   --instance-suffix <SUFFIX>   Target instance crux-in-a-box-<SUFFIX>
+#                                  (default: crux-in-a-box). Also determines
+#                                  the S3 prefix and archive filename.
 # ==========================================================================
 
 # ====== FIXED CONFIGURATION ======
 BUCKET="hal-crux-backups"
 REGION="us-east-1"
-SOURCE_DIR="$HOME/.openclaw"
+KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
+SSH_USER="ubuntu"
+SOURCE_DIR=".openclaw"   # relative to the instance user's home
 
 # ====== HELPERS ======
-info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
-ok()    { printf "\033[1;32m✔ %s\033[0m\n" "$*"; }
-warn()  { printf "\033[1;33m⚠ %s\033[0m\n" "$*"; }
-die()   { printf "\033[1;31m✘ %s\033[0m\n" "$*" >&2; exit 1; }
+info()  { printf "\033[1;34m\xe2\x96\xb8 %s\033[0m\n" "$*"; }
+ok()    { printf "\033[1;32m\xe2\x9c\x94 %s\033[0m\n" "$*"; }
+warn()  { printf "\033[1;33m\xe2\x9a\xa0 %s\033[0m\n" "$*"; }
+die()   { printf "\033[1;31m\xe2\x9c\x98 %s\033[0m\n" "$*" >&2; exit 1; }
+
+require_cmd() { command -v "$1" &>/dev/null || die "'$1' is required but not found."; }
 
 usage() {
   cat <<USAGE
 Usage: $0 [--instance-suffix <SUFFIX>]
 
 Optional:
-  --instance-suffix <SUFFIX>   Matches setup-device.sh. Instance name becomes
-                                 crux-in-a-box-<SUFFIX>; backup is stored under
-                                 that prefix in s3://$BUCKET.
+  --instance-suffix <SUFFIX>   Target instance crux-in-a-box-<SUFFIX>
+                                 (default: crux-in-a-box). Also sets the S3
+                                 prefix/filename. Stored in s3://$BUCKET.
 USAGE
   exit 1
 }
@@ -67,84 +76,101 @@ fi
 PREFIX="$INSTANCE_NAME"
 
 # ====== PREFLIGHT ======
-command -v aws &>/dev/null || die "'aws' CLI not found on this instance."
-command -v tar &>/dev/null || die "'tar' not found on this instance."
+require_cmd aws
+require_cmd ssh
 
-[ -d "$SOURCE_DIR" ] || die "Source directory not found: $SOURCE_DIR"
+KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
+[ -f "$KEY_FILE" ] || die "SSH key not found: $KEY_FILE"
 
 aws sts get-caller-identity --region "$REGION" &>/dev/null \
-  || die "AWS credentials unavailable. This script expects the instance IAM role (IMDS)."
+  || die "AWS CLI is not authenticated. Run 'aws configure' first."
 
-# ====== ENSURE BUCKET ======
-# Create the backup bucket if it doesn't exist yet. NOTE: for us-east-1 the
-# create-bucket call must NOT pass a LocationConstraint (AWS rejects it).
-if aws s3api head-bucket --bucket "$BUCKET" --region "$REGION" 2>/dev/null; then
-  ok "Bucket exists: $BUCKET"
-else
-  info "Bucket '$BUCKET' not found — creating in $REGION..."
-  aws s3api create-bucket --bucket "$BUCKET" --region "$REGION" >/dev/null \
-    || die "Could not create bucket '$BUCKET'. Check the name is globally unique and IAM permissions."
-  aws s3api wait bucket-exists --bucket "$BUCKET" --region "$REGION" \
-    || die "Bucket '$BUCKET' was created but did not become available."
-  # Block public access and enable default server-side encryption.
-  aws s3api put-public-access-block --bucket "$BUCKET" --region "$REGION" \
-    --public-access-block-configuration \
-    "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" \
-    >/dev/null 2>&1 || warn "Could not set public-access-block on $BUCKET (continuing)."
-  aws s3api put-bucket-encryption --bucket "$BUCKET" --region "$REGION" \
-    --server-side-encryption-configuration \
-    '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' \
-    >/dev/null 2>&1 || warn "Could not set default encryption on $BUCKET (continuing)."
-  ok "Bucket created: $BUCKET"
-fi
-
-# ====== BUILD ARCHIVE ======
-# tar from the parent dir so the archive contains the basename
-# (e.g. '.openclaw/...') rather than absolute paths.
-PARENT_DIR="$(cd "$(dirname "$SOURCE_DIR")" && pwd)"
-BASE_NAME="$(basename "$SOURCE_DIR")"
-STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
-ARCHIVE_NAME="${BASE_NAME#.}-${INSTANCE_NAME}-${STAMP}.tar.gz"
-ARCHIVE_PATH="$(mktemp -d)/${ARCHIVE_NAME}"
-
-info "Archiving $SOURCE_DIR → $ARCHIVE_PATH"
-tar czf "$ARCHIVE_PATH" -C "$PARENT_DIR" "$BASE_NAME" \
-  || die "tar failed."
-
-ARCHIVE_SIZE="$(du -h "$ARCHIVE_PATH" | cut -f1)"
-ok "Archive created (${ARCHIVE_SIZE})"
-
-# ====== UPLOAD ======
-S3_URI="s3://${BUCKET}/${PREFIX}/${ARCHIVE_NAME}"
-info "Uploading to $S3_URI (server-side encryption: AES256)"
-aws s3 cp "$ARCHIVE_PATH" "$S3_URI" \
+# ====== LOCATE TARGET INSTANCE ======
+info "Locating instance '$INSTANCE_NAME' in $REGION..."
+INSTANCE_ID=$(aws ec2 describe-instances \
   --region "$REGION" \
-  --sse AES256 \
-  || die "Upload failed. Check the bucket ($BUCKET) and the instance IAM permissions."
-ok "Uploaded"
+  --filters \
+    "Name=tag:Name,Values=$INSTANCE_NAME" \
+    "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].InstanceId' \
+  --output text 2>/dev/null || true)
 
-# ====== VERIFY ======
-info "Verifying object in S3..."
-if aws s3 ls "$S3_URI" --region "$REGION" >/dev/null 2>&1; then
-  ok "Verified: $S3_URI"
-else
-  die "Upload reported success but object not found at $S3_URI"
+if [ "$INSTANCE_ID" = "None" ] || [ -z "$INSTANCE_ID" ]; then
+  die "No running instance named '$INSTANCE_NAME' found in $REGION."
+fi
+ok "Found instance: $INSTANCE_ID"
+
+PUBLIC_IP=$(aws ec2 describe-instances \
+  --instance-ids "$INSTANCE_ID" --region "$REGION" \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text)
+
+if [ "$PUBLIC_IP" = "None" ] || [ -z "$PUBLIC_IP" ]; then
+  die "Instance '$INSTANCE_NAME' has no public IP."
+fi
+ok "Instance IP: $PUBLIC_IP"
+
+# ====== COMPUTE ARCHIVE / S3 TARGET ======
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+ARCHIVE_NAME="openclaw-${INSTANCE_NAME}-${STAMP}.tar.gz"
+S3_URI="s3://${BUCKET}/${PREFIX}/${ARCHIVE_NAME}"
+
+# ====== REMOTE BACKUP ======
+# Runs on the instance: ensures the bucket exists, tars ~/.openclaw, uploads,
+# and verifies. The instance has S3 access via its IAM role (IMDS).
+info "Backing up ~/$SOURCE_DIR on $INSTANCE_NAME -> $S3_URI"
+
+REMOTE_SCRIPT=$(cat <<REMOTE
+set -euo pipefail
+BUCKET="$BUCKET"
+REGION="$REGION"
+SRC="\$HOME/$SOURCE_DIR"
+S3_URI="$S3_URI"
+ARCHIVE_NAME="$ARCHIVE_NAME"
+
+command -v aws >/dev/null || { echo "aws CLI not found on instance" >&2; exit 1; }
+[ -d "\$SRC" ] || { echo "Source dir not found on instance: \$SRC" >&2; exit 1; }
+
+if ! aws s3api head-bucket --bucket "\$BUCKET" --region "\$REGION" 2>/dev/null; then
+  echo "Creating bucket \$BUCKET in \$REGION..."
+  aws s3api create-bucket --bucket "\$BUCKET" --region "\$REGION" >/dev/null
+  aws s3api wait bucket-exists --bucket "\$BUCKET" --region "\$REGION"
+  aws s3api put-public-access-block --bucket "\$BUCKET" --region "\$REGION" --public-access-block-configuration "BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true" >/dev/null 2>&1 || echo "warn: could not set public-access-block"
+  aws s3api put-bucket-encryption --bucket "\$BUCKET" --region "\$REGION" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}' >/dev/null 2>&1 || echo "warn: could not set default encryption"
 fi
 
-# ====== CLEANUP ======
-rm -f "$ARCHIVE_PATH"
-rmdir "$(dirname "$ARCHIVE_PATH")" 2>/dev/null || true
+TMP="\$(mktemp -d)"
+ARCHIVE_PATH="\$TMP/\$ARCHIVE_NAME"
+tar czf "\$ARCHIVE_PATH" -C "\$HOME" "$SOURCE_DIR"
+echo "archive size: \$(du -h "\$ARCHIVE_PATH" | cut -f1)"
+aws s3 cp "\$ARCHIVE_PATH" "\$S3_URI" --region "\$REGION" --sse AES256
+aws s3 ls "\$S3_URI" --region "\$REGION" >/dev/null || { echo "Verify failed: object not found at \$S3_URI" >&2; exit 1; }
+rm -rf "\$TMP"
+echo "REMOTE_BACKUP_OK"
+REMOTE
+)
+
+REMOTE_OUTPUT=$(ssh -o StrictHostKeyChecking=no -o ConnectTimeout=10 \
+  -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" "bash -s" <<<"$REMOTE_SCRIPT") \
+  || die "Remote backup failed. Output above."
+
+printf '%s\n' "$REMOTE_OUTPUT" | while IFS= read -r line; do printf '   %s\n' "$line"; done
+if ! echo "$REMOTE_OUTPUT" | grep -q "REMOTE_BACKUP_OK"; then
+  die "Remote backup did not report success."
+fi
+ok "Uploaded and verified"
 
 cat <<EOF
 
 ============================================
   OpenClaw backup complete
 ============================================
-  Source  : $SOURCE_DIR
-  Archive : $ARCHIVE_NAME
-  S3 URI  : $S3_URI
+  Instance : $INSTANCE_NAME ($INSTANCE_ID)
+  Source   : ~/$SOURCE_DIR (on the instance)
+  Archive  : $ARCHIVE_NAME
+  S3 URI   : $S3_URI
 
-  To restore on a new instance:
+  To restore onto an instance (run there):
     aws s3 cp $S3_URI /tmp/$ARCHIVE_NAME --region $REGION
     tar xzf /tmp/$ARCHIVE_NAME -C \$HOME
 ============================================
