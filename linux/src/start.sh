@@ -280,6 +280,24 @@ chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
 chmod 600 "$OPENCLAW_ENV"
 echo "✔ Anthropic API key written to ~/.openclaw/.env"
 
+# Append the agent's tool-call API keys (optional). Unlike ANTHROPIC_API_KEY
+# (used by the gateway's model calls), these are consumed by the agent's bash
+# tool calls — RunPod GPU pods and the refine.ink review API — so they must
+# reach the tool environment (the gateway loads ~/.openclaw/.env into its
+# process env, which tool subprocesses inherit).
+for kv in "RUNPOD_API_KEY=${RUNPOD_API_KEY:-}" "REFINE_INK_API_KEY=${REFINE_INK_API_KEY:-}"; do
+  name="${kv%%=*}"; val="${kv#*=}"
+  if [ -z "$val" ]; then
+    echo "⚠ ${name} not provided — skipping (agent tools needing it will fail until it's added to ~/.openclaw/.env)"
+    continue
+  fi
+  sed -i "/^${name}=/d" "$OPENCLAW_ENV"
+  echo "${name}=${val}" >> "$OPENCLAW_ENV"
+  echo "✔ ${name} written to ~/.openclaw/.env"
+done
+chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
+chmod 600 "$OPENCLAW_ENV"
+
 # ====== SERVICES ======
 
 # install GitHub CLI

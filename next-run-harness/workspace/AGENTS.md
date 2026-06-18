@@ -16,6 +16,8 @@ Do not reread injected files; they're already in context.
 
 **Every main-session turn ends in exactly one of these four states. A turn that ends in none of them is a failed turn.** The heartbeat is a safety net for crashes — it is not your planner. "Yield with nothing scheduled" does not exist.
 
+**Forward action is phase-relative (`PLAN.md` § Milestone table).** Before the Exploration-adequacy certification clears (`playbooks/exploration.md`), *deliverable-forward* means **dossier-forward**: a launched scout, a dispatched lit-read subagent, or a newly registered candidate satisfies LAUNCH/DELEGATE — a turn spent deepening exploration is a satisfying turn, not idle. Nudging the skeleton or writing prose during the exploration phase is premature drafting (`HEARTBEAT.md` milestone-clock front-of-run check), not forward motion. The four states are unchanged; only what counts as legitimate forward motion shifts with the phase.
+
 1. **LAUNCH** — A background job is running (`nohup`, PID + log path recorded), a **pre-registered branch protocol** is appended to `LOG.md` (e.g. `PASS → X; PARTIAL → Y; FAIL/MALFORMED → Z`), and a one-shot harvest cron is scheduled for expected-completion +10 min whose systemEvent text names the job and the LOG entry key (see `TOOLS.md` § Self-chain convention).
 2. **DELEGATE** — One or more subagents are in flight, each with a deliverable path and wall-clock budget (briefs per `playbooks/subagent.md`); the next *independent* action is either taken this turn or self-chained.
 3. **MEMO** — A Tier-2 decision memo is logged (see Decision authority below) and the decided branch's first action is taken — or its critic subagents are in flight. Waiting is not a state.
@@ -44,6 +46,7 @@ Before yielding, if the turn changed the state (launched, harvested, delegated, 
 ## Pre-registration
 
 - **Falsifier next to hypothesis.** Every method claim in `PLAN.md` has a pre-registered falsifier in `REGISTRY.md` — the experiment that would kill it — declared *before* that experiment runs. Verdict bins (PASS / PARTIAL / FAIL / MALFORMED / AMBIGUOUS) go in the script docstring before launch.
+- **No tautological headline.** A headline claim whose pre-registered falsifier would be *vacuously not triggered* — no runnable experiment could falsify it; it is true by construction given its own definitions — is rejected at registration. This is a Stuck/Pivot trigger (`playbooks/decisions.md`), not a claim to draft around. Drafting is gated on the headline-substance certification (`REGISTRY.md` § Headline substance, enforced by `scripts/gate_artifact.sh`). This applies with special force to a *fallback* negative/impossibility result reached after candidates fail: it faces the same bar as a positive headline, not a lower one.
 - **Branch protocol before launch.** No background job starts without its LOG.md branch protocol (End-of-Turn Contract state 1).
 - **Lock discipline.** Frozen definitions (thresholds, success criteria, evaluation splits) live as JSON in `locks/` and are read by code, not retyped in prose. Changing a lock is a Tier-2 memo. Prose referencing a lock that doesn't exist on disk is a defect.
 - **The question is the contract.** `BRIEF.md`'s requirements and prohibitions are registered in `REGISTRY.md` § Brief constraints, each with a checking mechanism. A contribution that drifts from the brief is a defect no matter how sound its claims are (`playbooks/review.md` §3).
@@ -84,5 +87,5 @@ When the next `PLAN.md` milestone is <24h out:
 
 ## Stuck tripwire
 
-Same blocker for >2h, or 3 failed attempts at the same approach → stop grinding and open `playbooks/decisions.md` § Stuck/Pivot. Decide-and-proceed within one heartbeat of writing the memo.
+**Quantitative:** same blocker for >2h, or 3 failed attempts at the same approach. **Qualitative:** a central-claim rejection recurring across ≥2 blind-review rounds (`playbooks/review.md` §2a), a DIVERGED brief-fidelity verdict (`playbooks/review.md` §3), a headline whose pre-registered falsifier is vacuous, or a STOP-EARLY/THIN-LIT exploration-sufficiency verdict recurring across ≥2 critic rounds with a viable un-scouted candidate (`playbooks/exploration.md` §4). Any of these → stop grinding and open `playbooks/decisions.md` § Stuck/Pivot. Decide-and-proceed within one heartbeat of writing the memo. Polishing presentation, adding datasets, or narrowing the claim does not clear a qualitative trigger.
 

@@ -26,7 +26,7 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-name <NAME> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --cost-tracker-url <URL> --placeholder-map <FILE> [--instance-suffix <SUFFIX>]
+Usage: $0 --telegram-bot-name <NAME> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --cost-tracker-url <URL> --placeholder-map <FILE> [--runpod-api-key <KEY>] [--refine-ink-api-key <KEY>] [--instance-suffix <SUFFIX>]
 
 Required:
   --telegram-bot-name <NAME>     Bot name as defined in telegram_bots.json
@@ -42,6 +42,10 @@ Optional:
   --instance-suffix <SUFFIX>     Suffix appended to the instance name
                                    (e.g. --instance-suffix 2 → crux-in-a-box-2).
                                    Allows running multiple instances in parallel.
+  --runpod-api-key <KEY>         RunPod API key — written to ~/.openclaw/.env as
+                                   RUNPOD_API_KEY for the agent's GPU-pod tool calls.
+  --refine-ink-api-key <KEY>     refine.ink API key — written to ~/.openclaw/.env as
+                                   REFINE_INK_API_KEY for the external-review API.
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
@@ -63,6 +67,8 @@ ANTHROPIC_API_KEY=""
 PLACEHOLDERS=""
 COST_TRACKER_URL=""
 INSTANCE_SUFFIX=""
+RUNPOD_API_KEY=""
+REFINE_INK_API_KEY=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -94,6 +100,16 @@ while [[ $# -gt 0 ]]; do
     --cost-tracker-url)
       [ -z "${2:-}" ] && { echo "Error: --cost-tracker-url requires a value" >&2; usage; }
       COST_TRACKER_URL="$2"
+      shift 2
+      ;;
+    --runpod-api-key)
+      [ -z "${2:-}" ] && { echo "Error: --runpod-api-key requires a value" >&2; usage; }
+      RUNPOD_API_KEY="$2"
+      shift 2
+      ;;
+    --refine-ink-api-key)
+      [ -z "${2:-}" ] && { echo "Error: --refine-ink-api-key requires a value" >&2; usage; }
+      REFINE_INK_API_KEY="$2"
       shift 2
       ;;
     --placeholder-map)
@@ -433,6 +449,8 @@ ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
           ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}' \
           COST_TRACKER_URL='${COST_TRACKER_URL}' \
           API_KEY_SUFFIX='${API_KEY_SUFFIX}' \
+          RUNPOD_API_KEY='${RUNPOD_API_KEY}' \
+          REFINE_INK_API_KEY='${REFINE_INK_API_KEY}' \
           PLACEHOLDERS='${PLACEHOLDERS}' \
           bash ~/crux-in-a-box-linux/src/start.sh"
 ok "Remote bootstrap complete"

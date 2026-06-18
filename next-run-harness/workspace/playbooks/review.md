@@ -20,6 +20,8 @@ Triage its findings like any review: strengthen the prose where licensed, queue 
 
 ## §2 — Endgame (blind review of the complete artifact)
 
+**Success bar (`BRIEF.md`):** the run succeeds when the blind-review score reaches **Weak Accept or higher** (internal §2a / §2c plus external §2b). Convergence *below* the bar (see the stopping rule) means *reviewing* is exhausted, not that the bar is met — a converged sub-Weak-Accept verdict is failure-to-meet-bar: it routes to the stuck/pivot fork (`playbooks/decisions.md`) while budget and time remain, and is shipped only when the budget or deadline is exhausted (honestly, with the gap stated in the completion report, `USER.md`). Never manufacture the score — reviewers are unauthorable, so the only path to the bar is genuinely meeting it.
+
 ### Run order
 
 1. `scripts/gate_artifact.sh` passes (mechanical gates — see below).
@@ -41,6 +43,8 @@ Triage its findings like any review: strengthen the prose where licensed, queue 
 **Stopping rule (binding):**
 - A round is **clean** iff it raises zero soundness- or claim-level findings (presentation-level findings get batched and fixed but do not reset the count).
 - **Stop after 2 consecutive clean rounds, or at round 6, whichever is first.** Track rounds in `REGISTRY.md` § Review ledger (round, date, verdict, clean?). Spawning internal round 7 is a contract violation — proceed to §2b instead.
+- **Central-claim rejection → fork (binding).** A round is a *central-claim rejection* iff its weaknesses name the headline claim itself as unsound / circular / tautological / vacuous — **not** presentation, and **not** "significance could be stronger" — and its recommendation is Weak Reject or below. Record it in the Review ledger (`central-claim hit?` column). When a central-claim rejection recurs across **≥2 rounds**, you may not spawn the next round: this is a mechanism-level failure (`playbooks/decisions.md` § Failure levels) — enter Stuck/Pivot, whose default is advancing the next portfolio candidate. Fixing presentation, adding datasets, or narrowing the claim does **not** clear it. **Tie-break:** a sound, brief-faithful artifact whose only remaining complaints are significance or presentation still ships the honest WEAK_ACCEPT at cap-6 — the fork is for vacuity/unsoundness of the *headline*, not for reviewers wanting more.
+- **The bar gates shipping, not just convergence.** Stopping (2-clean / cap-6) ends *reviewing*; it does not authorize shipping a verdict **below Weak Accept** (the success bar — §2 intro, `BRIEF.md`). Below-bar at convergence → stuck/pivot fork while budget and time remain; ship below bar only when a cap is exhausted, disclosed in the completion report. (A Weak Accept is *at* the bar and ships.)
 - If the verdict is identical two rounds running, further internal rounds are defined as zero-information: proceed to §2b regardless of clean-count.
 - **Why:** blind-review verdicts plateau within ~5 rounds. Iterating past convergence produces contaminated reviewers and streak-gaming, never soundness. An honest WEAK_ACCEPT is a stronger ship-state than a manufactured ACCEPT.
 
@@ -98,7 +102,7 @@ Report back: the path to your written review.
 
 ### §2b — External reviews (a milestone, not an option)
 
-Submit to every external reviewer listed in `BRIEF.md` / `TOOLS.md` § Accounts ({{EXTERNAL_REVIEWERS|e.g. Stanford agentic reviewer; CMU paper reviewer; refine.ink}}), respecting any per-platform quotas and ordering the brief specifies (paid single-shot reviews go last, after internal rounds are clean). For each external review: triage findings exactly as §1, apply one fix pass, rebuild. **Why this is a gated milestone:** prose instructions to use external reviewers do not bind under deadline pressure; a milestone with a gate does. `gate_artifact.sh` for the final milestone checks that an external-review artifact exists in `reviews/external/`.
+Submit to every external reviewer in `TOOLS.md` § Accounts — **CMU Paper Reviewer** and **Stanford Agentic Reviewer** (browser-submit; the review returns **by email** to the `gog`-authenticated review Gmail, pulled with the `gog` CLI) and **refine.ink** (REST API via `REFINE_INK_API_KEY`) — respecting per-platform quotas and ordering: metered/paid platforms (likely refine.ink) go last, after the internal rounds are clean. The two portal→email reviewers are **asynchronous** — submit, then poll the inbox on a heartbeat cadence for the returned review rather than blocking on it. For each external review: triage findings exactly as §1, apply one fix pass, rebuild. **Why this is a gated milestone:** prose instructions to use external reviewers do not bind under deadline pressure; a milestone with a gate does. `gate_artifact.sh` for the final milestone checks that an external-review artifact exists in `reviews/external/`.
 
 ### §2c — The accompanying final review
 
