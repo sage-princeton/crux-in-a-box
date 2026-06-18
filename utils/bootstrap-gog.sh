@@ -81,13 +81,34 @@ fi
 # A dedicated temp HOME keeps this bootstrap from touching your everyday gog
 # state, and the 'file' keyring (not the OS keychain) is what makes the bundle
 # movable to another machine.
-GOG_HOME="$(mktemp -d "${TMPDIR:-/tmp}/gog-bootstrap.XXXXXX")"
+# Strip any trailing slash from TMPDIR so we don't build a '//' path that
+# wouldn't string-prefix-match gog's normalized 'config path' output below.
+_TMPDIR="${TMPDIR:-/tmp}"; _TMPDIR="${_TMPDIR%/}"
+GOG_HOME="$(cd "$(mktemp -d "${_TMPDIR}/gog-bootstrap.XXXXXX")" && pwd -P)"
 export GOG_HOME
 export GOG_KEYRING_BACKEND="file"
 # GOG_KEYRING_PASSWORD is already exported by the caller.
 
 cleanup() { rm -rf "$GOG_HOME"; }
 trap cleanup EXIT
+
+# ---- Guard: confirm this gog actually honors GOG_HOME ----
+# Older gog (e.g. v0.9.0) ignores GOG_HOME and writes to the platform default
+# config dir. If we don't catch that, auth lands elsewhere and we'd tar an
+# EMPTY bundle (the silent failure this guard exists to prevent). v0.28.0+ is
+# required: it reports the GOG_HOME-relative path from 'gog config path'.
+GOG_CFG_PATH="$(gog config path 2>/dev/null || true)"
+case "$GOG_CFG_PATH" in
+  "$GOG_HOME"/*) : ;;  # good — config resolves under our GOG_HOME
+  *)
+    echo "Error: this gog build does not honor GOG_HOME (config path resolved to" >&2
+    echo "         '${GOG_CFG_PATH:-unknown}', not under '$GOG_HOME')." >&2
+    echo "       Upgrade to gog v0.28.0+ (brew upgrade openclaw/tap/gogcli, or" >&2
+    echo "       download from https://github.com/openclaw/gogcli/releases)." >&2
+    echo "       Current: $(gog --version 2>&1 | head -1)" >&2
+    exit 1
+    ;;
+esac
 
 echo "▸ GOG_HOME (temp):   $GOG_HOME"
 echo "▸ Account:           $GOG_ACCOUNT_EMAIL"

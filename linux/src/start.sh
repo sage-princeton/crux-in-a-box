@@ -360,7 +360,9 @@ rm -rf /tmp/aws /tmp/awscliv2.zip
 # install gogcli (Google Workspace CLI) from the GitHub release.
 # Homebrew isn't available on this box, so we pull the prebuilt linux binary.
 # Pin via GOGCLI_VERSION (default tracks a known-good tag).
-GOGCLI_VERSION="${GOGCLI_VERSION:-v0.9.0}"
+# v0.28.0+ honors GOG_HOME (older versions like 0.9.0 ignore it and write to
+# the platform default config dir, which breaks the portable-bundle approach).
+GOGCLI_VERSION="${GOGCLI_VERSION:-v0.28.0}"
 GOGCLI_ARCH="$(dpkg --print-architecture)"   # amd64 or arm64
 GOGCLI_TARBALL="gogcli_${GOGCLI_VERSION#v}_linux_${GOGCLI_ARCH}.tar.gz"
 GOGCLI_URL="https://github.com/openclaw/gogcli/releases/download/${GOGCLI_VERSION}/${GOGCLI_TARBALL}"

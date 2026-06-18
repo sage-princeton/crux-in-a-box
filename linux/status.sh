@@ -48,19 +48,22 @@ fi
 if command -v gog &>/dev/null; then
   # The keyring env (GOG_HOME / GOG_KEYRING_BACKEND / GOG_KEYRING_PASSWORD /
   # GOG_ACCOUNT) is written to ~/.openclaw/.env by start.sh, not the shell —
-  # load it so the auth check can decrypt the file keyring non-interactively.
+  # load it so gog can decrypt the file keyring non-interactively.
   OPENCLAW_ENV="$HOME/.openclaw/.env"
   GOG_ENV=()
   if [ -f "$OPENCLAW_ENV" ]; then
     while IFS= read -r kv; do GOG_ENV+=("$kv"); done < <(grep -E '^GOG_' "$OPENCLAW_ENV" 2>/dev/null)
   fi
-  # 'auth list --check' exchanges the stored refresh token for an access token.
-  if env "${GOG_ENV[@]}" gog auth list --check --timeout 20s &>/dev/null; then
-    pass "gog CLI: authenticated"
-  elif [ "${#GOG_ENV[@]}" -eq 0 ]; then
+  # Green ONLY if we can actually read the inbox end-to-end: this hits the Gmail
+  # API (decrypt keyring -> refresh token -> access token -> messages.list),
+  # which is the real capability the agent depends on. A bare token check can
+  # pass while the inbox is still unreadable (wrong scope, account, etc.).
+  if [ "${#GOG_ENV[@]}" -eq 0 ]; then
     warn "gog CLI: installed but no GOG_* env in ~/.openclaw/.env — not configured"
+  elif env "${GOG_ENV[@]}" gog gmail search 'in:inbox' --max 1 --json &>/dev/null; then
+    pass "gog CLI: inbox readable"
   else
-    warn "gog CLI: installed but auth check failed (token expired/revoked or keyring password wrong)"
+    warn "gog CLI: installed but inbox NOT readable (auth/scope/account issue — run: gog gmail search 'in:inbox' --max 1)"
   fi
 else
   fail "gog CLI: not installed"
