@@ -20,8 +20,12 @@ cd linux/
   --anthropic-model anthropic/claude-sonnet-4-20250514 \
   --anthropic-api-key <KEY> \
   --cost-tracker-url <URL> \
+  --runpod-api-key <RUNPOD_KEY> \
+  --refine-ink-api-key <REFINE_KEY> \
   --placeholder-map placeholders.txt
 ```
+
+`--runpod-api-key` and `--refine-ink-api-key` are optional but needed this run — they're written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read `RUNPOD_API_KEY` / `REFINE_INK_API_KEY`. Omit one only if that service is unused.
 
 Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `setup-device.sh --help` for optional env-var overrides (region, instance type, disk size, etc.).
 
