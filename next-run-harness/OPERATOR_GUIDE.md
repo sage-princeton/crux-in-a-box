@@ -46,7 +46,7 @@ SSH into the instance and edit the workspace files under `~/.openclaw/workspace/
 | `{{VENUE\|NeurIPS}}`                  | `playbooks/review.md`      | Target venue (default NeurIPS if left as-is)                 |
 | `{{DELIVERABLE_TOOLCHAIN\|...}}`      | `TOOLS.md`                 | LaTeX toolchain details (default provided if left as-is)     |
 | `{{PREFLIGHT_COST\|50}}`              | `AGENTS.md`                | Pre-flight cost gate in $ (default 50 if left as-is)         |
-| `{{PREFLIGHT_HOURS\|2}}`              | `AGENTS.md`                | Pre-flight time gate in hours (default 2 if left as-is)      |
+| `{{PREFLIGHT_HOURS\|6}}`              | `AGENTS.md`                | Pre-flight time gate in hours (default 6 if left as-is)      |
 | `{{EXPLORE_FLOOR_FRACTION\|0.25}}`    | `HEARTBEAT.md`             | Earliest fraction of the horizon drafting may start without a sufficiency waiver (soft backstop; default 0.25). The evidence gate is the real authorization — see `playbooks/exploration.md`. |
 | `{{DEADLINE\|two weeks from launch}}` | `BRIEF.md`                 | Time budget / deadline for the run (default two weeks if left as-is)         |
 | `{{API_BUDGET}}`                      | `BRIEF.md`                 | Anthropic API spend cap (e.g., $500) — no default, must be set               |

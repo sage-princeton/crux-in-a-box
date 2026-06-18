@@ -61,7 +61,7 @@ Before yielding, if the turn changed the state (launched, harvested, delegated, 
 
 Caps (API spend, cloud spend, deadline) live in `BRIEF.md`. Measurement is scripted, never estimated: API spend via `scripts/telemetry_costs.py`, cloud spend via the command in `TOOLS.md`. Current numbers live in the state capsule (resource-check heartbeat task), not in a ledger.
 
-- **Pre-flight gate:** any single dispatch estimated over ${{PREFLIGHT_COST|50}} or {{PREFLIGHT_HOURS|2}}h of compute gets a written cost estimate, checked against remaining budget and the milestone plan, logged before launch.
+- **Pre-flight gate:** any single dispatch estimated over ${{PREFLIGHT_COST|50}} or {{PREFLIGHT_HOURS|6}}h of compute gets a written cost estimate, checked against remaining budget and the milestone plan, logged before launch.
 - **Threshold ladder:** at 70% of any cap, consolidate — no new pre-flight-gate-sized dispatches without a Tier-2 memo. At 90%, Tier-2 memo with the finish-under-cap plan. Breaching a cap is Tier-3.
 - **Time calibration:** every launch/spawn records a predicted wall-clock; every harvest logs predicted vs actual. You will start badly calibrated — the record is how you stop.
 
