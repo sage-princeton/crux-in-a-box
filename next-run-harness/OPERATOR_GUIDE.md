@@ -12,22 +12,23 @@ This provisions an EC2 instance and bootstraps the full environment automaticall
 
 The script tags the instance with `AnthropicKeySuffix` (last 6 chars of the API key) and `AnthropicSpendAtCreation` (API spend at launch time, queried from the cost-tracking Lambda). It warns if another running instance already uses the same API key.
 
+All configuration lives in a single KEY=VALUE config file. Copy `placeholders.txt.example` to `placeholders.txt`, fill it in, and pass it as the positional argument (it's also the default if omitted). The only command-line flag is `--instance-suffix`:
+
 ```bash
 cd linux/
-./setup-device.sh \
-  --telegram-bot-name <NAME> \
-  --telegram-owner-id <ID> \
-  --anthropic-model anthropic/claude-sonnet-4-20250514 \
-  --anthropic-api-key <KEY> \
-  --cost-tracker-url <URL> \
-  --runpod-api-key <RUNPOD_KEY> \
-  --refine-ink-api-key <REFINE_KEY> \
-  --placeholder-map placeholders.txt
+cp placeholders.txt.example placeholders.txt   # then edit it
+./setup-device.sh placeholders.txt
+# parallel instance: ./setup-device.sh --instance-suffix 2 placeholders.txt
 ```
 
-`--runpod-api-key` and `--refine-ink-api-key` are optional but needed this run — they're written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read `RUNPOD_API_KEY` / `REFINE_INK_API_KEY`. Omit one only if that service is unused.
+Required keys (the script validates all of these up front, before any AWS work, and lists every missing one at once):
 
-Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `setup-device.sh --help` for optional env-var overrides (region, instance type, disk size, etc.).
+- **Provisioning/runtime:** `TELEGRAM_BOT_NAME`, `TELEGRAM_OWNER_ID`, `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY`, `COST_TRACKER_URL`, `RUNPOD_API_KEY`, `REFINE_INK_API_KEY`
+- **Workspace placeholders:** `GITHUB_USER`, `CLOUD_SPEND_LIMIT`, `API_BUDGET`
+
+`RUNPOD_API_KEY` and `REFINE_INK_API_KEY` are written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read them. The config file holds secrets — keep it out of git (it is `.gitignore`d). `--instance-suffix <SUFFIX>` (the one flag) names the instance `crux-in-a-box-<SUFFIX>` for running instances in parallel.
+
+Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `setup-device.sh --help` for the full key list and optional env-var overrides (region, instance type, disk size, etc.).
 
 The script will print connection details (SSH + VNC) and a list of any remaining unresolved `{{PLACEHOLDER}}` values in the workspace.
 
@@ -65,7 +66,7 @@ All verified working before launch, by you — not the agent:
 
 State the caps (API $, cloud $, deadline) in `BRIEF.md`. Verify `scripts/telemetry_costs.py` returns a number (it queries the cost-tracking Lambda, which uses the Anthropic Admin API). **Once, around hour 12:** compare the script's output against the Anthropic console billing page; if they disagree materially, tell the agent the true number — it will record the correction factor in `TOOLS.md`. After that, the script is the agent's source of truth (the threshold ladder in `AGENTS.md` acts on it).
 
-**Pre-requisite:** Deploy the cost-tracking Lambda first (`lambda/cost_tracker/deploy.sh`) and pass the URL via `--cost-tracker-url`.
+**Pre-requisite:** Deploy the cost-tracking Lambda first (`lambda/cost_tracker/deploy.sh`) and set the URL as `COST_TRACKER_URL` in the config file.
 
 ### Step 5: Launch
 

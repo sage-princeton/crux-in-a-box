@@ -26,26 +26,42 @@ set -euo pipefail
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 --telegram-bot-name <NAME> --telegram-owner-id <ID> --anthropic-model <MODEL> --anthropic-api-key <KEY> --cost-tracker-url <URL> --placeholder-map <FILE> [--runpod-api-key <KEY>] [--refine-ink-api-key <KEY>] [--instance-suffix <SUFFIX>]
+Usage: $0 [--instance-suffix <SUFFIX>] [CONFIG_FILE]
 
-Required:
-  --telegram-bot-name <NAME>     Bot name as defined in telegram_bots.json
-                                   (e.g. cruxlinuxtest). The token is looked up automatically.
-  --telegram-owner-id <ID>       Telegram user ID for commands.ownerAllowFrom
-  --anthropic-model <MODEL>      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
-  --anthropic-api-key <KEY>      Anthropic API key
-  --cost-tracker-url <URL>       Cost-tracking Lambda URL (from lambda/cost_tracker/deploy.sh).
-  --placeholder-map <FILE>       Workspace placeholders file (KEY=VALUE, one per line).
-                                   Copy placeholders.txt.example and fill it in.
+All configuration lives in a single KEY=VALUE config file (default:
+placeholders.txt). Copy placeholders.txt.example, fill it in, and pass it as
+the positional argument. The only command-line flag is --instance-suffix.
 
-Optional:
+  ./setup-device.sh placeholders.txt
+  ./setup-device.sh --instance-suffix 2 placeholders.txt
+
+Flags:
   --instance-suffix <SUFFIX>     Suffix appended to the instance name
                                    (e.g. --instance-suffix 2 → crux-in-a-box-2).
                                    Allows running multiple instances in parallel.
-  --runpod-api-key <KEY>         RunPod API key — written to ~/.openclaw/.env as
-                                   RUNPOD_API_KEY for the agent's GPU-pod tool calls.
-  --refine-ink-api-key <KEY>     refine.ink API key — written to ~/.openclaw/.env as
-                                   REFINE_INK_API_KEY for the external-review API.
+
+Required keys (the script aborts early, listing every missing one, if any is
+absent or blank):
+
+  Provisioning / runtime:
+    TELEGRAM_BOT_NAME    Bot name as defined in telegram_bots.json
+                           (e.g. cruxlinuxtest). The token is looked up automatically.
+    TELEGRAM_OWNER_ID    Telegram user ID for commands.ownerAllowFrom
+    ANTHROPIC_MODEL      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
+    ANTHROPIC_API_KEY    Anthropic API key
+    COST_TRACKER_URL     Cost-tracking Lambda URL (from lambda/cost_tracker/deploy.sh)
+    RUNPOD_API_KEY       RunPod API key — written to ~/.openclaw/.env as
+                           RUNPOD_API_KEY for the agent's GPU-pod tool calls.
+    REFINE_INK_API_KEY   refine.ink API key — written to ~/.openclaw/.env as
+                           REFINE_INK_API_KEY for the external-review API.
+
+  Workspace placeholders (substituted into the harness files):
+    GITHUB_USER          GitHub username for the gh CLI
+    CLOUD_SPEND_LIMIT    RunPod GPU spend cap (e.g. \$500)
+    API_BUDGET           Anthropic API spend cap (e.g. \$500)
+
+Optional keys:
+    ...any workspace placeholder with a default (PAGE_BUDGET, VENUE, etc.)
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
@@ -60,15 +76,10 @@ USAGE
 }
 
 # ====== PARSE ARGS ======
-TELEGRAM_BOT_NAME=""
-TELEGRAM_OWNER_ID=""
-ANTHROPIC_MODEL=""
-ANTHROPIC_API_KEY=""
-PLACEHOLDERS=""
-COST_TRACKER_URL=""
+# One positional argument (the config file, default placeholders.txt) and one
+# flag (--instance-suffix). Everything else lives in the config file.
+CONFIG_FILE=""
 INSTANCE_SUFFIX=""
-RUNPOD_API_KEY=""
-REFINE_INK_API_KEY=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -77,78 +88,104 @@ while [[ $# -gt 0 ]]; do
       INSTANCE_SUFFIX="$2"
       shift 2
       ;;
-    --telegram-bot-name)
-      [ -z "${2:-}" ] && { echo "Error: --telegram-bot-name requires a value" >&2; usage; }
-      TELEGRAM_BOT_NAME="$2"
-      shift 2
-      ;;
-    --telegram-owner-id)
-      [ -z "${2:-}" ] && { echo "Error: --telegram-owner-id requires a value" >&2; usage; }
-      TELEGRAM_OWNER_ID="$2"
-      shift 2
-      ;;
-    --anthropic-model)
-      [ -z "${2:-}" ] && { echo "Error: --anthropic-model requires a value" >&2; usage; }
-      ANTHROPIC_MODEL="$2"
-      shift 2
-      ;;
-    --anthropic-api-key)
-      [ -z "${2:-}" ] && { echo "Error: --anthropic-api-key requires a value" >&2; usage; }
-      ANTHROPIC_API_KEY="$2"
-      shift 2
-      ;;
-    --cost-tracker-url)
-      [ -z "${2:-}" ] && { echo "Error: --cost-tracker-url requires a value" >&2; usage; }
-      COST_TRACKER_URL="$2"
-      shift 2
-      ;;
-    --runpod-api-key)
-      [ -z "${2:-}" ] && { echo "Error: --runpod-api-key requires a value" >&2; usage; }
-      RUNPOD_API_KEY="$2"
-      shift 2
-      ;;
-    --refine-ink-api-key)
-      [ -z "${2:-}" ] && { echo "Error: --refine-ink-api-key requires a value" >&2; usage; }
-      REFINE_INK_API_KEY="$2"
-      shift 2
-      ;;
-    --placeholder-map)
-      [ -z "${2:-}" ] && { echo "Error: --placeholder-map requires a file path" >&2; usage; }
-      [ -f "$2" ] || { echo "Error: placeholder map file not found: $2" >&2; exit 1; }
-      while IFS= read -r line || [ -n "$line" ]; do
-        # Skip comments and blank lines
-        [[ "$line" =~ ^[[:space:]]*# ]] && continue
-        [[ "$line" =~ ^[[:space:]]*$ ]] && continue
-        # Strip inline comments
-        line="${line%%#*}"
-        # Trim whitespace
-        line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        [ -z "$line" ] && continue
-        [[ "$line" == *=* ]] || { echo "Error: invalid line in placeholder map (expected KEY=VALUE): $line" >&2; exit 1; }
-        if [ -n "$PLACEHOLDERS" ]; then
-          PLACEHOLDERS="${PLACEHOLDERS}|||${line}"
-        else
-          PLACEHOLDERS="$line"
-        fi
-      done < "$2"
-      shift 2
-      ;;
     -h|--help)
       usage
       ;;
-    *)
-      echo "Unknown argument: $1" >&2
+    -*)
+      echo "Error: unknown flag '$1'. The only flag is --instance-suffix; everything else lives in the config file." >&2
       usage
+      ;;
+    *)
+      [ -n "$CONFIG_FILE" ] && { echo "Error: more than one config file given ('$CONFIG_FILE', '$1')" >&2; usage; }
+      CONFIG_FILE="$1"
+      shift
       ;;
   esac
 done
 
-[ -z "$TELEGRAM_BOT_NAME" ] && { echo "Error: --telegram-bot-name is required" >&2; usage; }
-[ -z "$TELEGRAM_OWNER_ID" ] && { echo "Error: --telegram-owner-id is required" >&2; usage; }
-[ -z "$ANTHROPIC_MODEL" ] && { echo "Error: --anthropic-model is required (e.g. anthropic/claude-opus-4-6)" >&2; usage; }
-[ -z "$ANTHROPIC_API_KEY" ] && { echo "Error: --anthropic-api-key is required" >&2; usage; }
-[ -z "$COST_TRACKER_URL" ] && { echo "Error: --cost-tracker-url is required (deploy the Lambda first, see lambda/cost_tracker/)" >&2; usage; }
-[ -z "$PLACEHOLDERS" ] && { echo "Error: --placeholder-map is required (copy placeholders.txt.example)" >&2; usage; }
+CONFIG_FILE="${CONFIG_FILE:-placeholders.txt}"
+[ -f "$CONFIG_FILE" ] || { echo "Error: config file not found: $CONFIG_FILE (copy placeholders.txt.example)" >&2; usage; }
+
+# ====== LOAD CONFIG FILE (KEY=VALUE) ======
+# Parse every KEY=VALUE line into the CFG associative array. Comments (#) and
+# blank lines are ignored; inline comments are stripped; whitespace is trimmed.
+declare -A CFG=()
+while IFS= read -r line || [ -n "$line" ]; do
+  [[ "$line" =~ ^[[:space:]]*# ]] && continue
+  [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+  line="${line%%#*}"
+  line="$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  [ -z "$line" ] && continue
+  [[ "$line" == *=* ]] || { echo "Error: invalid line in config (expected KEY=VALUE): $line" >&2; exit 1; }
+  CFG_KEY="${line%%=*}"
+  CFG_VALUE="${line#*=}"
+  # Trim trailing space from the key (value keeps its inner spacing).
+  CFG_KEY="$(echo "$CFG_KEY" | sed 's/[[:space:]]*$//')"
+  [ -z "$CFG_KEY" ] && { echo "Error: empty key in config line: $line" >&2; exit 1; }
+  CFG["$CFG_KEY"]="$CFG_VALUE"
+done < "$CONFIG_FILE"
+
+# ====== VALIDATE REQUIRED KEYS (early, before any AWS work) ======
+# Collect ALL missing required keys so the operator sees every problem at once,
+# rather than fixing them one re-run at a time.
+REQUIRED_KEYS=(
+  TELEGRAM_BOT_NAME
+  TELEGRAM_OWNER_ID
+  ANTHROPIC_MODEL
+  ANTHROPIC_API_KEY
+  COST_TRACKER_URL
+  RUNPOD_API_KEY
+  REFINE_INK_API_KEY
+  GITHUB_USER
+  CLOUD_SPEND_LIMIT
+  API_BUDGET
+)
+MISSING_KEYS=()
+for key in "${REQUIRED_KEYS[@]}"; do
+  if [ -z "${CFG[$key]:-}" ]; then
+    MISSING_KEYS+=("$key")
+  fi
+done
+if [ "${#MISSING_KEYS[@]}" -gt 0 ]; then
+  echo "Error: the following required keys are missing or blank in $CONFIG_FILE:" >&2
+  for key in "${MISSING_KEYS[@]}"; do
+    echo "  - $key" >&2
+  done
+  echo "" >&2
+  echo "Fill them in (see placeholders.txt.example) and re-run." >&2
+  exit 1
+fi
+
+# ====== ASSIGN OPERATIONAL VALUES ======
+# These keys drive provisioning logic (AWS tagging, baseline spend query, SSH
+# env-forwarding to start.sh), so they get their own variables.
+TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]}"
+TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]}"
+ANTHROPIC_MODEL="${CFG[ANTHROPIC_MODEL]}"
+ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
+COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
+RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
+REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
+# INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
+
+# ====== BUILD WORKSPACE PLACEHOLDER MAP ======
+# Every config key EXCEPT the operational/runtime ones above is forwarded to
+# start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
+# keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
+# (PAGE_BUDGET, VENUE, …) flowing into the harness files.
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY INSTANCE_SUFFIX "
+PLACEHOLDERS=""
+for key in "${!CFG[@]}"; do
+  case "$NON_PLACEHOLDER_KEYS" in
+    *" $key "*) continue ;;
+  esac
+  pair="${key}=${CFG[$key]}"
+  if [ -n "$PLACEHOLDERS" ]; then
+    PLACEHOLDERS="${PLACEHOLDERS}|||${pair}"
+  else
+    PLACEHOLDERS="$pair"
+  fi
+done
 
 # ====== RESOLVE TELEGRAM BOT TOKEN ======
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
@@ -177,6 +214,10 @@ INSTANCE_PROFILE_NAME="${CRUX_INSTANCE_PROFILE:-crux-in-a-box-profile}"
 SSH_USER="ubuntu"
 DISK_SIZE_GB="${CRUX_DISK_SIZE_GB:-80}"
 VNC_PORT=5901
+# Oldest day the cost tracker should sum from when establishing the baseline.
+# Defaults to today (UTC) so the run measures only spend from launch onward;
+# override with CRUX_COST_START_DATE=YYYY-MM-DD for a different window.
+COST_START_DATE="${CRUX_COST_START_DATE:-$(date -u +%F)}"
 
 # ====== HELPERS ======
 info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
@@ -329,22 +370,28 @@ if [ -n "$DUPE_IDS" ] && [ "$DUPE_IDS" != "None" ]; then
 fi
 
 # ====== 3c. SNAPSHOT INITIAL API SPEND ======
-info "Querying current API spend for key ...$API_KEY_SUFFIX..."
+# Cost-tracker contract: POST {"api_key": "<full key>", "start_date": "YYYY-MM-DD"}
+# -> {"total_spend": <float>}. We send the FULL key (the Lambda matches it to the
+# org key by partial_key_hint and never echoes it) and a far-back start_date so
+# the baseline is the key's total spend-to-date.
+info "Querying current API spend for key ...$API_KEY_SUFFIX (since $COST_START_DATE)..."
+COST_REQUEST=$(jq -n --arg key "$ANTHROPIC_API_KEY" --arg start "$COST_START_DATE" \
+  '{api_key: $key, start_date: $start}')
 INITIAL_SPEND=$(curl -sf -X POST "$COST_TRACKER_URL" \
   -H "Content-Type: application/json" \
-  -d "{\"api_key_suffix\": \"$API_KEY_SUFFIX\"}" \
+  -d "$COST_REQUEST" \
   | jq -r '.total_spend' 2>/dev/null || echo "")
 
 if [ -z "$INITIAL_SPEND" ] || [ "$INITIAL_SPEND" = "null" ]; then
-  die "Could not query spend from cost tracker at $COST_TRACKER_URL — cannot establish baseline. Fix the Lambda or check the API key suffix (…$API_KEY_SUFFIX)."
+  die "Could not query spend from cost tracker at $COST_TRACKER_URL — cannot establish baseline. Fix the Lambda or check the API key suffix (…$API_KEY_SUFFIX) and start_date ($COST_START_DATE)."
 fi
 
-ok "Current API spend: \$INITIAL_SPEND"
+ok "Current API spend: \$$INITIAL_SPEND"
 
 # If there's already money on this key, make the operator acknowledge the baseline.
 if [ "$(echo "$INITIAL_SPEND > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
-  warn "This API key already has \$INITIAL_SPEND of spend on it."
-  warn "Instance-attributable cost = current spend minus this baseline (\$INITIAL_SPEND)."
+  warn "This API key already has \$$INITIAL_SPEND of spend on it."
+  warn "Instance-attributable cost = current spend minus this baseline (\$$INITIAL_SPEND)."
   printf "\033[1;33m   Continue with this baseline? [y/N]: \033[0m"
   read -r REPLY
   if [[ ! "$REPLY" =~ ^[Yy]$ ]]; then
@@ -364,7 +411,7 @@ EXISTING_ID=$(aws ec2 describe-instances \
 if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
   warn "WARNING: An EC2 instance '$INSTANCE_NAME' is already running ($EXISTING_ID)."
   warn "Continuing will re-provision this existing instance (SSH + bootstrap)."
-  warn "If you want a separate instance instead, re-run with --instance-suffix <SUFFIX>."
+  warn "If you want a separate instance instead, set INSTANCE_SUFFIX in the config file and re-run."
   printf "\033[1;33m   Continue with existing instance %s? [y/N]: \033[0m" "$EXISTING_ID"
   read -r REPLY
   if [[ "$REPLY" =~ ^[Yy]$ ]]; then
@@ -376,7 +423,7 @@ if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
         "Key=AnthropicKeySuffix,Value=$API_KEY_SUFFIX" \
         "Key=AnthropicSpendAtCreation,Value=$INITIAL_SPEND"
   else
-    die "Aborted. To launch a parallel instance, re-run with --instance-suffix <SUFFIX>."
+    die "Aborted. To launch a parallel instance, set INSTANCE_SUFFIX in the config file and re-run."
   fi
 else
   info "Launching EC2 instance..."

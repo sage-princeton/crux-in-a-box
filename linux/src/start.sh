@@ -352,7 +352,7 @@ if [ -d "$HARNESS_SRC" ]; then
   # Make scripts executable
   chmod +x "$OPENCLAW_WORKSPACE/scripts/"*.sh 2>/dev/null || true
 
-  # --- Step 1: Resolve user-supplied placeholders (from --placeholder-map) ---
+  # --- Step 1: Resolve user-supplied placeholders (from the config file) ---
   # These run first so they take priority over built-in defaults.
   if [ -n "${PLACEHOLDERS:-}" ]; then
     IFS='|||' read -ra PAIRS <<< "$PLACEHOLDERS"
@@ -398,7 +398,7 @@ if [ -d "$HARNESS_SRC" ]; then
   REMAINING=$(grep -rn '{{' "$OPENCLAW_WORKSPACE" --include='*.md' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'grep for {{' | head -20 || true)
   if [ -n "$REMAINING" ]; then
     echo ""
-    echo "⚠ Unresolved placeholders (resolve manually or via --placeholder-map before launch):"
+    echo "⚠ Unresolved placeholders (resolve manually or via the config file before launch):"
     echo "$REMAINING"
   fi
 else

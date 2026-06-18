@@ -1,18 +1,32 @@
-# placeholders.txt — workspace placeholder map for setup-device.sh
+# placeholders.txt — single config file for setup-device.sh
 #
-# Usage: ./setup-device.sh ... --placeholder-map placeholders.txt
+# Usage: ./setup-device.sh placeholders.txt
+#   (placeholders.txt is also the default if no argument is given)
+#   The only command-line flag is --instance-suffix <SUFFIX> (run multiple
+#   instances in parallel, e.g. ./setup-device.sh --instance-suffix 2 placeholders.txt).
 #
 # Lines are KEY=VALUE. Comments (#) and blank lines are ignored.
-# Placeholders with defaults (e.g. PAGE_BUDGET) are auto-populated
-# if not specified here, so only fill in what you need to override.
+# All configuration lives here. setup-device.sh validates that every Required
+# key below is present and non-blank BEFORE doing any AWS work, and lists all
+# missing keys at once.
 
-# ── Required (no defaults — must be set here or manually post-launch) ──
+# ── Required: provisioning / runtime (used by setup-device.sh itself) ──
+
+TELEGRAM_BOT_NAME=your-bot-name          # must exist as a key in telegram_bots.json
+TELEGRAM_OWNER_ID=123456789              # your Telegram user ID
+ANTHROPIC_MODEL=anthropic/claude-opus-4-7
+ANTHROPIC_API_KEY=sk-ant-...             # secret — keep this file out of git
+COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
+RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env
+REFINE_INK_API_KEY=...                   # secret — written to ~/.openclaw/.env
+
+# ── Required: workspace placeholders (no defaults — substituted into files) ──
 
 GITHUB_USER=your-github-username
 CLOUD_SPEND_LIMIT=$500
 API_BUDGET=$500
 
-# ── Optional (have sensible defaults — uncomment to override) ──
+# ── Optional: workspace placeholders with defaults (uncomment to override) ──
 
 # PAGE_BUDGET=9
 # SNAPSHOT_TIMES=10:00 and 19:00
