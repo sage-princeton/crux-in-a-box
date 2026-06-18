@@ -136,6 +136,9 @@ REQUIRED_KEYS=(
   COST_TRACKER_URL
   RUNPOD_API_KEY
   REFINE_INK_API_KEY
+  GOG_ACCOUNT
+  GOG_KEYRING_PASSWORD
+  GOG_HOME_TARBALL
   GITHUB_USER
   CLOUD_SPEND_LIMIT
   API_BUDGET
@@ -168,12 +171,25 @@ RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
 
+# gog (Google Workspace CLI) — required; auto-configured on the box.
+#   GOG_ACCOUNT          the @gmail.com address gog acts as
+#   GOG_KEYRING_PASSWORD passphrase that decrypts the file keyring (never expires)
+#   GOG_HOME_TARBALL     LOCAL path to the pre-authorized bundle from
+#                          utils/bootstrap-gog.sh (scp'd to the box)
+# Presence/non-blankness of all three is enforced by REQUIRED_KEYS above.
+GOG_ACCOUNT="${CFG[GOG_ACCOUNT]}"
+GOG_KEYRING_PASSWORD="${CFG[GOG_KEYRING_PASSWORD]}"
+GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
+
+[ -f "$GOG_HOME_TARBALL" ] \
+  || { echo "Error: GOG_HOME_TARBALL not found: $GOG_HOME_TARBALL (create it with utils/bootstrap-gog.sh)" >&2; exit 1; }
+
 # ====== BUILD WORKSPACE PLACEHOLDER MAP ======
 # Every config key EXCEPT the operational/runtime ones above is forwarded to
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY INSTANCE_SUFFIX "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -486,6 +502,17 @@ else
   warn "next-run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
 fi
 
+# Copy the pre-authorized gog bundle (if provided). start.sh unpacks it into
+# GOG_HOME and wires the keyring env so gog is authenticated with no browser.
+GOG_HOME_TARBALL_REMOTE=""
+if [ -n "$GOG_HOME_TARBALL" ]; then
+  info "Copying gog auth bundle to instance..."
+  scp -o StrictHostKeyChecking=no -i "$KEY_FILE" \
+    "$GOG_HOME_TARBALL" "${SSH_USER}@${PUBLIC_IP}:~/gog-home.tar.gz"
+  GOG_HOME_TARBALL_REMOTE="\$HOME/gog-home.tar.gz"
+  ok "gog auth bundle copied"
+fi
+
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
@@ -498,6 +525,9 @@ ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
           API_KEY_SUFFIX='${API_KEY_SUFFIX}' \
           RUNPOD_API_KEY='${RUNPOD_API_KEY}' \
           REFINE_INK_API_KEY='${REFINE_INK_API_KEY}' \
+          GOG_ACCOUNT='${GOG_ACCOUNT}' \
+          GOG_KEYRING_PASSWORD='${GOG_KEYRING_PASSWORD}' \
+          GOG_HOME_TARBALL='${GOG_HOME_TARBALL_REMOTE}' \
           PLACEHOLDERS='${PLACEHOLDERS}' \
           bash ~/crux-in-a-box-linux/src/start.sh"
 ok "Remote bootstrap complete"

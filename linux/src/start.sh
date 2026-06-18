@@ -298,6 +298,45 @@ done
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
 chmod 600 "$OPENCLAW_ENV"
 
+# ====== gog (Google Workspace CLI) auth ======
+# gog auth is REQUIRED. The pre-authorized bundle (from utils/bootstrap-gog.sh)
+# was scp'd by setup-device.sh into the real user's home; unpack it into a fixed
+# GOG_HOME and wire the file-keyring env into ~/.openclaw/.env so gog is
+# authenticated with no browser. Missing inputs are a hard error (set -e aborts).
+if [ -z "${GOG_KEYRING_PASSWORD:-}" ]; then
+  echo "Error: GOG_KEYRING_PASSWORD is required but not set (passed by setup-device.sh from the config file)." >&2
+  exit 1
+fi
+
+# setup-device.sh passes "$HOME/gog-home.tar.gz"; resolve it under the real home.
+GOG_TARBALL_PATH="${REAL_HOME}/gog-home.tar.gz"
+if [ ! -f "$GOG_TARBALL_PATH" ]; then
+  echo "Error: gog auth bundle not found at $GOG_TARBALL_PATH — expected setup-device.sh to scp it (create it with utils/bootstrap-gog.sh)." >&2
+  exit 1
+fi
+
+GOG_HOME_DIR="$REAL_HOME/.openclaw/gogcli"
+sudo -u "$REAL_USER" mkdir -p "$GOG_HOME_DIR"
+chmod 700 "$GOG_HOME_DIR"
+sudo -u "$REAL_USER" tar xzf "$GOG_TARBALL_PATH" -C "$GOG_HOME_DIR"
+chown -R "$REAL_USER:$REAL_USER" "$GOG_HOME_DIR"
+rm -f "$GOG_TARBALL_PATH"
+
+# Wire the keyring env so every gog invocation (incl. agent tool subprocesses
+# that inherit the gateway env) can decrypt the refresh token non-interactively.
+for kv in \
+  "GOG_HOME=${GOG_HOME_DIR}" \
+  "GOG_KEYRING_BACKEND=file" \
+  "GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD}" \
+  "GOG_ACCOUNT=${GOG_ACCOUNT:-}"; do
+  name="${kv%%=*}"; val="${kv#*=}"
+  sed -i "/^${name}=/d" "$OPENCLAW_ENV"
+  echo "${name}=${val}" >> "$OPENCLAW_ENV"
+done
+chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
+chmod 600 "$OPENCLAW_ENV"
+echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-unset})"
+
 # ====== SERVICES ======
 
 # install GitHub CLI
@@ -318,9 +357,26 @@ unzip -qo /tmp/awscliv2.zip -d /tmp
 /tmp/aws/install --update
 rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# install gogcli - note fails silently
-sudo -u "$REAL_USER" bash -c \
-  'brew install openclaw/tap/gogcli' || true
+# install gogcli (Google Workspace CLI) from the GitHub release.
+# Homebrew isn't available on this box, so we pull the prebuilt linux binary.
+# Pin via GOGCLI_VERSION (default tracks a known-good tag).
+GOGCLI_VERSION="${GOGCLI_VERSION:-v0.9.0}"
+GOGCLI_ARCH="$(dpkg --print-architecture)"   # amd64 or arm64
+GOGCLI_TARBALL="gogcli_${GOGCLI_VERSION#v}_linux_${GOGCLI_ARCH}.tar.gz"
+GOGCLI_URL="https://github.com/openclaw/gogcli/releases/download/${GOGCLI_VERSION}/${GOGCLI_TARBALL}"
+if curl -fsSL "$GOGCLI_URL" -o /tmp/gogcli.tar.gz; then
+  tar xzf /tmp/gogcli.tar.gz -C /tmp gog 2>/dev/null || tar xzf /tmp/gogcli.tar.gz -C /tmp
+  install -m 0755 /tmp/gog /usr/local/bin/gog 2>/dev/null \
+    || { find /tmp -maxdepth 2 -name gog -type f -exec install -m 0755 {} /usr/local/bin/gog \; ; }
+  rm -f /tmp/gogcli.tar.gz /tmp/gog
+  if command -v gog >/dev/null 2>&1; then
+    echo "✔ gogcli installed: $(gog --version 2>&1 | head -1)"
+  else
+    echo "⚠ gogcli install ran but 'gog' is not on PATH — check $GOGCLI_URL"
+  fi
+else
+  echo "⚠ Could not download gogcli from $GOGCLI_URL — gog will be unavailable (set GOGCLI_VERSION to a valid release tag)."
+fi
 
 
 # set up gateway

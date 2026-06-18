@@ -46,10 +46,24 @@ fi
 
 # ----- gogcli -----
 if command -v gog &>/dev/null; then
-  pass "gog CLI: installed"
-  # TODO: confirm gog logged in
+  # The keyring env (GOG_HOME / GOG_KEYRING_BACKEND / GOG_KEYRING_PASSWORD /
+  # GOG_ACCOUNT) is written to ~/.openclaw/.env by start.sh, not the shell —
+  # load it so the auth check can decrypt the file keyring non-interactively.
+  OPENCLAW_ENV="$HOME/.openclaw/.env"
+  GOG_ENV=()
+  if [ -f "$OPENCLAW_ENV" ]; then
+    while IFS= read -r kv; do GOG_ENV+=("$kv"); done < <(grep -E '^GOG_' "$OPENCLAW_ENV" 2>/dev/null)
+  fi
+  # 'auth list --check' exchanges the stored refresh token for an access token.
+  if env "${GOG_ENV[@]}" gog auth list --check --timeout 20s &>/dev/null; then
+    pass "gog CLI: authenticated"
+  elif [ "${#GOG_ENV[@]}" -eq 0 ]; then
+    warn "gog CLI: installed but no GOG_* env in ~/.openclaw/.env — not configured"
+  else
+    warn "gog CLI: installed but auth check failed (token expired/revoked or keyring password wrong)"
+  fi
 else
-  warn "gog CLI: not installed"
+  fail "gog CLI: not installed"
 fi
 
 # ----- openclaw -----

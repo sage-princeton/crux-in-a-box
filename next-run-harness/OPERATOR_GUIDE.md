@@ -24,9 +24,10 @@ cp placeholders.txt.example placeholders.txt   # then edit it
 Required keys (the script validates all of these up front, before any AWS work, and lists every missing one at once):
 
 - **Provisioning/runtime:** `TELEGRAM_BOT_NAME`, `TELEGRAM_OWNER_ID`, `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY`, `COST_TRACKER_URL`, `RUNPOD_API_KEY`, `REFINE_INK_API_KEY`
+- **gog (Google Workspace CLI):** `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, `GOG_HOME_TARBALL`
 - **Workspace placeholders:** `GITHUB_USER`, `CLOUD_SPEND_LIMIT`, `API_BUDGET`
 
-`RUNPOD_API_KEY` and `REFINE_INK_API_KEY` are written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read them. The config file holds secrets — keep it out of git (it is `.gitignore`d). `--instance-suffix <SUFFIX>` (the one flag) names the instance `crux-in-a-box-<SUFFIX>` for running instances in parallel.
+`RUNPOD_API_KEY` and `REFINE_INK_API_KEY` are written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read them. **gog** is auto-authenticated from a pre-built bundle: run `utils/bootstrap-gog.sh` once on your laptop (one browser consent) to turn your Google OAuth client JSON into `gog-home.tar.gz`, then set `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, and `GOG_HOME_TARBALL` — `setup-device.sh` ships the bundle to the box and `start.sh` unpacks it + wires the file-keyring env, so gog reads Gmail with no browser. The config file holds secrets (incl. a live Gmail refresh token in the tarball) — keep it out of git (it is `.gitignore`d). `--instance-suffix <SUFFIX>` (the one flag) names the instance `crux-in-a-box-<SUFFIX>` for running instances in parallel.
 
 Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `setup-device.sh --help` for the full key list and optional env-var overrides (region, instance type, disk size, etc.).
 

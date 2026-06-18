@@ -26,6 +26,15 @@ GITHUB_USER=your-github-username
 CLOUD_SPEND_LIMIT=$500
 API_BUDGET=$500
 
+# ── Required: gog (Google Workspace CLI) auto-config ──
+# All three are required. First create the bundle once on your laptop:
+#     GOG_KEYRING_PASSWORD=... utils/bootstrap-gog.sh client_secret.json you@gmail.com
+# Then point GOG_HOME_TARBALL at the resulting gog-home.tar.gz. These are
+# SECRETS (the tarball holds a live Gmail refresh token) — keep them out of git.
+GOG_ACCOUNT=you@gmail.com
+GOG_KEYRING_PASSWORD=the-same-passphrase-used-in-bootstrap-gog.sh
+GOG_HOME_TARBALL=./gog-home.tar.gz
+
 # ── Optional: workspace placeholders with defaults (uncomment to override) ──
 
 # PAGE_BUDGET=9
