@@ -1,92 +1,65 @@
 #!/usr/bin/env python3
-"""Total API spend from an OpenClaw telemetry JSONL file.
+"""Total API spend from the cost-tracking Lambda.
 
-Parses agent.end events, deduplicates by responseId, computes cost from
-raw token counts (the embedded cost object is broken — all zeros).
+Queries the cost-tracking service (backed by the Anthropic Admin API)
+to get the total spend for this instance's API key.
+
 This is the canonical spend number: update the state capsule from this,
-never from hand estimates — naive telemetry sums (no dedup) overcount
-severely.
+never from hand estimates.
 
-Pricing source: https://docs.anthropic.com/en/docs/about-claude/pricing
-Cache-write prices assume 5-minute TTL (1.25× base input).
-
-Usage:
-    python3 telemetry_costs.py [telemetry.jsonl]
+qUsage:
+    python3 telemetry_costs.py
 """
 
 import json
 import sys
+import urllib.request
+import urllib.error
 
-DEFAULT_PATH = "{{TELEMETRY_PATH}}"
-
-# Prices in dollars per token (= $/MTok ÷ 1 000 000).
-# fmt: off
-PRICING: dict[str, dict[str, float]] = {
-    "claude-opus-4-8": {
-        "input":      5.00 / 1_000_000,
-        "output":    25.00 / 1_000_000,
-        "cacheRead":  0.50 / 1_000_000,   # 0.1× input
-        "cacheWrite": 6.25 / 1_000_000,   # 1.25× input (5-min TTL)
-    },
-    "claude-opus-4-7": {
-        "input":      5.00 / 1_000_000,
-        "output":    25.00 / 1_000_000,
-        "cacheRead":  0.50 / 1_000_000,
-        "cacheWrite": 6.25 / 1_000_000,
-    },
-}
-# fmt: on
-
-# Aliases / dated IDs that map to the same pricing.
-PRICING["claude-opus-4-20250514"] = PRICING["claude-opus-4-7"]
-
-
-def _cost_for_usage(usage: dict, model: str) -> float:
-    """Compute dollar cost from a usage dict and model id."""
-    prices = PRICING.get(model)
-    if prices is None:
-        # Try prefix match (e.g. "claude-opus-4-8-20260301" → "claude-opus-4-8")
-        for key in PRICING:
-            if model.startswith(key):
-                prices = PRICING[key]
-                break
-    if prices is None:
-        # Unknown model — fall back to 0 so we don't crash; stderr note.
-        print(f"WARNING: no pricing for model {model!r}, skipping", file=sys.stderr)
-        return 0.0
-
-    return (
-        usage.get("input", 0)      * prices["input"]
-        + usage.get("output", 0)     * prices["output"]
-        + usage.get("cacheRead", 0)  * prices["cacheRead"]
-        + usage.get("cacheWrite", 0) * prices["cacheWrite"]
-    )
+COST_TRACKER_URL = "{{COST_TRACKER_URL}}"
+API_KEY_SUFFIX = "{{API_KEY_SUFFIX}}"
 
 
 def main() -> None:
-    path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_PATH
+    if not COST_TRACKER_URL or COST_TRACKER_URL.startswith("{{"):
+        print("Error: COST_TRACKER_URL placeholder not resolved.", file=sys.stderr)
+        print(
+            "  Expected the cost-tracking Lambda URL to be injected at provisioning time.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    seen: set[str] = set()
-    total = 0.0
+    if not API_KEY_SUFFIX or API_KEY_SUFFIX.startswith("{{"):
+        print("Error: API_KEY_SUFFIX placeholder not resolved.", file=sys.stderr)
+        print(
+            "  Expected the last 6 chars of the API key to be injected at provisioning time.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
 
-    with open(path) as f:
-        for line in f:
-            record = json.loads(line)
-            if record.get("type") != "agent.end":
-                continue
-            for msg in record.get("messages", []):
-                if msg.get("role") != "assistant":
-                    continue
-                usage = msg.get("usage")
-                if not usage:
-                    continue
-                rid = msg.get("responseId", "")
-                if rid:
-                    if rid in seen:
-                        continue
-                    seen.add(rid)
-                model = msg.get("model", "")
-                total += _cost_for_usage(usage, model)
+    payload = json.dumps({"api_key_suffix": API_KEY_SUFFIX}).encode()
+    req = urllib.request.Request(
+        COST_TRACKER_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode(errors="replace")
+        print(f"Error: cost tracker returned HTTP {exc.code}: {body}", file=sys.stderr)
+        sys.exit(1)
+    except urllib.error.URLError as exc:
+        print(f"Error: could not reach cost tracker: {exc.reason}", file=sys.stderr)
+        sys.exit(1)
+
+    total = data.get("total_spend")
+    if total is None:
+        print(f"Error: unexpected response: {data}", file=sys.stderr)
+        sys.exit(1)
 
     print(f"${total:.2f}")
 
