@@ -24,10 +24,13 @@ fi
 
 # ----- GitHub CLI -----
 if command -v gh &>/dev/null; then
-  if gh auth status &>/dev/null; then
+  # start.sh persists gh creds to ~/.config/gh AND writes GH_TOKEN to
+  # ~/.openclaw/.env; pick up the latter as a fallback for tool-env parity.
+  GH_TOK=$(grep -E '^GH_TOKEN=' "$HOME/.openclaw/.env" 2>/dev/null | head -1 | cut -d= -f2-)
+  if gh auth status &>/dev/null || GH_TOKEN="$GH_TOK" gh auth status &>/dev/null; then
     pass "gh CLI: authenticated"
   else
-    warn "gh CLI: installed but NOT authenticated"
+    warn "gh CLI: installed but NOT authenticated (check GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN)"
   fi
 else
   fail "gh CLI: not installed"

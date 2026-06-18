@@ -19,6 +19,11 @@ ANTHROPIC_API_KEY=sk-ant-...             # secret — keep this file out of git
 COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
 RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env
 REFINE_INK_API_KEY=...                   # secret — written to ~/.openclaw/.env
+# GitHub classic PAT — secret. Authenticates the gh CLI + git-over-HTTPS on the
+# box (gh auth login --with-token) and is written to ~/.openclaw/.env as
+# GITHUB_TOKEN/GH_TOKEN. Create at https://github.com/settings/tokens (classic);
+# needs at least 'repo' scope (add 'workflow' if the agent edits CI).
+GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN=ghp_...
 
 # ── Required: workspace placeholders (no defaults — substituted into files) ──
 

@@ -387,11 +387,36 @@ sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ======
 
-# # Log in to GitHub
-# gh auth login
+# ====== GitHub auth (gh CLI + git over HTTPS) ======
+# Authenticate gh non-interactively with the classic PAT passed by
+# setup-device.sh. Run as the real user (gh stores creds under ~/.config/gh),
+# wire up git's credential helper, and also export the token in ~/.openclaw/.env
+# (GITHUB_TOKEN/GH_TOKEN are what gh, git, and most tooling read) so the agent's
+# tool subprocesses can push/pull and call the GitHub API.
+if [ -n "${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN:-}" ]; then
+  if command -v gh >/dev/null 2>&1; then
+    if printf '%s' "$GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN" \
+         | sudo -u "$REAL_USER" gh auth login --hostname github.com --git-protocol https --with-token; then
+      sudo -u "$REAL_USER" gh auth setup-git || true
+      echo "✔ gh CLI authenticated and git credential helper configured"
+    else
+      echo "⚠ gh auth login failed — check the GitHub classic PAT (scope/expiry)."
+    fi
+  else
+    echo "⚠ gh CLI not installed — cannot authenticate GitHub."
+  fi
 
-# # Check GitHub status
-# gh auth status
+  # Export for the gateway/agent tool environment (gh + git read these).
+  for name in GITHUB_TOKEN GH_TOKEN; do
+    sed -i "/^${name}=/d" "$OPENCLAW_ENV"
+    echo "${name}=${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN}" >> "$OPENCLAW_ENV"
+  done
+  chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
+  chmod 600 "$OPENCLAW_ENV"
+  echo "✔ GITHUB_TOKEN/GH_TOKEN written to ~/.openclaw/.env"
+else
+  echo "⚠ GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN not provided — gh/git will be unauthenticated."
+fi
 
 # Set up gog
 # see: https://gogcli.sh/quickstart.html

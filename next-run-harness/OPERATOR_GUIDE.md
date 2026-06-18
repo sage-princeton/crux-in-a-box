@@ -23,7 +23,7 @@ cp placeholders.txt.example placeholders.txt   # then edit it
 
 Required keys (the script validates all of these up front, before any AWS work, and lists every missing one at once):
 
-- **Provisioning/runtime:** `TELEGRAM_BOT_NAME`, `TELEGRAM_OWNER_ID`, `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY`, `COST_TRACKER_URL`, `RUNPOD_API_KEY`, `REFINE_INK_API_KEY`
+- **Provisioning/runtime:** `TELEGRAM_BOT_NAME`, `TELEGRAM_OWNER_ID`, `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY`, `COST_TRACKER_URL`, `RUNPOD_API_KEY`, `REFINE_INK_API_KEY`, `GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN`
 - **gog (Google Workspace CLI):** `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, `GOG_HOME_TARBALL`
 - **Workspace placeholders:** `GITHUB_USER`, `CLOUD_SPEND_LIMIT`, `API_BUDGET`
 
@@ -57,7 +57,7 @@ Placeholders with defaults (the `|value` part) can be left as-is if the default 
 
 All verified working before launch, by you — not the agent:
 
-- **GitHub:** `gh auth login` + confirm `gh auth status`. Create an empty project remote if needed.
+- **GitHub:** auto-authenticated from `GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN` (`gh auth login --with-token` + `gh auth setup-git`); confirm with `gh auth status`. Create an empty project remote if needed.
 - **Telegram pairing:** DM your bot on Telegram, then from the instance: `openclaw pairing list telegram` → `openclaw pairing approve telegram <CODE>`.
 - **Email CLI (`gog`):** authenticated to the dedicated review Gmail (see https://gogcli.sh/quickstart.html). Confirm `gog gmail list "in:inbox"` works.
 - **External reviewer platforms — dry-run now, not at the gate.** Submit a throwaway PDF to (1) **CMU** `https://prometheus-eval.github.io/cmu-paper-reviewer/` and (2) **Stanford** `https://paperreview.ai/` with delivery to the review Gmail, and confirm the review email arrives and is readable via `gog`. (3) **refine.ink:** confirm `REFINE_INK_API_KEY` works against its API. The final milestone is gated on external review (`gate_artifact.sh` requires an artifact in `reviews/external/`), so a reviewer or inbox that's broken when first needed mid-run becomes a Tier-3 block.
