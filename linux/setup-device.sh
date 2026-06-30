@@ -526,23 +526,47 @@ fi
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
+
+# Build the remote command safely. Values like PLACEHOLDERS can contain
+# apostrophes, parentheses, spaces and newlines (e.g. RESEARCH_CONTEXT prose),
+# which would break naive single-quoting (a literal ' closes the quote and the
+# rest of the value is parsed as shell syntax). printf %q emits each value in a
+# form that is guaranteed-safe to re-parse in the remote shell, regardless of
+# its contents.
+build_remote_env() {
+  local name val out=""
+  for name in "$@"; do
+    val="${!name}"
+    out+="${name}=$(printf '%q' "$val") "
+  done
+  printf '%s' "$out"
+}
+
+REMOTE_ENV=$(build_remote_env \
+  TELEGRAM_BOT_TOKEN \
+  TELEGRAM_OWNER_ID \
+  ANTHROPIC_MODEL \
+  ANTHROPIC_API_KEY \
+  REASONING_EFFORT \
+  COST_TRACKER_URL \
+  API_KEY_SUFFIX \
+  RUNPOD_API_KEY \
+  REFINE_INK_API_KEY \
+  GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN \
+  GOG_ACCOUNT \
+  GOG_KEYRING_PASSWORD \
+  GOG_HOME_TARBALL_REMOTE \
+  PLACEHOLDERS)
+
+# GOG_HOME_TARBALL_REMOTE maps to the GOG_HOME_TARBALL env var the remote
+# expects; rename the assignment without touching the (already escaped) value.
+REMOTE_ENV="${REMOTE_ENV/GOG_HOME_TARBALL_REMOTE=/GOG_HOME_TARBALL=}"
+
+REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/start.sh \
+   && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/start.sh"
+
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
-  "chmod +x ~/crux-in-a-box-linux/src/start.sh \
-   && sudo TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}' \
-          TELEGRAM_OWNER_ID='${TELEGRAM_OWNER_ID}' \
-          ANTHROPIC_MODEL='${ANTHROPIC_MODEL}' \
-          ANTHROPIC_API_KEY='${ANTHROPIC_API_KEY}' \
-          REASONING_EFFORT='${REASONING_EFFORT}' \
-          COST_TRACKER_URL='${COST_TRACKER_URL}' \
-          API_KEY_SUFFIX='${API_KEY_SUFFIX}' \
-          RUNPOD_API_KEY='${RUNPOD_API_KEY}' \
-          REFINE_INK_API_KEY='${REFINE_INK_API_KEY}' \
-          GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN='${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN}' \
-          GOG_ACCOUNT='${GOG_ACCOUNT}' \
-          GOG_KEYRING_PASSWORD='${GOG_KEYRING_PASSWORD}' \
-          GOG_HOME_TARBALL='${GOG_HOME_TARBALL_REMOTE}' \
-          PLACEHOLDERS='${PLACEHOLDERS}' \
-          bash ~/crux-in-a-box-linux/src/start.sh"
+  "$REMOTE_CMD"
 ok "Remote bootstrap complete"
 
 # ====== 9. CONNECTION INFO ======
