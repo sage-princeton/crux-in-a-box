@@ -253,9 +253,19 @@ if [ ! -f "$OPENCLAW_CONFIG" ]; then
   chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
 fi
 
+# ⚠️ EXTENDED THINKING — enables extended thinking (verify the key against your
+# pinned OpenClaw version). Sets a global default thinking level from
+# REASONING_EFFORT (default "high"). The key below is the one OpenClaw exposes for
+# a global default thinking level (.agents.defaults.thinkingDefault, values
+# off|minimal|low|medium|high|xhigh|adaptive|max). VERIFY this key name against
+# YOUR pinned OpenClaw version: an unknown key is simply ignored, so thinking just
+# stays OFF until corrected — it will NOT break the run. (Same fail-soft convention
+# as the gate-enforcer caveat.)
+THINKING_LEVEL="${REASONING_EFFORT:-max}"
 TMP_CONFIG=$(mktemp)
-jq --arg model "$ANTHROPIC_MODEL" '
+jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" '
   .agents.defaults.model.primary = $model |
+  .agents.defaults.thinkingDefault = $reasoning |
   .tools.profile = "full" |
   .agents.defaults.heartbeat.every = "30m" |
   .agents.defaults.heartbeat.skipWhenBusy = true |
@@ -265,6 +275,7 @@ jq --arg model "$ANTHROPIC_MODEL" '
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
 echo "✔ Model configured: $ANTHROPIC_MODEL"
+echo "✔ Extended thinking configured: thinkingDefault=$THINKING_LEVEL (verify key vs pinned OpenClaw; unknown key => thinking stays off, run unaffected)"
 echo "✔ Tools profile set to full"
 echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
 echo "✔ Subagents maxConcurrent: 5"

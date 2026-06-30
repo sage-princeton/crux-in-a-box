@@ -14,7 +14,9 @@
 
 TELEGRAM_BOT_NAME=your-bot-name          # must exist as a key in telegram_bots.json
 TELEGRAM_OWNER_ID=123456789              # your Telegram user ID
-ANTHROPIC_MODEL=anthropic/claude-opus-4-7
+ANTHROPIC_MODEL=anthropic/claude-opus-4-8
+REASONING_EFFORT=max                     # enables extended thinking.
+                                         # accepted: off|minimal|low|medium|high|xhigh|adaptive|max
 ANTHROPIC_API_KEY=sk-ant-...             # secret — keep this file out of git
 COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
 RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env
@@ -31,7 +33,14 @@ GITHUB_USER=your-github-username
 CLOUD_SPEND_LIMIT=$500
 API_BUDGET=$2000
 DEADLINE=10 days from launch
-EXPORE_FLOOR_FRACTION=0.33
+
+# The task itself — the run-specific brief. These are substituted into BRIEF.md
+# (which is a generic template; the actual research goal lives here, in config).
+# Each is a single line (the config format is one KEY=VALUE per line). Avoid '#'
+# (treated as a comment) and '&' in the values.
+RESEARCH_QUESTION=<the one-sentence research question the agent must answer>
+RESEARCH_CONTEXT=<the background the agent needs, plus exactly what to produce — e.g. "Prior methods do A but not B, and existing approaches are brittle. The agent should produce (a) a method for B, (b) evidence about whether the result is robust/composable, and (c) at least one downstream test it did not directly optimize for.">
+
 
 # ── Required: gog (Google Workspace CLI) auto-config ──
 # All three are required. First create the bundle once on your laptop:

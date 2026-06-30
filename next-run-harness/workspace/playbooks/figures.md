@@ -1,6 +1,6 @@
 # Playbook: Figures, Diagrams, and Formatting
 
-Scope: visual artifacts only — plots, diagrams, tables, page formatting. Prose and narrative are `playbooks/writing.md`. The conventions here are distilled from a hand-tuned, submission-proven figure pipeline; treat the specific values as defaults that work, not suggestions to rediscover.
+Scope: visual artifacts only — plots, diagrams, tables, page formatting. Prose and narrative are `playbooks/writing.md`. Treat the specific values here as defaults that work, not suggestions to rediscover.
 
 ## The iteration loop (figures fail from missing feedback, not missing skill)
 
