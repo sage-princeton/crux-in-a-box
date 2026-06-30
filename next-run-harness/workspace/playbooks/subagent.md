@@ -28,9 +28,9 @@ GIT: <commit yourself with message prefix "<task>:" | leave tree for parent>
 
 ## Harvest checklist (before acting on any subagent report)
 
-1. **Spot-verify one artifact**: open at least one file/command from the Evidence Block and confirm it says what the report says. Subagent reports sometimes contain polished result tables that exist nowhere in the output files — this check is not optional.
+1. **Spot-verify a surprising or claim-bearing result, not every report**: when a report carries a result that is surprising, load-bearing, or about to become a claim, open at least one file/command from its Evidence Block and confirm it says what the report says. Subagent reports sometimes contain polished result tables that exist nowhere in the output files — that is what this check exists to catch. Routine, unsurprising reports don't each need a re-derivation (`AGENTS.md` evidence rules: artifact-or-it-didn't-happen for load-bearing numbers, not blanket re-verification of everything).
 2. **Check the verdict against the pre-registered bins** in the script docstring/brief — the bin the *output* fires, not the bin the report narrates.
-3. **Never copy a number from a subagent report into prose.** Numbers go artifact → (re-derivation script if load-bearing) → prose, with a `REGISTRY.md` row.
+3. **Never copy a number from a subagent report into prose.** Numbers go artifact → (re-derivation script if load-bearing) → prose; a number that changes the headline also gets a `REGISTRY.md` § Claim & decision trail row.
 4. Execute the pre-registered branch protocol from `LOG.md`; log Observed/Decided/Reason, including predicted vs actual wall-clock (AGENTS.md § Resources — this is how your duration estimates get calibrated).
 5. Commit the seam.
 
