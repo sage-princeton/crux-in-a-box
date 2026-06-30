@@ -261,7 +261,7 @@ fi
 # YOUR pinned OpenClaw version: an unknown key is simply ignored, so thinking just
 # stays OFF until corrected — it will NOT break the run. (Same fail-soft convention
 # as the gate-enforcer caveat.)
-THINKING_LEVEL="${REASONING_EFFORT:-high}"
+THINKING_LEVEL="${REASONING_EFFORT:-max}"
 TMP_CONFIG=$(mktemp)
 jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" '
   .agents.defaults.model.primary = $model |
