@@ -8,7 +8,7 @@ _One paragraph: what the brief asks for, restated in your own words. (Write duri
 
 ## Research plan (the spine)
 
-_The intellectual center of the run — write it during hour 0–2, before the milestone table, and revisit it at every milestone. This is the north star for **quality**, not just defensibility. Five parts:_
+_The intellectual center of the run — a **living, two-pass** artifact, not an hour-0 commitment. **Seed it hour 0–2** with only what is honest before reading the literature: the question restated, and provisional hypotheses/directions to *aim* the lit review (the budget capacity is costed in § Budget-deployment menu). The lit-dependent parts below — the calibrated *strong-vs-weak* target, the single most decisive experiment, the real cruxes, and the committed direction — are the **output of the Exploration Dossier** (`playbooks/exploration.md`) and get filled in / revised there, gated by the exploration-sufficiency critic; writing them as hour-0 guesses is the premature-commitment trap exploration exists to avoid. Revisit the spine at every milestone. This is the north star for **quality**, not just defensibility. Five parts:_
 
 - **The question.** _The brief's research question in your own words, sharpened to what you can actually decide with this budget._
 - **Hypotheses (1–3) and how they relate.** _The mechanism premises you'll test, and whether they're rivals (only one can be the headline), complements (they compose), or a base/stretch pair. Each gets a pre-registered falsifier in `REGISTRY.md` § Falsifiers before its first experiment._
@@ -16,7 +16,7 @@ _The intellectual center of the run — write it during hour 0–2, before the m
 - **The single most decisive experiment.** _The one run that would move the question most — the one that actually settles it, not the cheapest one that technically clears the floor (`playbooks/review.md` §2d). Name it, and what each outcome would mean._
 - **The known cruxes.** _The 2–4 open questions any reviewer will press on (the OPEN CRUXES that recurring literature work is aimed at, `playbooks/exploration.md` §2). These drive the back-edges below: a Review or Draft finding that lands on a crux sends you back to Experiment, which is normal research._
 
-**Headline claim (base):** _the claim the deliverable will make, locked at plan time and tracked in `REGISTRY.md` § Claim & decision trail._
+**Headline claim (base):** _the claim the deliverable will make, locked once the direction is chosen in the Exploration Dossier (not at hour 0), and tracked in `REGISTRY.md` § Claim & decision trail._
 **Headline claim (stretch):** _the stronger form (the ambition-target claim above), with its falsifier registered. Settling for the base without having run the stretch falsifier requires a logged reason (usually cost). Don't abandon a claim that hasn't been falsified; don't keep one that has._
 
 ## Budget-deployment menu (what the budget buys)
