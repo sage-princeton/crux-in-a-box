@@ -169,10 +169,10 @@ TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]}"
 TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]}"
 ANTHROPIC_MODEL="${CFG[ANTHROPIC_MODEL]}"
 ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
-# Extended-thinking level — enables extended thinking. Default "max"; start.sh
+# Extended-thinking level — enables extended thinking. Default "xhigh"; start.sh
 # writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
 # config file.
-REASONING_EFFORT="${CFG[REASONING_EFFORT]:-max}"
+REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"

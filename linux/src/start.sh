@@ -255,17 +255,38 @@ fi
 
 # ⚠️ EXTENDED THINKING — enables extended thinking (verify the key against your
 # pinned OpenClaw version). Sets a global default thinking level from
-# REASONING_EFFORT (default "high"). The key below is the one OpenClaw exposes for
+# REASONING_EFFORT (default "xhigh"). The key below is the one OpenClaw exposes for
 # a global default thinking level (.agents.defaults.thinkingDefault, values
 # off|minimal|low|medium|high|xhigh|adaptive|max). VERIFY this key name against
 # YOUR pinned OpenClaw version: an unknown key is simply ignored, so thinking just
 # stays OFF until corrected — it will NOT break the run. (Same fail-soft convention
 # as the gate-enforcer caveat.)
-THINKING_LEVEL="${REASONING_EFFORT:-max}"
+THINKING_LEVEL="${REASONING_EFFORT:-xhigh}"
+
+# Prompt cache retention. "long" maps to Anthropic's 1h cache TTL (vs the 5-min
+# default). The heartbeat cadence is 30m, so turns are routinely spaced past the
+# 5-min TTL — without this, the large re-read workspace prompt is a full cache
+# MISS every turn; "long" keeps it warm across the gaps → cache-read pricing.
+CACHE_RETENTION="${CACHE_RETENTION:-long}"
+
+# Per-request LLM idle watchdog. OpenClaw's default is 120s
+# (DEFAULT_LLM_IDLE_TIMEOUT_MS) — too short for heavy reasoning (xhigh/max), whose
+# pre-stream thinking pause can exceed 2 min and trip a "model idle timeout".
+# models.providers.<id>.timeoutSeconds is the knob that RAISES the watchdog
+# (agents.defaults.timeoutSeconds only bounds it DOWN; its 48-min default is fine).
+# 600s covers xhigh; raise toward ~900+ if you switch the default to max. Provider
+# id = the part before the "/".
+PROVIDER_ID="${ANTHROPIC_MODEL%%/*}"
+PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
+
 TMP_CONFIG=$(mktemp)
-jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" '
+jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" \
+   --arg cache "$CACHE_RETENTION" --arg provider "$PROVIDER_ID" \
+   --argjson ptimeout "$PROVIDER_REQUEST_TIMEOUT_SECONDS" '
   .agents.defaults.model.primary = $model |
   .agents.defaults.thinkingDefault = $reasoning |
+  .agents.defaults.params.cacheRetention = $cache |
+  .models.providers[$provider].timeoutSeconds = $ptimeout |
   .tools.profile = "full" |
   .agents.defaults.heartbeat.every = "30m" |
   .agents.defaults.heartbeat.skipWhenBusy = true |
@@ -276,6 +297,8 @@ jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" '
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
 echo "✔ Model configured: $ANTHROPIC_MODEL"
 echo "✔ Extended thinking configured: thinkingDefault=$THINKING_LEVEL (verify key vs pinned OpenClaw; unknown key => thinking stays off, run unaffected)"
+echo "✔ Prompt cache retention: $CACHE_RETENTION (1h TTL — survives the 30m heartbeat gaps)"
+echo "✔ Provider request timeout: ${PROVIDER_REQUEST_TIMEOUT_SECONDS}s for '$PROVIDER_ID' (raises the 120s idle watchdog for heavy reasoning)"
 echo "✔ Tools profile set to full"
 echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
 echo "✔ Subagents maxConcurrent: 5"
