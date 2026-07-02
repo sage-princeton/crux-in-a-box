@@ -1,6 +1,6 @@
 # Playbook: Exploration
 
-Why this exists: the dominant front-of-run failure is racing to a deliverable — a one-pass literature skim and an hours-long candidate portfolio, then committing to the first idea that survives a single shallow scout. Exploration is the phase the rest of the scaffold is built to *race past*. On a multi-week horizon the agent should spend a substantial front fraction here, across **both literature and experimentation**, before any prose — but exploration is a *cycle*, not an hour-0 gate: `Set up → Explore ⇄ Experiment ⇄ Draft ⇄ Review` (`PLAN.md` § Research plan). Literature and scouting recur against open cruxes for as long as cruxes stay open. This playbook is the authority `PLAN.md` and `AGENTS.md` point at for what "explore deeply" means, and the home of the isolated exploration-sufficiency critic that authorizes drafting.
+Why this exists: the dominant front-of-run failure is racing to a deliverable — a one-pass literature skim and an hours-long candidate portfolio, then committing to the first idea that survives a single shallow scout. Exploration is the phase the rest of the scaffold is built to *race past*. The agent should spend a substantial front fraction of the run here — as a calibration, roughly 30–40% of the horizon *whatever its length* (on a 5-day run that is the first 1.5–2 days; a short deadline compresses drafting and review, never exploration) — across **both literature and experimentation**, before any prose — but exploration is a *cycle*, not an hour-0 gate: `Set up → Explore ⇄ Experiment ⇄ Draft ⇄ Review` (`PLAN.md` § Research plan). Literature and scouting recur against open cruxes for as long as cruxes stay open. This playbook is the authority `PLAN.md` and `AGENTS.md` point at for what "explore deeply" means, and the home of the isolated exploration-sufficiency critic that authorizes drafting.
 
 **Forward action during exploration is exploration, not artifact progress.** A satisfying End-of-Turn LAUNCH/DELEGATE here is a launched scout, a dispatched lit-read subagent, or a newly registered candidate — *not* skeleton or prose work. "No churning small work just to look busy" in this phase means more evidence, not faster drafting; a turn spent deepening exploration is a satisfying turn, not idle (`AGENTS.md` § The End-of-Turn Contract).
 
@@ -19,7 +19,7 @@ The promoted direction becomes the locked headline (`PLAN.md` § Research plan).
 
 Literature is two distinct moves, and the second is the one most easily skipped.
 
-**Survey (fan-out breadth).** Run the survey as fan-out, not a solo skim: one isolated subagent per sub-area (`playbooks/subagent.md`), each returning an Evidence Block; the parent spot-checks at least one claimed source per report (`AGENTS.md`: artifact-or-it-didn't-happen). The `### COVERAGE` note records what was actually searched, so the §4 critic can find unsearched regions. The survey's job is to map the landscape and **name the 3–5 anchor papers closest to the contribution**.
+**Survey (fan-out breadth).** Run the survey as fan-out, not a solo skim: one isolated subagent per sub-area (`playbooks/subagent.md`), each returning an Evidence Block; the parent spot-checks at least one claimed source per report (`AGENTS.md`: artifact-or-it-didn't-happen). Keyword sweeps and the forward/backward citation walks go through the APIs in `TOOLS.md` § Literature search — one call per walk — not manual web search; point each subagent's brief at the walks it owns. The `### COVERAGE` note records what was actually searched, so the §4 critic can find unsearched regions. The survey's job is to map the landscape and **name the 3–5 anchor papers closest to the contribution**.
 
 **Deep-read (depth on the anchors).** For each anchor paper named by the survey, read it **in full — methods and results, not the abstract** — and write a structured note at `exploration/lit/<paper>.md` with three parts:
 - **What they did** — the actual method, setup, and scale (model size, sample/seed count, datasets), in enough detail to compare against this work's design.
@@ -50,13 +50,17 @@ Breadth that scales with the horizon is enforced not by a counter (counters manu
 You are an external research-program critic, posture HOSTILE-FAIR. Inputs: the
 brief and an exploration dossier; you may also read the candidate portfolio table,
 the deep-read notes under exploration/lit/, and the registered falsifier rows, and
-you must verify each scout claim against its on-disk artifact. Do NOT propose to
-start writing. You are NOT the author.
+you must verify each scout claim against its on-disk artifact. You may also search
+the literature yourself (web search/fetch and the APIs in TOOLS.md § Literature
+search) to test the dossier's coverage — hunting for missing sub-areas, seminal
+work, or prior work closer to the contribution than what the dossier cites is
+exactly your job; do not limit yourself to what the dossier already names. Do NOT
+propose to start writing. You are NOT the author.
 
 Paper brief: <PATH-TO-BRIEF>
 Dossier:     <PATH-TO-DOSSIER>
 
-Answer, grounded only in the artifacts:
+Answer, grounded in the artifacts and your own literature checks:
   (a) Given the literature the dossier surveys, is the chosen direction the
       STRONGEST available — or is there a stronger / closer-to-frontier direction
       the exploration did not scout?

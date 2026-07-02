@@ -1,5 +1,6 @@
 telegram_bots.json
-linux/placeholders.txt
+linux/placeholders*.txt
+!linux/placeholders.txt.example
 
 **.pyc
 INVENTORY.md
@@ -8,3 +9,8 @@ INVENTORY.md
 **gog-home.tar.gz
 
 clean-room
+
+# local diagnostics / caches — never commit
+telemetry*.jsonl
+.mypy_cache/
+.claude/settings.local.json

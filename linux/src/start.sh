@@ -522,6 +522,21 @@ else
   echo "⚠ Harness workspace not found at $HARNESS_SRC — skipping workspace setup"
 fi
 
+# ====== THINKING-SIGNATURE WATCHDOG ======
+# Auto-recovers the main session when it wedges on cascading
+# "Invalid `signature` in `thinking` block" provider errors — a known OpenClaw
+# bug (openclaw/openclaw#44370, #45010) with no upstream fix as of 2026.6.11.
+# Detection is strict (errorMessage records only, newest stopReason must be an
+# error) with a 30-min cooldown and a daily reset cap.
+WATCHDOG_DIR="$REAL_HOME/.openclaw/watchdog"
+sudo -u "$REAL_USER" mkdir -p "$WATCHDOG_DIR"
+cp "$SCRIPT_DIR/crux-thinking-watchdog.sh" "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
+chown "$REAL_USER:$REAL_USER" "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
+chmod +x "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
+sudo -u "$REAL_USER" bash -c \
+  '(crontab -l 2>/dev/null | grep -v crux-thinking-watchdog; echo "*/5 * * * * $HOME/.openclaw/watchdog/crux-thinking-watchdog.sh") | crontab -'
+echo "✔ Thinking-signature watchdog installed (cron */5 min)"
+
 echo ""
 echo "✔ Linux CRUX-in-a-box bootstrap complete."
 

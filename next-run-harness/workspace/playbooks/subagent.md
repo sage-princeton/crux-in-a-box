@@ -21,7 +21,7 @@ GIT: <commit yourself with message prefix "<task>:" | leave tree for parent>
 
 ## Spawning rules (parent side)
 
-- One unit of work per subagent; chain or parallelize rather than writing omnibus briefs. ≤3 in flight (`AGENTS.md`).
+- One unit of work per subagent; chain or parallelize rather than writing omnibus briefs. ≤5 in flight (`AGENTS.md`).
 - Inline-edit rule: <10-line diffs are done inline, not spawned.
 - Reviewer subagents are **isolated**, never forked — context bleed is how review contamination starts (`playbooks/review.md`).
 - Track each spawn in the state capsule (name, budget, ETA). At +50% budget overrun: inspect, then preempt and re-scope, or extend with a logged reason.

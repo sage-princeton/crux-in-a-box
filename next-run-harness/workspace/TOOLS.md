@@ -23,6 +23,23 @@ Single source of environment facts. `MEMORY.md` must NOT duplicate anything here
   3. **refine.ink** — programmatic REST API; key in env `REFINE_INK_API_KEY`. Submit the PDF and fetch the review via the API — **read refine.ink's API docs hour-0 for the exact endpoints/shape and verify the key works before relying on it.** If it is metered/paid, run it LAST (the §2b ordering: paid single-shot reviews go after internal rounds are clean).
   Hour-0 dry run (do this before launch, per `OPERATOR_GUIDE.md` Step 3): confirm each portal accepts a submission, the email arrives at the review Gmail and is readable via `gog`, and the refine.ink key works. A reviewer that's broken when first needed mid-run is a Tier-3 block (`USER.md`).
 
+## Literature search (use these, not manual web search)
+
+Keyword sweeps and citation walks are single API calls — the `### COVERAGE` walks required by `playbooks/exploration.md` §2 are cheap here and lossy via general web search. Both APIs are free/keyless; on HTTP 429 back off a few seconds and retry.
+
+```bash
+# Semantic Scholar Graph API — keyword search
+curl -s "https://api.semanticscholar.org/graph/v1/paper/search?query=QUERY+TERMS&fields=title,year,abstract,citationCount,externalIds&limit=20"
+# Forward citation walk (who cites this paper) — accepts arXiv:<id>, DOI:<doi>, or S2 paper id
+curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:<ID>/citations?fields=title,year,citationCount,externalIds&limit=100"
+# Backward walk (its references)
+curl -s "https://api.semanticscholar.org/graph/v1/paper/arXiv:<ID>/references?fields=title,year,citationCount,externalIds&limit=100"
+# arXiv API — metadata/abstract search
+curl -s "http://export.arxiv.org/api/query?search_query=all:%22EXACT+PHRASE%22&max_results=20"
+```
+
+Full text: PDF at `https://arxiv.org/pdf/<id>`, LaTeX source at `https://arxiv.org/e-print/<id>` (the deep-read and exemplar steps in `playbooks/exploration.md` §2). OpenReview (`https://api2.openreview.net/notes/search?term=...`) has published reviews for venue papers — useful for seeing what reviewers pressed on in the closest prior work. Subagents doing lit work get this section via this file; point their briefs at the specific walk to run.
+
 ## Spend measurement
 
 - **API:** `python3 scripts/telemetry_costs.py` — queries the cost-tracking service (Anthropic Admin API via Lambda). Canonical source of API spend. Never hand-estimate.
