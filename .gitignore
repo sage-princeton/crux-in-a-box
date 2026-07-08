@@ -11,6 +11,10 @@ INVENTORY.md
 clean-room
 
 # local diagnostics / caches — never commit
-telemetry*.jsonl
+*.jsonl
+*.zip
+# raw run telemetry holds live credentials — only the _CLEAN versions may be committed
+personas_telemetry.jsonl
+tabpfn_telemetry.jsonl
 .mypy_cache/
 .claude/settings.local.json

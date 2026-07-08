@@ -29,10 +29,14 @@ DAILY_CAP=4
 DRY_RUN="${DRY_RUN:-0}"
 SESSION_FILE_OVERRIDE="${SESSION_FILE_OVERRIDE:-}"
 
-# Strict detection pattern: the API error text inside an errorMessage field on
-# the same stored record. The backticks + errorMessage co-occurrence keep agent
-# prose that merely *mentions* the bug from matching.
-ERR_PAT='errorMessage.*Invalid `signature` in `thinking` block'
+# Detection pattern: an invalid_request_error about thinking blocks inside an
+# errorMessage field on the same stored record. The bug class has multiple API
+# message variants — "Invalid `signature` in `thinking` block" AND "`thinking`
+# or `redacted_thinking` blocks in the latest assistant message cannot be
+# modified" have both been observed — so match the class, not one string. The
+# errorMessage + invalid_request_error co-occurrence keeps agent prose that
+# merely *mentions* the bug from matching.
+ERR_PAT='errorMessage.*invalid_request_error.*(`thinking`|`signature`|redacted_thinking)'
 
 mkdir -p "$WD"
 log() { echo "$(date -u +%FT%TZ) $*" >> "$LOG"; }

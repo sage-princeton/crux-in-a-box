@@ -31,6 +31,8 @@ The pre-flight sanity note and burn-rate heuristic in `AGENTS.md` § Resources a
   - `REQUIRE_EXTERNAL_REVIEWS=1` — an external review artifact exists in `reviews/external/`.
   - `REQUIRE_EVIDENCE_ADEQUATE=1` — the ship-time power critic's `reviews/power_critic_ship.md` exists, its verdict reads `ADEQUATE`, and it reports `seeds≥seed_floor` / `cells≥cell_floor` (`locks/evidence_floors.json`). This makes the "powered enough" clause mechanical rather than self-judged, with no agent-typed token in the loop.
   - `REQUIRE_SHIP_AUTHORIZATION=1` — the light under-spend backstop (don't finish far under budget while time and money remain): reads `reviews/final_review.md`, `locks/budget.json`, and an honest ship/under-spend memo in `LOG.md`.
+  - `REQUIRE_PRESENTATION=1` — the presentation gates (abstract within its word cap, no ALL-CAPS prose, at least one main-body figure), active at the Presentation Overhaul milestone and re-checked at ship. The full acceptance test — these gates plus two fresh PDF-only cold-readers — is in `playbooks/writing.md` § The Presentation Overhaul; a paper that fails it does not ship, regardless of its review scores.
+  - `REQUIRE_README=1` — the final README exists at repo root, is substantive, includes a reproduction section, and carries no internal vocabulary. Written and committed as the run's **last commit**, after the Presentation Overhaul and before the completion report (`playbooks/writing.md` § The final README).
 - **Budget / time:** the scripts named above.
 
 Hour-0 duty: complete the gate-read locks (`locks/budget.json`, `locks/evidence_floors.json`; see `locks/README.md`) with this brief's caps and the actual launch clock, and index them in `REGISTRY.md` § Locks.

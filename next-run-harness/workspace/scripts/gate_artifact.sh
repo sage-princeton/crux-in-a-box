@@ -57,6 +57,43 @@ HITS=$(grep -rnE '(runs/exp_|code/scripts/|paper/section_|LOG\.md|REGISTRY\.md|l
 gate "internal-paths" $([ -z "$HITS" ] && echo 0 || echo 1) "internal file paths in deliverable:
 $HITS"
 
+# --- 5b. Presentation gates (Presentation Overhaul + Ship milestones) -----
+# Mechanical checks for the documented revision-round failure: prose that rots
+# into an over-long abstract, ALL-CAPS emphasis, and a figureless main body.
+# These run under REQUIRE_PRESENTATION=1 (not always-on: a skeleton or early
+# draft would fail them spuriously). The cold-read acceptance test in
+# playbooks/writing.md § Presentation overhaul is the judgment half; these are
+# the grep half. Reviewers are never told about these (reviewers grade,
+# scripts verify).
+if [ "${REQUIRE_PRESENTATION:-0}" = "1" ]; then
+  # (a) Abstract exists and fits the word cap.
+  ABSTRACT_WORD_CAP="{{ABSTRACT_WORD_CAP|200}}"
+  case "$ABSTRACT_WORD_CAP" in (*[!0-9]*) ABSTRACT_WORD_CAP=200 ;; esac
+  ABS_FILE=$(grep -rlE '\\begin\{abstract\}' "$SRC" --include='*.tex' 2>/dev/null | head -1)
+  if [ -z "$ABS_FILE" ]; then
+    gate "abstract-exists" 1 "no \\begin{abstract} found under $SRC"
+  else
+    ABS_WORDS=$(sed -n '/\\begin{abstract}/,/\\end{abstract}/p' "$ABS_FILE" \
+      | grep -v '^[[:space:]]*%' | sed -e 's/\\begin{abstract}//' -e 's/\\end{abstract}//' \
+      | sed 's/\\[a-zA-Z]*//g' | wc -w | tr -d ' ')
+    gate "abstract-length" $([ "${ABS_WORDS:-999}" -le "$ABSTRACT_WORD_CAP" ] && echo 0 || echo 1) \
+      "abstract is ${ABS_WORDS} words > cap=${ABSTRACT_WORD_CAP} — rewrite to the 5-6 sentence-role spec (playbooks/writing.md); losing nuance here is fine"
+  fi
+  # (b) No ALL-CAPS emphasis in prose. >=6 consecutive capitals is almost never
+  # a real acronym; the allowlist below holds the known legit ones. Extending
+  # the allowlist is a Tier-2 memo, same as any gate change.
+  ALLCAPS_ALLOW='NEURIPS|GITHUB|LICENSE|DATASET[S]?:|HTTPS?'
+  HITS=$(grep -rnE '\b[A-Z]{6,}\b' "$SRC" --include='*.tex' 2>/dev/null \
+    | grep -v ':[[:space:]]*%' | grep -vE "$ALLCAPS_ALLOW" | head -20)
+  gate "allcaps-prose" $([ -z "$HITS" ] && echo 0 || echo 1) "ALL-CAPS emphasis in deliverable prose (restate calmly at the strength the registry licenses):
+$HITS"
+  # (c) At least one figure in the MAIN BODY (appendix figures don't count).
+  N_FIG=$(grep -rlE '\\begin\{figure' "$SRC" --include='*.tex' 2>/dev/null \
+    | grep -viE 'appendix|supplement' | wc -l | tr -d ' ')
+  gate "figure-in-body" $([ "${N_FIG:-0}" -ge 1 ] && echo 0 || echo 1) \
+    "no figure environment in any main-body .tex — readers spend ~30% of attention on figures (playbooks/writing.md effort allocation); build Figure 1 per playbooks/figures.md from cached artifacts"
+fi
+
 # --- 6. External-review milestone gate (final milestone only) ------------
 if [ "${REQUIRE_EXTERNAL_REVIEWS:-0}" = "1" ]; then
   N_EXT=$(ls reviews/external/ 2>/dev/null | wc -l | tr -d ' ')
@@ -148,6 +185,28 @@ PY
     gate "ship-authorization" 0 ""   # a cap is genuinely (near-)exhausted
   else
     gate "ship-authorization" 1 "below-bar ship with budget/time apparently remaining (under-spent=$UNDERSPENT) and no ship-justification memo in LOG.md. Deploy the budget on stronger evidence and keep working (BRIEF.md success bar; HEARTBEAT.md under-spend), reach Weak Accept+ in reviews/final_review.md, or log an honest ship/under-spend justification memo."
+  fi
+fi
+
+# --- 9. Final README (ship gate) ------------------------------------------
+# The repo's front door for a cold visitor — written LAST, after the
+# Presentation Overhaul, committed as the run's final commit
+# (playbooks/writing.md § The final README). Mechanical half only; the
+# cold-reader acceptance lives in the playbook.
+if [ "${REQUIRE_README:-0}" = "1" ]; then
+  R="README.md"
+  if [ ! -s "$R" ]; then
+    gate "readme-exists" 1 "no $R at repo root — write the final README (playbooks/writing.md § The final README) before the completion report"
+  else
+    gate "readme-exists" 0 ""
+    R_WORDS=$(wc -w < "$R" | tr -d ' ')
+    gate "readme-substantive" $([ "${R_WORDS:-0}" -ge 150 ] && echo 0 || echo 1) \
+      "README is ${R_WORDS} words — too thin to orient a cold visitor (needs: what+finding, paper path, repo map, repro command, data provenance)"
+    gate "readme-repro" $(grep -iqE 'reproduc|repro' "$R" && echo 0 || echo 1) \
+      "README has no reproduction section — a visitor must be able to rerun the headline result from a fresh clone"
+    HITS=$( { grep -nE "$INTERNAL_VOCAB" "$R"; grep -nE '\b[A-Z]{6,}\b' "$R" | grep -vE "${ALLCAPS_ALLOW:-NEURIPS|GITHUB|LICENSE|HTTPS?}"; } 2>/dev/null | head -10)
+    gate "readme-vocabulary" $([ -z "$HITS" ] && echo 0 || echo 1) "internal vocabulary or ALL-CAPS in README:
+$HITS"
   fi
 fi
 

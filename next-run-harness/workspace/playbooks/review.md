@@ -29,8 +29,9 @@ Triage its findings like any review: strengthen the prose where licensed, **run 
 2. Internal blind rounds (§2a) until the yield-based stopping rule fires.
 3. External reviews (§2b) — this is a `PLAN.md` milestone, not an option.
 4. One final internal blind round → its verdict is the accompanying final review (§2c), written to `reviews/final_review.md`.
-5. **Full-paper readability round** (`playbooks/writing.md` § The final readability round) — runs once §2 soundness review has converged and before ship. It is a **craft pass over the whole paper** (cold reads of every section by fresh isolated subagents, then one focused clarity/flow edit); it **does not reopen claims or re-run experiments** (a deep structural problem is logged for triage, not silently fixed at camera-ready). The procedure lives in `writing.md`; it sits *here* in the pipeline.
-6. Completion report to the operator (`USER.md`).
+5. **Presentation Overhaul** (`playbooks/writing.md` § The Presentation Overhaul) — mandatory, acceptance-tested milestone once §2 soundness review has converged and before ship. Presentation-level **restructuring is authorized** (reorganize, rewrite, rebuild figures); **claims, numbers, and evidence are frozen** — verified afterward against `REGISTRY.md` § Claim & decision trail plus a §3 brief-fidelity check. It does not re-run experiments. Exit is the acceptance test (the `REQUIRE_PRESENTATION` gates + two fresh PDF-only cold-readers), not self-judgment; the procedure and iteration bound live in `writing.md`.
+6. **Final README** (`playbooks/writing.md` § The final README) — the cold-visitor front door for the repo, written after the overhaul passes, gated (`REQUIRE_README=1`) plus one PDF-free cold-reader on the README alone, committed and pushed as the run's last commit.
+7. Completion report to the operator (`USER.md`).
 
 The §2d power / evidence-adequacy critic runs at drafting entry (against the planned design) and again before ship (against the delivered artifacts); its ship-time verdict is what the evidence gate reads. It is not a sequential step in the run order so much as the gate on entering drafting and on shipping.
 

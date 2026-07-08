@@ -279,6 +279,12 @@ CACHE_RETENTION="${CACHE_RETENTION:-long}"
 PROVIDER_ID="${ANTHROPIC_MODEL%%/*}"
 PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
 
+# Whole-turn ceiling. OpenClaw's default is too short for xhigh research turns
+# (deep thinking + long tool loops) — both pilot boxes hit "Request timed out
+# before a response was generated... increase agents.defaults.timeoutSeconds".
+# 3600s = 1h per turn; the 30m heartbeat sweeper bounds the cost of a runaway.
+AGENT_TURN_TIMEOUT_SECONDS="${AGENT_TURN_TIMEOUT_SECONDS:-3600}"
+
 TMP_CONFIG=$(mktemp)
 jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" \
    --arg cache "$CACHE_RETENTION" --arg provider "$PROVIDER_ID" \

@@ -54,6 +54,7 @@ GOG_HOME_TARBALL=./gog-home.tar.gz
 # ── Optional: workspace placeholders with defaults (uncomment to override) ──
 
 # PAGE_BUDGET=9
+# ABSTRACT_WORD_CAP=200      # presentation gate: max abstract words (gate_artifact.sh)
 # SNAPSHOT_TIMES=10:00 and 19:00
 # VENUE=NeurIPS
 # PREFLIGHT_COST=50

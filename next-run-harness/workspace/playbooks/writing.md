@@ -57,13 +57,41 @@ Writing is not an afterthought at the end: budget a substantial trailing fractio
 
 Reproducibility ships with the paper: a fresh-machine README and the one-command repro for headline numbers are milestone gates, not camera-ready chores.
 
-## The final readability round (whole paper, once, terminal)
+## The Presentation Overhaul (mandatory terminal milestone, acceptance-tested)
 
-A **dedicated terminal milestone** after the §2 soundness review has converged and before Ship (`playbooks/review.md` §2; `PLAN.md`'s Readability milestone) — distinct from the soundness round, and a full-paper round, not a front-matter-only pass. Soundness review asks *is the paper right?*; this round asks *is the paper legible on one cold read, end to end?*
+A **mandatory terminal milestone** after the §2 soundness review has converged and before Ship (`playbooks/review.md` §2; `PLAN.md`'s Presentation Overhaul milestone). Soundness review asks *is the paper right?*; this milestone asks *is the paper legible to a cold expert reader, end to end?* — and it does not pass on your judgment of that, only on the acceptance test below.
 
-Why a whole-paper round and not just the front matter: yes, reader attention concentrates on the abstract, intro, and figures (effort allocation above), and the costliest single failure is a cold reader who can't get the contribution and stops there. But a paper that loses the reader in a muddy method section, an unlabelled table, or a results paragraph whose job isn't clear has the same fate one section deeper — and the illusion of transparency is worst everywhere you've reread your own words most, not only up front. So this round cold-reads **every section**, and the illusion is breakable only by a reader who has none of your context.
+Why this exists: revision rounds rot prose. Each review fix adds a hedge, a qualifier, an internal term; none looks harmful alone; the accumulated result is an over-long abstract, ALL-CAPS emphasis, jargon-saturated sections, and figures that never got built — a paper a reviewer stops reading on page 1. The illusion of transparency is worst everywhere you've reread your own words most. By this point in the run you are structurally the wrong judge of your own prose, which is why the exit condition belongs to cold readers and a gate script, not to you.
 
-- **Cold-read every section, isolated (you cannot run this on yourself).** Spawn fresh isolated subagents given *only the rendered PDF*, covering the **whole paper** — abstract, introduction, every method/results/discussion section, the figures, captions, and tables (fan out across sections or assign a section each; assume zero ambient context, `playbooks/subagent.md`). Each is briefed to report, for its assigned sections: (a) what a cold reader takes away — for the front matter specifically, the subfield and paper type, the main claim and its stated standard of evidence, the key evidence, and why it matters; (b) every place a cold reader is confused, every undefined term, every place the flow breaks; (c) whether each section's *job* is legible on a single read (does the section do the thing its name promises, and can the reader tell?). The gap between what the cold-readers extract and what you intended *is* the edit list. (Front-matter-specific checks still apply: the abstract must lead with the contribution and fit its budget — it must not spill onto a second page.)
-- **Structure from exemplars (informs the edit, not the cold-read).** The **`.tex` sources of the best published anchor papers** are already on disk in `paper/exemplars/` (fetched during exploration, `playbooks/exploration.md` §2) — use them as the structural templates. If the closest prior work isn't also the best-*written* in the area, pull 1–2 additional well-structured accepted papers (from `exploration/DOSSIER.md` § LIT SYNTHESIS or the target venue) alongside them. Match their *structural shape* — how they open the abstract, sequence the introduction's arc, phrase the contributions list, frame Figure 1, and order and proportion the body sections — never their content.
-- **One focused edit pass across the whole paper**, in response to the cold-reads and guided by those exemplars: clarity, flow, and legibility everywhere — tighten the abstract to the sentence-roles above; make the introduction's contribution and contributions-list legible on a single read; fix each section so its job lands on one read; fix figure takeaways, captions, and tables (`playbooks/figures.md`). It **does not reopen claims or re-run experiments** — if a cold-read surfaces a *deep* structural problem (organization, not polish) or anything that would change a claim, log it as a finding for triage (`playbooks/decisions.md`); do not silently restructure or patch a blind-reviewed artifact at camera-ready.
-- **Single round, terminal, bounded.** This is a craft pass over the whole paper, distinct from the soundness-focused blind review (§2a): it runs **once**, after §2 has converged and before the deliverable ships, and it is not a loop.
+**The one frozen thing is the science.** Unlike earlier drafting passes, **restructuring is authorized**: reorganize sections, rewrite any prose, redesign the narrative flow, rebuild figures. What is *not* authorized: changing any claim's content or strength, any number, or any evidence. After the overhaul, verify the prose still matches `REGISTRY.md` § Claim & decision trail exactly and re-run the brief-fidelity check (`playbooks/review.md` §3); log anything borderline. No new experiments — figures are built from cached artifacts (`playbooks/figures.md`).
+
+The overhaul requirements:
+
+1. **Abstract to the sentence-role spec** (§ Effort allocation above): 5–6 sentences, hard cap {{ABSTRACT_WORD_CAP|200}} words, simplest language that stays precise. Losing nuance here is fine.
+2. **Vocabulary**: zero ALL-CAPS emphasis in prose; zero author-internal vocabulary; every technical term defined at first use, judged from the cold reader's chair.
+3. **Figures in the main body**: at minimum a Figure 1 designed around "what exactly should the reader take away," rendered and inspected at final size (`playbooks/figures.md`).
+4. **De-hedging sweep**: where qualifiers accreted across review rounds, restate each claim once, cleanly, at exactly the strength the registry licenses — cut the scar tissue without changing the claim.
+5. **Structure from exemplars**: match the structural shape of the anchor papers' `.tex` sources in `paper/exemplars/` (abstract opening, introduction arc, contributions list, Figure 1 framing, section proportions) — never their content. If the closest prior work isn't the best-*written*, pull 1–2 additional well-structured accepted papers from the dossier or venue.
+
+**The acceptance test (binding — the milestone gate):** the overhaul is done when BOTH hold, not when you feel done:
+
+- `REQUIRE_PRESENTATION=1 scripts/gate_artifact.sh <pdf>` passes (abstract length, ALL-CAPS, figure-in-body, plus the standing form gates); and
+- **two fresh isolated cold-readers**, spawned per `playbooks/subagent.md` with *only the rendered PDF* and zero ambient context, each correctly state the main claim, its standard of evidence, and why it matters — and report no undefined terms and no section whose job they couldn't follow on one read. Spawner-side contamination rules apply (`playbooks/review.md` §2a): no prior verdicts, no "we think it's ready."
+
+Iterate cold-read → edit until the test passes. If it hasn't passed after **three rounds**, the process is the problem — write a Tier-2 memo diagnosing why (usually: the paper needs a structural change you've been avoiding, or a claim is genuinely illegible because it is genuinely unclear) and act on it; do not ship past a failing acceptance test, and do not soften the test.
+
+## The final README (the run's last commit)
+
+After the Presentation Overhaul passes and before the completion report: write (or rewrite) the repo-root `README.md` as the **front door for a cold visitor**, and commit and push it as the run's final commit. The repo outlives the run; a visitor landing on it — an evaluator, a researcher, the operator months later — gets the README first and decides in two minutes whether anything here is worth their time. Write for that reader: zero project context, zero harness context.
+
+Contents, in order:
+
+1. **What this is and what it found** — two or three plain-language sentences: the research question, the headline finding at exactly the strength `REGISTRY.md` licenses (the README is documentation, not a new claims surface), and why it matters.
+2. **The paper** — path to the final PDF and its source.
+3. **Repo map** — a short annotated list of the directories that matter (code, data, results, reviews), each with one plain clause on what's in it. Not a full tree; the five things a visitor needs.
+4. **Reproduce the headline result** — environment setup and the one-command repro (this command must actually work from a fresh clone; it is the same reproducibility obligation as § above, now surfaced where a visitor will find it).
+5. **Data** — one line per dataset: what it is, where it came from or how it was generated.
+
+Style rules are the Presentation Overhaul's: no author-internal vocabulary, no ALL-CAPS emphasis, every technical term defined at first use, and short — the whole file legible in ~2 minutes.
+
+**Acceptance:** `REQUIRE_README=1 scripts/gate_artifact.sh <pdf>` passes, and one fresh isolated cold-reader given *only* `README.md` can answer: what did this project find, where is the paper, and how would I rerun the headline result. Then commit, push, and send the completion report.

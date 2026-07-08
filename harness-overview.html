@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>How the crux research harness works — an overview</title>
-<meta name="description" content="A visual and textual overview of the crux autonomous AI research harness: how a single agent runs a multi-week research project on its own, and the guardrails that keep it honest and on-target.">
+<meta name="description" content="A visual and textual overview of the crux autonomous AI research harness: how a single agent runs a week-long research project on its own, and the guardrails that keep it honest and on-target.">
 <style>
   :root{
     --bg:#f7f7fb; --surface:#ffffff; --surface-2:#f0f1f7; --ink:#1a1c2a; --muted:#565a72;
@@ -195,7 +195,7 @@
     <div class="hero">
       <p class="eyebrow">Autonomous research, explained</p>
       <h1>How the <span style="color:var(--accent)">crux</span> harness lets one AI agent write a research paper on its own</h1>
-      <p class="lede">Give it a research question, about two weeks, and a compute budget. Then leave. This page shows the moving parts that keep a fully autonomous agent honest, on-target, and productive — from the files it lives in to the mechanical gates that decide when it's allowed to ship.</p>
+      <p class="lede">Give it a research question, about a week, and a compute budget. Then leave. This page shows the moving parts that keep a fully autonomous agent honest, on-target, and productive — from the files it lives in to the mechanical gates that decide when it's allowed to ship.</p>
     </div>
   </div>
 </header>
@@ -225,12 +225,12 @@
       <p class="section-intro">crux is an <strong>autonomous research agent</strong> built on the OpenClaw runtime. A human operator hands it a brief and walks away. The agent plans the project, reads the literature deeply, runs its own GPU experiments, writes the paper, sends it to external reviewers, and reports back — deliberating before each move and making every decision itself. The operator is an <em>observer</em>, not a collaborator: the agent sends routine one-way status updates, but only two messages may ever <em>ask anything</em> of them.</p>
       <div class="stat-grid">
         <div class="stat"><div class="n">1</div><div class="l">autonomous agent, no human in the loop</div></div>
-        <div class="stat"><div class="n">~2</div><div class="l">weeks from launch to deadline</div></div>
+        <div class="stat"><div class="n">~1</div><div class="l">week from launch to deadline</div></div>
         <div class="stat"><div class="n">2</div><div class="l">budgets to spend wisely: API&nbsp;$ &amp; GPU&nbsp;$</div></div>
         <div class="stat"><div class="n">2</div><div class="l">messages that may ask a human for anything: a broken tool, or "done"</div></div>
         <div class="stat"><div class="n">1</div><div class="l">goal: a paper good enough to publish at a top venue</div></div>
       </div>
-      <p class="section-intro" style="margin-top:22px">The whole design exists to answer one question: <strong>can an agent do real, multi-week research without supervision — and what does it need so that "no supervision" doesn't become "no rigor"?</strong> The design leans on <strong>a small set of rules and strong heuristics</strong>: an agent that deliberates, a compute budget framed as a <em>target to deploy on depth</em> (not just a ceiling), and a handful of isolated critics whose verdicts the agent honors cooperatively.</p>
+      <p class="section-intro" style="margin-top:22px">The whole design exists to answer one question: <strong>can an agent do a real, week-long research project without supervision — and what does it need so that "no supervision" doesn't become "no rigor"?</strong> The design leans on <strong>a small set of rules and strong heuristics</strong>: an agent that deliberates, a compute budget framed as a <em>target to deploy on depth</em> (not just a ceiling), and a handful of isolated critics whose verdicts the agent honors cooperatively.</p>
     </div>
   </section>
 
@@ -238,16 +238,16 @@
   <section id="lifecycle" aria-labelledby="life-h">
     <div class="wrap">
       <h2 id="life-h"><span class="section-tag" style="background:var(--c-explore)" aria-hidden="true"></span>A run, from start to finish</h2>
-      <p class="section-intro">A run is a <strong>research cycle</strong>, not a one-way staircase: <code>Set up → Explore ⇄ Experiment ⇄ Draft ⇄ Review → Readability → Ship</code>. The <code>⇄</code> back-edges are <strong>normal research</strong> — returning from Draft or Review to run another experiment is exactly what a good researcher does, not a failure or a pivot. Exploration still comes first and gets a big share of the clock (a deep read of the literature, plus scouting experiments); drafting in earnest waits until an isolated critic agrees the evidence is real.</p>
+      <p class="section-intro">A run is a <strong>research cycle</strong>, not a one-way staircase: <code>Set up → Explore ⇄ Experiment ⇄ Draft ⇄ Review → Presentation Overhaul → Ship</code>. The <code>⇄</code> back-edges are <strong>normal research</strong> — returning from Draft or Review to run another experiment is exactly what a good researcher does, not a failure or a pivot. Exploration still comes first and gets a big share of the clock — roughly 30–40% of the horizon, whatever its length (a deep read of the literature, plus scouting experiments); drafting in earnest waits until an isolated critic agrees the evidence is real.</p>
       <ol class="steps">
         <li style="--step:var(--c-setup)"><span class="k">1</span><h3>Set up</h3><p>Verify the environment; build an empty paper that already compiles in the venue template; write the research-plan spine and a costed budget-deployment menu.</p><span class="gate">gate: skeleton builds</span></li>
-        <li style="--step:var(--c-explore)"><span class="k">2</span><h3>Explore</h3><p>Survey the literature, then <strong>deep-read</strong> the 3–5 closest papers in full (methods + results), and scout 2–3 candidate approaches with real experiments.</p><span class="gate">authorized by: exploration critic</span></li>
+        <li style="--step:var(--c-explore)"><span class="k">2</span><h3>Explore</h3><p>Survey the literature with citation-graph APIs (forward/backward walks, not just web search), then <strong>deep-read</strong> the 3–5 closest papers in full (methods + results), and scout 2–3 candidate approaches with real experiments.</p><span class="gate">authorized by: exploration critic (who can search the literature itself)</span></li>
         <li style="--step:var(--c-explore)"><span class="k">3</span><h3>Experiment</h3><p>Run the most decisive experiments at depth — more seeds, more scale — spending the budget on evidence before polish.</p><span class="back" aria-hidden="true">⇄ revisited from Draft / Review</span></li>
         <li style="--step:var(--c-draft)"><span class="k">4</span><h3>Draft</h3><p>Commit to a headline after scouting and write the paper. A real finding sends you <em>back to Experiment</em> — the default fix is "what experiment closes this?", not "narrow the claim."</p><span class="back" aria-hidden="true">⇄ back to Experiment is normal</span></li>
         <li style="--step:var(--c-review)"><span class="k">5</span><h3>Review</h3><p>Hostile internal reviews, then isolated blind rounds and real external reviewers, fixing soundness issues each round until a round adds nothing new.</p><span class="back" aria-hidden="true">⇄ back to Experiment is normal</span></li>
-        <li style="--step:var(--c-quality)"><span class="k">6</span><h3>Readability</h3><p>A terminal craft round: fresh cold-readers pass over <strong>every section</strong>, then one focused clarity edit. Does not reopen claims.</p><span class="gate">whole-paper cold reads</span></li>
+        <li style="--step:var(--c-quality)"><span class="k">6</span><h3>Presentation Overhaul</h3><p>A mandatory rewrite for cold-reader legibility: restructuring is authorized, the claims and numbers are frozen. Exit only by acceptance test — mechanical gates plus two fresh cold-readers — never by self-judgment.</p><span class="gate">gate: REQUIRE_PRESENTATION + 2 cold-readers</span></li>
       </ol>
-      <p class="section-intro" style="margin-top:14px">…then <strong>Ship</strong>: the camera-ready paper plus an honest final review, with the result reported against the bar.</p>
+      <p class="section-intro" style="margin-top:14px">…then <strong>Ship</strong>: the camera-ready paper plus an honest final review — and, as the run's very last commit, a plain-language <strong>README</strong> that lets a visitor with zero context understand the repo, find the paper, and reproduce the headline result.</p>
       <p class="section-intro" style="margin-top:14px"><strong>Success bar:</strong> the paper reaches a peer-review score of <em>Weak Accept or higher</em>. Reviewers are isolated and their verdicts can't be authored by the agent, so the only way to pass is to genuinely earn it. Falling short — or finishing with most of the budget unspent — while time and budget remain is treated as a failure to fix, not a finish.</p>
     </div>
   </section>
@@ -276,13 +276,14 @@
 
           <!-- Band B: OpenClaw runtime -->
           <div class="band band-runtime" style="--band:var(--accent)">
-            <p class="band-head"><span class="band-ico" aria-hidden="true">⚙️</span> OpenClaw runtime — the engine &nbsp;·&nbsp; config <code>openclaw.json</code> (model Opus&nbsp;4.8 · heartbeat cadence · tool profile · ≤3 subagents · plugins)</p>
+            <p class="band-head"><span class="band-ico" aria-hidden="true">⚙️</span> OpenClaw runtime — the engine &nbsp;·&nbsp; config <code>openclaw.json</code> (model Opus&nbsp;4.8 · heartbeat cadence · tool profile · ≤5 subagents · 1-hour turn ceiling · plugins)</p>
             <div class="runtime-grid">
               <div class="rt-card rt-main"><h4>Main session</h4><p>The agent loop, deliberating before each move. Each turn must end in one of five states — <strong>Launch · Delegate · Memo · Milestone · Mature</strong> — never idly waiting on a human.</p></div>
               <div class="rt-card"><h4>Heartbeat scheduler</h4><p>Cron tasks wake the session: harvest 30m · git 60m · milestone-clock 3h · resource 4h · blocker 6h. A sweeper, not the driver.</p></div>
-              <div class="rt-card"><h4>Subagent sessions</h4><p>Isolated workers (≤3 at once). Each sees only <code>AGENTS.md</code> + <code>TOOLS.md</code> + its brief, and returns an evidence-backed report.</p></div>
+              <div class="rt-card"><h4>Subagent sessions</h4><p>Isolated workers (≤5 at once; spent mostly on exploration fan-out). Each sees only <code>AGENTS.md</code> + <code>TOOLS.md</code> + its brief — which now open with the research goal — and returns an evidence-backed report.</p></div>
               <div class="rt-card"><h4>Tools</h4><p><code>exec</code>/<code>nohup</code> · web fetch + search · browser (Playwright) · <code>gog</code> (Gmail) · RunPod API · <code>git</code>.</p></div>
               <div class="rt-card"><h4>Enforcement hooks <span class="eng" title="engineered for this task"><span class="eng-dot" aria-hidden="true"></span><span class="visually-hidden"> (engineered for this task)</span></span></h4><p>Optional ship-time backstop: <code>before_tool_call</code> / <code>message_sending</code> + exec-approvals. Turns a ship-gate <code>GATE&nbsp;FAIL</code> into a hard block. Default posture is cooperative, not hard-enforced.</p></div>
+              <div class="rt-card"><h4>Session watchdog <span class="eng" title="engineered for this task"><span class="eng-dot" aria-hidden="true"></span><span class="visually-hidden"> (engineered for this task)</span></span></h4><p>A box-level cron <em>outside</em> the runtime. Detects a session permanently wedged by a known runtime bug (corrupted thinking-block replay), archives it, and dispatches a recovery turn — the agent resumes from its state capsule. Cooldown + daily cap prevent loops.</p></div>
             </div>
           </div>
 
@@ -352,7 +353,7 @@
       <p class="group-title">Task &amp; rules — what it must do and how</p>
       <div class="cards">
         <div class="card"><h3><code class="fname">BRIEF.md</code></h3><p>The research question, the success bar, the budgets, and the "must / must-not" constraints.</p></div>
-        <div class="card"><h3><code class="fname">AGENTS.md</code></h3><p>The operating constitution: how every turn must end, the decision tiers, and the evidence rules.</p></div>
+        <div class="card"><h3><code class="fname">AGENTS.md</code></h3><p>The operating constitution: the research question and success bar up top (so even subagents know the goal they serve), how every turn must end, the decision tiers, and the evidence rules.</p></div>
         <div class="card"><h3><code class="fname">HEARTBEAT.md</code></h3><p>A periodic "sweeper" that harvests finished jobs, watches the clock, and checks spend.</p></div>
         <div class="card"><h3><code class="fname">USER.md</code></h3><p>The operator contract: one-way status updates and the only two messages that may ask for anything.</p></div>
       </div>
@@ -368,7 +369,7 @@
       <p class="group-title">Procedures &amp; ground truth</p>
       <div class="cards">
         <div class="card"><h3><code class="fname">playbooks/</code></h3><p>Step-by-step procedures for decisions, exploration, review, writing, figures, and subagents.</p></div>
-        <div class="card"><h3><code class="fname">TOOLS.md</code></h3><p>Environment truth: GPU cloud, email, reviewer platforms, and hard-won "footguns" to avoid.</p></div>
+        <div class="card"><h3><code class="fname">TOOLS.md</code></h3><p>Environment truth: GPU cloud, email, reviewer platforms, literature-search APIs (citation walks as single calls), and hard-won "footguns" to avoid.</p></div>
         <div class="card"><h3><code class="fname">locks/</code></h3><p>Frozen definitions as JSON (budgets, evidence floors) that <em>code reads</em> so they can't quietly drift.</p></div>
         <div class="card"><h3><code class="fname">scripts/</code></h3><p>The mechanical checkers: the gate script and the spend meter. Numbers are measured, never guessed.</p></div>
       </div>
@@ -444,10 +445,11 @@
         <div class="stage" role="listitem"><span class="id">§2d</span><p>Power critic — is the headline actually supported, or resting on a single data point? Its file is the evidence the ship gate reads.</p></div>
         <div class="stage" role="listitem"><span class="id">§3</span><p>Brief-fidelity review — does the paper still answer the question that was assigned?</p></div>
       </div>
-      <p class="muted" style="margin:12px 0 0; font-size:.88rem"><strong>Default response to a real finding:</strong> "what experiment closes this?" — go back to Experiment. Narrowing the claim is the fallback when the experiment is genuinely out of budget. A lone favorable review can't overrule same-axis soundness rejections.</p>
+      <p class="muted" style="margin:12px 0 0; font-size:.88rem"><strong>Default response to a real finding:</strong> "what experiment closes this?" — go back to Experiment. Narrowing the claim is the fallback when the experiment is genuinely out of budget. A lone favorable review can't overrule same-axis soundness rejections. And <strong>fixes may not accrete hedges</strong>: a fix whose only edit is a new qualifier sentence is a smell — prefer deletion, restructuring, or a closing experiment. An early single cold-read at the first full draft catches structural legibility problems while the Draft&nbsp;⇄&nbsp;Experiment back-edge is still open.</p>
 
-      <h3 style="margin:26px 0 10px">Then a final readability round <span class="tag">terminal</span></h3>
-      <p class="section-intro" style="margin-bottom:14px">Once soundness review converges, a distinct <strong>readability round</strong> runs once. Fresh isolated cold-readers pass over <strong>every section</strong> — abstract, intro, each method/results/discussion section, figures, captions, tables — each reporting what a cold reader takes away, every confusion, every undefined term, every place flow breaks. Guided by 2–3 well-written accepted papers in the area, the agent then makes <strong>one focused clarity edit</strong>. It does not reopen claims or re-run experiments; a deep structural problem is logged for triage, not silently fixed at camera-ready. Bounded and terminal — a craft pass, not a loop.</p>
+      <h3 style="margin:26px 0 10px">Then the mandatory Presentation Overhaul <span class="tag">acceptance-tested</span></h3>
+      <p class="section-intro" style="margin-bottom:14px">Revision rounds reliably rot prose — each review fix adds a hedge, a qualifier, an internal term; the accumulated result is an over-long abstract, ALL-CAPS emphasis, jargon-saturated sections, and figures that never got built. So once soundness review converges, a <strong>mandatory overhaul</strong> removes the scar tissue wholesale. Restructuring is <em>authorized</em> (reorganize, rewrite, rebuild figures); the science is <em>frozen</em> — no claim, number, or evidence may change, verified afterward against the claim registry and a brief-fidelity check. Requirements: a 5–6-sentence abstract under a hard word cap, zero ALL-CAPS or internal vocabulary, figures in the main body, a de-hedging sweep, and structure matched to well-written exemplar papers. <strong>Exit is an acceptance test, not a self-judgment</strong>: the mechanical presentation gates must pass <em>and</em> two fresh cold-readers, given only the PDF, must correctly extract the claim, its evidence standard, and why it matters. Three failed rounds forces a diagnosis memo — the test never softens, and milestone deadlines move before this gate does.</p>
+      <p class="section-intro" style="margin-bottom:14px"><strong>And one last act: the final README.</strong> Before the completion report, the agent writes the repo-root README for a visitor with zero context — what the project found (at exactly the registry-licensed strength), where the paper is, a map of the repo, a one-command reproduction, and data provenance — passes its own gate plus a cold-reader, and commits it as the run's final commit. The repo outlives the run; its front door is part of the deliverable.</p>
     </div>
   </section>
 
@@ -455,7 +457,7 @@
   <section id="gates" aria-labelledby="g-h">
     <div class="wrap">
       <h2 id="g-h"><span class="section-tag" style="background:var(--c-gate)" aria-hidden="true"></span>The gates: a critical few</h2>
-      <p class="section-intro">The harness keeps a deliberate, small set of gates. One checker, <code class="fname">gate_artifact.sh</code>, runs at review rounds and milestones. <strong>Form &amp; hygiene</strong> checks (is this a finished-looking submission?) are always on. Three <strong>ship-time</strong> checks remain — an external-review existence check, plus two that read an <em>isolated critic's own file</em> or the budget lock <strong>directly</strong> — and there is no self-typed certification string left to game.</p>
+      <p class="section-intro">The harness keeps a deliberate, small set of gates. One checker, <code class="fname">gate_artifact.sh</code>, runs at review rounds and milestones. <strong>Form &amp; hygiene</strong> checks (is this a finished-looking submission?) are always on. The <strong>ship-time</strong> checks read an <em>isolated critic's own file</em> or the budget lock <strong>directly</strong> — no self-typed certification string to game — and the <strong>presentation &amp; README</strong> gates make "accessible" mechanical rather than a vibe.</p>
       <div class="gate-cols">
         <div class="gatebox form">
           <header>Form &amp; hygiene (always on)</header>
@@ -474,6 +476,22 @@
             <li><code>external-reviews</code><span class="desc">a real external review is on disk in <code>reviews/external/</code></span></li>
             <li><code>evidence-adequate</code><span class="desc">the isolated power critic's <code>reviews/power_critic_ship.md</code> says <code>ADEQUATE</code> and meets the seed/cell floors</span></li>
             <li><code>ship-authorization</code><span class="desc">light under-spend backstop: a Weak Accept+ final review, a genuinely (near-)exhausted budget cap, or an honest ship memo in <code>LOG.md</code></span></li>
+          </ul>
+        </div>
+        <div class="gatebox substance">
+          <header>Presentation (overhaul milestone, re-checked at ship)</header>
+          <ul>
+            <li><code>abstract-length</code><span class="desc">abstract exists and fits its word cap (default 200)</span></li>
+            <li><code>allcaps-prose</code><span class="desc">no ALL-CAPS emphasis in the paper's prose</span></li>
+            <li><code>figure-in-body</code><span class="desc">at least one figure in the main body — appendix figures don't count</span></li>
+          </ul>
+        </div>
+        <div class="gatebox substance">
+          <header>Final README (ship)</header>
+          <ul>
+            <li><code>readme-exists</code> / <code>readme-substantive</code><span class="desc">a real README at repo root, not a stub</span></li>
+            <li><code>readme-repro</code><span class="desc">it tells a visitor how to reproduce the headline result</span></li>
+            <li><code>readme-vocabulary</code><span class="desc">no internal jargon or ALL-CAPS in the front door</span></li>
           </ul>
         </div>
       </div>
@@ -502,6 +520,9 @@
           <tr><td>Quietly answer a different question than assigned</td><td>The <span class="fix">brief-fidelity review</span> (§3)</td></tr>
           <tr><td>Skim abstracts instead of reading the key papers</td><td>The deep-read step + the <span class="fix">exploration-sufficiency critic</span>, which checks a full-read note exists per anchor paper before drafting</td></tr>
           <tr><td>Invent a statistic that traces to no file</td><td>The evidence heuristics (<span class="fix">artifact or it didn't happen</span>) + hostile §1 section review + spot-checking surprising results</td></tr>
+          <tr><td>Let revision rounds rot the prose — hedges, jargon, ALL-CAPS, a bloated abstract, no figures</td><td>The mandatory <span class="fix">Presentation Overhaul</span>: mechanical presentation gates + a two-cold-reader acceptance test that cannot be self-judged, with claims frozen while prose is rebuilt</td></tr>
+          <tr><td>Ship a repo nobody else can navigate</td><td>The <span class="fix">final README stage</span> — a gated, cold-read, plain-language front door committed as the run's last commit</td></tr>
+          <tr><td>Wedge on a runtime bug overnight and stay dead for hours</td><td>The box-level <span class="fix">session watchdog</span> — detects the failure signature, auto-resets, and the agent resumes from its state capsule (bounded by a cooldown and daily cap)</td></tr>
         </tbody>
       </table>
     </div>
