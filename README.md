@@ -33,7 +33,16 @@ Installed by default:
 | refine.ink (reviews) | `REFINE_INK_API_KEY` in `~/.openclaw/.env`    | key in the config                            |
 | AWS                  | `aws` CLI                                     | not authenticated on install                 |
 
-_NB: verify each of these before launch (`linux/status.sh`); a service broken mid-run becomes a hard block._
+> [!NOTE]
+> It is important to verify each of these before launch. While the
+> `setup_device.sh` script attempts to verify each of these is configured
+> correctly on the remote, misconfiguration could lead to an underprovisioned
+> run.
+
+> [!TIP]
+> Asking the agent to confirm that it has access to each of your services can
+> be a useful way to improve your confidence that each service is properly
+> configured.
 
 ## Layout
 
