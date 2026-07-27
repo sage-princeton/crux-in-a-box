@@ -1,25 +1,44 @@
 # CRUX in a box
 
-This repository is designed to facilitate creating the architecture for [CRUX-style](https://cruxevals.com/) experiments.
+This repository is designed to facilitate creating the architecture for [CRUX-style](https://cruxevals.com/) experiments: autonomous research agents (OpenClaw on an EC2 box) that take a research question and produce a paper.
 
-## Prerequesties
+> [!NOTE]
+> This code is set up specifically to support [CRUX](https://cruxevals.com/) evaluations.
+> We strongly encourage you to remix, adapt, and reuse this scaffold to conduct
+> your own CRUX-style experiments, and to meet your specific research goals.
 
-- A new Mac user account with administrative permissions
+## Prerequisites
+
+- AWS CLI with authentication (`aws sts get-caller-identity` works)
+- `ssh`, `scp`, `jq`
+- A Telegram bot token in `telegram_bots.json` (see the `.example`)
 
 ## Getting started
 
-1. Run `start.sh`. This will configure a significant portion of the CRUX system automatically.
-2. TK set up Telegram (TODO: why tg?)
-3. Authenticate any external services your agent will use
+1. Deploy the cost-tracking Lambda (`lambda/cost_tracker/deploy.sh`). This lets agents track their costs/usage in near-real-time.
+2. Run `utils/bootstrap-gog.sh` once to build the pre-authenticated Gmail bundle.
+3. In `linux/`, copy `placeholders.txt.example`, fill it in, and run `./setup-device.sh placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot.
+4. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
+5. Verify accounts per `next-run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
 
 ## External services for your agent to use
 
 Installed by default:
 
-TODO: make this a table with: service | how it's configured | how to authenticate
+| Service              | How it's configured                           | How to authenticate                          |
+| -------------------- | --------------------------------------------- | -------------------------------------------- |
+| GitHub               | `gh` CLI                                      | PAT in the config; `start.sh` runs `gh auth` |
+| Gmail                | `gog` CLI via [gogcli.sh](https://gogcli.sh/) | pre-built bundle (`GOG_*` keys), no browser  |
+| RunPod (GPUs)        | `RUNPOD_API_KEY` in `~/.openclaw/.env`        | key in the config                            |
+| refine.ink (reviews) | `REFINE_INK_API_KEY` in `~/.openclaw/.env`    | key in the config                            |
+| AWS                  | `aws` CLI                                     | not authenticated on install                 |
 
-- GitHub: `gh` CLI
-- AWS: `aws` CLI
-<!-- - Gmail: `gog` CLI via [gogcli.sh](https://gogcli.sh/) -->
+_NB: verify each of these before launch (`linux/status.sh`); a service broken mid-run becomes a hard block._
 
-_NB: none of these are authenticated upon install; you will need to authenticate them separately._
+## Layout
+
+- `linux/` — provisioning, watchdog, monitoring
+- `next-run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
+- `harness-overview.html` — human-facing overview
+- `utils/` — gog bootstrap, telemetry scrubbing
+- `logs-for-release/` — scrubbed run telemetry
