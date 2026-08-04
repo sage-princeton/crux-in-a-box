@@ -1,0 +1,53 @@
+# placeholders-codex.txt — config for codex-run-harness/setup-codex.sh
+#
+# Usage (on the run box): sudo ./setup-codex.sh placeholders-codex.txt
+# Lines are KEY=VALUE; comments (#) and blank lines ignored. Values must not
+# contain '#' (treated as an inline-comment start). This file holds SECRETS —
+# it is covered by .gitignore (linux/placeholders*.txt); never commit a
+# filled-in copy.
+
+# ── Required ──────────────────────────────────────────────────────────────
+
+OPENAI_API_KEY=sk-...                    # secret — Codex auth + the agent's own API calls
+API_BUDGET_USD=3000                      # loop stops when spend reaches API_STOP_FRACTION of this
+DEADLINE_HOURS=144                       # 6 days; clock stamped at launch.sh time, not setup time
+
+# The task — one line each, no '#' or newlines in the values.
+RESEARCH_QUESTION=<the one-sentence research question the agent must answer>
+RESEARCH_CONTEXT=<background + exactly what to produce, e.g. "Prior methods do A but not B. Produce (a) a method for B, (b) evidence on robustness, (c) one downstream test not directly optimized for.">
+
+# ── Strongly recommended ──────────────────────────────────────────────────
+
+RUNPOD_API_KEY=rpa_...                   # secret — GPU compute for experiments
+REFINE_INK_API_KEY=...                   # secret — the external AI reviewer credit
+CLOUD_SPEND_LIMIT_USD=500
+
+# OpenAI ADMIN key (org-level, not a project key): turns on exact spend
+# metering via the organization costs API. Without it the loop prices Codex
+# session token counts using the OPENAI_*_USD_PER_MTOK rates below — a lower
+# bound that misses API calls made by the agent's own experiment code.
+OPENAI_ADMIN_KEY=
+OPENAI_PROJECT_ID=                       # optional: scope admin-key metering to one project
+
+# ── Optional overrides (defaults shown; uncomment to change) ──────────────
+
+# CODEX_MODEL=gpt-5.6-sol               # "Sol Ultra" = this model + effort ultra; no *-ultra model ID
+# CODEX_REASONING_EFFORT=ultra           # tiers: minimal..high|xhigh|max|ultra (ultra = multi-agent tier)
+# VERIFIER_REASONING_EFFORT=high         # the isolated referee
+# CODEX_CLI_VERSION=0.144.5              # pinned; bump only after re-verifying the flags
+# VENUE=NeurIPS
+# PAGE_BUDGET=9
+# ABSTRACT_WORD_CAP=200
+# FINAL_POLISH_HOURS=4                   # reserved presentation+README window before deadline
+# API_STOP_FRACTION=0.98                 # stop loop at this fraction of API_BUDGET_USD
+# POLISH_BUDGET_FRACTION=0.92            # enter polish mode at this fraction of budget
+# ITERATION_TIMEOUT_MIN=180              # per-session wall-clock cap (also the wedge backstop)
+# VERIFIER_TIMEOUT_MIN=30
+# LOOP_PAUSE_SECONDS=20
+# MAX_FAST_FAILURES=6
+
+# Token pricing for the session-scan spend fallback (USD per 1M tokens).
+# Set to the real rates for CODEX_MODEL; ignored when OPENAI_ADMIN_KEY is set.
+# OPENAI_INPUT_USD_PER_MTOK=1.25
+# OPENAI_CACHED_INPUT_USD_PER_MTOK=0.125
+# OPENAI_OUTPUT_USD_PER_MTOK=10.00

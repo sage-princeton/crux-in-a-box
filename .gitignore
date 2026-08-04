@@ -1,6 +1,11 @@
 telegram_bots.json
 linux/placeholders*.txt
 !linux/placeholders.txt.example
+!linux/placeholders-codex.txt.example
+# filled placeholder configs hold live keys — ignore them wherever they land
+placeholders*.txt
+# scrub blacklists are BUILT FROM live secrets — never commit them
+blacklist*.txt
 
 **.pyc
 INVENTORY.md
