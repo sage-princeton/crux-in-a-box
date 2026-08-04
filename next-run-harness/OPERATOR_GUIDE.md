@@ -10,7 +10,7 @@ How to set up, launch, and live with a run of this harness. Every mechanism exis
 
 ### Step 1: Run `setup-device.sh`
 
-This provisions an EC2 instance and bootstraps the full environment automatically: desktop + VNC, OpenClaw, Telegram, monitoring, telemetry, services (GitHub CLI, AWS CLI, gog), and the harness workspace. It also configures `openclaw.json` with the model, tools profile, heartbeat, subagent limits, Telegram channel, and owner authorization.
+This provisions an EC2 instance and bootstraps the full environment automatically: desktop + VNC, OpenClaw, Telegram, monitoring, telemetry, services (AWS CLI), and the harness workspace. It also configures `openclaw.json` with the model, tools profile, heartbeat, subagent limits, Telegram channel, and owner authorization.
 
 The script tags the instance with `AnthropicKeySuffix` (last 6 chars of the API key) and `AnthropicSpendAtCreation` (API spend at launch time, queried from the cost-tracking Lambda). It warns if another running instance already uses the same API key.
 
@@ -26,10 +26,11 @@ cp placeholders.txt.example placeholders.txt   # then edit it
 Required keys (the script validates all of these up front, before any AWS work, and lists every missing one at once):
 
 - **Provisioning/runtime:** `TELEGRAM_BOT_NAME`, `TELEGRAM_OWNER_ID`, `ANTHROPIC_MODEL`, `ANTHROPIC_API_KEY`, `COST_TRACKER_URL`, `RUNPOD_API_KEY`, `REFINE_INK_API_KEY`
-- **gog (Google Workspace CLI):** `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, `GOG_HOME_TARBALL`
-- **Workspace placeholders:** `GITHUB_USER`, `CLOUD_SPEND_LIMIT`, `API_BUDGET`
+- **Workspace placeholders:** `CLOUD_SPEND_LIMIT`, `API_BUDGET`
 
-`RUNPOD_API_KEY` and `REFINE_INK_API_KEY` are written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read them. **gog** is auto-authenticated from a pre-built bundle: run `utils/bootstrap-gog.sh` once on your laptop (one browser consent) to turn your Google OAuth client JSON into `gog-home.tar.gz`, then set `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, and `GOG_HOME_TARBALL` — `setup-device.sh` ships the bundle to the box and `start.sh` unpacks it + wires the file-keyring env, so gog reads Gmail with no browser. The config file holds secrets (incl. a live Gmail refresh token in the tarball) — keep it out of git (it is `.gitignore`d). `--instance-suffix <SUFFIX>` (the one flag) names the instance `crux-in-a-box-<SUFFIX>` for running instances in parallel.
+`RUNPOD_API_KEY` and `REFINE_INK_API_KEY` are written to the agent's env file so its tool calls (RunPod GPU pods, refine.ink reviews) can read them. The config file holds secrets — keep it out of git (it is `.gitignore`d). `--instance-suffix <SUFFIX>` (the one flag) names the instance `crux-in-a-box-<SUFFIX>` for running instances in parallel.
+
+**No GitHub and no gog/Gmail.** The run is deliberately self-contained: the workspace repo is local-only (no remote, no `gh`), and there is no mail client — so the external-review slate is API-only (**refine.ink**), and the email-delivered portal reviewers (CMU, Stanford) are out of scope. Two consequences worth accepting explicitly before launch: (1) **nothing is backed up off-box** — if the instance is lost, the run is lost, so snapshot anything you care about yourself (`scp` the workspace periodically); (2) the unauthorable-verdict half of the success bar rests on one external reviewer plus the isolated internal blind reviews, so verify `REFINE_INK_API_KEY` before launch — it now has no fallback.
 
 Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `setup-device.sh --help` for the full key list and optional env-var overrides (region, instance type, disk size, etc.).
 
@@ -41,7 +42,6 @@ SSH into the instance and edit the workspace files under `~/.openclaw/workspace/
 
 | Placeholder                           | File(s)                    | What to fill in                                              |
 | ------------------------------------- | -------------------------- | ------------------------------------------------------------ |
-| `{{GITHUB_USER}}`                     | `TOOLS.md`                 | GitHub username for `gh`                                     |
 | `{{PAGE_BUDGET\|9}}`                  | `scripts/gate_artifact.sh` | Main-body page limit (default 9 if left as-is)               |
 | `{{SNAPSHOT_TIMES\|10:00 and 19:00}}` | `USER.md`, `HEARTBEAT.md`  | Daily snapshot times (default 10:00 and 19:00 if left as-is) |
 | `{{CLOUD_SPEND_LIMIT}}`               | `TOOLS.md`                 | Spend limit, e.g., $500                                      |
@@ -60,10 +60,8 @@ Placeholders with defaults (the `|value` part) can be left as-is if the default 
 
 All verified working before launch, by you — not the agent:
 
-- **GitHub:** `gh auth login` + confirm `gh auth status`. Create an empty project remote if needed.
 - **Telegram pairing:** DM your bot on Telegram, then from the instance: `openclaw pairing list telegram` → `openclaw pairing approve telegram <CODE>`.
-- **Email CLI (`gog`):** authenticated to the dedicated review Gmail (see https://gogcli.sh/quickstart.html). Confirm `gog gmail list "in:inbox"` works.
-- **External reviewer platforms — dry-run now, not at the gate.** Submit a throwaway PDF to (1) **CMU** `https://prometheus-eval.github.io/cmu-paper-reviewer/` and (2) **Stanford** `https://paperreview.ai/` with delivery to the review Gmail, and confirm the review email arrives and is readable via `gog`. (3) **refine.ink:** confirm `REFINE_INK_API_KEY` works against its API. The final milestone is gated on external review (`gate_artifact.sh` requires an artifact in `reviews/external/`), so a reviewer or inbox that's broken when first needed mid-run becomes a Tier-3 block.
+- **External reviewer — dry-run now, not at the gate.** Confirm `REFINE_INK_API_KEY` works against the refine.ink API with a throwaway PDF. The final milestone is gated on external review (`gate_artifact.sh` requires an artifact in `reviews/external/`) and refine.ink is now the **only** external reviewer, so a key that's broken when first needed mid-run is a Tier-3 block with nothing to fall back on.
 - **Cloud quotas pre-approved, long-lived credentials.** Quota approvals can take longer than the run, and short-lived SSO tokens expire mid-run and silently kill scheduled jobs.
 
 ### Step 4: Verify telemetry

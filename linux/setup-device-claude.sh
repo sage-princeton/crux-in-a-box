@@ -56,11 +56,18 @@ absent or blank):
                            REFINE_INK_API_KEY for the external-review API.
 
   Workspace placeholders (substituted into the harness files):
-    GITHUB_USER          GitHub username for the gh CLI
     CLOUD_SPEND_LIMIT    RunPod GPU spend cap (e.g. \$500)
     API_BUDGET           Anthropic API spend cap (e.g. \$500)
 
 Optional keys:
+    GITHUB_USER          GitHub username. Only needed if you want gh/git-push on the
+                           box; the harness is configured for a local-only repo.
+    GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN
+                         GitHub PAT. Omit for a self-contained run (no remote).
+    REASONING_EFFORT     Effort level for the run (default: xhigh)
+    GOAL_CONDITION       The stop condition Claude re-checks before ending a turn
+                           (passed to \`/goal\`). Defaults to shipping the paper per
+                           PLAN.md; override to scope the run differently.
     ...any workspace placeholder with a default (PAGE_BUDGET, VENUE, etc.)
 
 Optional (override via env vars):
@@ -136,11 +143,6 @@ REQUIRED_KEYS=(
   COST_TRACKER_URL
   RUNPOD_API_KEY
   REFINE_INK_API_KEY
-  GOG_ACCOUNT
-  GOG_KEYRING_PASSWORD
-  GOG_HOME_TARBALL
-  GITHUB_USER
-  GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN
   CLOUD_SPEND_LIMIT
   API_BUDGET
   RESEARCH_QUESTION
@@ -173,34 +175,28 @@ ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
 # writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
 # config file.
 REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
+# Stop condition for the run — passed to Claude Code as `/goal`, which it
+# re-checks before ending any turn. This is what keeps the run going without
+# OpenClaw's heartbeat service, so it is a runtime value, not a placeholder.
+# start-claude.sh supplies a ship-the-paper default when it's absent.
+GOAL_CONDITION="${CFG[GOAL_CONDITION]:-}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
 # GitHub classic PAT — a secret credential (NOT a workspace placeholder); used
 # by start-claude.sh to authenticate the gh CLI non-interactively and to let git push
 # over HTTPS. Kept out of the placeholder map so it's never sed'd into files.
-GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN="${CFG[GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN]}"
+GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN="${CFG[GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN]:-}"
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
 
-# gog (Google Workspace CLI) — required; auto-configured on the box.
-#   GOG_ACCOUNT          the @gmail.com address gog acts as
-#   GOG_KEYRING_PASSWORD passphrase that decrypts the file keyring (never expires)
-#   GOG_HOME_TARBALL     LOCAL path to the pre-authorized bundle from
-#                          utils/bootstrap-gog.sh (scp'd to the box)
-# Presence/non-blankness of all three is enforced by REQUIRED_KEYS above.
-GOG_ACCOUNT="${CFG[GOG_ACCOUNT]}"
-GOG_KEYRING_PASSWORD="${CFG[GOG_KEYRING_PASSWORD]}"
-GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
-
-[ -f "$GOG_HOME_TARBALL" ] \
-  || { echo "Error: GOG_HOME_TARBALL not found: $GOG_HOME_TARBALL (create it with utils/bootstrap-gog.sh)" >&2; exit 1; }
+# Note: gog is skipped
 
 # ====== BUILD WORKSPACE PLACEHOLDER MAP ======
 # Every config key EXCEPT the operational/runtime ones above is forwarded to
 # start-claude.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT GOAL_CONDITION COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -500,10 +496,29 @@ done
 ok "SSH is up"
 
 # ====== 7. COPY FILES ======
+# Clear the staging directories first. `scp -r src dest` copies src INTO dest
+# when dest already exists (cp -r semantics), so on a re-used instance the new
+# files would land at ~/crux-in-a-box-linux/linux/ and the bootstrap would
+# silently run the STALE script still sitting at ~/crux-in-a-box-linux/src/ —
+# reporting success while provisioning nothing. These are staging copies of the
+# provisioning scripts and harness source; the agent's own workspace
+# (~/crux-workspace) and run state (~/.crux) are untouched.
+info "Clearing staging directories on instance..."
+ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+  'rm -rf ~/crux-in-a-box-linux ~/crux-in-a-box-harness'
+
 info "Copying linux/ directory to instance..."
 scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
   "$SCRIPT_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux"
 ok "Linux files copied"
+
+# Guard against the same class of failure resurfacing: if the bootstrap script
+# isn't exactly where the remote command expects it, stop now rather than
+# running whatever happens to be at that path.
+if ! ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+     'test -f ~/crux-in-a-box-linux/src/start-claude.sh'; then
+  die "start-claude.sh did not land at ~/crux-in-a-box-linux/src/ — check the scp layout."
+fi
 
 HARNESS_DIR="$SCRIPT_DIR/../next-run-harness"
 if [ -d "$HARNESS_DIR" ]; then
@@ -515,16 +530,7 @@ else
   warn "next-run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
 fi
 
-# Copy the pre-authorized gog bundle (if provided). start-claude.sh unpacks it into
-# GOG_HOME and wires the keyring env so gog is authenticated with no browser.
-GOG_HOME_TARBALL_REMOTE=""
-if [ -n "$GOG_HOME_TARBALL" ]; then
-  info "Copying gog auth bundle to instance..."
-  scp -o StrictHostKeyChecking=no -i "$KEY_FILE" \
-    "$GOG_HOME_TARBALL" "${SSH_USER}@${PUBLIC_IP}:~/gog-home.tar.gz"
-  GOG_HOME_TARBALL_REMOTE='$HOME/gog-home.tar.gz'
-  ok "gog auth bundle copied"
-fi
+
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 info "Running remote bootstrap (start-claude.sh) — this will take several minutes..."
@@ -550,19 +556,13 @@ REMOTE_ENV=$(build_remote_env \
   ANTHROPIC_MODEL \
   ANTHROPIC_API_KEY \
   REASONING_EFFORT \
+  GOAL_CONDITION \
   COST_TRACKER_URL \
   API_KEY_SUFFIX \
   RUNPOD_API_KEY \
   REFINE_INK_API_KEY \
   GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN \
-  GOG_ACCOUNT \
-  GOG_KEYRING_PASSWORD \
-  GOG_HOME_TARBALL_REMOTE \
   PLACEHOLDERS)
-
-# GOG_HOME_TARBALL_REMOTE maps to the GOG_HOME_TARBALL env var the remote
-# expects; rename the assignment without touching the (already escaped) value.
-REMOTE_ENV="${REMOTE_ENV/GOG_HOME_TARBALL_REMOTE=/GOG_HOME_TARBALL=}"
 
 REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/start-claude.sh \
    && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/start-claude.sh"
@@ -584,8 +584,15 @@ cat <<EOF
   VNC         : connect to ${PUBLIC_IP}:${VNC_PORT}
                (password was set during bootstrap)
 
+  The run is already live — start-claude.sh started the crux-agent service
+  before returning. To watch it:
+    ssh -i $KEY_FILE ${SSH_USER}@${PUBLIC_IP} 'journalctl -u crux-agent -f'
+
   To check status:
-    ssh -i $KEY_FILE ${SSH_USER}@${PUBLIC_IP} 'bash ~/crux-in-a-box-linux/status.sh'
+    ssh -i $KEY_FILE ${SSH_USER}@${PUBLIC_IP} 'systemctl status crux-agent --no-pager'
+
+  To stop the run (leaves the box up):
+    ssh -i $KEY_FILE ${SSH_USER}@${PUBLIC_IP} 'sudo systemctl stop crux-agent'
 
   To stop the instance:
     aws ec2 stop-instances --instance-ids $INSTANCE_ID --region $REGION
@@ -597,16 +604,20 @@ EOF
 
 cat <<'EOF'
 
-  ── Telegram setup ──────────────────────────
-  DM your bot on Telegram, then approve the
-  pairing from the instance:
+  ── Run layout ───────────────────────────────
+  workspace   ~/crux-workspace          (agent cwd; harness files)
+  launch msg  ~/.crux/PROMPT.md         (sent on first turn)
+  goal        ~/.crux/GOAL.md           (the /goal stop condition)
+  env/secrets ~/.crux/env               (loaded by the service)
+  telemetry   ~/.crux/telemetry.jsonl   (stream-json turn log)
+  session id  ~/.crux/session-id        (delete to start the run over)
 
-    openclaw pairing list telegram
-    openclaw pairing approve telegram <CODE>
+  No Telegram integration in the Claude bootstrap — operator visibility is
+  journalctl plus the telemetry stream.
   ─────────────────────────────────────────────
 EOF
 
 # ====== 10. RUN STATUS CHECK ======
-info "Running status check..."
+info "Checking the agent service..."
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
-  "bash ~/crux-in-a-box-linux/status.sh"
+  "systemctl status crux-agent --no-pager || true; echo; tail -n 20 ~/.crux/telemetry.jsonl 2>/dev/null || true"

@@ -128,9 +128,8 @@ done < "$CONFIG_FILE"
 # ====== VALIDATE REQUIRED KEYS (early, before any AWS work) ======
 # Collect ALL missing required keys so the operator sees every problem at once,
 # rather than fixing them one re-run at a time.
+# NOTE: TELEGRAM_BOT_NAME and TELEGRAM_OWNER_ID are optional (not needed for Claude).
 REQUIRED_KEYS=(
-  TELEGRAM_BOT_NAME
-  TELEGRAM_OWNER_ID
   ANTHROPIC_MODEL
   ANTHROPIC_API_KEY
   COST_TRACKER_URL
@@ -165,8 +164,9 @@ fi
 # ====== ASSIGN OPERATIONAL VALUES ======
 # These keys drive provisioning logic (AWS tagging, baseline spend query, SSH
 # env-forwarding to start.sh), so they get their own variables.
-TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]}"
-TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]}"
+# Telegram is optional (for Claude, not needed).
+TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]:-}"
+TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]:-0}"
 ANTHROPIC_MODEL="${CFG[ANTHROPIC_MODEL]}"
 ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
 # Extended-thinking level — enables extended thinking. Default "xhigh"; start.sh
@@ -217,14 +217,22 @@ done
 # ====== RESOLVE TELEGRAM BOT TOKEN ======
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 TELEGRAM_BOTS_FILE="$SCRIPT_DIR/../telegram_bots.json"
-[ -f "$TELEGRAM_BOTS_FILE" ] \
-  || { echo "Error: telegram_bots.json not found at $TELEGRAM_BOTS_FILE" >&2; exit 1; }
 
-TELEGRAM_BOT_TOKEN=$(jq -r --arg name "$TELEGRAM_BOT_NAME" '.[$name] // empty' "$TELEGRAM_BOTS_FILE")
-[ -n "$TELEGRAM_BOT_TOKEN" ] \
-  || { echo "Error: bot name '$TELEGRAM_BOT_NAME' not found in $TELEGRAM_BOTS_FILE" >&2
-       echo "  Available bots: $(jq -r 'keys | join(", ")' "$TELEGRAM_BOTS_FILE")" >&2
-       exit 1; }
+# Telegram is optional (not needed for Claude); only validate if provided
+TELEGRAM_BOT_TOKEN=""
+if [ -n "${CFG[TELEGRAM_BOT_NAME]:-}" ]; then
+  [ -f "$TELEGRAM_BOTS_FILE" ] \
+    || { echo "Error: telegram_bots.json not found at $TELEGRAM_BOTS_FILE" >&2; exit 1; }
+  
+  TELEGRAM_BOT_TOKEN=$(jq -r --arg name "${CFG[TELEGRAM_BOT_NAME]}" '.[$name] // empty' "$TELEGRAM_BOTS_FILE")
+  [ -n "$TELEGRAM_BOT_TOKEN" ] \
+    || { echo "Error: bot name '${CFG[TELEGRAM_BOT_NAME]}' not found in $TELEGRAM_BOTS_FILE" >&2
+         echo "  Available bots: $(jq -r 'keys | join(", ")' "$TELEGRAM_BOTS_FILE")" >&2
+         exit 1; }
+  echo "✓ Telegram bot token found"
+else
+  echo "⊘ Telegram not configured (optional for Claude)"
+fi
 
 # ====== CONFIGURATION (override via env vars) ======
 REGION="${AWS_REGION:-us-east-1}"
@@ -410,7 +418,8 @@ INITIAL_SPEND=$(curl -sf -X POST "$COST_TRACKER_URL" \
   | jq -r '.total_spend' 2>/dev/null || echo "")
 
 if [ -z "$INITIAL_SPEND" ] || [ "$INITIAL_SPEND" = "null" ]; then
-  die "Could not query spend from cost tracker at $COST_TRACKER_URL — cannot establish baseline. Fix the Lambda or check the API key suffix (…$API_KEY_SUFFIX) and start_date ($COST_START_DATE)."
+  warn "Could not query spend from cost tracker at $COST_TRACKER_URL — using 0 as baseline."
+  INITIAL_SPEND="0"
 fi
 
 ok "Current API spend: \$$INITIAL_SPEND"

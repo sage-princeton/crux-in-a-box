@@ -17,6 +17,13 @@ TELEGRAM_OWNER_ID=123456789              # your Telegram user ID
 ANTHROPIC_MODEL=anthropic/claude-opus-4-8
 REASONING_EFFORT=xhigh                   # enables extended thinking.
                                          # accepted: off|minimal|low|medium|high|xhigh|adaptive|max
+# Optional, Claude bootstrap only (setup-device-claude.sh / start-claude.sh).
+# The stop condition for the run, passed to Claude Code as `/goal`. It installs a
+# Stop hook that blocks the agent's turn from ending until the condition holds —
+# this is what keeps a Claude run going in place of OpenClaw's heartbeat service.
+# Defaults to "ship the paper per PLAN.md"; set it to scope the run differently.
+# Max 4000 characters. Ignored by the OpenClaw bootstrap.
+# GOAL_CONDITION=The literature survey in BRIEF.md is complete and notes.md passes scripts/gate_artifact.sh.
 ANTHROPIC_API_KEY=sk-ant-...             # secret — keep this file out of git
 COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
 RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env

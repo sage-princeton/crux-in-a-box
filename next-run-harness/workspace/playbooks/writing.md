@@ -82,7 +82,7 @@ Iterate cold-read → edit until the test passes. If it hasn't passed after **th
 
 ## The final README (the run's last commit)
 
-After the Presentation Overhaul passes and before the completion report: write (or rewrite) the repo-root `README.md` as the **front door for a cold visitor**, and commit and push it as the run's final commit. The repo outlives the run; a visitor landing on it — an evaluator, a researcher, the operator months later — gets the README first and decides in two minutes whether anything here is worth their time. Write for that reader: zero project context, zero harness context.
+After the Presentation Overhaul passes and before the completion report: write (or rewrite) the repo-root `README.md` as the **front door for a cold visitor**, and commit it as the run's final commit (local-only repo — no push). The repo outlives the run; a visitor landing on it — an evaluator, a researcher, the operator months later — gets the README first and decides in two minutes whether anything here is worth their time. Write for that reader: zero project context, zero harness context.
 
 Contents, in order:
 
@@ -94,4 +94,4 @@ Contents, in order:
 
 Style rules are the Presentation Overhaul's: no author-internal vocabulary, no ALL-CAPS emphasis, every technical term defined at first use, and short — the whole file legible in ~2 minutes.
 
-**Acceptance:** `REQUIRE_README=1 scripts/gate_artifact.sh <pdf>` passes, and one fresh isolated cold-reader given *only* `README.md` can answer: what did this project find, where is the paper, and how would I rerun the headline result. Then commit, push, and send the completion report.
+**Acceptance:** `REQUIRE_README=1 scripts/gate_artifact.sh <pdf>` passes, and one fresh isolated cold-reader given *only* `README.md` can answer: what did this project find, where is the paper, and how would I rerun the headline result. Then commit and send the completion report.

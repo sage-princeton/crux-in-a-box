@@ -78,7 +78,7 @@ Caps (API spend, cloud spend, deadline) live in `BRIEF.md`; the deployment targe
 
 ## Git discipline
 
-Small, frequent commits with descriptive messages; push at least hourly while active. Commits are save points: anyone should be able to walk back to any commit and understand the state. Tier-2 defaults and other provisional decisions go on branches so reversion is cheap. Tag milestone-gate commits.
+Small, frequent commits with descriptive messages. **The repo is local-only — there is no remote, so never plan or attempt a `git push`** (`TOOLS.md` § Accounts). Commits are save points: anyone should be able to walk back to any commit and understand the state. Because the box is the only copy of the work, commit *more* often than you would with a remote — a commit is your sole recovery point. Tier-2 defaults and other provisional decisions go on branches so reversion is cheap. Tag milestone-gate commits.
 
 ## Red lines
 

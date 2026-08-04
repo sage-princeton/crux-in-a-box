@@ -281,7 +281,7 @@
               <div class="rt-card rt-main"><h4>Main session</h4><p>The agent loop, deliberating before each move. Each turn must end in one of five states — <strong>Launch · Delegate · Memo · Milestone · Mature</strong> — never idly waiting on a human.</p></div>
               <div class="rt-card"><h4>Heartbeat scheduler</h4><p>Cron tasks wake the session: harvest 30m · git 60m · milestone-clock 3h · resource 4h · blocker 6h. A sweeper, not the driver.</p></div>
               <div class="rt-card"><h4>Subagent sessions</h4><p>Isolated workers (≤5 at once; spent mostly on exploration fan-out). Each sees only <code>AGENTS.md</code> + <code>TOOLS.md</code> + its brief — which now open with the research goal — and returns an evidence-backed report.</p></div>
-              <div class="rt-card"><h4>Tools</h4><p><code>exec</code>/<code>nohup</code> · web fetch + search · browser (Playwright) · <code>gog</code> (Gmail) · RunPod API · <code>git</code>.</p></div>
+              <div class="rt-card"><h4>Tools</h4><p><code>exec</code>/<code>nohup</code> · web fetch + search · browser (Playwright) · RunPod API · <code>git</code> (local-only).</p></div>
               <div class="rt-card"><h4>Enforcement hooks <span class="eng" title="engineered for this task"><span class="eng-dot" aria-hidden="true"></span><span class="visually-hidden"> (engineered for this task)</span></span></h4><p>Optional ship-time backstop: <code>before_tool_call</code> / <code>message_sending</code> + exec-approvals. Turns a ship-gate <code>GATE&nbsp;FAIL</code> into a hard block. Default posture is cooperative, not hard-enforced.</p></div>
               <div class="rt-card"><h4>Session watchdog <span class="eng" title="engineered for this task"><span class="eng-dot" aria-hidden="true"></span><span class="visually-hidden"> (engineered for this task)</span></span></h4><p>A box-level cron <em>outside</em> the runtime. Detects a session permanently wedged by a known runtime bug (corrupted thinking-block replay), archives it, and dispatches a recovery turn — the agent resumes from its state capsule. Cooldown + daily cap prevent loops.</p></div>
             </div>
@@ -308,9 +308,8 @@
             <p class="band-head"><span class="band-ico" aria-hidden="true">🌐</span> External world — task resources</p>
             <div class="chips">
               <span class="chip">RunPod GPUs — experiments</span>
-              <span class="chip">CMU · Stanford · refine.ink — external reviews</span>
-              <span class="chip">Gmail (gog) — review delivery</span>
-              <span class="chip">GitHub — commits / save points</span>
+              <span class="chip">refine.ink — external review (API)</span>
+              <span class="chip">git (local) — commits / save points</span>
               <span class="chip">cost-tracker — measured API spend</span>
             </div>
           </div>
@@ -337,7 +336,7 @@
             <li><strong>Harvest &amp; record.</strong> When a job finishes, a cron wakes the session to read the result file, spot-check a surprising or claim-bearing number against the artifact it claims, and write the outcome into <code>PLAN.md</code>, <code>LOG.md</code>, and — for a pre-registered falsifier or a headline-claim change — the light <code>REGISTRY.md</code>.</li>
             <li><strong>Gate.</strong> At each milestone the agent runs <code>scripts/gate_artifact.sh</code>. The form/hygiene checks are always on; the ship-time checks read an <em>isolated critic's own artifact</em> (<code>reviews/power_critic_ship.md</code>, <code>reviews/final_review.md</code>) and the budget lock in <code>locks/</code> directly — never an agent-typed string — and exit <code>GATE FAIL</code> if a rule isn't met. The agent honors a failing gate.</li>
             <li><strong>Enforce (optional ship-time backstop).</strong> If the enforcement plugin is installed, OpenClaw's typed hooks turn the <em>ship</em> gates into runtime vetoes — a failing ship gate blocks the turn or cancels the completion message — so the one irreversible action can't be skipped. Everything earlier stays cooperative.</li>
-            <li><strong>Report.</strong> Scheduled snapshots and (once) the completion report go to the operator over Telegram; external reviews return via Gmail/API and re-enter the loop at step 4.</li>
+            <li><strong>Report.</strong> Scheduled snapshots and (once) the completion report go to the operator over Telegram; the external review returns via the refine.ink API and re-enters the loop at step 4.</li>
           </ol>
         </div>
       </details>
