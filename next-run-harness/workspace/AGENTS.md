@@ -87,11 +87,29 @@ Small, frequent commits with descriptive messages. **The repo is local-only — 
 - Before changing schedulers/configs (cron, openclaw.json, shell rc), inspect existing state and merge — don't clobber.
 - Speed never justifies fabrication. Deadlines control *what you work on*, not *what counts as true* — the evidence rules do not relax under time pressure.
 
+## Horizon & cadence
+
+**Every schedule number in this harness is a fraction of the horizon, not an absolute clock value.** Let **H** be the run horizon: launch → the deadline in `BRIEF.md` § Budgets & caps. Compute H in hours at hour-0, record it in the state capsule, and derive the schedule from it. *Why:* a fixed "within 24h" is meaningless on a 16-hour run and lax on a month-long one — the same fraction is the thing that transfers.
+
+| Quantity | Fraction of H | H = two weeks | H = 16h |
+| --- | --- | --- | --- |
+| Milestone 1 — skeleton compiling, gate live | first **~7%** | ~24h | ~1h |
+| Exploration Dossier certified (`playbooks/exploration.md` §4) | **30–40%** | ~4–5.5d | ~5–6.5h |
+| Presentation Overhaul + Ship (terminal, non-skippable) | last **~15%** | ~2d | ~2.5h |
+| Crunch block active (below) | next milestone **<10%** of H away | <~34h | <~1.6h |
+
+Two rules that hold at every H:
+
+- **A short horizon compresses drafting and review — never exploration.** The dossier keeps its 30–40% share; a thin dossier poisons everything downstream (`PLAN.md` § Milestone rules).
+- **The Presentation Overhaul may not be dropped**, only sized. On a very short H it is a tight pass, not an absent one (`playbooks/writing.md`).
+
+**Sub-48h horizons:** halve the `HEARTBEAT.md` sweep intervals and set the milestone-clock to ≈H/8, floor 10 min. State the derived cadence in the state capsule so a restart doesn't silently revert to the multi-day defaults.
+
 ## Crunch block
 
-When the next `PLAN.md` milestone is <24h out:
+When the next `PLAN.md` milestone is within ~10% of the horizon (§ Horizon & cadence):
 
-1. Drop the heartbeat cadence to 10 min (`cron update` or openclaw.json, whichever drives it); restore afterward.
+1. Drop the heartbeat cadence to the floor (10 min); restore afterward. *(Note: on a runtime with no heartbeat service, this instead means shortening your own self-chain intervals — check the actual scheduler in `TOOLS.md` rather than assuming one exists.)*
 2. No-op heartbeats are forbidden: every beat edits/commits deliverable-forward, dispatches/harvests a subagent, or escalates a named blocker.
 3. Mid-crunch, nothing beyond the scheduled snapshots justifies contact except a hard environment failure.
 4. Compute time-remaining at every beat; if the trajectory misses the milestone, cut scope.

@@ -9,7 +9,7 @@ Single source of environment facts. `MEMORY.md` must NOT duplicate anything here
 - Workspace path: `{{WORKSPACE_PATH}}`
 - Host: `{{HOST_DESCRIPTION|macOS VM, arm64}}`
 - Python: `{{PYTHON_SETUP|use uv + a pinned 3.11+ venv under code/; system python is old}}`
-- Deliverable toolchain: `{{DELIVERABLE_TOOLCHAIN|LaTeX via tectonic + the NeurIPS 2026 template at templates/paper_template.zip (neurips_2026.tex/.sty + checklist.tex) — unzip into paper/ and build the Milestone-1 skeleton from it on day 1 (see PLAN.md milestone 1); complete checklist.tex before camera-ready}}`
+- Deliverable toolchain: `{{DELIVERABLE_TOOLCHAIN|LaTeX via tectonic + the NeurIPS 2026 template at templates/paper_template.zip (neurips_2026.tex/.sty + checklist.tex) — unzip into paper/ and build the Milestone-1 skeleton from it in the first ~7% of the horizon (see PLAN.md milestone 1 and AGENTS.md § Horizon & cadence); complete checklist.tex before camera-ready}}`
 
 ## Accounts (verify, then keep current)
 

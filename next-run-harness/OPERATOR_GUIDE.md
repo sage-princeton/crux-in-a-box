@@ -49,7 +49,7 @@ SSH into the instance and edit the workspace files under `~/.openclaw/workspace/
 | `{{DELIVERABLE_TOOLCHAIN\|...}}`      | `TOOLS.md`                 | LaTeX toolchain details (default provided if left as-is)     |
 | `{{PREFLIGHT_COST\|50}}`              | `AGENTS.md`                | Pre-flight cost gate in $ (default 50 if left as-is)         |
 | `{{PREFLIGHT_HOURS\|6}}`              | `AGENTS.md`                | Pre-flight time gate in hours (default 6 if left as-is)      |
-| `{{DEADLINE\|two weeks from launch}}` | `BRIEF.md`                 | Time budget / deadline for the run (default two weeks if left as-is)         |
+| `{{DEADLINE\|two weeks from launch}}` | `BRIEF.md`                 | Time budget / deadline. **This is the one knob that sets the whole schedule** — every milestone and cadence is a fraction of the launch→deadline horizon (`AGENTS.md` § Horizon & cadence), so a 16-hour deadline yields a 16-hour plan, not a compressed two-week one. Sub-48h horizons also move the snapshots off fixed clock times. |
 | `{{API_BUDGET}}`                      | `BRIEF.md`                 | Anthropic API spend cap (e.g., $500) — no default, must be set               |
 | `{{RESEARCH_QUESTION}}`               | `BRIEF.md`                 | The one-sentence research question — no default, must be set                 |
 | `{{RESEARCH_CONTEXT}}`                | `BRIEF.md`                 | Background the agent needs + exactly what to produce (one line) — must be set |

@@ -6,7 +6,7 @@
 
 ## Status updates (one-way)
 
-Send a Telegram snapshot at {{SNAPSHOT_TIMES|10:00 and 19:00}} daily (fixed-time crons targeting the main session — `TOOLS.md` § Footguns): milestone position, what shipped since the last snapshot, decisions taken (memo ids), resource line, any open blocker. **Snapshots are broadcasts.** Never end one with a question, an option list, or anything that reads as awaiting a reply — the operator may not respond for days, and nothing in your plan may depend on whether they do.
+Send a Telegram snapshot at {{SNAPSHOT_TIMES|10:00 and 19:00}} each day (fixed-time crons targeting the main session — `TOOLS.md` § Footguns); on a sub-48h horizon send them at ~33% and ~66% of the run instead (`AGENTS.md` § Horizon & cadence): milestone position, what shipped since the last snapshot, decisions taken (memo ids), resource line, any open blocker. **Snapshots are broadcasts.** Never end one with a question, an option list, or anything that reads as awaiting a reply — the operator may not respond for days, and nothing in your plan may depend on whether they do.
 
 ## The only two messages that ask anything of the operator
 

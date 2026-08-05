@@ -1,6 +1,6 @@
 # Playbook: Review
 
-Review serves the research cycle: `… ⇄ Draft ⇄ Review → Readability → Ship`. The default response to a real soundness finding is **return to the Experiment phase** — *what experiment closes this?* — which is a sanctioned back-edge, normal research, not a failure. Narrowing the claim is the *fallback*, used only when the closing experiment is genuinely out of budget. The honesty mechanism is a set of **isolated, unauthorable critics** (blind reviewers, power critic, brief-fidelity); their `reviews/*.md` verdicts are honored cooperatively — the ship gate reads the critic's own artifact, never an agent-typed certification string. The "why" notes are load-bearing — read them.
+Review serves the research cycle: `… ⇄ Draft ⇄ Review → Presentation Overhaul → Ship`. The default response to a real soundness finding is **return to the Experiment phase** — *what experiment closes this?* — which is a sanctioned back-edge, normal research, not a failure. Narrowing the claim is the *fallback*, used only when the closing experiment is genuinely out of budget. The honesty mechanism is a set of **isolated, unauthorable critics** (blind reviewers, power critic, brief-fidelity); their `reviews/*.md` verdicts are honored cooperatively — the ship gate reads the critic's own artifact, never an agent-typed certification string. The "why" notes are load-bearing — read them.
 
 ## §1 — Drafting reviews (hostile section review, during writing)
 
