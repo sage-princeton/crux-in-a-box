@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
-# gate_artifact.sh — mechanical deliverable gates: cooperative, and a critical few.
-# Run before each blind-review round and at every PLAN.md milestone gate.
-# Exit 0 = all active gates pass. Any failure prints GATE FAIL lines, exits 1.
+# gate_artifact.sh — mechanical deliverable checks.
 #
-# FORM/HYGIENE gates run always; the two SHIP substance gates read the ISOLATED
-# critic's own artifact and the budget lock DIRECTLY — never an agent-typed
-# certification string, so there is no self-typed token in the loop. The gates are
-# cooperative: the agent is trusted to run this and honor the exit code
-# (OPERATOR_GUIDE.md § enforcement). Add gates only via a Tier-2 memo.
+# Run before every review round:        scripts/gate_artifact.sh <pdf> [<src-dir>]
+# Run during the final pass:            FINAL=1 scripts/gate_artifact.sh <pdf> [<src-dir>]
+#
+# Cooperative: run it and honor the exit code. Exit 0 = all active checks pass;
+# failures print GATE FAIL lines and exit 1. These checks are mechanical form
+# checks only — quality is judged by the isolated reviewers (AGENTS.md § Reviews),
+# never by this script, and reviewers are never told about these checks.
+#
+# Run from the workspace root (the project repo root): the FINAL checks resolve
+# reviews/external/, results.html, and README.md relative to the current dir.
 set -u
 
 FAIL=0
@@ -15,57 +18,70 @@ gate() { # gate <name> <0-ok|1-fail> <detail>
   if [ "$2" -ne 0 ]; then echo "GATE FAIL [$1]: $3"; FAIL=1; else echo "gate ok  [$1]"; fi
 }
 
-PDF="${1:?usage: gate_artifact.sh <path-to-pdf> [<source-dir>]}"
+PDF="${1:?usage: [FINAL=1] gate_artifact.sh <path-to-pdf> [<source-dir>]}"
 SRC="${2:-paper}"
 
-# --- 1. Artifact exists and page budget ---------------------------------
-PAGE_BUDGET="{{PAGE_BUDGET|9}}"   # main-body page limit from BRIEF.md
-case "$PAGE_BUDGET" in (*[!0-9]*) PAGE_BUDGET=9 ;; esac   # unresolved placeholder -> safe default
+# --- 1. PDF exists and fits the page budget ------------------------------
+# PAGE_BUDGET caps the MAIN BODY; references/appendices get BACKMATTER_ALLOWANCE
+# on top, because pdfinfo can only count total pages. The main-body cap itself
+# is verified by eye at the final pass — this check only catches runaway length.
+PAGE_BUDGET="{{PAGE_BUDGET|9}}"
+BACKMATTER_ALLOWANCE="{{BACKMATTER_ALLOWANCE|15}}"
+case "$PAGE_BUDGET" in (*[!0-9]*) PAGE_BUDGET=9 ;; esac
+case "$BACKMATTER_ALLOWANCE" in (*[!0-9]*) BACKMATTER_ALLOWANCE=15 ;; esac
+PAGE_CEILING=$((PAGE_BUDGET + BACKMATTER_ALLOWANCE))
 if [ ! -f "$PDF" ]; then
   gate "pdf-exists" 1 "$PDF not found"
 else
   gate "pdf-exists" 0 ""
   if command -v pdfinfo >/dev/null 2>&1; then
     PAGES=$(pdfinfo "$PDF" | awk '/^Pages:/ {print $2}')
-    # TODO(task-specific): if refs/appendix are exempt, count main-body pages.
-    gate "page-budget" $([ "${PAGES:-999}" -le "$PAGE_BUDGET" ] && echo 0 || echo 1) \
-         "pages=$PAGES > budget=$PAGE_BUDGET"
+    gate "page-budget" $([ "${PAGES:-999}" -le "$PAGE_CEILING" ] && echo 0 || echo 1) \
+         "total pages=$PAGES > ceiling=$PAGE_CEILING (main body ≤$PAGE_BUDGET + backmatter ≤$BACKMATTER_ALLOWANCE); the main-body cap is checked by eye at the final pass"
   fi
 fi
 
-# --- 2. Unresolved placeholders -----------------------------------------
+# --- 2. Unresolved placeholders ------------------------------------------
 PLACEHOLDERS='\[CITE:|TODO|TKTK|% MISSING|XXX|\?\?\?'
 HITS=$(grep -rnE "$PLACEHOLDERS" "$SRC" --include='*.tex' --include='*.md' 2>/dev/null | grep -v 'gate_artifact' | head -20)
 gate "placeholders" $([ -z "$HITS" ] && echo 0 || echo 1) "unresolved placeholders:
 $HITS"
 
-# --- 3. Author-internal vocabulary (reads-as-internal-document) ----------
-# These greps live HERE, not in reviewer prompts. Never tell a reviewer about them.
-INTERNAL_VOCAB='closure ledger|untouchable|MAJOR-[0-9]|F-[0-9]+\.[0-9]|SHIP/DEFER|Principle #|Status: LIVE|changelog:'
+# --- 3. Internal vocabulary (reads as an internal document) --------------
+INTERNAL_VOCAB='AGENTS\.md|PLAN\.md|LOG\.md|HEARTBEAT|resource ledger|work in flight'
 HITS=$(grep -rnE "$INTERNAL_VOCAB" "$SRC" --include='*.tex' 2>/dev/null | head -20)
-gate "internal-vocab" $([ -z "$HITS" ] && echo 0 || echo 1) "author-internal vocabulary in deliverable:
+gate "internal-vocab" $([ -z "$HITS" ] && echo 0 || echo 1) "internal vocabulary in deliverable:
 $HITS"
 
-# --- 4. Deanonymization ---------------------------------------------------
-DEANON='{{AGENT_NAME}}|{{OPERATOR_NAME}}'
-HITS=$(grep -rniE "$DEANON" "$SRC" --include='*.tex' 2>/dev/null | head -20)
-gate "deanonymize" $([ -z "$HITS" ] && echo 0 || echo 1) "deanonymising strings:
+# --- 4. Deanonymization --------------------------------------------------
+# Whole-word match on the resolved agent/operator names. Names that are common
+# English words (e.g. a generic default like "operator") would false-positive
+# on ordinary prose, so those are skipped — pick distinctive names if you want
+# this check to bite.
+HITS=""
+for NAME in '{{AGENT_NAME}}' '{{OPERATOR_NAME}}'; do
+  case "$(printf '%s' "$NAME" | tr 'A-Z' 'a-z')" in
+    crux|operator|agent|assistant|user|admin) continue ;;
+  esac
+  H=$(grep -rniE "\b$NAME\b" "$SRC" --include='*.tex' 2>/dev/null | head -10)
+  [ -n "$H" ] && HITS="$HITS
+$H"
+done
+gate "deanonymize" $([ -z "$HITS" ] && echo 0 || echo 1) "deanonymizing strings:
 $HITS"
 
 # --- 5. Leaked internal paths --------------------------------------------
-HITS=$(grep -rnE '(runs/exp_|code/scripts/|paper/section_|LOG\.md|REGISTRY\.md|locks/)' "$SRC" --include='*.tex' 2>/dev/null | head -20)
+HITS=$(grep -rnE '(^|[^a-zA-Z])(runs/|work/|code/scripts/|reviews/|scripts/telemetry)' "$SRC" --include='*.tex' 2>/dev/null | head -20)
 gate "internal-paths" $([ -z "$HITS" ] && echo 0 || echo 1) "internal file paths in deliverable:
 $HITS"
 
-# --- 5b. Presentation gates (Presentation Overhaul + Ship milestones) -----
-# Mechanical checks for the documented revision-round failure: prose that rots
-# into an over-long abstract, ALL-CAPS emphasis, and a figureless main body.
-# These run under REQUIRE_PRESENTATION=1 (not always-on: a skeleton or early
-# draft would fail them spuriously). The cold-read acceptance test in
-# playbooks/writing.md § Presentation overhaul is the judgment half; these are
-# the grep half. Reviewers are never told about these (reviewers grade,
-# scripts verify).
-if [ "${REQUIRE_PRESENTATION:-0}" = "1" ]; then
+# =========================================================================
+# FINAL=1 — the final-pass checks (presentation, external reviews, README,
+# accessible results page). Not always-on: a skeleton or early draft would
+# fail them spuriously.
+# =========================================================================
+if [ "${FINAL:-0}" = "1" ]; then
+
   # (a) Abstract exists and fits the word cap.
   ABSTRACT_WORD_CAP="{{ABSTRACT_WORD_CAP|200}}"
   case "$ABSTRACT_WORD_CAP" in (*[!0-9]*) ABSTRACT_WORD_CAP=200 ;; esac
@@ -77,126 +93,71 @@ if [ "${REQUIRE_PRESENTATION:-0}" = "1" ]; then
       | grep -v '^[[:space:]]*%' | sed -e 's/\\begin{abstract}//' -e 's/\\end{abstract}//' \
       | sed 's/\\[a-zA-Z]*//g' | wc -w | tr -d ' ')
     gate "abstract-length" $([ "${ABS_WORDS:-999}" -le "$ABSTRACT_WORD_CAP" ] && echo 0 || echo 1) \
-      "abstract is ${ABS_WORDS} words > cap=${ABSTRACT_WORD_CAP} — rewrite to the 5-6 sentence-role spec (playbooks/writing.md); losing nuance here is fine"
+      "abstract is ${ABS_WORDS} words > cap=${ABSTRACT_WORD_CAP} — rewrite to 5-6 plain sentences; losing nuance here is fine"
   fi
-  # (b) No ALL-CAPS emphasis in prose. >=6 consecutive capitals is almost never
-  # a real acronym; the allowlist below holds the known legit ones. Extending
-  # the allowlist is a Tier-2 memo, same as any gate change.
-  ALLCAPS_ALLOW='NEURIPS|GITHUB|LICENSE|DATASET[S]?:|HTTPS?'
+
+  # (b) No ALL-CAPS emphasis in prose (>=6 consecutive capitals is almost
+  # never a real acronym; the allowlist holds the known legitimate ones,
+  # including the target venue's name uppercased).
+  VENUE_UC=$(printf '%s' "{{VENUE|NeurIPS}}" | tr 'a-z' 'A-Z' | tr -cd 'A-Z')
+  ALLCAPS_ALLOW="${VENUE_UC:-NEURIPS}|GITHUB|LICENSE|DATASET[S]?:"
   HITS=$(grep -rnE '\b[A-Z]{6,}\b' "$SRC" --include='*.tex' 2>/dev/null \
     | grep -v ':[[:space:]]*%' | grep -vE "$ALLCAPS_ALLOW" | head -20)
-  gate "allcaps-prose" $([ -z "$HITS" ] && echo 0 || echo 1) "ALL-CAPS emphasis in deliverable prose (restate calmly at the strength the registry licenses):
+  gate "allcaps-prose" $([ -z "$HITS" ] && echo 0 || echo 1) "ALL-CAPS emphasis in prose (restate calmly at the strength the evidence supports):
 $HITS"
-  # (c) At least one figure in the MAIN BODY (appendix figures don't count).
+
+  # (b2) Main-body boundary: the page where the references begin must fall
+  # within PAGE_BUDGET+1 (references may start at the top of the page after
+  # the main body ends). This is the mechanical check on the main-body cap
+  # that the always-on total-page ceiling cannot make.
+  if command -v pdftotext >/dev/null 2>&1 && [ -f "$PDF" ]; then
+    MAXP="${PAGES:-40}"; [ "$MAXP" -gt 40 ] 2>/dev/null && MAXP=40
+    REF_PAGE=""
+    P=1
+    while [ "$P" -le "$MAXP" ]; do
+      if pdftotext -f "$P" -l "$P" -layout "$PDF" - 2>/dev/null \
+         | grep -qiE '^[[:space:]]*([0-9]+[[:space:]]+)?(References|Bibliography)[[:space:]]*$'; then
+        REF_PAGE=$P; break
+      fi
+      P=$((P+1))
+    done
+    if [ -n "$REF_PAGE" ]; then
+      gate "main-body-pages" $([ "$REF_PAGE" -le $((PAGE_BUDGET + 1)) ] && echo 0 || echo 1) \
+        "references begin on page $REF_PAGE — the main body appears to exceed the ${PAGE_BUDGET}-page cap (it must end by page $PAGE_BUDGET; references may start on page $((PAGE_BUDGET+1)))"
+    else
+      gate "main-body-pages" 1 "no References/Bibliography heading found in the first $MAXP pages — cannot locate the main-body boundary; verify the main-body page cap by eye and fix the references heading"
+    fi
+  fi
+
+  # (c) At least one figure in the main body (appendix figures don't count).
   N_FIG=$(grep -rlE '\\begin\{figure' "$SRC" --include='*.tex' 2>/dev/null \
     | grep -viE 'appendix|supplement' | wc -l | tr -d ' ')
   gate "figure-in-body" $([ "${N_FIG:-0}" -ge 1 ] && echo 0 || echo 1) \
-    "no figure environment in any main-body .tex — readers spend ~30% of attention on figures (playbooks/writing.md effort allocation); build Figure 1 per playbooks/figures.md from cached artifacts"
-fi
+    "no figure environment in any main-body .tex — build Figure 1 from cached results; readers spend much of their attention on figures"
 
-# --- 6. External-review milestone gate (final milestone only) ------------
-if [ "${REQUIRE_EXTERNAL_REVIEWS:-0}" = "1" ]; then
+  # (d) External review artifacts were actually collected — one per reviewer.
   N_EXT=$(ls reviews/external/ 2>/dev/null | wc -l | tr -d ' ')
-  gate "external-reviews" $([ "$N_EXT" -ge 1 ] && echo 0 || echo 1) \
-       "no external review artifacts in reviews/external/ (the brief budgets them; using them is a milestone, not optional)"
-fi
+  gate "external-reviews" $([ "$N_EXT" -ge 2 ] && echo 0 || echo 1) \
+       "reviews/external/ holds $N_EXT artifact(s); both external reviewers are required before completion (AGENTS.md § Reviews). If a reviewer platform is genuinely broken, the outage and the attempt must be in LOG.md and the completion report"
 
-# --- 7. Evidence adequacy (final/ship gate) ------------------------------
-# The headline must be powered, not a single cell. Read the ISOLATED ship-time
-# power critic's OWN file directly (playbooks/review.md §2d) — no agent-typed
-# REGISTRY cert line. The critic writes its verdict and the seed/cell counts it
-# found against the delivered artifacts; the gate honors that artifact and checks
-# the counts against locks/evidence_floors.json. A missing critic file or a
-# non-ADEQUATE verdict fails — the agent must run the critic, not type a token.
-# A negative/impossibility headline faces the SAME floor as a positive one.
-if [ "${REQUIRE_EVIDENCE_ADEQUATE:-0}" = "1" ]; then
-  SEED_FLOOR=3; CELL_FLOOR=2
-  if [ -f locks/evidence_floors.json ]; then
-    _sf=$(python3 -c 'import json;print(json.load(open("locks/evidence_floors.json")).get("seed_floor",3))' 2>/dev/null)
-    _cf=$(python3 -c 'import json;print(json.load(open("locks/evidence_floors.json")).get("cell_floor",2))' 2>/dev/null)
-    case "${_sf:-}" in (''|*[!0-9]*) : ;; (*) SEED_FLOOR="$_sf" ;; esac
-    case "${_cf:-}" in (''|*[!0-9]*) : ;; (*) CELL_FLOOR="$_cf" ;; esac
-  fi
-  PC="reviews/power_critic_ship.md"
-  if [ ! -f "$PC" ] || [ ! -s "$PC" ]; then
-    gate "evidence-adequate" 1 "no ship-time power critic at $PC — spawn the isolated power/evidence-adequacy critic (review.md §2d) against the delivered artifacts before shipping"
+  # (e) The accessible results page exists and is self-contained.
+  H="results.html"
+  if [ ! -s "$H" ]; then
+    gate "results-html" 1 "no $H at repo root — build the accessible results page (final pass, step 2)"
   else
-    if grep -iqE '(verdict|recommendation)[[:space:]]*:[[:space:]]*adequate' "$PC"; then
-      gate "evidence-adequate:verdict" 0 ""
-    else
-      gate "evidence-adequate:verdict" 1 "$PC verdict is not ADEQUATE (e.g. UNDERPOWERED / SINGLE-POINT / SCALE-INCONSISTENT) — power up the headline or route to Stuck/Pivot; it does not ship underpowered (BRIEF.md evidence floor)"
-    fi
-    SEEDS=$(grep -oiE 'seeds[=: ]+[0-9]+' "$PC" | grep -oE '[0-9]+' | head -1)
-    CELLS=$(grep -oiE '(load-bearing-)?cells[=: ]+[0-9]+' "$PC" | grep -oE '[0-9]+' | head -1)
-    gate "evidence-adequate:seeds" $([ "${SEEDS:-0}" -ge "$SEED_FLOOR" ] 2>/dev/null && echo 0 || echo 1) \
-      "power critic reports seeds=${SEEDS:-unstated} < floor=$SEED_FLOOR (locks/evidence_floors.json) — the critic must state 'seeds=<N>' and meet the floor"
-    gate "evidence-adequate:cells" $([ "${CELLS:-0}" -ge "$CELL_FLOOR" ] 2>/dev/null && echo 0 || echo 1) \
-      "power critic reports cells=${CELLS:-unstated} < floor=$CELL_FLOOR (locks/evidence_floors.json) — the critic must state 'cells=<M>' and meet the floor"
+    gate "results-html" 0 ""
+    H_WORDS=$(wc -w < "$H" | tr -d ' ')
+    gate "results-html-substantive" $([ "${H_WORDS:-0}" -ge 200 ] && echo 0 || echo 1) \
+      "$H is ${H_WORDS} words — too thin to present the results accessibly"
+    EXT=$(grep -nE '(src|href)=["'\'']https?://' "$H" 2>/dev/null | grep -viE 'href=["'\'']https?://(arxiv|github|doi)' | head -5)
+    gate "results-html-selfcontained" $([ -z "$EXT" ] && echo 0 || echo 1) "$H loads external resources (inline CSS and embed images instead):
+$EXT"
   fi
-fi
 
-# --- 8. Ship authorization (final/ship gate) — light under-spend backstop -
-# Blocks an early below-bar ship while budget+time remain. Cooperative and light —
-# the felt-budget heuristic (AGENTS.md § Resources; HEARTBEAT.md burn-rate) does
-# the real work; this is only the backstop. Passes if ANY holds:
-#   (a) reviews/final_review.md records Weak Accept or higher (success); OR
-#   (b) locks/budget.json + telemetry show a cap genuinely (near-)exhausted; OR
-#   (c) LOG.md carries an honest ship / under-spend justification memo.
-# Only below-bar + budget-remaining + no-memo fails. "Unknown budget" does NOT
-# hard-block — the memo path is always open to an honest, logged call.
-if [ "${REQUIRE_SHIP_AUTHORIZATION:-0}" = "1" ]; then
-  BARMET=1
-  if [ -f reviews/final_review.md ] \
-     && grep -iqE '(recommendation|verdict)[[:space:]]*:.*accept' reviews/final_review.md \
-     && ! grep -iqE '(recommendation|verdict)[[:space:]]*:.*(reject|borderline)' reviews/final_review.md; then
-    BARMET=0
-  fi
-  SHIPMEMO=1
-  if [ -f LOG.md ] && grep -iqE '(ship.{0,20}justif|justif.{0,20}ship|below.bar ship|under.?spend)' LOG.md; then SHIPMEMO=0; fi
-  UNDERSPENT="unknown"
-  if [ -f locks/budget.json ]; then
-    UNDERSPENT=$(python3 - <<'PY' 2>/dev/null || echo unknown
-import json, subprocess, sys
-from datetime import datetime, timezone
-try:
-    b = json.load(open("locks/budget.json"))
-    dls = str(b.get("deadline_iso", "")); lns = str(b.get("launch_iso", "")); ab = b.get("api_budget")
-    if not dls or not lns or "FILL_AT_HOUR_0" in (dls, lns) or ab in (None, 0, ""):
-        print("unknown"); sys.exit(0)
-    dl = datetime.fromisoformat(dls); ln = datetime.fromisoformat(lns)
-    if dl.tzinfo is None: dl = dl.replace(tzinfo=timezone.utc)
-    if ln.tzinfo is None: ln = ln.replace(tzinfo=timezone.utc)
-    now = datetime.now(timezone.utc)
-    rt = (dl - now).total_seconds() / max(1.0, (dl - ln).total_seconds())
-    tf = float(b.get("underspend_time_floor", 0.5)); bf = float(b.get("underspend_budget_floor", 0.4))
-    out = subprocess.run([sys.executable, "scripts/telemetry_costs.py"], capture_output=True, text=True, timeout=40)
-    rb = 1.0 - float(out.stdout.strip().lstrip("$")) / float(ab)
-    print("yes" if (rt > tf and rb > bf) else "no")
-except Exception:
-    print("unknown")
-PY
-)
-  fi
-  if [ "$BARMET" -eq 0 ]; then
-    gate "ship-authorization" 0 ""
-  elif [ "$SHIPMEMO" -eq 0 ]; then
-    gate "ship-authorization" 0 ""   # honest below-bar / under-spend call, logged in LOG.md
-  elif [ "$UNDERSPENT" = "no" ]; then
-    gate "ship-authorization" 0 ""   # a cap is genuinely (near-)exhausted
-  else
-    gate "ship-authorization" 1 "below-bar ship with budget/time apparently remaining (under-spent=$UNDERSPENT) and no ship-justification memo in LOG.md. Deploy the budget on stronger evidence and keep working (BRIEF.md success bar; HEARTBEAT.md under-spend), reach Weak Accept+ in reviews/final_review.md, or log an honest ship/under-spend justification memo."
-  fi
-fi
-
-# --- 9. Final README (ship gate) ------------------------------------------
-# The repo's front door for a cold visitor — written LAST, after the
-# Presentation Overhaul, committed as the run's final commit
-# (playbooks/writing.md § The final README). Mechanical half only; the
-# cold-reader acceptance lives in the playbook.
-if [ "${REQUIRE_README:-0}" = "1" ]; then
+  # (f) Final README: exists, substantive, has a reproduction section, clean.
   R="README.md"
   if [ ! -s "$R" ]; then
-    gate "readme-exists" 1 "no $R at repo root — write the final README (playbooks/writing.md § The final README) before the completion report"
+    gate "readme-exists" 1 "no $R at repo root — write the final README (final pass, step 3)"
   else
     gate "readme-exists" 0 ""
     R_WORDS=$(wc -w < "$R" | tr -d ' ')
@@ -204,7 +165,7 @@ if [ "${REQUIRE_README:-0}" = "1" ]; then
       "README is ${R_WORDS} words — too thin to orient a cold visitor (needs: what+finding, paper path, repo map, repro command, data provenance)"
     gate "readme-repro" $(grep -iqE 'reproduc|repro' "$R" && echo 0 || echo 1) \
       "README has no reproduction section — a visitor must be able to rerun the headline result from a fresh clone"
-    HITS=$( { grep -nE "$INTERNAL_VOCAB" "$R"; grep -nE '\b[A-Z]{6,}\b' "$R" | grep -vE "${ALLCAPS_ALLOW:-NEURIPS|GITHUB|LICENSE|HTTPS?}"; } 2>/dev/null | head -10)
+    HITS=$( { grep -nE "$INTERNAL_VOCAB" "$R"; grep -nE '\b[A-Z]{6,}\b' "$R" | grep -vE "$ALLCAPS_ALLOW"; } 2>/dev/null | head -10)
     gate "readme-vocabulary" $([ -z "$HITS" ] && echo 0 || echo 1) "internal vocabulary or ALL-CAPS in README:
 $HITS"
   fi

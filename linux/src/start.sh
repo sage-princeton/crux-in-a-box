@@ -131,6 +131,10 @@ XFCEWALL
 # install openclaw (no onboarding)
 sudo -u "$REAL_USER" bash -c \
   'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'
+# The install is unpinned — record the version, because every config key written
+# further down is ignored silently if its name drifted in a newer release.
+OPENCLAW_INSTALLED_VERSION=$(sudo -u "$REAL_USER" bash -lc 'openclaw --version' 2>/dev/null | head -1 || echo unknown)
+echo "✔ OpenClaw installed: ${OPENCLAW_INSTALLED_VERSION:-unknown} (unpinned — record this; the config keys below are version-sensitive)"
 
 # Copy exec-approvals config (unrestricted access for the agent)
 sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
@@ -259,14 +263,14 @@ fi
 # a global default thinking level (.agents.defaults.thinkingDefault, values
 # off|minimal|low|medium|high|xhigh|adaptive|max). VERIFY this key name against
 # YOUR pinned OpenClaw version: an unknown key is simply ignored, so thinking just
-# stays OFF until corrected — it will NOT break the run. (Same fail-soft convention
-# as the gate-enforcer caveat.)
+# stays OFF until corrected — it will NOT break the run. (Unknown config keys
+# are ignored fail-soft; the same applies to every key written below.)
 THINKING_LEVEL="${REASONING_EFFORT:-xhigh}"
 
 # Prompt cache retention. "long" maps to Anthropic's 1h cache TTL (vs the 5-min
-# default). The heartbeat cadence is 30m, so turns are routinely spaced past the
-# 5-min TTL — without this, the large re-read workspace prompt is a full cache
-# MISS every turn; "long" keeps it warm across the gaps → cache-read pricing.
+# default). The heartbeat cadence is 15m, so turns are routinely spaced past the
+# 5-min TTL — without this, the workspace prompt is a full cache MISS every
+# turn; "long" keeps it warm across the gaps → cache-read pricing.
 CACHE_RETENTION="${CACHE_RETENTION:-long}"
 
 # Per-request LLM idle watchdog. OpenClaw's default is 120s
@@ -280,9 +284,9 @@ PROVIDER_ID="${ANTHROPIC_MODEL%%/*}"
 PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
 
 # Whole-turn ceiling. OpenClaw's default is too short for xhigh research turns
-# (deep thinking + long tool loops) — both pilot boxes hit "Request timed out
+# (deep thinking + long tool loops), which can otherwise hit "Request timed out
 # before a response was generated... increase agents.defaults.timeoutSeconds".
-# 3600s = 1h per turn; the 30m heartbeat sweeper bounds the cost of a runaway.
+# 3600s = 1h per turn; the 15m heartbeat sweeper bounds the cost of a runaway.
 AGENT_TURN_TIMEOUT_SECONDS="${AGENT_TURN_TIMEOUT_SECONDS:-3600}"
 
 TMP_CONFIG=$(mktemp)
@@ -294,20 +298,20 @@ jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" \
   .agents.defaults.params.cacheRetention = $cache |
   .models.providers[$provider].timeoutSeconds = $ptimeout |
   .tools.profile = "full" |
-  .agents.defaults.heartbeat.every = "30m" |
+  .agents.defaults.heartbeat.every = "15m" |
   .agents.defaults.heartbeat.skipWhenBusy = true |
   .agents.defaults.heartbeat.target = "none" |
-  .agents.defaults.subagents.maxConcurrent = 5
+  .agents.defaults.subagents.maxConcurrent = 8
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
 echo "✔ Model configured: $ANTHROPIC_MODEL"
-echo "✔ Extended thinking configured: thinkingDefault=$THINKING_LEVEL (verify key vs pinned OpenClaw; unknown key => thinking stays off, run unaffected)"
-echo "✔ Prompt cache retention: $CACHE_RETENTION (1h TTL — survives the 30m heartbeat gaps)"
+echo "→ wrote thinkingDefault=$THINKING_LEVEL — NOT verified: unknown keys are ignored silently. VERIFY at launch that the first responses actually show extended thinking (gateway log / response blocks); a silently-off thinking level changes the run's construct."
+echo "→ wrote cacheRetention=$CACHE_RETENTION — NOT verified: if ignored, 15m-spaced turns pay full cache-miss pricing; check early spend against expectations."
 echo "✔ Provider request timeout: ${PROVIDER_REQUEST_TIMEOUT_SECONDS}s for '$PROVIDER_ID' (raises the 120s idle watchdog for heavy reasoning)"
 echo "✔ Tools profile set to full"
-echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
-echo "✔ Subagents maxConcurrent: 5"
+echo "✔ Heartbeat configured: 15m, skipWhenBusy, target=none"
+echo "✔ Subagents maxConcurrent: 8 (native sessions_spawn — width for parallel exploration; delegated work runs through the gateway and is captured in telemetry)"
 
 # Append ANTHROPIC_API_KEY to ~/.openclaw/.env for daemon/gateway use
 OPENCLAW_ENV="$REAL_HOME/.openclaw/.env"
@@ -316,9 +320,16 @@ if [ -f "$OPENCLAW_ENV" ]; then
   sed -i '/^ANTHROPIC_API_KEY=/d' "$OPENCLAW_ENV"
 fi
 echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$OPENCLAW_ENV"
+# Run-start date for spend metering: telemetry_costs.py sums the costs API from
+# this day forward, so the canonical spend number covers the WHOLE run (a
+# today-only default would reset to $0 every midnight). Day-bucketed caveat:
+# any same-day prior spend on this key before provisioning is included — use a
+# fresh key per run.
+sed -i '/^COST_START_DATE=/d' "$OPENCLAW_ENV"
+echo "COST_START_DATE=$(date -u +%F)" >> "$OPENCLAW_ENV"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
 chmod 600 "$OPENCLAW_ENV"
-echo "✔ Anthropic API key written to ~/.openclaw/.env"
+echo "✔ Anthropic API key + COST_START_DATE=$(date -u +%F) written to ~/.openclaw/.env"
 
 # Append the agent's tool-call API keys (optional). Unlike ANTHROPIC_API_KEY
 # (used by the gateway's model calls), these are consumed by the agent's bash
@@ -476,10 +487,14 @@ if [ -d "$HARNESS_SRC" ]; then
   chmod +x "$OPENCLAW_WORKSPACE/scripts/"*.sh 2>/dev/null || true
 
   # --- Step 1: Resolve user-supplied placeholders (from the config file) ---
-  # These run first so they take priority over built-in defaults.
+  # These run first so they take priority over built-in defaults. Split on the
+  # LITERAL '|||' delimiter (IFS='|||' would split on every single '|', silently
+  # truncating any value that contains one).
   if [ -n "${PLACEHOLDERS:-}" ]; then
-    IFS='|||' read -ra PAIRS <<< "$PLACEHOLDERS"
-    for PAIR in "${PAIRS[@]}"; do
+    _REST="${PLACEHOLDERS}|||"
+    while [ -n "$_REST" ]; do
+      PAIR="${_REST%%|||*}"
+      _REST="${_REST#*|||}"
       [ -z "$PAIR" ] && continue
       KEY="${PAIR%%=*}"
       VALUE="${PAIR#*=}"
@@ -499,9 +514,7 @@ if [ -d "$HARNESS_SRC" ]; then
   find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec sed -i \
     -e "s#{{AGENT_NAME}}#${AGENT_NAME}#g" \
     -e "s#{{OPERATOR_NAME}}#${OPERATOR_NAME}#g" \
-    -e "s#{{OPERATOR_SHORT}}#${OPERATOR_NAME}#g" \
     -e "s#{{WORKSPACE_PATH}}#${OPENCLAW_WORKSPACE}#g" \
-    -e "s#{{TELEMETRY_PATH}}#${REAL_HOME}/.openclaw/telemetry/telemetry.jsonl#g" \
     -e "s#{{HOST_DESCRIPTION|[^}]*}}#Ubuntu 22.04 EC2, amd64#g" \
     -e "s#{{COST_TRACKER_URL}}#${COST_TRACKER_URL:-}#g" \
     -e "s#{{API_KEY_SUFFIX}}#${API_KEY_SUFFIX:-}#g" \
@@ -541,6 +554,30 @@ chown "$REAL_USER:$REAL_USER" "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
 chmod +x "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
 sudo -u "$REAL_USER" bash -c \
   '(crontab -l 2>/dev/null | grep -v crux-thinking-watchdog; echo "*/5 * * * * $HOME/.openclaw/watchdog/crux-thinking-watchdog.sh") | crontab -'
+
+# ====== FINAL-PASS INJECTOR ======
+# Auto-dispatches the standing final-pass instruction when the agent writes
+# COMPLETION_REPORT.md at the workspace root (AGENTS.md requirement 9). The
+# message body is staged here from FINAL_PASS.md (single source of truth);
+# manual operator send remains the fallback (OPERATOR_GUIDE.md).
+FINAL_PASS_DIR="$REAL_HOME/.openclaw/final_pass"
+sudo -u "$REAL_USER" mkdir -p "$FINAL_PASS_DIR"
+FINAL_PASS_SRC="$REAL_HOME/crux-in-a-box-harness/FINAL_PASS.md"
+if [ -f "$FINAL_PASS_SRC" ]; then
+  # Stage the message body: everything below the first '---' rule (the part
+  # above it is operator-facing documentation, not part of the message).
+  awk 'flag{print} /^---$/{flag=1}' "$FINAL_PASS_SRC" > "$FINAL_PASS_DIR/message.md"
+  chown "$REAL_USER:$REAL_USER" "$FINAL_PASS_DIR/message.md"
+  echo "✔ Final-pass message staged from FINAL_PASS.md"
+else
+  echo "⚠ FINAL_PASS.md not found at $FINAL_PASS_SRC — the injector will log an error and the operator must send the final pass manually"
+fi
+cp "$SCRIPT_DIR/final-pass-injector.sh" "$FINAL_PASS_DIR/final-pass-injector.sh"
+chown "$REAL_USER:$REAL_USER" "$FINAL_PASS_DIR/final-pass-injector.sh"
+chmod +x "$FINAL_PASS_DIR/final-pass-injector.sh"
+sudo -u "$REAL_USER" bash -c \
+  '(crontab -l 2>/dev/null | grep -v final-pass-injector; echo "*/5 * * * * $HOME/.openclaw/final_pass/final-pass-injector.sh") | crontab -'
+echo "✔ Final-pass injector installed (cron */5 — triggers on workspace COMPLETION_REPORT.md)"
 echo "✔ Thinking-signature watchdog installed (cron */5 min)"
 
 echo ""

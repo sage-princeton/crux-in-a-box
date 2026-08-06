@@ -4,8 +4,8 @@
 Queries the cost-tracking service (backed by the Anthropic Admin API)
 to get the total spend for this instance's API key.
 
-This is the canonical spend number: update the state capsule from this,
-never from hand estimates.
+This is the canonical spend number: update the PLAN.md current-position
+line from this, never from hand estimates.
 
 Cost-tracker contract:
     POST {"api_key": "<full sk-ant-... key>", "start_date": "YYYY-MM-DD"}
@@ -16,8 +16,11 @@ key by partial_key_hint and never echoes it back.
 
 Usage:
     python3 telemetry_costs.py [START_DATE]
-      START_DATE (YYYY-MM-DD) is the oldest day to sum from. Defaults to the
-      COST_START_DATE env var, else 2024-01-01 (effectively all-time).
+      START_DATE (YYYY-MM-DD) is the oldest day to sum from. Resolution order:
+      CLI arg > COST_START_DATE env var > COST_START_DATE in ~/.openclaw/.env
+      (written at provisioning = the run's start date) > 2024-01-01 (all-time).
+      The default MUST cover the whole run: a today-only default would silently
+      reset the reported spend to $0 every midnight and corrupt the ledger.
 """
 
 import json
@@ -25,13 +28,26 @@ import os
 import sys
 import urllib.request
 import urllib.error
-from datetime import datetime, timezone
 from pathlib import Path
 
 COST_TRACKER_URL = "{{COST_TRACKER_URL}}"
 API_KEY_SUFFIX = "{{API_KEY_SUFFIX}}"  # for display/logging only
-# Default to today (UTC); override with a CLI arg or the COST_START_DATE env var.
-DEFAULT_START_DATE = datetime.now(timezone.utc).date().isoformat()
+# All-time fallback — safe because each run uses a fresh API key; the normal
+# path is the provisioning-written COST_START_DATE in ~/.openclaw/.env.
+DEFAULT_START_DATE = "2024-01-01"
+
+
+def _load_openclaw_env(name: str) -> str:
+    """Return a value from ~/.openclaw/.env (works outside the gateway env)."""
+    env_path = Path.home() / ".openclaw" / ".env"
+    try:
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if line.startswith(f"{name}="):
+                return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return ""
 
 
 def _load_api_key() -> str:
@@ -39,15 +55,7 @@ def _load_api_key() -> str:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if key:
         return key.strip()
-    env_path = Path.home() / ".openclaw" / ".env"
-    try:
-        for line in env_path.read_text().splitlines():
-            line = line.strip()
-            if line.startswith("ANTHROPIC_API_KEY="):
-                return line.split("=", 1)[1].strip().strip('"').strip("'")
-    except OSError:
-        pass
-    return ""
+    return _load_openclaw_env("ANTHROPIC_API_KEY")
 
 
 def main() -> None:
@@ -71,7 +79,9 @@ def main() -> None:
     start_date = (
         sys.argv[1]
         if len(sys.argv) > 1
-        else os.environ.get("COST_START_DATE", DEFAULT_START_DATE)
+        else os.environ.get("COST_START_DATE")
+        or _load_openclaw_env("COST_START_DATE")
+        or DEFAULT_START_DATE
     )
 
     payload = json.dumps({"api_key": api_key, "start_date": start_date}).encode()

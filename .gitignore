@@ -18,3 +18,7 @@ personas_telemetry.jsonl
 tabpfn_telemetry.jsonl
 .mypy_cache/
 .claude/settings.local.json
+
+verifier-calibration/
+
+.env

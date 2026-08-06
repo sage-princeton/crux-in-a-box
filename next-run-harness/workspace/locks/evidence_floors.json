@@ -1,9 +1,0 @@
-{
-  "name": "evidence_floors",
-  "definition": "Minimum replication for a load-bearing headline result, read by scripts/gate_artifact.sh (REQUIRE_EVIDENCE_ADEQUATE=1) at ship. The isolated ship-time power critic (playbooks/review.md §2d) states the seed/cell counts it found against the delivered artifacts; the gate checks them against these floors. A negative/impossibility headline faces the SAME floor as a positive one.",
-  "seed_floor": 3,
-  "cell_floor": 2,
-  "locked_at": null,
-  "locked_by_log_entry": null,
-  "change_policy": "Tier-2 memo. Tune to the task hour-0 — usually upward; a result thinner than these floors is an unfinished experiment, not a caveat."
-}
