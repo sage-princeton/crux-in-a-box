@@ -5,7 +5,7 @@
  * The default is COOPERATIVE gates honored by the agent, not hard enforcement.
  * The isolated critics' own verdict files are the evidence and the agent is
  * trusted to run the gate and honor its exit code. This plugin exists only as an
- * OPTIONAL ship-time backstop: it makes the three SHIP gates non-bypassable at
+ * OPTIONAL ship-time backstop: it makes the SHIP gates non-bypassable at
  * the ship / completion-report boundary for operators who want a belt-and-
  * suspenders stop.
  *
@@ -35,15 +35,13 @@ const PDF = "paper/main.pdf";
 // ONLY allowlisted ship path (exec-approvals) and deny raw build/submit. The
 // routine latex build is intentionally NOT gated here — only the ship wrapper.
 const SHIP_COMMAND = /(^|\/|\s)ship\.sh\b/;
-// Matches the completion-report body so daily snapshots / Tier-3 pings are NOT
+// Matches the completion-report body so routine snapshots / Tier-3 pings are NOT
 // blocked. Align with USER.md § Status updates (the report's header line).
 const COMPLETION_MARKER = /completion report|COMPLETION REPORT/;
 
 // SHIP gate flags — keep in lockstep with PLAN.md milestone-table gate commands
-// and the three ship gates in scripts/gate_artifact.sh. This enforcer guards
-// SHIP only.
+// and the ship gates in scripts/gate_artifact.sh. This enforcer guards SHIP only.
 const SHIP_FLAGS = {
-  REQUIRE_EXTERNAL_REVIEWS: "1",
   REQUIRE_EVIDENCE_ADEQUATE: "1",
   REQUIRE_SHIP_AUTHORIZATION: "1",
 };

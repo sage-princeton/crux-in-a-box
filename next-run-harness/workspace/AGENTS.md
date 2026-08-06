@@ -10,7 +10,7 @@ This file is a small set of operating **principles** — heuristics to apply wit
 
 **Research question:** {{RESEARCH_QUESTION}}
 
-The deliverable is a research paper answering that question, at a quality **publishable at {{VENUE|NeurIPS}}**: success is a **Weak Accept or higher** from the isolated internal blind review and the external reviewers, none of whom you can author. The full contract — success bar, background context, caps — is `BRIEF.md`; the horizon is **{{DEADLINE|two weeks from launch}}** with budgets of **{{API_BUDGET}}** (API) and **{{CLOUD_SPEND_LIMIT}}** (GPU), targets to deploy on depth (§ Resources). Every mechanism below exists to serve this: a **strong, true, legible** answer to the question above — not a thin, defensible one, and not a polished answer to a different question.
+The deliverable is a research paper answering that question, at a quality **publishable at {{VENUE|NeurIPS}}**: success is a **Weak Accept or higher** from the isolated blind review, which you cannot author. The full contract — success bar, background context, caps — is `BRIEF.md`; the horizon is **{{DEADLINE|1 day from launch}}** with budgets of **{{API_BUDGET}}** (API) and **{{CLOUD_SPEND_LIMIT}}** (GPU), targets to deploy on depth (§ Resources). **Every schedule in this scaffold is a fraction of that horizon, not a fixed number of hours** — the run may be a day or a fortnight, and the phase proportions hold either way. Every mechanism below exists to serve this: a **strong, true, legible** answer to the question above — not a thin, defensible one, and not a polished answer to a different question.
 
 Subagents: this is the project your task serves. Your specific job and scope are in your spawn brief; when a local choice is underdetermined, choose the option that best serves this goal.
 
@@ -72,13 +72,13 @@ Before yielding, if the turn changed the state (launched, harvested, delegated, 
 
 Caps (API spend, cloud spend, deadline) live in `BRIEF.md`; the deployment target is `locks/budget.json`. Measurement is scripted, never estimated: API spend via `scripts/telemetry_costs.py`, cloud spend via the command in `TOOLS.md`. Current numbers live in the state capsule (resource-check heartbeat task), surfaced continuously as burn-rate vs runway (`HEARTBEAT.md`).
 
-- **Pre-flight sanity:** any single dispatch estimated over ${{PREFLIGHT_COST|50}} or {{PREFLIGHT_HOURS|6}}h gets a one-line cost estimate checked against remaining budget before launch. *Why:* catch a runaway before it runs, not after.
+- **Pre-flight sanity:** any single dispatch estimated over ${{PREFLIGHT_COST|50}}, or over {{PREFLIGHT_HORIZON_FRACTION|10}}% of the run horizon in wall-clock, gets a one-line cost estimate checked against remaining budget before launch. *Why:* catch a runaway before it runs, not after — and on a short horizon the wall-clock half is the binding one.
 - **Near a cap → consolidate.** As any cap approaches exhaustion, stop opening new large dispatches and converge on a finish-under-cap plan; breaching a cap is Tier-3. *Why:* a ceiling is real even when the floor is the bigger risk.
 - **Time calibration:** every launch/spawn records a predicted wall-clock; every harvest logs predicted vs actual. *Why:* you start badly calibrated — the record is how you stop.
 
 ## Git discipline
 
-Small, frequent commits with descriptive messages; push at least hourly while active. Commits are save points: anyone should be able to walk back to any commit and understand the state. Tier-2 defaults and other provisional decisions go on branches so reversion is cheap. Tag milestone-gate commits.
+Small, frequent commits with descriptive messages — at least once per state-changing turn. The repo is **local only; there is no remote and nothing to push** (`TOOLS.md`). Commits are save points: anyone should be able to walk back to any commit and understand the state. Tier-2 defaults and other provisional decisions go on branches so reversion is cheap. Tag milestone-gate commits.
 
 ## Red lines
 
@@ -89,16 +89,16 @@ Small, frequent commits with descriptive messages; push at least hourly while ac
 
 ## Crunch block
 
-When the next `PLAN.md` milestone is <24h out:
+When the time remaining to the next `PLAN.md` milestone is under **{{CRUNCH_FRACTION|10}}% of the run horizon** (`BRIEF.md` § Budgets — on a 1-day run that is roughly the last two hours; on a two-week run, the last day and a half):
 
-1. Drop the heartbeat cadence to 10 min (`cron update` or openclaw.json, whichever drives it); restore afterward.
+1. Drop the heartbeat cadence to a third of its normal interval, floor 5 min (`cron update` or openclaw.json, whichever drives it); restore afterward.
 2. No-op heartbeats are forbidden: every beat edits/commits deliverable-forward, dispatches/harvests a subagent, or escalates a named blocker.
 3. Mid-crunch, nothing beyond the scheduled snapshots justifies contact except a hard environment failure.
 4. Compute time-remaining at every beat; if the trajectory misses the milestone, cut scope.
 
 ## Stuck tripwire
 
-**Quantitative:** same blocker for >2h, or 3 failed attempts at the same approach. **Qualitative:** a central-claim rejection recurring across ≥2 blind-review rounds (`playbooks/review.md` §2a), a DIVERGED brief-fidelity verdict (`playbooks/review.md` §3), a headline whose pre-registered falsifier is vacuous, or a STOP-EARLY/THIN-LIT exploration-sufficiency verdict recurring across ≥2 critic rounds with a viable un-scouted candidate (`playbooks/exploration.md` §4). Any of these → stop grinding and open `playbooks/decisions.md` § Stuck/Pivot. Decide-and-proceed within one heartbeat of writing the memo. Polishing presentation, adding datasets, or narrowing the claim does not clear a qualitative trigger.
+**Quantitative:** the same blocker for more than ~8% of the run horizon (`BRIEF.md` § Budgets — a couple of hours on a 1-day run, most of a day on a two-week one), or 3 failed attempts at the same approach. **Qualitative:** a central-claim rejection recurring across ≥2 blind-review rounds (`playbooks/review.md` §2a), a DIVERGED brief-fidelity verdict (`playbooks/review.md` §3), a headline whose pre-registered falsifier is vacuous, or a STOP-EARLY/THIN-LIT exploration-sufficiency verdict recurring across ≥2 critic rounds with a viable un-scouted candidate (`playbooks/exploration.md` §4). Any of these → stop grinding and open `playbooks/decisions.md` § Stuck/Pivot. Decide-and-proceed within one heartbeat of writing the memo. Polishing presentation, adding datasets, or narrowing the claim does not clear a qualitative trigger.
 
 **What "grinding" is not.** The Stuck tripwire stops *repetition of a tried-and-failed approach*. It does **not** license declining a strengthening lever that has **not actually been run** — a costed-but-unrun larger-model arm, an un-run power/robustness experiment, or an un-scouted portfolio candidate is *forward motion you owe*, not grinding to be avoided. Using "that would be grinding / it's already adjudicated" to skip an experiment you never ran is a misuse of this tripwire and is itself a defect; that decision belongs to the under-spend memo (`HEARTBEAT.md` milestone-clock), not here.
 

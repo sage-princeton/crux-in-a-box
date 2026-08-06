@@ -1,10 +1,9 @@
 # gate-enforcer — OPTIONAL ship-time backstop
 
-**The default posture is cooperative gates honored by the agent, not hard enforcement.** The `scripts/gate_artifact.sh` checks are cooperative: the agent is trusted to run the gate and honor its exit code, and the substance is anchored in artifacts the agent can't author (the isolated power critic's own verdict file, the final review, `locks/budget.json`) — so there is no self-typed token to game. This plugin is **optional**. It exists for operators who want a belt-and-suspenders stop: it turns the three **ship** gates into **runtime vetoes** so a completion / ship cannot slip through even if the agent forgets to run the gate.
+**The default posture is cooperative gates honored by the agent, not hard enforcement.** The `scripts/gate_artifact.sh` checks are cooperative: the agent is trusted to run the gate and honor its exit code, and the substance is anchored in artifacts the agent can't author (the isolated power critic's own verdict file, the final review, `locks/budget.json`) — so there is no self-typed token to game. This plugin is **optional**. It exists for operators who want a belt-and-suspenders stop: it turns the **ship** gates into **runtime vetoes** so a completion / ship cannot slip through even if the agent forgets to run the gate.
 
 It guards **ship only**. Drafting is gated cooperatively by the isolated exploration-sufficiency critic's `reviews/*.md` verdict (playbooks/exploration.md), not by a flag this plugin could enforce. The ship gates it runs:
 
-- `REQUIRE_EXTERNAL_REVIEWS` — an external-review artifact exists in `reviews/external/`.
 - `REQUIRE_EVIDENCE_ADEQUATE` — the ship-time power critic's `reviews/power_critic_ship.md` exists and reports an `ADEQUATE` verdict with `seeds≥seed_floor`/`cells≥cell_floor` (floors from `locks/evidence_floors.json`); the headline must be powered, not a single cell.
 - `REQUIRE_SHIP_AUTHORIZATION` — a light under-spend backstop: ships if `reviews/final_review.md` records Weak Accept+, **or** `locks/budget.json` shows a cap genuinely (near-)exhausted, **or** `LOG.md` carries an honest ship/under-spend justification memo. No below-bar ship while budget/time visibly remain.
 
@@ -15,7 +14,7 @@ It guards **ship only**. Drafting is gated cooperatively by the isolated explora
 1. `before_tool_call` — vetoes the **ship wrapper command** (`SHIP_COMMAND`, default `ship.sh`) unless the ship gates pass. Make `ship.sh` the only allowlisted ship path (exec-approvals below) and deny raw submit; then this is a true, phase-independent hard stop that does **not** depend on agent-authored PLAN.md text. The routine latex build is intentionally *not* gated (you build to review many times).
 2. `message_sending` — on an outbound **completion report** (the ship signal), runs the ship gate and returns `cancel: true` if it fails. Body is read from `content` first (then `text`); an **empty/unknown body fails closed** (the gate runs anyway) so a misnamed field can't slip the report through. Routine snapshots/Tier-3 pings (non-matching body) are allowed.
 
-`SHIP_FLAGS` is kept in lockstep with the `PLAN.md` milestone-table ship-gate commands and the three ship gates in `gate_artifact.sh` — update them together.
+`SHIP_FLAGS` is kept in lockstep with the `PLAN.md` milestone-table ship-gate commands and the ship gates in `gate_artifact.sh` — update them together.
 
 ## Trigger detection (tune this)
 
@@ -56,7 +55,7 @@ In `~/.openclaw/exec-approvals.json`, force the ship path through a wrapper and 
 }
 ```
 
-(denylist beats allowlist). Provide `scripts/ship.sh` that runs `REQUIRE_EVIDENCE_ADEQUATE=1 REQUIRE_SHIP_AUTHORIZATION=1 REQUIRE_EXTERNAL_REVIEWS=1 scripts/gate_artifact.sh <pdf>` and only proceeds on exit 0.
+(denylist beats allowlist). Provide `scripts/ship.sh` that runs `REQUIRE_EVIDENCE_ADEQUATE=1 REQUIRE_SHIP_AUTHORIZATION=1 scripts/gate_artifact.sh <pdf>` and only proceeds on exit 0.
 
 ## Hard caps OpenClaw does NOT give you
 

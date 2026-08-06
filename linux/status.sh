@@ -22,20 +22,6 @@ else
   fail "VNC server is NOT running"
 fi
 
-# ----- GitHub CLI -----
-if command -v gh &>/dev/null; then
-  # start.sh persists gh creds to ~/.config/gh AND writes GH_TOKEN to
-  # ~/.openclaw/.env; pick up the latter as a fallback for tool-env parity.
-  GH_TOK=$(grep -E '^GH_TOKEN=' "$HOME/.openclaw/.env" 2>/dev/null | head -1 | cut -d= -f2-)
-  if gh auth status &>/dev/null || GH_TOKEN="$GH_TOK" gh auth status &>/dev/null; then
-    pass "gh CLI: authenticated"
-  else
-    warn "gh CLI: installed but NOT authenticated (check GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN)"
-  fi
-else
-  fail "gh CLI: not installed"
-fi
-
 # ----- AWS CLI -----
 if command -v aws &>/dev/null; then
   if aws sts get-caller-identity &>/dev/null; then
@@ -47,29 +33,11 @@ else
   fail "aws CLI: not installed"
 fi
 
-# ----- gogcli -----
-if command -v gog &>/dev/null; then
-  # The keyring env (GOG_HOME / GOG_KEYRING_BACKEND / GOG_KEYRING_PASSWORD /
-  # GOG_ACCOUNT) is written to ~/.openclaw/.env by start.sh, not the shell —
-  # load it so gog can decrypt the file keyring non-interactively.
-  OPENCLAW_ENV="$HOME/.openclaw/.env"
-  GOG_ENV=()
-  if [ -f "$OPENCLAW_ENV" ]; then
-    while IFS= read -r kv; do GOG_ENV+=("$kv"); done < <(grep -E '^GOG_' "$OPENCLAW_ENV" 2>/dev/null)
-  fi
-  # Green ONLY if we can actually read the inbox end-to-end: this hits the Gmail
-  # API (decrypt keyring -> refresh token -> access token -> messages.list),
-  # which is the real capability the agent depends on. A bare token check can
-  # pass while the inbox is still unreadable (wrong scope, account, etc.).
-  if [ "${#GOG_ENV[@]}" -eq 0 ]; then
-    warn "gog CLI: installed but no GOG_* env in ~/.openclaw/.env — not configured"
-  elif env "${GOG_ENV[@]}" gog gmail search 'in:inbox' --max 1 --json &>/dev/null; then
-    pass "gog CLI: inbox readable"
-  else
-    warn "gog CLI: installed but inbox NOT readable (auth/scope/account issue — run: gog gmail search 'in:inbox' --max 1)"
-  fi
+# ----- git (local only; no remote, no forge credentials) -----
+if command -v git &>/dev/null; then
+  pass "git: installed (local only — this box has no remote)"
 else
-  fail "gog CLI: not installed"
+  fail "git: not installed"
 fi
 
 # ----- openclaw -----

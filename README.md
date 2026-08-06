@@ -16,22 +16,30 @@ This repository is designed to facilitate creating the architecture for [CRUX-st
 ## Getting started
 
 1. Deploy the cost-tracking Lambda (`lambda/cost_tracker/deploy.sh`). This lets agents track their costs/usage in near-real-time.
-2. Run `utils/bootstrap-gog.sh` once to build the pre-authenticated Gmail bundle.
-3. In `linux/`, copy `placeholders.txt.example`, fill it in, and run `./setup-device.sh placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot.
-4. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
-5. Verify accounts per `next-run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
+2. In `linux/`, copy `placeholders.txt.example`, fill it in, and run `./setup-device.sh placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot.
+3. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
+4. Verify accounts per `next-run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
+
+## The run horizon
+
+`DEADLINE` in the config is **the one knob that resizes a run**. Every schedule in the
+scaffold — the exploration fraction, milestone spacing, the crunch threshold, snapshot
+cadence — is expressed as a fraction of it rather than as a fixed number of hours, so the
+same workspace runs at `1 day from launch` or `two weeks from launch` with no other edits.
+The default is one day.
 
 ## External services for your agent to use
 
 Installed by default:
 
-| Service              | How it's configured                           | How to authenticate                          |
-| -------------------- | --------------------------------------------- | -------------------------------------------- |
-| GitHub               | `gh` CLI                                      | PAT in the config; `start.sh` runs `gh auth` |
-| Gmail                | `gog` CLI via [gogcli.sh](https://gogcli.sh/) | pre-built bundle (`GOG_*` keys), no browser  |
-| RunPod (GPUs)        | `RUNPOD_API_KEY` in `~/.openclaw/.env`        | key in the config                            |
-| refine.ink (reviews) | `REFINE_INK_API_KEY` in `~/.openclaw/.env`    | key in the config                            |
-| AWS                  | `aws` CLI                                     | not authenticated on install                 |
+| Service       | How it's configured                    | How to authenticate          |
+| ------------- | -------------------------------------- | ---------------------------- |
+| RunPod (GPUs) | `RUNPOD_API_KEY` in `~/.openclaw/.env` | key in the config            |
+| AWS           | `aws` CLI                              | not authenticated on install |
+| git           | local only — no remote, no forge       | n/a                          |
+
+There is no email and no external reviewer service on the box. Peer review runs entirely on
+isolated subagents the agent spawns but cannot author (`next-run-harness/workspace/playbooks/review.md`).
 
 > [!NOTE]
 > It is important to verify each of these before launch. While the
@@ -49,5 +57,5 @@ Installed by default:
 - `linux/` — provisioning, watchdog, monitoring
 - `next-run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
 - `harness-overview.html` — human-facing overview
-- `utils/` — gog bootstrap, telemetry scrubbing
+- `utils/` — telemetry scrubbing
 - `logs-for-release/` — scrubbed run telemetry

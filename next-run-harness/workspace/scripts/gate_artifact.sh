@@ -82,7 +82,7 @@ if [ "${REQUIRE_PRESENTATION:-0}" = "1" ]; then
   # (b) No ALL-CAPS emphasis in prose. >=6 consecutive capitals is almost never
   # a real acronym; the allowlist below holds the known legit ones. Extending
   # the allowlist is a Tier-2 memo, same as any gate change.
-  ALLCAPS_ALLOW='NEURIPS|GITHUB|LICENSE|DATASET[S]?:|HTTPS?'
+  ALLCAPS_ALLOW='NEURIPS|LICENSE|DATASET[S]?:|HTTPS?'
   HITS=$(grep -rnE '\b[A-Z]{6,}\b' "$SRC" --include='*.tex' 2>/dev/null \
     | grep -v ':[[:space:]]*%' | grep -vE "$ALLCAPS_ALLOW" | head -20)
   gate "allcaps-prose" $([ -z "$HITS" ] && echo 0 || echo 1) "ALL-CAPS emphasis in deliverable prose (restate calmly at the strength the registry licenses):
@@ -94,14 +94,7 @@ $HITS"
     "no figure environment in any main-body .tex — readers spend ~30% of attention on figures (playbooks/writing.md effort allocation); build Figure 1 per playbooks/figures.md from cached artifacts"
 fi
 
-# --- 6. External-review milestone gate (final milestone only) ------------
-if [ "${REQUIRE_EXTERNAL_REVIEWS:-0}" = "1" ]; then
-  N_EXT=$(ls reviews/external/ 2>/dev/null | wc -l | tr -d ' ')
-  gate "external-reviews" $([ "$N_EXT" -ge 1 ] && echo 0 || echo 1) \
-       "no external review artifacts in reviews/external/ (the brief budgets them; using them is a milestone, not optional)"
-fi
-
-# --- 7. Evidence adequacy (final/ship gate) ------------------------------
+# --- 6. Evidence adequacy (final/ship gate) ------------------------------
 # The headline must be powered, not a single cell. Read the ISOLATED ship-time
 # power critic's OWN file directly (playbooks/review.md §2d) — no agent-typed
 # REGISTRY cert line. The critic writes its verdict and the seed/cell counts it
@@ -135,7 +128,7 @@ if [ "${REQUIRE_EVIDENCE_ADEQUATE:-0}" = "1" ]; then
   fi
 fi
 
-# --- 8. Ship authorization (final/ship gate) — light under-spend backstop -
+# --- 7. Ship authorization (final/ship gate) — light under-spend backstop -
 # Blocks an early below-bar ship while budget+time remain. Cooperative and light —
 # the felt-budget heuristic (AGENTS.md § Resources; HEARTBEAT.md burn-rate) does
 # the real work; this is only the backstop. Passes if ANY holds:
@@ -188,7 +181,7 @@ PY
   fi
 fi
 
-# --- 9. Final README (ship gate) ------------------------------------------
+# --- 8. Final README (ship gate) ------------------------------------------
 # The repo's front door for a cold visitor — written LAST, after the
 # Presentation Overhaul, committed as the run's final commit
 # (playbooks/writing.md § The final README). Mechanical half only; the
@@ -204,7 +197,7 @@ if [ "${REQUIRE_README:-0}" = "1" ]; then
       "README is ${R_WORDS} words — too thin to orient a cold visitor (needs: what+finding, paper path, repo map, repro command, data provenance)"
     gate "readme-repro" $(grep -iqE 'reproduc|repro' "$R" && echo 0 || echo 1) \
       "README has no reproduction section — a visitor must be able to rerun the headline result from a fresh clone"
-    HITS=$( { grep -nE "$INTERNAL_VOCAB" "$R"; grep -nE '\b[A-Z]{6,}\b' "$R" | grep -vE "${ALLCAPS_ALLOW:-NEURIPS|GITHUB|LICENSE|HTTPS?}"; } 2>/dev/null | head -10)
+    HITS=$( { grep -nE "$INTERNAL_VOCAB" "$R"; grep -nE '\b[A-Z]{6,}\b' "$R" | grep -vE "${ALLCAPS_ALLOW:-NEURIPS|LICENSE|HTTPS?}"; } 2>/dev/null | head -10)
     gate "readme-vocabulary" $([ -z "$HITS" ] && echo 0 || echo 1) "internal vocabulary or ALL-CAPS in README:
 $HITS"
   fi

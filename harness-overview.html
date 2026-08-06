@@ -222,10 +222,10 @@
   <section id="idea" aria-labelledby="idea-h">
     <div class="wrap">
       <h2 id="idea-h"><span class="section-tag" style="background:var(--c-setup)" aria-hidden="true"></span>The big idea</h2>
-      <p class="section-intro">crux is an <strong>autonomous research agent</strong> built on the OpenClaw runtime. A human operator hands it a brief and walks away. The agent plans the project, reads the literature deeply, runs its own GPU experiments, writes the paper, sends it to external reviewers, and reports back — deliberating before each move and making every decision itself. The operator is an <em>observer</em>, not a collaborator: the agent sends routine one-way status updates, but only two messages may ever <em>ask anything</em> of them.</p>
+      <p class="section-intro">crux is an <strong>autonomous research agent</strong> built on the OpenClaw runtime. A human operator hands it a brief and walks away. The agent plans the project, reads the literature deeply, runs its own GPU experiments, writes the paper, puts it through an isolated blind-review loop it cannot author, and reports back — deliberating before each move and making every decision itself. The operator is an <em>observer</em>, not a collaborator: the agent sends routine one-way status updates, but only two messages may ever <em>ask anything</em> of them.</p>
       <div class="stat-grid">
         <div class="stat"><div class="n">1</div><div class="l">autonomous agent, no human in the loop</div></div>
-        <div class="stat"><div class="n">~1</div><div class="l">week from launch to deadline</div></div>
+        <div class="stat"><div class="n">1d+</div><div class="l">run horizon — set per run; every schedule is a fraction of it</div></div>
         <div class="stat"><div class="n">2</div><div class="l">budgets to spend wisely: API&nbsp;$ &amp; GPU&nbsp;$</div></div>
         <div class="stat"><div class="n">2</div><div class="l">messages that may ask a human for anything: a broken tool, or "done"</div></div>
         <div class="stat"><div class="n">1</div><div class="l">goal: a paper good enough to publish at a top venue</div></div>
@@ -244,7 +244,7 @@
         <li style="--step:var(--c-explore)"><span class="k">2</span><h3>Explore</h3><p>Survey the literature with citation-graph APIs (forward/backward walks, not just web search), then <strong>deep-read</strong> the 3–5 closest papers in full (methods + results), and scout 2–3 candidate approaches with real experiments.</p><span class="gate">authorized by: exploration critic (who can search the literature itself)</span></li>
         <li style="--step:var(--c-explore)"><span class="k">3</span><h3>Experiment</h3><p>Run the most decisive experiments at depth — more seeds, more scale — spending the budget on evidence before polish.</p><span class="back" aria-hidden="true">⇄ revisited from Draft / Review</span></li>
         <li style="--step:var(--c-draft)"><span class="k">4</span><h3>Draft</h3><p>Commit to a headline after scouting and write the paper. A real finding sends you <em>back to Experiment</em> — the default fix is "what experiment closes this?", not "narrow the claim."</p><span class="back" aria-hidden="true">⇄ back to Experiment is normal</span></li>
-        <li style="--step:var(--c-review)"><span class="k">5</span><h3>Review</h3><p>Hostile internal reviews, then isolated blind rounds and real external reviewers, fixing soundness issues each round until a round adds nothing new.</p><span class="back" aria-hidden="true">⇄ back to Experiment is normal</span></li>
+        <li style="--step:var(--c-review)"><span class="k">5</span><h3>Review</h3><p>Hostile section reviews, then isolated blind rounds — every reviewer a fresh subagent that sees only the PDF — fixing soundness issues each round until a round adds nothing new.</p><span class="back" aria-hidden="true">⇄ back to Experiment is normal</span></li>
         <li style="--step:var(--c-quality)"><span class="k">6</span><h3>Presentation Overhaul</h3><p>A mandatory rewrite for cold-reader legibility: restructuring is authorized, the claims and numbers are frozen. Exit only by acceptance test — mechanical gates plus two fresh cold-readers — never by self-judgment.</p><span class="gate">gate: REQUIRE_PRESENTATION + 2 cold-readers</span></li>
       </ol>
       <p class="section-intro" style="margin-top:14px">…then <strong>Ship</strong>: the camera-ready paper plus an honest final review — and, as the run's very last commit, a plain-language <strong>README</strong> that lets a visitor with zero context understand the repo, find the paper, and reproduce the headline result.</p>
@@ -266,7 +266,7 @@
             <p class="band-head"><span class="band-ico" aria-hidden="true">🧑‍💻</span> Operator (human) — an observer, not a collaborator</p>
             <div class="chips">
               <span class="chip">sends: BRIEF.md + launch prompt</span>
-              <span class="chip">receives: status snapshots (2×/day, one-way)</span>
+              <span class="chip">receives: status snapshots (fixed cadence, one-way)</span>
               <span class="chip">receives: the one completion report</span>
               <span class="chip">interrupts only if a tool truly breaks</span>
             </div>
@@ -281,7 +281,7 @@
               <div class="rt-card rt-main"><h4>Main session</h4><p>The agent loop, deliberating before each move. Each turn must end in one of five states — <strong>Launch · Delegate · Memo · Milestone · Mature</strong> — never idly waiting on a human.</p></div>
               <div class="rt-card"><h4>Heartbeat scheduler</h4><p>Cron tasks wake the session: harvest 30m · git 60m · milestone-clock 3h · resource 4h · blocker 6h. A sweeper, not the driver.</p></div>
               <div class="rt-card"><h4>Subagent sessions</h4><p>Isolated workers (≤5 at once; spent mostly on exploration fan-out). Each sees only <code>AGENTS.md</code> + <code>TOOLS.md</code> + its brief — which now open with the research goal — and returns an evidence-backed report.</p></div>
-              <div class="rt-card"><h4>Tools</h4><p><code>exec</code>/<code>nohup</code> · web fetch + search · browser (Playwright) · <code>gog</code> (Gmail) · RunPod API · <code>git</code>.</p></div>
+              <div class="rt-card"><h4>Tools</h4><p><code>exec</code>/<code>nohup</code> · web fetch + search · browser (Playwright) · RunPod API · <code>git</code> (local, no remote).</p></div>
               <div class="rt-card"><h4>Enforcement hooks <span class="eng" title="engineered for this task"><span class="eng-dot" aria-hidden="true"></span><span class="visually-hidden"> (engineered for this task)</span></span></h4><p>Optional ship-time backstop: <code>before_tool_call</code> / <code>message_sending</code> + exec-approvals. Turns a ship-gate <code>GATE&nbsp;FAIL</code> into a hard block. Default posture is cooperative, not hard-enforced.</p></div>
               <div class="rt-card"><h4>Session watchdog <span class="eng" title="engineered for this task"><span class="eng-dot" aria-hidden="true"></span><span class="visually-hidden"> (engineered for this task)</span></span></h4><p>A box-level cron <em>outside</em> the runtime. Detects a session permanently wedged by a known runtime bug (corrupted thinking-block replay), archives it, and dispatches a recovery turn — the agent resumes from its state capsule. Cooldown + daily cap prevent loops.</p></div>
             </div>
@@ -308,9 +308,7 @@
             <p class="band-head"><span class="band-ico" aria-hidden="true">🌐</span> External world — task resources</p>
             <div class="chips">
               <span class="chip">RunPod GPUs — experiments</span>
-              <span class="chip">CMU · Stanford · refine.ink — external reviews</span>
-              <span class="chip">Gmail (gog) — review delivery</span>
-              <span class="chip">GitHub — commits / save points</span>
+              <span class="chip">local git — commits / save points</span>
               <span class="chip">cost-tracker — measured API spend</span>
             </div>
           </div>
@@ -337,7 +335,7 @@
             <li><strong>Harvest &amp; record.</strong> When a job finishes, a cron wakes the session to read the result file, spot-check a surprising or claim-bearing number against the artifact it claims, and write the outcome into <code>PLAN.md</code>, <code>LOG.md</code>, and — for a pre-registered falsifier or a headline-claim change — the light <code>REGISTRY.md</code>.</li>
             <li><strong>Gate.</strong> At each milestone the agent runs <code>scripts/gate_artifact.sh</code>. The form/hygiene checks are always on; the ship-time checks read an <em>isolated critic's own artifact</em> (<code>reviews/power_critic_ship.md</code>, <code>reviews/final_review.md</code>) and the budget lock in <code>locks/</code> directly — never an agent-typed string — and exit <code>GATE FAIL</code> if a rule isn't met. The agent honors a failing gate.</li>
             <li><strong>Enforce (optional ship-time backstop).</strong> If the enforcement plugin is installed, OpenClaw's typed hooks turn the <em>ship</em> gates into runtime vetoes — a failing ship gate blocks the turn or cancels the completion message — so the one irreversible action can't be skipped. Everything earlier stays cooperative.</li>
-            <li><strong>Report.</strong> Scheduled snapshots and (once) the completion report go to the operator over Telegram; external reviews return via Gmail/API and re-enter the loop at step 4.</li>
+            <li><strong>Report.</strong> Scheduled snapshots and (once) the completion report go to the operator over Telegram; review verdicts land as files in <code>reviews/</code> and re-enter the loop at step 4.</li>
           </ol>
         </div>
       </details>
@@ -399,7 +397,7 @@
           <ul class="clean">
             <li><span class="pill t1">T1</span><div><strong>Act &amp; log</strong> — anything inside scope: methods, experiments, tooling, spend within budget.</div></li>
             <li><span class="pill t2">T2</span><div><strong>Logged memo</strong> — choices that change the contribution: write the memo, run critic subagents, then proceed on a branch.</div></li>
-            <li><span class="pill t3">T3</span><div><strong>Blocking contact</strong> — only two triggers: a broken external tool it can't route around, or the final completion report.</div></li>
+            <li><span class="pill t3">T3</span><div><strong>Blocking contact</strong> — only two triggers: a broken external resource it can't route around, or the final completion report.</div></li>
           </ul>
         </div>
       </div>
@@ -431,7 +429,7 @@
         </div>
         <div class="panel">
           <h3>The success bar is earned, not declared</h3>
-          <p>The paper only "passes" when isolated reviewers — internal and external — score it Weak Accept or higher. Crucially, <strong>the agent cannot author those verdicts</strong>: review subagents see only the PDF, and external reviews come from real third-party services. There is no way to manufacture the score, so the only path to success is to actually meet the bar — or to ship an honest below-bar result and say so plainly.</p>
+          <p>The paper only "passes" when isolated reviewers score it Weak Accept or higher. Crucially, <strong>the agent cannot author those verdicts</strong>: every reviewer is a fresh subagent that sees only the rendered PDF and nothing else, and the spawner is forbidden from passing along round numbers, prior verdicts, or any expected outcome. There is no way to manufacture the score, so the only path to success is to actually meet the bar — or to ship an honest below-bar result and say so plainly.</p>
         </div>
       </div>
 
@@ -440,7 +438,7 @@
         <div class="stage" role="listitem"><span class="id">§1</span><p>Hostile section reviews while writing — the cheapest way to catch a made-up number.</p></div>
         <div class="stage" role="listitem"><span class="id">§1b</span><p>Underclaim audit — the counter-force that stops the paper being over-pruned.</p></div>
         <div class="stage" role="listitem"><span class="id">§2a</span><p>Internal blind rounds — isolated reviewers; stop when a round adds no new soundness finding.</p></div>
-        <div class="stage" role="listitem"><span class="id">§2b</span><p>External reviewers — real third-party services (a required milestone, not an option).</p></div>
+        <div class="stage" role="listitem"><span class="id">§2d</span><p>Power critic — an isolated evidence-adequacy check that the headline is not resting on a single cell or seed.</p></div>
         <div class="stage" role="listitem"><span class="id">§2c</span><p>Accompanying final review — ships with the paper, verdict exactly as written; the gate reads it directly.</p></div>
         <div class="stage" role="listitem"><span class="id">§2d</span><p>Power critic — is the headline actually supported, or resting on a single data point? Its file is the evidence the ship gate reads.</p></div>
         <div class="stage" role="listitem"><span class="id">§3</span><p>Brief-fidelity review — does the paper still answer the question that was assigned?</p></div>
@@ -473,8 +471,7 @@
         <div class="gatebox substance">
           <header>Ship-time (final milestone)</header>
           <ul>
-            <li><code>external-reviews</code><span class="desc">a real external review is on disk in <code>reviews/external/</code></span></li>
-            <li><code>evidence-adequate</code><span class="desc">the isolated power critic's <code>reviews/power_critic_ship.md</code> says <code>ADEQUATE</code> and meets the seed/cell floors</span></li>
+                        <li><code>evidence-adequate</code><span class="desc">the isolated power critic's <code>reviews/power_critic_ship.md</code> says <code>ADEQUATE</code> and meets the seed/cell floors</span></li>
             <li><code>ship-authorization</code><span class="desc">light under-spend backstop: a Weak Accept+ final review, a genuinely (near-)exhausted budget cap, or an honest ship memo in <code>LOG.md</code></span></li>
           </ul>
         </div>

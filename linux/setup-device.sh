@@ -52,13 +52,14 @@ absent or blank):
     COST_TRACKER_URL     Cost-tracking Lambda URL (from lambda/cost_tracker/deploy.sh)
     RUNPOD_API_KEY       RunPod API key — written to ~/.openclaw/.env as
                            RUNPOD_API_KEY for the agent's GPU-pod tool calls.
-    REFINE_INK_API_KEY   refine.ink API key — written to ~/.openclaw/.env as
-                           REFINE_INK_API_KEY for the external-review API.
 
   Workspace placeholders (substituted into the harness files):
-    GITHUB_USER          GitHub username for the gh CLI
     CLOUD_SPEND_LIMIT    RunPod GPU spend cap (e.g. \$500)
     API_BUDGET           Anthropic API spend cap (e.g. \$500)
+    DEADLINE             The run horizon, phrased relative to launch
+                           (e.g. "1 day from launch"). Every schedule in the
+                           harness is a fraction of this, so it is the one knob
+                           that resizes the whole run.
 
 Optional keys:
     ...any workspace placeholder with a default (PAGE_BUDGET, VENUE, etc.)
@@ -135,14 +136,9 @@ REQUIRED_KEYS=(
   ANTHROPIC_API_KEY
   COST_TRACKER_URL
   RUNPOD_API_KEY
-  REFINE_INK_API_KEY
-  GOG_ACCOUNT
-  GOG_KEYRING_PASSWORD
-  GOG_HOME_TARBALL
-  GITHUB_USER
-  GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN
   CLOUD_SPEND_LIMIT
   API_BUDGET
+  DEADLINE
   RESEARCH_QUESTION
   RESEARCH_CONTEXT
 )
@@ -175,32 +171,15 @@ ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
 REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
-REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
-# GitHub classic PAT — a secret credential (NOT a workspace placeholder); used
-# by start.sh to authenticate the gh CLI non-interactively and to let git push
-# over HTTPS. Kept out of the placeholder map so it's never sed'd into files.
-GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN="${CFG[GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN]}"
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
-
-# gog (Google Workspace CLI) — required; auto-configured on the box.
-#   GOG_ACCOUNT          the @gmail.com address gog acts as
-#   GOG_KEYRING_PASSWORD passphrase that decrypts the file keyring (never expires)
-#   GOG_HOME_TARBALL     LOCAL path to the pre-authorized bundle from
-#                          utils/bootstrap-gog.sh (scp'd to the box)
-# Presence/non-blankness of all three is enforced by REQUIRED_KEYS above.
-GOG_ACCOUNT="${CFG[GOG_ACCOUNT]}"
-GOG_KEYRING_PASSWORD="${CFG[GOG_KEYRING_PASSWORD]}"
-GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
-
-[ -f "$GOG_HOME_TARBALL" ] \
-  || { echo "Error: GOG_HOME_TARBALL not found: $GOG_HOME_TARBALL (create it with utils/bootstrap-gog.sh)" >&2; exit 1; }
 
 # ====== BUILD WORKSPACE PLACEHOLDER MAP ======
 # Every config key EXCEPT the operational/runtime ones above is forwarded to
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
-# keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
-# (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+# keeps DEADLINE, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
+# (PAGE_BUDGET, VENUE, SNAPSHOT_CADENCE, CRUNCH_FRACTION, …) flowing into the
+# harness files.
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY INSTANCE_SUFFIX "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -513,17 +492,6 @@ else
   warn "next-run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
 fi
 
-# Copy the pre-authorized gog bundle (if provided). start.sh unpacks it into
-# GOG_HOME and wires the keyring env so gog is authenticated with no browser.
-GOG_HOME_TARBALL_REMOTE=""
-if [ -n "$GOG_HOME_TARBALL" ]; then
-  info "Copying gog auth bundle to instance..."
-  scp -o StrictHostKeyChecking=no -i "$KEY_FILE" \
-    "$GOG_HOME_TARBALL" "${SSH_USER}@${PUBLIC_IP}:~/gog-home.tar.gz"
-  GOG_HOME_TARBALL_REMOTE="\$HOME/gog-home.tar.gz"
-  ok "gog auth bundle copied"
-fi
-
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 info "Running remote bootstrap (start.sh) — this will take several minutes..."
 
@@ -551,16 +519,7 @@ REMOTE_ENV=$(build_remote_env \
   COST_TRACKER_URL \
   API_KEY_SUFFIX \
   RUNPOD_API_KEY \
-  REFINE_INK_API_KEY \
-  GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN \
-  GOG_ACCOUNT \
-  GOG_KEYRING_PASSWORD \
-  GOG_HOME_TARBALL_REMOTE \
   PLACEHOLDERS)
-
-# GOG_HOME_TARBALL_REMOTE maps to the GOG_HOME_TARBALL env var the remote
-# expects; rename the assignment without touching the (already escaped) value.
-REMOTE_ENV="${REMOTE_ENV/GOG_HOME_TARBALL_REMOTE=/GOG_HOME_TARBALL=}"
 
 REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/start.sh \
    && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/start.sh"

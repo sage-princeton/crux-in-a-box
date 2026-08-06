@@ -44,11 +44,11 @@ Never start at the first draft. Each stage gets a review pass (hostile + undercl
 
 **First-full-draft cold read (early, once).** The moment stage 5 first yields a complete draft, spawn **one isolated cold-reader** — rendered PDF only, zero ambient context (`playbooks/subagent.md`) — briefed to report: what is the contribution and its stated standard of evidence? where did a cold reader get lost? which sections' jobs aren't legible on one read? This is the early-warning twin of the terminal readability round below: it runs while the Draft ⇄ Experiment back-edge is still open, so a structural legibility problem costs an edit here but only a triage memo there. Clarity findings only — soundness belongs to the §1/§2 reviews (`playbooks/review.md`); do not let this reader grade claims.
 
-Writing is not an afterthought at the end: budget a substantial trailing fraction of the run for distillation, and start stage 1 as soon as the evidence picture stabilizes. **Stage 1 (the compressed-narrative lock) may not begin until the exploration-sufficiency critic returns ADEQUATE** against the dossier (`playbooks/exploration.md`). That isolated, unauthorable critic is honored cooperatively — its `reviews/*.md` ADEQUATE verdict is what authorizes drafting; there is no self-typed certification line and no drafting-entry gate flag to clear. "The evidence picture stabilizes" means exactly that critic verdict, not a vibe: exploration is a multi-pass, multi-day phase on a long horizon, not an hour-0 skim. (The empty target-format skeleton, Milestone 1, is a compiling shell and does not count as prose.)
+Writing is not an afterthought at the end: budget a substantial trailing fraction of the run for distillation, and start stage 1 as soon as the evidence picture stabilizes. **Stage 1 (the compressed-narrative lock) may not begin until the exploration-sufficiency critic returns ADEQUATE** against the dossier (`playbooks/exploration.md`). That isolated, unauthorable critic is honored cooperatively — its `reviews/*.md` ADEQUATE verdict is what authorizes drafting; there is no self-typed certification line and no drafting-entry gate flag to clear. "The evidence picture stabilizes" means exactly that critic verdict, not a vibe: exploration is a multi-pass phase occupying 30–40% of the horizon whatever that horizon is (`playbooks/exploration.md`), not an hour-0 skim. (The empty target-format skeleton, Milestone 1, is a compiling shell and does not count as prose.)
 
 ## Failure modes to check yourself against
 
-- **Illusion of transparency.** You have weeks of context; the reader has none. Define terms at first use, over-explain transitions, never reference internal artifacts or vocabulary (the gates check this mechanically).
+- **Illusion of transparency.** You have the whole run's context; the reader has none. Define terms at first use, over-explain transitions, never reference internal artifacts or vocabulary (the gates check this mechanically).
 - **Cherry-picking.** Present representative examples; mark exploratory vs pre-specified analyses (a pre-specified test is one whose falsifier was declared before the experiment — `REGISTRY.md` § Falsifiers; an exploratory finding has no such row and must be labelled as such); don't present an existence proof as a systematic claim.
 - **Weak baselines.** Effort spent polishing your method while baselines run at defaults is a rigged comparison — reviewers price it as such. Baseline tuning effort is part of the claim's evidence.
 - **Complexity as a virtue.** The strongest papers apply simple techniques carefully. Simplify the method before defending the complexity.
@@ -82,7 +82,7 @@ Iterate cold-read → edit until the test passes. If it hasn't passed after **th
 
 ## The final README (the run's last commit)
 
-After the Presentation Overhaul passes and before the completion report: write (or rewrite) the repo-root `README.md` as the **front door for a cold visitor**, and commit and push it as the run's final commit. The repo outlives the run; a visitor landing on it — an evaluator, a researcher, the operator months later — gets the README first and decides in two minutes whether anything here is worth their time. Write for that reader: zero project context, zero harness context.
+After the Presentation Overhaul passes and before the completion report: write (or rewrite) the repo-root `README.md` as the **front door for a cold visitor**, and commit it as the run's final commit. The repo outlives the run; a visitor landing on it — an evaluator, a researcher, the operator months later — gets the README first and decides in two minutes whether anything here is worth their time. Write for that reader: zero project context, zero harness context.
 
 Contents, in order:
 
@@ -94,4 +94,4 @@ Contents, in order:
 
 Style rules are the Presentation Overhaul's: no author-internal vocabulary, no ALL-CAPS emphasis, every technical term defined at first use, and short — the whole file legible in ~2 minutes.
 
-**Acceptance:** `REQUIRE_README=1 scripts/gate_artifact.sh <pdf>` passes, and one fresh isolated cold-reader given *only* `README.md` can answer: what did this project find, where is the paper, and how would I rerun the headline result. Then commit, push, and send the completion report.
+**Acceptance:** `REQUIRE_README=1 scripts/gate_artifact.sh <pdf>` passes, and one fresh isolated cold-reader given *only* `README.md` can answer: what did this project find, where is the paper, and how would I rerun the headline result. Then commit and send the completion report.

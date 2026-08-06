@@ -25,7 +25,7 @@ The main activity here is **post-run scaffold revision**: a run finishes, someth
 
 5. **Test gates with fixtures before trusting them.** For any new `gate_artifact.sh` check: a passing case, one fixture per failure mode, and a flag-off case proving it stays dormant at earlier milestones. Run them in the scratchpad, not the repo.
 
-6. **Hygiene before commit.** Secrets live only in gitignored files (`linux/placeholders-*.txt`, `telegram_bots.json`, `gog-home.tar.gz`). Raw run telemetry contains live credentials — never commit it; scrub with `utils/clean-telemetry.sh` (blacklist built from the gitignored secret sources) and independently pattern-scan the output (`sk-ant-`, `ghp_`, `rpa_`, AWS key shapes, private-key blocks) before treating it as clean. Before any commit, secret-scan the changed files.
+6. **Hygiene before commit.** Secrets live only in gitignored files (`linux/placeholders-*.txt`, `telegram_bots.json`). Raw run telemetry contains live credentials — never commit it; scrub with `utils/clean-telemetry.sh` (blacklist built from the gitignored secret sources) and independently pattern-scan the output (`sk-ant-`, `rpa_`, AWS key shapes, private-key blocks) before treating it as clean. Before any commit, secret-scan the changed files.
 
 ## Live boxes
 

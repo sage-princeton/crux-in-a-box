@@ -2,26 +2,22 @@
 
 Single source of environment facts. `MEMORY.md` must NOT duplicate anything here — it links here. Subagents see this file: keep it accurate so every subagent doesn't rediscover the environment.
 
-**Hour-0 duty (main agent):** verify every fact below against the live environment and correct this file where reality differs. Briefs and templates routinely carry stale environment facts; a wrong account ID left uncorrected costs days.
+**Hour-0 duty (main agent):** verify every fact below against the live environment and correct this file where reality differs. Briefs and templates routinely carry stale environment facts; a wrong account ID left uncorrected costs a large fraction of the horizon — the shorter the run, the more expensive it is.
 
 ## Workspace & runtime
 
 - Workspace path: `{{WORKSPACE_PATH}}`
 - Host: `{{HOST_DESCRIPTION|macOS VM, arm64}}`
 - Python: `{{PYTHON_SETUP|use uv + a pinned 3.11+ venv under code/; system python is old}}`
-- Deliverable toolchain: `{{DELIVERABLE_TOOLCHAIN|LaTeX via tectonic + the NeurIPS 2026 template at templates/paper_template.zip (neurips_2026.tex/.sty + checklist.tex) — unzip into paper/ and build the Milestone-1 skeleton from it on day 1 (see PLAN.md milestone 1); complete checklist.tex before camera-ready}}`
+- Deliverable toolchain: `{{DELIVERABLE_TOOLCHAIN|LaTeX via tectonic + the NeurIPS 2026 template at templates/paper_template.zip (neurips_2026.tex/.sty + checklist.tex) — unzip into paper/ and build the Milestone-1 skeleton from it in the first tenth of the horizon (see PLAN.md milestone 1); complete checklist.tex before camera-ready}}`
 
 ## Accounts (verify, then keep current)
 
-- **GitHub:** `gh` as `{{GITHUB_USER}}`
-- **Email (review retrieval):** `gog` CLI (https://gogcli.sh) authenticated to the dedicated review Gmail. Find and read the CMU/Stanford review emails with `gog gmail` (e.g. `gog gmail list "in:inbox"`; see gogcli.sh for read/attachment syntax) and save each into `reviews/external/`. Confirm `gog` is authenticated hour-0 (`OPERATOR_GUIDE.md` Step 3); this inbox exists only to receive portal reviews.
 - **Telegram:** operator channel via OpenClaw; main session is the only session bound to it (see Footguns).
 - **Cloud (GPU compute):** RunPod — cheap on-demand GPUs via the RunPod REST + GraphQL API. The API key is provided for this run in env `RUNPOD_API_KEY` (verify it works hour-0). You create and tear down pods yourself; the agent host is separate (see § Workspace & runtime). Your RunPod spend limit is {{CLOUD_SPEND_LIMIT}}. **Pod access is non-obvious — read § RunPod (GPU pods) before launching one.**
-- **External reviewers (`playbooks/review.md` §2b — submit the camera-ready PDF, save each returned review into `reviews/external/`):**
-  1. **CMU Paper Reviewer** — portal `https://prometheus-eval.github.io/cmu-paper-reviewer/`. Submit via the browser (Chrome/Playwright, see § Browser); give the delivery address as the `gog`-authenticated review Gmail. The review comes back **by email** — retrieve it with the `gog` CLI (`gog gmail`; see § Email). Asynchronous: submission and result are decoupled — submit, then poll the inbox on a heartbeat cadence; never block waiting.
-  2. **Stanford Agentic Reviewer** — portal `https://paperreview.ai/`. Same pattern: browser-submit with delivery to the review Gmail, then `gog gmail` to pull the emailed review.
-  3. **refine.ink** — programmatic REST API; key in env `REFINE_INK_API_KEY`. Submit the PDF and fetch the review via the API — **read refine.ink's API docs hour-0 for the exact endpoints/shape and verify the key works before relying on it.** If it is metered/paid, run it LAST (the §2b ordering: paid single-shot reviews go after internal rounds are clean).
-  Hour-0 dry run (do this before launch, per `OPERATOR_GUIDE.md` Step 3): confirm each portal accepts a submission, the email arrives at the review Gmail and is readable via `gog`, and the refine.ink key works. A reviewer that's broken when first needed mid-run is a Tier-3 block (`USER.md`).
+- **Version control:** `git`, local only — there is no remote and nothing to push. Commits are save points on this box (`AGENTS.md` § Git discipline).
+
+**Review is entirely internal.** There are no external reviewer services in this environment. The bar is set by the isolated critics you spawn but cannot author — blind reviewers, the power critic, the brief-fidelity critic, the cold-readers (`playbooks/review.md`). Do not plan around an external platform; do not treat its absence as a blocker.
 
 ## Literature search (use these, not manual web search)
 
@@ -82,4 +78,4 @@ Stall >30s → **screenshot first, debug second**: `/usr/sbin/screencapture -x <
 
 ## Browser
 
-Chrome via Playwright for web UIs, signups, and reviewer-platform submissions. Screen Recording + Accessibility permissions are enabled.
+Chrome via Playwright for web UIs and signups. Screen Recording + Accessibility permissions are enabled.

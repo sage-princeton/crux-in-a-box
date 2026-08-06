@@ -5,7 +5,7 @@ set -euo pipefail
 # start.sh  –  runs ON the Linux (Ubuntu 22.04) EC2 instance
 # ==========================================================================
 # Mirrors mac/start.sh: installs a desktop environment, VNC, openclaw,
-# monitoring, telemetry, and external service CLIs.
+# monitoring, telemetry, and service CLIs.
 #
 # Expected to be run as root (or via sudo) by setup-device.sh.
 # ==========================================================================
@@ -322,10 +322,10 @@ echo "✔ Anthropic API key written to ~/.openclaw/.env"
 
 # Append the agent's tool-call API keys (optional). Unlike ANTHROPIC_API_KEY
 # (used by the gateway's model calls), these are consumed by the agent's bash
-# tool calls — RunPod GPU pods and the refine.ink review API — so they must
-# reach the tool environment (the gateway loads ~/.openclaw/.env into its
-# process env, which tool subprocesses inherit).
-for kv in "RUNPOD_API_KEY=${RUNPOD_API_KEY:-}" "REFINE_INK_API_KEY=${REFINE_INK_API_KEY:-}"; do
+# tool calls — RunPod GPU pods — so they must reach the tool environment (the
+# gateway loads ~/.openclaw/.env into its process env, which tool subprocesses
+# inherit).
+for kv in "RUNPOD_API_KEY=${RUNPOD_API_KEY:-}"; do
   name="${kv%%=*}"; val="${kv#*=}"
   if [ -z "$val" ]; then
     echo "⚠ ${name} not provided — skipping (agent tools needing it will fail until it's added to ~/.openclaw/.env)"
@@ -338,58 +338,7 @@ done
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
 chmod 600 "$OPENCLAW_ENV"
 
-# ====== gog (Google Workspace CLI) auth ======
-# gog auth is REQUIRED. The pre-authorized bundle (from utils/bootstrap-gog.sh)
-# was scp'd by setup-device.sh into the real user's home; unpack it into a fixed
-# GOG_HOME and wire the file-keyring env into ~/.openclaw/.env so gog is
-# authenticated with no browser. Missing inputs are a hard error (set -e aborts).
-if [ -z "${GOG_KEYRING_PASSWORD:-}" ]; then
-  echo "Error: GOG_KEYRING_PASSWORD is required but not set (passed by setup-device.sh from the config file)." >&2
-  exit 1
-fi
-
-# setup-device.sh passes "$HOME/gog-home.tar.gz"; resolve it under the real home.
-GOG_TARBALL_PATH="${REAL_HOME}/gog-home.tar.gz"
-if [ ! -f "$GOG_TARBALL_PATH" ]; then
-  echo "Error: gog auth bundle not found at $GOG_TARBALL_PATH — expected setup-device.sh to scp it (create it with utils/bootstrap-gog.sh)." >&2
-  exit 1
-fi
-
-GOG_HOME_DIR="$REAL_HOME/.openclaw/gogcli"
-sudo -u "$REAL_USER" mkdir -p "$GOG_HOME_DIR"
-chmod 700 "$GOG_HOME_DIR"
-sudo -u "$REAL_USER" tar xzf "$GOG_TARBALL_PATH" -C "$GOG_HOME_DIR"
-chown -R "$REAL_USER:$REAL_USER" "$GOG_HOME_DIR"
-rm -f "$GOG_TARBALL_PATH"
-
-# Wire the keyring env so every gog invocation (incl. agent tool subprocesses
-# that inherit the gateway env) can decrypt the refresh token non-interactively.
-for kv in \
-  "GOG_HOME=${GOG_HOME_DIR}" \
-  "GOG_KEYRING_BACKEND=file" \
-  "GOG_KEYRING_PASSWORD=${GOG_KEYRING_PASSWORD}" \
-  "GOG_ACCOUNT=${GOG_ACCOUNT:-}"; do
-  name="${kv%%=*}"; val="${kv#*=}"
-  sed -i "/^${name}=/d" "$OPENCLAW_ENV"
-  echo "${name}=${val}" >> "$OPENCLAW_ENV"
-done
-chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
-chmod 600 "$OPENCLAW_ENV"
-echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-unset})"
-
 # ====== SERVICES ======
-
-# install GitHub CLI
-(type -p wget >/dev/null || apt-get install wget -y) \
-  && mkdir -p -m 755 /etc/apt/keyrings \
-  && out=$(mktemp) \
-  && wget -nv -O"$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-  && cat "$out" | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
-  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-  && apt-get update \
-  && apt-get install gh -y
 
 # install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
@@ -397,69 +346,20 @@ unzip -qo /tmp/awscliv2.zip -d /tmp
 /tmp/aws/install --update
 rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# install gogcli (Google Workspace CLI) from the GitHub release.
-# Homebrew isn't available on this box, so we pull the prebuilt linux binary.
-# Pin via GOGCLI_VERSION (default tracks a known-good tag).
-# v0.28.0+ honors GOG_HOME (older versions like 0.9.0 ignore it and write to
-# the platform default config dir, which breaks the portable-bundle approach).
-GOGCLI_VERSION="${GOGCLI_VERSION:-v0.28.0}"
-GOGCLI_ARCH="$(dpkg --print-architecture)"   # amd64 or arm64
-GOGCLI_TARBALL="gogcli_${GOGCLI_VERSION#v}_linux_${GOGCLI_ARCH}.tar.gz"
-GOGCLI_URL="https://github.com/openclaw/gogcli/releases/download/${GOGCLI_VERSION}/${GOGCLI_TARBALL}"
-if curl -fsSL "$GOGCLI_URL" -o /tmp/gogcli.tar.gz; then
-  tar xzf /tmp/gogcli.tar.gz -C /tmp gog 2>/dev/null || tar xzf /tmp/gogcli.tar.gz -C /tmp
-  install -m 0755 /tmp/gog /usr/local/bin/gog 2>/dev/null \
-    || { find /tmp -maxdepth 2 -name gog -type f -exec install -m 0755 {} /usr/local/bin/gog \; ; }
-  rm -f /tmp/gogcli.tar.gz /tmp/gog
-  if command -v gog >/dev/null 2>&1; then
-    echo "✔ gogcli installed: $(gog --version 2>&1 | head -1)"
-  else
-    echo "⚠ gogcli install ran but 'gog' is not on PATH — check $GOGCLI_URL"
-  fi
-else
-  echo "⚠ Could not download gogcli from $GOGCLI_URL — gog will be unavailable (set GOGCLI_VERSION to a valid release tag)."
-fi
-
-
 # set up gateway
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ======
 
-# ====== GitHub auth (gh CLI + git over HTTPS) ======
-# Authenticate gh non-interactively with the classic PAT passed by
-# setup-device.sh. Run as the real user (gh stores creds under ~/.config/gh),
-# wire up git's credential helper, and also export the token in ~/.openclaw/.env
-# (GITHUB_TOKEN/GH_TOKEN are what gh, git, and most tooling read) so the agent's
-# tool subprocesses can push/pull and call the GitHub API.
-if [ -n "${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN:-}" ]; then
-  if command -v gh >/dev/null 2>&1; then
-    if printf '%s' "$GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN" \
-         | sudo -u "$REAL_USER" gh auth login --hostname github.com --git-protocol https --with-token; then
-      sudo -u "$REAL_USER" gh auth setup-git || true
-      echo "✔ gh CLI authenticated and git credential helper configured"
-    else
-      echo "⚠ gh auth login failed — check the GitHub classic PAT (scope/expiry)."
-    fi
-  else
-    echo "⚠ gh CLI not installed — cannot authenticate GitHub."
-  fi
-
-  # Export for the gateway/agent tool environment (gh + git read these).
-  for name in GITHUB_TOKEN GH_TOKEN; do
-    sed -i "/^${name}=/d" "$OPENCLAW_ENV"
-    echo "${name}=${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN}" >> "$OPENCLAW_ENV"
-  done
-  chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
-  chmod 600 "$OPENCLAW_ENV"
-  echo "✔ GITHUB_TOKEN/GH_TOKEN written to ~/.openclaw/.env"
-else
-  echo "⚠ GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN not provided — gh/git will be unauthenticated."
-fi
-
-# Set up gog
-# see: https://gogcli.sh/quickstart.html
+# ====== VERSION CONTROL ======
+# Local git only: the box has no GitHub credentials and the agent has no remote
+# to push to. Commits are save points on this box (workspace AGENTS.md § Git
+# discipline). Identity is set so commits from agent tool calls don't fail.
+sudo -u "$REAL_USER" git config --global user.name "crux" || true
+sudo -u "$REAL_USER" git config --global user.email "crux@localhost" || true
+sudo -u "$REAL_USER" git config --global init.defaultBranch main || true
+echo "✔ git configured (local only — no remote)"
 
 # ====== HARNESS WORKSPACE ======
 # Copy the next-run-harness workspace into the agent's OpenClaw workspace

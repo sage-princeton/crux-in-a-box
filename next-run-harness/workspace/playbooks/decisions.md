@@ -39,7 +39,7 @@ Most findings never reach this procedure. The research lifecycle is a cycle — 
 Persist-vs-pivot is not a mood; classify what actually broke:
 
 - **Implementation-level** — the code, a hyperparameter, the experimental setup. Persist: fix and rerun. (This includes the common, healthy case: a Review/Draft finding routes you back to the Experiment phase to run the experiment that closes it — a sanctioned back-edge, not a pivot.)
-- **Mechanism-level** — the idea's premise broke: the signal you hypothesized structurally isn't there. Stop repairing. Default: advance the next `PLAN.md` portfolio candidate. Repairing a mechanism-level failure with implementation-level fixes is how days disappear.
+- **Mechanism-level** — the idea's premise broke: the signal you hypothesized structurally isn't there. Stop repairing. Default: advance the next `PLAN.md` portfolio candidate. Repairing a mechanism-level failure with implementation-level fixes is how a large fraction of the horizon disappears.
 - **Question-level** — the portfolio is exhausted, or the evidence genuinely re-scopes the brief's question. Tier-2 memo (it changes the contribution), with the brief-fidelity review (`playbooks/review.md` §3) run on the re-scoped direction before committing.
 
 The misclassification risk runs one way in practice: mechanism-level failures get treated as implementation-level (endless local repair), then jump straight to question-level (re-frame the deliverable around surviving artifacts) without ever passing through "advance the next candidate." The portfolio exists to make that middle step the cheap default.

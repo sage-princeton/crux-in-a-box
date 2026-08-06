@@ -20,19 +20,17 @@ REASONING_EFFORT=xhigh                   # enables extended thinking.
 ANTHROPIC_API_KEY=sk-ant-...             # secret — keep this file out of git
 COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
 RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env
-REFINE_INK_API_KEY=...                   # secret — written to ~/.openclaw/.env
-# GitHub classic PAT — secret. Authenticates the gh CLI + git-over-HTTPS on the
-# box (gh auth login --with-token) and is written to ~/.openclaw/.env as
-# GITHUB_TOKEN/GH_TOKEN. Create at https://github.com/settings/tokens (classic);
-# needs at least 'repo' scope (add 'workflow' if the agent edits CI).
-GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN=ghp_...
 
 # ── Required: workspace placeholders (no defaults — substituted into files) ──
 
-GITHUB_USER=your-github-username
 CLOUD_SPEND_LIMIT=$500
 API_BUDGET=$2000
-DEADLINE=10 days from launch
+# DEADLINE is THE RUN HORIZON. Every schedule in the scaffold is expressed as a
+# fraction of it (exploration ~30-40%, crunch inside the last ~10%, etc.), so the
+# same workspace works at "1 day from launch" or "two weeks from launch" with no
+# other edits. Keep it phrased relative to launch; the agent converts it to an
+# absolute deadline_iso in locks/budget.json at hour 0.
+DEADLINE=1 day from launch
 
 # The task itself — the run-specific brief. These are substituted into BRIEF.md
 # (which is a generic template; the actual research goal lives here, in config).
@@ -42,23 +40,13 @@ RESEARCH_QUESTION=<the one-sentence research question the agent must answer>
 RESEARCH_CONTEXT=<the background the agent needs, plus exactly what to produce — e.g. "Prior methods do A but not B, and existing approaches are brittle. The agent should produce (a) a method for B, (b) evidence about whether the result is robust/composable, and (c) at least one downstream test it did not directly optimize for.">
 
 
-# ── Required: gog (Google Workspace CLI) auto-config ──
-# All three are required. First create the bundle once on your laptop:
-#     GOG_KEYRING_PASSWORD=... utils/bootstrap-gog.sh client_secret.json you@gmail.com
-# Then point GOG_HOME_TARBALL at the resulting gog-home.tar.gz. These are
-# SECRETS (the tarball holds a live Gmail refresh token) — keep them out of git.
-GOG_ACCOUNT=you@gmail.com
-GOG_KEYRING_PASSWORD=the-same-passphrase-used-in-bootstrap-gog.sh
-GOG_HOME_TARBALL=./gog-home.tar.gz
-
 # ── Optional: workspace placeholders with defaults (uncomment to override) ──
 
 # PAGE_BUDGET=9
 # ABSTRACT_WORD_CAP=200      # presentation gate: max abstract words (gate_artifact.sh)
-# SNAPSHOT_TIMES=10:00 and 19:00
+# SNAPSHOT_CADENCE=every 6 hours   # snapshot interval; aim for ~4-8 snapshots over the horizon
 # VENUE=NeurIPS
 # PREFLIGHT_COST=50
-# PREFLIGHT_HOURS=6
-# DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + venue template — installed and building from day 1, see PLAN.md milestone 1
-# EXTERNAL_REVIEWER_ACCESS=platform → how to submit → quota, one line each
-# EXTERNAL_REVIEWERS=e.g. Stanford agentic reviewer; CMU paper reviewer; refine.ink
+# PREFLIGHT_HORIZON_FRACTION=10  # pre-flight wall-clock gate, as a % of the run horizon
+# CRUNCH_FRACTION=10             # crunch block fires inside this % of the horizon before a milestone
+# DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + venue template — installed and building in the first tenth of the horizon, see PLAN.md milestone 1
