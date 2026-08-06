@@ -1,6 +1,8 @@
 telegram_bots.json
 linux/placeholders*.txt
 !linux/placeholders.txt.example
+fable-test-run/placeholders*.txt
+!fable-test-run/placeholders.txt.example
 
 **.pyc
 INVENTORY.md
