@@ -184,6 +184,15 @@ if [ -f "$TELEMETRY_MANIFEST" ] && command -v jq &>/dev/null; then
     echo "✔ Telemetry plugin manifest already has activation block"
   fi
 fi
+
+# The gateway installs as a systemd USER service. Without lingering, that user
+# manager is torn down when setup-device.sh's ssh session closes, taking the
+# gateway with it — so the box would look healthy at the end of bootstrap and be
+# dead a minute later. Lingering keeps it running headless across logout/reboot.
+loginctl enable-linger "$REAL_USER" \
+  && echo "✔ systemd lingering enabled for $REAL_USER" \
+  || echo "⚠ could not enable lingering for $REAL_USER — the gateway may die when the ssh session closes"
+
 # ====== TELEGRAM ======
 # If a Telegram bot token was provided, configure it in openclaw.json
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -228,7 +237,10 @@ if [ -n "${TELEGRAM_OWNER_ID:-}" ]; then
   echo "✔ commands.ownerAllowFrom configured: telegram:$TELEGRAM_OWNER_ID"
 fi
 
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
+# NOTE: deliberately NO gateway restart here. Config writes continue below and
+# the single install+start happens at the end, once everything is on disk.
+# Starting the gateway twice used to race its startup migrations (see the
+# gateway section at the bottom of this file for the full story).
 
 # ====== AI Provider and Model ======
 # Requires ANTHROPIC_MODEL and ANTHROPIC_API_KEY to be set as env vars
@@ -346,9 +358,48 @@ unzip -qo /tmp/awscliv2.zip -d /tmp
 /tmp/aws/install --update
 rm -rf /tmp/aws /tmp/awscliv2.zip
 
-# set up gateway
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
+# ====== GATEWAY (single install + start, after ALL config is written) ======
+# On first boot the gateway runs startup migrations against ~/.openclaw while
+# holding a lock with a ~5-minute lease. If a second `gateway restart` lands
+# while the first process is still migrating, that start dies with
+#   "startup migrations are already running for this state directory"
+# and — because the unit retries every 5s — systemd burns its whole restart
+# allowance (5 tries in ~55s) well inside the lock window, hits "Start request
+# repeated too quickly", and leaves the service dead permanently even after the
+# lock expires. This script used to restart the gateway twice; it only ever
+# worked because minutes of unrelated package installs sat between the two
+# calls. Now there is exactly one start, and it waits the lock out rather than
+# hammering it.
+REAL_UID=$(id -u "$REAL_USER")
+XDG_RT="/run/user/$REAL_UID"
+gw() { sudo -u "$REAL_USER" env XDG_RUNTIME_DIR="$XDG_RT" "$@"; }
+
+gw "$REAL_HOME/.npm-global/bin/openclaw" gateway install
+
+GW_UP=0
+for attempt in $(seq 1 8); do
+  # Clear any prior start-limit state so systemd will actually try again.
+  gw systemctl --user reset-failed openclaw-gateway.service 2>/dev/null || true
+  if gw "$REAL_HOME/.npm-global/bin/openclaw" gateway restart; then
+    GW_UP=1
+    break
+  fi
+  echo "⚠ gateway not up (attempt ${attempt}/8) — waiting 45s; a startup-migration lock holds for ~5 min"
+  sleep 45
+done
+
+if [ "$GW_UP" -ne 1 ]; then
+  echo "" >&2
+  echo "Error: the gateway never came up. Diagnostics:" >&2
+  gw "$REAL_HOME/.npm-global/bin/openclaw" gateway status --deep >&2 || true
+  echo "--- last 50 lines of the service journal ---" >&2
+  gw journalctl --user -u openclaw-gateway.service -n 50 --no-pager >&2 || true
+  echo "" >&2
+  echo "gateway.mode is currently: $(jq -r '.gateway.mode // "unset"' "$REAL_HOME/.openclaw/openclaw.json" 2>/dev/null)" >&2
+  echo "Recover by hand with: systemctl --user reset-failed openclaw-gateway.service && openclaw gateway restart" >&2
+  exit 1
+fi
+echo "✔ gateway running"
 
 # ======
 
