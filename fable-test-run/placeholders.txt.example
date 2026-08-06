@@ -1,0 +1,66 @@
+# placeholders.txt — single config file for fable-test-run/setup-device.sh
+#
+# SMOKE-TEST VARIANT. Compared to linux/placeholders.txt.example, six keys are
+# gone because their integrations are gone:
+#   REFINE_INK_API_KEY  (no external reviews)
+#   GITHUB_USER, GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN  (no GitHub)
+#   GOG_ACCOUNT, GOG_KEYRING_PASSWORD, GOG_HOME_TARBALL  (no Google)
+# Leaving them in the file is harmless — they are ignored, not substituted.
+#
+# Usage: ./setup-device.sh placeholders.txt
+#   (placeholders.txt is also the default if no argument is given)
+#   The only command-line flag is --instance-suffix <SUFFIX> (run multiple
+#   instances in parallel, e.g. ./setup-device.sh --instance-suffix 2 placeholders.txt).
+#
+# Lines are KEY=VALUE. Comments (#) and blank lines are ignored.
+# All configuration lives here. setup-device.sh validates that every Required
+# key below is present and non-blank BEFORE doing any AWS work, and lists all
+# missing keys at once.
+
+# ── Required: provisioning / runtime (used by setup-device.sh itself) ──
+
+TELEGRAM_BOT_NAME=your-bot-name          # must exist as a key in telegram_bots.json
+TELEGRAM_OWNER_ID=123456789              # your Telegram user ID
+ANTHROPIC_MODEL=anthropic/claude-fable-5
+REASONING_EFFORT=xhigh                   # enables extended thinking.
+                                         # accepted: off|minimal|low|medium|high|xhigh|adaptive|max
+ANTHROPIC_API_KEY=sk-ant-...             # secret — keep this file out of git
+COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
+RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env
+
+# ── Required: workspace placeholders (no defaults — substituted into files) ──
+
+CLOUD_SPEND_LIMIT=$100
+API_BUDGET=$1000
+DEADLINE=2 days from launch              # a short horizon suits a smoke test, but
+                                         # note the scaffold's own rule: a short
+                                         # horizon compresses drafting and review,
+                                         # NOT exploration (playbooks/exploration.md)
+
+# The task itself — the run-specific brief. These are substituted into BRIEF.md
+# (which is a generic template; the actual research goal lives here, in config).
+# Each is a single line (the config format is one KEY=VALUE per line). Avoid '#'
+# (treated as a comment) and '&' in the values.
+RESEARCH_QUESTION=<the one-sentence research question the agent must answer>
+RESEARCH_CONTEXT=<the background the agent needs, plus exactly what to produce — e.g. "Prior methods do A but not B, and existing approaches are brittle. The agent should produce (a) a method for B, (b) evidence about whether the result is robust/composable, and (c) at least one downstream test it did not directly optimize for.">
+
+# ── Optional: workspace placeholders with defaults (uncomment to override) ──
+
+# PAGE_BUDGET=9
+# ABSTRACT_WORD_CAP=200      # presentation gate: max abstract words (gate_artifact.sh)
+# SNAPSHOT_TIMES=10:00 and 19:00
+# VENUE=NeurIPS
+# PREFLIGHT_COST=50
+# PREFLIGHT_HOURS=6
+# DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + venue template — installed and building from day 1, see PLAN.md milestone 1
+
+# ── Deliberately absent (do not add these back without also re-adding their
+#    harness-side references — see fable-test-run/README.md) ──
+# REFINE_INK_API_KEY=...
+# GITHUB_USER=...
+# GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN=ghp_...
+# GOG_ACCOUNT=you@gmail.com
+# GOG_KEYRING_PASSWORD=...
+# GOG_HOME_TARBALL=./gog-home.tar.gz
+# EXTERNAL_REVIEWER_ACCESS=...
+# EXTERNAL_REVIEWERS=...
