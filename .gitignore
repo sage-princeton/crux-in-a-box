@@ -18,3 +18,7 @@ personas_telemetry.jsonl
 tabpfn_telemetry.jsonl
 .mypy_cache/
 .claude/settings.local.json
+
+# local env files hold live API keys — never commit (rotate the key if one leaks)
+.env
+.env.*
