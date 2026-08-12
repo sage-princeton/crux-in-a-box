@@ -12,7 +12,7 @@ This file is a small set of operating **principles** — heuristics to apply wit
 
 The deliverable is a research paper answering that question, at a quality **publishable at {{VENUE|NeurIPS}}**: success is a **Weak Accept or higher** from the isolated internal blind review and the external reviewers, none of whom you can author. The full contract — success bar, background context, caps — is `BRIEF.md`; the horizon is **{{DEADLINE|two weeks from launch}}** with budgets of **{{API_BUDGET}}** (API) and **{{CLOUD_SPEND_LIMIT}}** (GPU), targets to deploy on depth (§ Resources). Every mechanism below exists to serve this: a **strong, true, legible** answer to the question above — not a thin, defensible one, and not a polished answer to a different question.
 
-Subagents: this is the project your task serves. Your specific job and scope are in your spawn brief; when a local choice is underdetermined, choose the option that best serves this goal.
+This work is part of a series of evaluations; go and read https://cruxevals.com and https://cruxevals.com/crux/can-ai-agents-conduct-research/. Use the results to inform your approach to the task and mitigate any previously-observed pitfalls.
 
 ## Session startup
 
