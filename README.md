@@ -19,7 +19,7 @@ This repository is designed to facilitate creating the architecture for [CRUX-st
 2. Run `utils/bootstrap-gog.sh` once to build the pre-authenticated Gmail bundle.
 3. In `linux/`, copy `placeholders.txt.example`, fill it in, and run `./setup-device.sh placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot.
 4. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
-5. Verify accounts per `next-run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
+5. Verify accounts per `run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
 
 ## External services for your agent to use
 
@@ -47,7 +47,7 @@ Installed by default:
 ## Layout
 
 - `linux/` — provisioning, watchdog, monitoring
-- `next-run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
+- `run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
 - `harness-overview.html` — human-facing overview
 - `utils/` — gog bootstrap, telemetry scrubbing
 - `logs-for-release/` — scrubbed run telemetry

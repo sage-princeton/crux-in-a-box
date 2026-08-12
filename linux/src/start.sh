@@ -462,7 +462,7 @@ fi
 # see: https://gogcli.sh/quickstart.html
 
 # ====== HARNESS WORKSPACE ======
-# Copy the next-run-harness workspace into the agent's OpenClaw workspace
+# Copy the run-harness workspace into the agent's OpenClaw workspace
 # and resolve placeholders that are known at provisioning time.
 HARNESS_SRC="$REAL_HOME/crux-in-a-box-harness/workspace"
 OPENCLAW_WORKSPACE="$REAL_HOME/.openclaw/workspace"

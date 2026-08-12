@@ -503,14 +503,14 @@ scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
   "$SCRIPT_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux"
 ok "Linux files copied"
 
-HARNESS_DIR="$SCRIPT_DIR/../next-run-harness"
+HARNESS_DIR="$SCRIPT_DIR/../run-harness"
 if [ -d "$HARNESS_DIR" ]; then
-  info "Copying next-run-harness/ to instance..."
+  info "Copying run-harness/ to instance..."
   scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
     "$HARNESS_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-harness"
   ok "Harness files copied"
 else
-  warn "next-run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
+  warn "run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
 fi
 
 # Copy the pre-authorized gog bundle (if provided). start.sh unpacks it into
