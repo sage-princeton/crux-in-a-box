@@ -11,6 +11,7 @@ INVENTORY.md
 **gog-home.tar.gz
 
 clean-room
+clean-room-old
 
 # local diagnostics / caches — never commit
 *.jsonl
