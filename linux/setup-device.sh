@@ -186,6 +186,9 @@ fi
 # writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
 # config file.
 REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
+# Pre-built base AMI (optional). When set, setup-device.sh skips the 10-15 min
+# apt/openclaw install and runs configure.sh only (~60-90s). Build with build-ami.sh.
+CRUX_AMI_ID="${CRUX_AMI_ID:-${CFG[CRUX_AMI_ID]:-}}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
@@ -213,7 +216,7 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT CRUX_AMI_ID COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -376,7 +379,9 @@ else
 fi
 
 # ====== 3. RESOLVE AMI ======
-if [ -z "$AMI_ID" ]; then
+if [ -n "$AMI_ID" ]; then
+  ok "AMI: $AMI_ID (pre-built CRUX base — configure.sh will be used instead of start.sh)"
+else
   info "Resolving latest Ubuntu 22.04 AMI..."
   AMI_ID=$(aws ec2 describe-images \
     --region "$REGION" --owners 099720109477 \
@@ -385,11 +390,10 @@ if [ -z "$AMI_ID" ]; then
       "Name=state,Values=available" \
     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
     --output text)
+  [ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
+    && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
+  ok "AMI: $AMI_ID (raw Ubuntu — start.sh will run full install)"
 fi
-
-[ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
-  && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
-ok "AMI: $AMI_ID"
 
 # ====== 3b. DUPLICATE API KEY CHECK ======
 API_KEY_SUFFIX="${LLM_API_KEY: -6}"
@@ -538,7 +542,15 @@ if [ -n "$GOG_HOME_TARBALL" ]; then
 fi
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
-info "Running remote bootstrap (start.sh) — this will take several minutes..."
+# Route to configure.sh (fast, ~60-90s) when a pre-built CRUX AMI is used,
+# or start.sh (full install, ~15 min) for raw Ubuntu.
+if [ -n "$CRUX_AMI_ID" ]; then
+  BOOTSTRAP_SCRIPT="configure.sh"
+  info "Running configure.sh (AMI-based — ~60-90s)..."
+else
+  BOOTSTRAP_SCRIPT="start.sh"
+  info "Running start.sh (raw Ubuntu — this will take several minutes)..."
+fi
 
 # Build the remote command safely. Values like PLACEHOLDERS can contain
 # apostrophes, parentheses, spaces and newlines (e.g. RESEARCH_CONTEXT prose),
@@ -576,8 +588,8 @@ REMOTE_ENV=$(build_remote_env \
 # expects; rename the assignment without touching the (already escaped) value.
 REMOTE_ENV="${REMOTE_ENV/GOG_HOME_TARBALL_REMOTE=/GOG_HOME_TARBALL=}"
 
-REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/start.sh \
-   && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/start.sh"
+REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/${BOOTSTRAP_SCRIPT} \
+   && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/${BOOTSTRAP_SCRIPT}"
 
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
   "$REMOTE_CMD"
