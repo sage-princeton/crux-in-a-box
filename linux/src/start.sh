@@ -431,7 +431,6 @@ fi
 # set up gateway — install the systemd service and start it once, with all
 # config already written above (Telegram, model, API keys, env vars).
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ======
 
@@ -554,3 +553,5 @@ echo "✔ Thinking-signature watchdog installed (cron */5 min)"
 echo ""
 echo "✔ Linux CRUX-in-a-box bootstrap complete."
 
+# Final restart to wake up for telegram
+sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
