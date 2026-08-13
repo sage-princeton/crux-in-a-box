@@ -12,7 +12,7 @@ How to set up, launch, and live with a run of this harness. Every mechanism exis
 
 This provisions an EC2 instance and bootstraps the full environment automatically: desktop + VNC, OpenClaw, Telegram, monitoring, telemetry, services (GitHub CLI, AWS CLI, gog), and the harness workspace. It also configures `openclaw.json` with the model, tools profile, heartbeat, subagent limits, Telegram channel, and owner authorization.
 
-The script tags the instance with `AnthropicKeySuffix` (last 6 chars of the API key) and `AnthropicSpendAtCreation` (API spend at launch time, queried from the cost-tracking Lambda). It warns if another running instance already uses the same API key.
+The script tags the instance with `LlmProvider`, `ApiKeySuffix` (last 6 chars of the API key), and `ApiSpendAtCreation` (API spend at launch time, queried from the cost-tracking Lambda). It warns if another running instance already uses the same API key.
 
 All configuration lives in a single KEY=VALUE config file. Copy `placeholders.txt.example` to `placeholders.txt`, fill it in, and pass it as the positional argument (it's also the default if omitted). The only command-line flag is `--instance-suffix`:
 
@@ -25,7 +25,7 @@ cp placeholders.txt.example placeholders.txt   # then edit it
 
 Required keys (the script validates all of these up front, before any AWS work, and lists every missing one at once):
 
-- **Provisioning/runtime:** `TELEGRAM_BOT_NAME`, `TELEGRAM_OWNER_ID`, `DEFAULT_LLM_MODEL`, `ANTHROPIC_API_KEY`, `COST_TRACKER_URL`, `RUNPOD_API_KEY`, `REFINE_INK_API_KEY`
+- **Provisioning/runtime:** `TELEGRAM_BOT_NAME`, `TELEGRAM_OWNER_ID`, `DEFAULT_LLM_MODEL`, `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (exactly one required), `COST_TRACKER_URL`, `RUNPOD_API_KEY`, `REFINE_INK_API_KEY`
 - **gog (Google Workspace CLI):** `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, `GOG_HOME_TARBALL`
 - **Workspace placeholders:** `GITHUB_USER`, `CLOUD_SPEND_LIMIT`, `API_BUDGET`
 

@@ -47,8 +47,9 @@ absent or blank):
     TELEGRAM_BOT_NAME    Bot name as defined in telegram_bots.json
                            (e.g. cruxlinuxtest). The token is looked up automatically.
     TELEGRAM_OWNER_ID    Telegram user ID for commands.ownerAllowFrom
-    DEFAULT_LLM_MODEL      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
-    ANTHROPIC_API_KEY    Anthropic API key
+    DEFAULT_LLM_MODEL      Model ID (e.g. anthropic/claude-opus-4-8 or openai/gpt-4o)
+    ANTHROPIC_API_KEY    Anthropic API key (set this OR OPENAI_API_KEY)
+    OPENAI_API_KEY       OpenAI API key    (set this OR ANTHROPIC_API_KEY)
     COST_TRACKER_URL     Cost-tracking Lambda URL (from lambda/cost_tracker/deploy.sh)
     RUNPOD_API_KEY       RunPod API key — written to ~/.openclaw/.env as
                            RUNPOD_API_KEY for the agent's GPU-pod tool calls.
@@ -132,7 +133,6 @@ REQUIRED_KEYS=(
   TELEGRAM_BOT_NAME
   TELEGRAM_OWNER_ID
   DEFAULT_LLM_MODEL
-  ANTHROPIC_API_KEY
   COST_TRACKER_URL
   RUNPOD_API_KEY
   REFINE_INK_API_KEY
@@ -152,6 +152,10 @@ for key in "${REQUIRED_KEYS[@]}"; do
     MISSING_KEYS+=("$key")
   fi
 done
+# Exactly one of ANTHROPIC_API_KEY or OPENAI_API_KEY must be set.
+if [ -z "${CFG[ANTHROPIC_API_KEY]:-}" ] && [ -z "${CFG[OPENAI_API_KEY]:-}" ]; then
+  MISSING_KEYS+=("ANTHROPIC_API_KEY or OPENAI_API_KEY")
+fi
 if [ "${#MISSING_KEYS[@]}" -gt 0 ]; then
   echo "Error: the following required keys are missing or blank in $CONFIG_FILE:" >&2
   for key in "${MISSING_KEYS[@]}"; do
@@ -168,7 +172,16 @@ fi
 TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]}"
 TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]}"
 DEFAULT_LLM_MODEL="${CFG[DEFAULT_LLM_MODEL]}"
-ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
+ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]:-}"
+OPENAI_API_KEY="${CFG[OPENAI_API_KEY]:-}"
+# Whichever provider key is set becomes the active one for cost tracking and tagging.
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+  LLM_API_KEY="$ANTHROPIC_API_KEY"
+  LLM_PROVIDER="anthropic"
+else
+  LLM_API_KEY="$OPENAI_API_KEY"
+  LLM_PROVIDER="openai"
+fi
 # Extended-thinking level — enables extended thinking. Default "xhigh"; start.sh
 # writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
 # config file.
@@ -200,7 +213,7 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -379,10 +392,10 @@ fi
 ok "AMI: $AMI_ID"
 
 # ====== 3b. DUPLICATE API KEY CHECK ======
-API_KEY_SUFFIX="${ANTHROPIC_API_KEY: -6}"
+API_KEY_SUFFIX="${LLM_API_KEY: -6}"
 DUPE_IDS=$(aws ec2 describe-instances --region "$REGION" \
   --filters \
-    "Name=tag:AnthropicKeySuffix,Values=$API_KEY_SUFFIX" \
+    "Name=tag:ApiKeySuffix,Values=$API_KEY_SUFFIX" \
     "Name=instance-state-name,Values=running,pending" \
   --query 'Reservations[].Instances[].InstanceId' \
   --output text 2>/dev/null | tr '\t' ' ' | xargs)
@@ -398,11 +411,10 @@ fi
 
 # ====== 3c. SNAPSHOT INITIAL API SPEND ======
 # Cost-tracker contract: POST {"api_key": "<full key>", "start_date": "YYYY-MM-DD"}
-# -> {"total_spend": <float>}. We send the FULL key (the Lambda matches it to the
-# org key by partial_key_hint and never echoes it) and a far-back start_date so
-# the baseline is the key's total spend-to-date.
-info "Querying current API spend for key ...$API_KEY_SUFFIX (since $COST_START_DATE)..."
-COST_REQUEST=$(jq -n --arg key "$ANTHROPIC_API_KEY" --arg start "$COST_START_DATE" \
+# -> {"total_spend": <float>}. For Anthropic, the Lambda uses the key to identify
+# the caller. For OpenAI, the Lambda ignores it (project is baked in at deploy time).
+info "Querying current API spend ($LLM_PROVIDER, key ...$API_KEY_SUFFIX, since $COST_START_DATE)..."
+COST_REQUEST=$(jq -n --arg key "$LLM_API_KEY" --arg start "$COST_START_DATE" \
   '{api_key: $key, start_date: $start}')
 INITIAL_SPEND=$(curl -sf -X POST "$COST_TRACKER_URL" \
   -H "Content-Type: application/json" \
@@ -417,7 +429,7 @@ ok "Current API spend: \$$INITIAL_SPEND"
 
 # If there's already money on this key, make the operator acknowledge the baseline.
 if [ "$(echo "$INITIAL_SPEND > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
-  warn "This API key already has \$$INITIAL_SPEND of spend on it."
+  warn "This API key/project already has \$$INITIAL_SPEND of spend on it."
   warn "Instance-attributable cost = current spend minus this baseline (\$$INITIAL_SPEND)."
   printf "\033[1;33m   Continue with this baseline? [y/N]: \033[0m"
   read -r REPLY
@@ -447,8 +459,9 @@ if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
     # Tag the existing instance with API key info
     aws ec2 create-tags --resources "$INSTANCE_ID" --region "$REGION" \
       --tags \
-        "Key=AnthropicKeySuffix,Value=$API_KEY_SUFFIX" \
-        "Key=AnthropicSpendAtCreation,Value=$INITIAL_SPEND"
+        "Key=LlmProvider,Value=$LLM_PROVIDER" \
+        "Key=ApiKeySuffix,Value=$API_KEY_SUFFIX" \
+        "Key=ApiSpendAtCreation,Value=$INITIAL_SPEND"
   else
     die "Aborted. To launch a parallel instance, set INSTANCE_SUFFIX in the config file and re-run."
   fi
@@ -464,7 +477,7 @@ else
     --block-device-mappings \
       "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\"}}]" \
     --tag-specifications \
-      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=AnthropicKeySuffix,Value=$API_KEY_SUFFIX},{Key=AnthropicSpendAtCreation,Value=$INITIAL_SPEND}]" \
+      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=LlmProvider,Value=$LLM_PROVIDER},{Key=ApiKeySuffix,Value=$API_KEY_SUFFIX},{Key=ApiSpendAtCreation,Value=$INITIAL_SPEND}]" \
     --query 'Instances[0].InstanceId' --output text)
   ok "Instance launched: $INSTANCE_ID"
 fi
@@ -547,6 +560,7 @@ REMOTE_ENV=$(build_remote_env \
   TELEGRAM_OWNER_ID \
   DEFAULT_LLM_MODEL \
   ANTHROPIC_API_KEY \
+  OPENAI_API_KEY \
   REASONING_EFFORT \
   COST_TRACKER_URL \
   API_KEY_SUFFIX \

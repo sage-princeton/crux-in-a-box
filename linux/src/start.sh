@@ -231,16 +231,16 @@ fi
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== AI Provider and Model ======
-# Requires DEFAULT_LLM_MODEL and ANTHROPIC_API_KEY to be set as env vars
-# (passed in by setup-device.sh).
+# Requires DEFAULT_LLM_MODEL and one of ANTHROPIC_API_KEY or OPENAI_API_KEY
+# to be set as env vars (passed in by setup-device.sh).
 
 if [ -z "${DEFAULT_LLM_MODEL:-}" ]; then
-  echo "Error: DEFAULT_LLM_MODEL is required (e.g. anthropic/claude-opus-4-6)" >&2
+  echo "Error: DEFAULT_LLM_MODEL is required (e.g. anthropic/claude-opus-4-8 or openai/gpt-4o)" >&2
   exit 1
 fi
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "Error: ANTHROPIC_API_KEY is required" >&2
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "Error: ANTHROPIC_API_KEY or OPENAI_API_KEY is required" >&2
   exit 1
 fi
 
@@ -309,16 +309,23 @@ echo "✔ Tools profile set to full"
 echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
 echo "✔ Subagents maxConcurrent: 5"
 
-# Append ANTHROPIC_API_KEY to ~/.openclaw/.env for daemon/gateway use
+# Append the LLM API key to ~/.openclaw/.env for daemon/gateway use.
+# Write whichever of ANTHROPIC_API_KEY / OPENAI_API_KEY is set; both if both.
 OPENCLAW_ENV="$REAL_HOME/.openclaw/.env"
-# Remove any existing ANTHROPIC_API_KEY line to avoid duplicates
 if [ -f "$OPENCLAW_ENV" ]; then
   sed -i '/^ANTHROPIC_API_KEY=/d' "$OPENCLAW_ENV"
+  sed -i '/^OPENAI_API_KEY=/d' "$OPENCLAW_ENV"
 fi
-echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$OPENCLAW_ENV"
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$OPENCLAW_ENV"
+  echo "✔ Anthropic API key written to ~/.openclaw/.env"
+fi
+if [ -n "${OPENAI_API_KEY:-}" ]; then
+  echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> "$OPENCLAW_ENV"
+  echo "✔ OpenAI API key written to ~/.openclaw/.env"
+fi
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
 chmod 600 "$OPENCLAW_ENV"
-echo "✔ Anthropic API key written to ~/.openclaw/.env"
 
 # Append the agent's tool-call API keys (optional). Unlike ANTHROPIC_API_KEY
 # (used by the gateway's model calls), these are consumed by the agent's bash
