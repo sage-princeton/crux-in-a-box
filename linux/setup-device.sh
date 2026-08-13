@@ -66,7 +66,7 @@ Optional keys:
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
-  CRUX_INSTANCE_TYPE             EC2 instance type (default: t3.xlarge)
+  CRUX_INSTANCE_TYPE             EC2 instance type (default: t3.2xlarge)
   CRUX_AMI_ID                    AMI ID (default: latest Ubuntu 22.04)
   CRUX_KEY_NAME                  EC2 key pair name (default: crux-in-a-box)
   CRUX_SG_NAME                   Security group name (default: crux-in-a-box-sg)
@@ -244,7 +244,7 @@ TELEGRAM_BOT_TOKEN=$(jq -r --arg name "$TELEGRAM_BOT_NAME" '.[$name] // empty' "
 
 # ====== CONFIGURATION (override via env vars) ======
 REGION="${AWS_REGION:-us-east-1}"
-INSTANCE_TYPE="${CRUX_INSTANCE_TYPE:-t3.xlarge}"
+INSTANCE_TYPE="${CRUX_INSTANCE_TYPE:-t3.2xlarge}"
 AMI_ID="${CRUX_AMI_ID:-}"
 KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
 SG_NAME="${CRUX_SG_NAME:-crux-in-a-box-sg}"

@@ -563,6 +563,3 @@ echo "✔ Thinking-signature watchdog installed (cron */5 min)"
 
 echo ""
 echo "✔ Linux CRUX-in-a-box bootstrap complete."
-
-# Final restart to wake up for telegram
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart

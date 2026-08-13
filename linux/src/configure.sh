@@ -179,9 +179,12 @@ chmod 600 "$OPENCLAW_ENV"
 echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-unset})"
 
 # ====== GATEWAY ======
-# All config is written above. One install + one restart — no intermediate starts.
+# All config is written above. gateway install writes the systemd unit AND
+# starts the service (it emits "Restarted systemd service" on completion).
+# Do NOT call gateway restart after — install already starts it, and a second
+# start immediately after triggers openclaw's migration lock (the lock is held
+# for ~5 min after first boot; a second boot attempt within that window fails).
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ====== GitHub auth ======
 if [ -n "${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN:-}" ]; then
