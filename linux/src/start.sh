@@ -228,8 +228,6 @@ if [ -n "${TELEGRAM_OWNER_ID:-}" ]; then
   echo "✔ commands.ownerAllowFrom configured: telegram:$TELEGRAM_OWNER_ID"
 fi
 
-find "$REAL_HOME/.openclaw" -name "*.lock" 2>/dev/null | xargs rm -f 2>/dev/null || true
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== AI Provider and Model ======
 # Requires DEFAULT_LLM_MODEL and one of ANTHROPIC_API_KEY or OPENAI_API_KEY
@@ -290,6 +288,7 @@ TMP_CONFIG=$(mktemp)
 jq --arg model "$DEFAULT_LLM_MODEL" --arg reasoning "$THINKING_LEVEL" \
    --arg cache "$CACHE_RETENTION" --arg provider "$PROVIDER_ID" \
    --argjson ptimeout "$PROVIDER_REQUEST_TIMEOUT_SECONDS" '
+  .gateway.mode = "local" |
   .agents.defaults.model.primary = $model |
   .agents.defaults.thinkingDefault = $reasoning |
   .agents.defaults.params.cacheRetention = $cache |
@@ -429,23 +428,10 @@ else
 fi
 
 
-# set up gateway
-# Clear any stale migration lock left by a previous (aborted) run — openclaw
-# writes a time-limited lock file during startup migrations; if the process was
-# killed mid-migration (e.g. SSH session dropped) the lock stays and the next
-# gateway start refuses to run for up to 5 minutes. Removing it before install
-# is safe: the lock only guards concurrent gateway starts, not data integrity.
-find "$REAL_HOME/.openclaw" -name "*.lock" -o -name "*migration-lock*" \
-  -o -name "*migrations.lock*" 2>/dev/null | xargs rm -f 2>/dev/null || true
-sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/$(id -u "$REAL_USER")" \
-  systemctl --user stop openclaw-gateway.service 2>/dev/null || true
+# set up gateway — install the systemd service and start it once, with all
+# config already written above (Telegram, model, API keys, env vars).
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
-if ! sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart; then
-  echo "⚠ Gateway restart failed (likely stale migration lock) — waiting 35s for lock to expire and retrying..."
-  sleep 35
-  find "$REAL_HOME/.openclaw" -name "*.lock" 2>/dev/null | xargs rm -f 2>/dev/null || true
-  sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
-fi
+sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ======
 
