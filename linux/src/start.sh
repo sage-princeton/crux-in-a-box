@@ -294,10 +294,19 @@ jq --arg model "$DEFAULT_LLM_MODEL" --arg reasoning "$THINKING_LEVEL" \
   .agents.defaults.params.cacheRetention = $cache |
   .models.providers[$provider].timeoutSeconds = $ptimeout |
   .tools.profile = "full" |
-  .agents.defaults.heartbeat.every = "30m" |
-  .agents.defaults.heartbeat.skipWhenBusy = true |
-  .agents.defaults.heartbeat.target = "none" |
-  .agents.defaults.subagents.maxConcurrent = 5
+   .agents.defaults.heartbeat.every = "30m" |
+   .agents.defaults.heartbeat.skipWhenBusy = true |
+   .agents.defaults.heartbeat.target = "none" |
+    .agents.defaults.subagents.maxConcurrent = 5 |
+    .tools.exec.security = "full" |
+    (.agents.list //= []) |
+    if any(.agents.list[]; .id == "main") then
+      .agents.list = [.agents.list[] | if .id == "main" then .tools.exec.security = "full" else . end]
+    else
+      .agents.list += [{"id": "main", "tools": {"exec": {"security": "full"}}}]
+    end |
+    .plugins.entries.codex.config.appServer.approvalPolicy = "never" |
+    .plugins.entries.codex.config.appServer.sandbox = "danger-full-access"
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
@@ -308,6 +317,8 @@ echo "✔ Provider request timeout: ${PROVIDER_REQUEST_TIMEOUT_SECONDS}s for '$P
 echo "✔ Tools profile set to full"
 echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
 echo "✔ Subagents maxConcurrent: 5"
+echo "✔ Exec security: tools.exec.security=full, agents.list[main].tools.exec.security=full"
+echo "✔ Codex app-server: approvalPolicy=never, sandbox=danger-full-access"
 
 # Append the LLM API key to ~/.openclaw/.env for daemon/gateway use.
 # Write whichever of ANTHROPIC_API_KEY / OPENAI_API_KEY is set; both if both.
