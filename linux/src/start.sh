@@ -18,16 +18,16 @@ export DEBIAN_FRONTEND=noninteractive
 
 
 # ====== DEPENDENCIES ======
-apt-get update -y
-apt-get upgrade -y
-apt-get install -y \
+apt-get update -y --allow-insecure-repositories
+apt-get upgrade -y --allow-unauthenticated
+apt-get install -y --allow-unauthenticated \
   build-essential curl git wget unzip jq \
   software-properties-common apt-transport-https
 
 # ====== GUI DESKTOP ======
 # Install a lightweight XFCE desktop and TigerVNC so the instance has a GUI
-apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
-apt-get install -y tigervnc-standalone-server tigervnc-common
+apt-get install -y --allow-unauthenticated xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
+apt-get install -y --allow-unauthenticated tigervnc-standalone-server tigervnc-common
 
 # Set a default login password for the user (for VNC desktop / sudo prompts)
 echo "$REAL_USER:cruxbox1" | chpasswd
@@ -228,6 +228,7 @@ if [ -n "${TELEGRAM_OWNER_ID:-}" ]; then
   echo "✔ commands.ownerAllowFrom configured: telegram:$TELEGRAM_OWNER_ID"
 fi
 
+find "$REAL_HOME/.openclaw" -name "*.lock" 2>/dev/null | xargs rm -f 2>/dev/null || true
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== AI Provider and Model ======
@@ -395,8 +396,8 @@ echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-un
   && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-  && apt-get update \
-  && apt-get install gh -y
+  && apt-get update --allow-insecure-repositories \
+  && apt-get install gh -y --allow-unauthenticated
 
 # install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
@@ -429,8 +430,22 @@ fi
 
 
 # set up gateway
+# Clear any stale migration lock left by a previous (aborted) run — openclaw
+# writes a time-limited lock file during startup migrations; if the process was
+# killed mid-migration (e.g. SSH session dropped) the lock stays and the next
+# gateway start refuses to run for up to 5 minutes. Removing it before install
+# is safe: the lock only guards concurrent gateway starts, not data integrity.
+find "$REAL_HOME/.openclaw" -name "*.lock" -o -name "*migration-lock*" \
+  -o -name "*migrations.lock*" 2>/dev/null | xargs rm -f 2>/dev/null || true
+sudo -u "$REAL_USER" XDG_RUNTIME_DIR="/run/user/$(id -u "$REAL_USER")" \
+  systemctl --user stop openclaw-gateway.service 2>/dev/null || true
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
+if ! sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart; then
+  echo "⚠ Gateway restart failed (likely stale migration lock) — waiting 35s for lock to expire and retrying..."
+  sleep 35
+  find "$REAL_HOME/.openclaw" -name "*.lock" 2>/dev/null | xargs rm -f 2>/dev/null || true
+  sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
+fi
 
 # ======
 
