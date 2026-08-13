@@ -231,11 +231,11 @@ fi
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== AI Provider and Model ======
-# Requires ANTHROPIC_MODEL and ANTHROPIC_API_KEY to be set as env vars
+# Requires DEFAULT_LLM_MODEL and ANTHROPIC_API_KEY to be set as env vars
 # (passed in by setup-device.sh).
 
-if [ -z "${ANTHROPIC_MODEL:-}" ]; then
-  echo "Error: ANTHROPIC_MODEL is required (e.g. anthropic/claude-opus-4-6)" >&2
+if [ -z "${DEFAULT_LLM_MODEL:-}" ]; then
+  echo "Error: DEFAULT_LLM_MODEL is required (e.g. anthropic/claude-opus-4-6)" >&2
   exit 1
 fi
 
@@ -276,7 +276,7 @@ CACHE_RETENTION="${CACHE_RETENTION:-long}"
 # (agents.defaults.timeoutSeconds only bounds it DOWN; its 48-min default is fine).
 # 600s covers xhigh; raise toward ~900+ if you switch the default to max. Provider
 # id = the part before the "/".
-PROVIDER_ID="${ANTHROPIC_MODEL%%/*}"
+PROVIDER_ID="${DEFAULT_LLM_MODEL%%/*}"
 PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
 
 # Whole-turn ceiling. OpenClaw's default is too short for xhigh research turns
@@ -286,7 +286,7 @@ PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
 AGENT_TURN_TIMEOUT_SECONDS="${AGENT_TURN_TIMEOUT_SECONDS:-3600}"
 
 TMP_CONFIG=$(mktemp)
-jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" \
+jq --arg model "$DEFAULT_LLM_MODEL" --arg reasoning "$THINKING_LEVEL" \
    --arg cache "$CACHE_RETENTION" --arg provider "$PROVIDER_ID" \
    --argjson ptimeout "$PROVIDER_REQUEST_TIMEOUT_SECONDS" '
   .agents.defaults.model.primary = $model |
@@ -301,7 +301,7 @@ jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" \
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
-echo "✔ Model configured: $ANTHROPIC_MODEL"
+echo "✔ Model configured: $DEFAULT_LLM_MODEL"
 echo "✔ Extended thinking configured: thinkingDefault=$THINKING_LEVEL (verify key vs pinned OpenClaw; unknown key => thinking stays off, run unaffected)"
 echo "✔ Prompt cache retention: $CACHE_RETENTION (1h TTL — survives the 30m heartbeat gaps)"
 echo "✔ Provider request timeout: ${PROVIDER_REQUEST_TIMEOUT_SECONDS}s for '$PROVIDER_ID' (raises the 120s idle watchdog for heavy reasoning)"

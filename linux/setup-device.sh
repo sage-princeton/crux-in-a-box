@@ -47,7 +47,7 @@ absent or blank):
     TELEGRAM_BOT_NAME    Bot name as defined in telegram_bots.json
                            (e.g. cruxlinuxtest). The token is looked up automatically.
     TELEGRAM_OWNER_ID    Telegram user ID for commands.ownerAllowFrom
-    ANTHROPIC_MODEL      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
+    DEFAULT_LLM_MODEL      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
     ANTHROPIC_API_KEY    Anthropic API key
     COST_TRACKER_URL     Cost-tracking Lambda URL (from lambda/cost_tracker/deploy.sh)
     RUNPOD_API_KEY       RunPod API key — written to ~/.openclaw/.env as
@@ -131,7 +131,7 @@ done < "$CONFIG_FILE"
 REQUIRED_KEYS=(
   TELEGRAM_BOT_NAME
   TELEGRAM_OWNER_ID
-  ANTHROPIC_MODEL
+  DEFAULT_LLM_MODEL
   ANTHROPIC_API_KEY
   COST_TRACKER_URL
   RUNPOD_API_KEY
@@ -167,7 +167,7 @@ fi
 # env-forwarding to start.sh), so they get their own variables.
 TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]}"
 TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]}"
-ANTHROPIC_MODEL="${CFG[ANTHROPIC_MODEL]}"
+DEFAULT_LLM_MODEL="${CFG[DEFAULT_LLM_MODEL]}"
 ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
 # Extended-thinking level — enables extended thinking. Default "xhigh"; start.sh
 # writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
@@ -200,7 +200,7 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -545,7 +545,7 @@ build_remote_env() {
 REMOTE_ENV=$(build_remote_env \
   TELEGRAM_BOT_TOKEN \
   TELEGRAM_OWNER_ID \
-  ANTHROPIC_MODEL \
+  DEFAULT_LLM_MODEL \
   ANTHROPIC_API_KEY \
   REASONING_EFFORT \
   COST_TRACKER_URL \
