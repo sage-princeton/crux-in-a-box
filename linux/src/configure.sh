@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==========================================================================
-# configure.sh  –  runs ON the Linux (Ubuntu 22.04) EC2 instance
+# configure.sh  –  runs ON the Linux (Ubuntu 24.04 LTS) EC2 instance
 # ==========================================================================
 # PER-RUN PHASE: applies all run-specific configuration on top of a box that
 # already has the software installed (either baked into an AMI by install.sh
@@ -11,8 +11,9 @@ set -euo pipefail
 # Consumes secrets and run config via env vars passed by
 # create-new-crux-box.sh (build_remote_env): Telegram bot token/owner, LLM
 # model + API keys, gog auth bundle, GitHub PAT, RunPod/refine.ink keys,
-# workspace placeholders, cost-tracker URL. Installs + starts the openclaw
-# gateway last, once all config is written.
+# workspace placeholders, cost-tracker URL. Starts the openclaw gateway last,
+# once all config is written (the gateway's systemd unit is already installed by
+# install.sh at bake time; this phase only writes secrets and starts it).
 #
 # Expected to be run as root (or via sudo) by create-new-crux-box.sh.
 # Does NOT re-run any apt/software install steps.
@@ -302,7 +303,7 @@ if [ -d "$HARNESS_SRC" ]; then
     -e "s#{{OPERATOR_SHORT}}#${OPERATOR_NAME}#g" \
     -e "s#{{WORKSPACE_PATH}}#${OPENCLAW_WORKSPACE}#g" \
     -e "s#{{TELEMETRY_PATH}}#${REAL_HOME}/.openclaw/telemetry/telemetry.jsonl#g" \
-    -e "s#{{HOST_DESCRIPTION|[^}]*}}#Ubuntu 22.04 EC2, amd64#g" \
+    -e "s#{{HOST_DESCRIPTION|[^}]*}}#Ubuntu 24.04 LTS EC2, amd64#g" \
     -e "s#{{COST_TRACKER_URL}}#${COST_TRACKER_URL:-}#g" \
     -e "s#{{API_KEY_SUFFIX}}#${API_KEY_SUFFIX:-}#g" \
     {} +
@@ -329,10 +330,62 @@ else
 fi
 
 # ====== GATEWAY ======
-# Install the systemd service and start it once, with all config already
-# written above (Telegram, model, API keys, env vars). Runs last so the
-# gateway's first start sees the complete configuration.
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
+# install.sh runs `openclaw gateway install` at bake time, but that happens
+# BEFORE gateway.mode/config exists, so it lays down a placeholder unit that
+# systemd reports as MASKED — specifically a 0-byte empty regular file at
+# ~/.config/systemd/user/openclaw-gateway.service (systemd treats an empty unit
+# file as masked, the SAME as a /dev/null symlink). `systemctl --user unmask`
+# only clears /dev/null-symlink masks, NOT empty-file masks, so it can't repair
+# this — the fix is to REGENERATE the unit now that config is complete.
+#
+# We've written gateway.mode=local and all secrets above, so `gateway install
+# --force` regenerates a proper, non-masked unit. Then enable + start it.
+REAL_UID=$(id -u "$REAL_USER")
+loginctl enable-linger "$REAL_USER" || true
+
+# Wrap the per-user systemctl/openclaw invocation once — every call needs the
+# same runtime dir + bus for the --user manager to be reachable non-interactively.
+uctl() {
+  sudo -u "$REAL_USER" \
+    XDG_RUNTIME_DIR="/run/user/${REAL_UID}" \
+    DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${REAL_UID}/bus" \
+    "$@"
+}
+
+# Regenerate the unit with config present. --force overwrites the baked
+# placeholder (empty/masked) unit with a real one. Remove the stale wants-symlink
+# first so the reinstall + enable start from a clean slate.
+rm -f "$REAL_HOME/.config/systemd/user/default.target.wants/openclaw-gateway.service" 2>/dev/null || true
+uctl systemctl --user unmask openclaw-gateway.service >/dev/null 2>&1 || true
+uctl "$REAL_HOME/.npm-global/bin/openclaw" gateway install --force
+uctl systemctl --user daemon-reload || true
+uctl systemctl --user enable openclaw-gateway.service || true
+
+# Clear any leftover failed/rate-limited state from prior attempts, then start.
+# (Not `restart`: a fresh install has nothing running to restart, and start is
+# the documented path; reset-failed avoids systemd's "start repeated too quickly"
+# rate-limit if configure.sh is re-run.)
+uctl systemctl --user reset-failed openclaw-gateway.service >/dev/null 2>&1 || true
+uctl systemctl --user restart openclaw-gateway.service
+
+# Verify. The gateway runs one-time startup migrations on first boot that briefly
+# hold a lock; give it a few seconds and poll rather than judging on the first
+# read, so a slow-but-healthy start isn't misreported as a failure.
+gw_ok=""
+for _ in 1 2 3 4 5 6; do
+  if uctl systemctl --user is-active openclaw-gateway.service >/dev/null 2>&1; then
+    gw_ok=1; break
+  fi
+  sleep 5
+done
+if [ -n "$gw_ok" ]; then
+  echo "✔ openclaw gateway active with full run config"
+else
+  echo "✘ openclaw gateway failed to start — dumping status + logs:" >&2
+  uctl systemctl --user --no-pager status openclaw-gateway.service >&2 || true
+  uctl journalctl --user -u openclaw-gateway.service --no-pager -n 30 >&2 || true
+  exit 1
+fi
 
 echo ""
 echo "✔ Linux CRUX-in-a-box bootstrap complete."

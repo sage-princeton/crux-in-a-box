@@ -5,12 +5,19 @@ set -euo pipefail
 # build-ami.sh  –  run this on your LOCAL machine (like create-new-crux-box.sh)
 # ==========================================================================
 # Bakes the CRUX-in-a-box base AMI: launches a temporary EC2 instance from
-# raw Ubuntu 22.04, runs install.sh on it (software install only — NO secrets
+# raw Ubuntu 24.04 LTS, runs install.sh on it (software install only — NO secrets
 # are ever passed or written), creates an AMI from the instance, waits for it
 # to become available, and terminates the builder.
 #
 # Pass the resulting AMI ID to create-new-crux-box.sh with --ami to skip the
 # 10-15 min software install on every run launch.
+#
+# On any failure AFTER the builder is provisioned (most commonly: AWS creds
+# expiring during the long install, surfacing as a "RequestExpired" at
+# create-image), the script leaves the builder RUNNING and prints the exact
+# commands to finish the bake by hand — refresh creds and resume from
+# create-image, no rebake. Auth is also re-checked right before create-image so
+# expired creds fail with that guidance instead of a raw AWS error.
 #
 # Prerequisites on the invoking machine:
 #   - AWS CLI v2 authenticated (`aws sts get-caller-identity` works)
@@ -32,6 +39,11 @@ SG_NAME="crux-in-a-box-sg"
 BUILDER_NAME="crux-ami-builder"
 SSH_USER="ubuntu"
 DISK_SIZE_GB=80
+# gp3 defaults are 3000 IOPS / 125 MB/s. Raise them so the volume has more
+# headroom while EBS lazily hydrates first-touched blocks from S3 (the cold-boot
+# I/O tax). Cheap: the first 3000 IOPS + 125 MB/s are free; only the delta bills.
+ROOT_IOPS=6000
+ROOT_THROUGHPUT=250
 VNC_PORT=5901
 
 # ====== HELPERS ======
@@ -41,6 +53,43 @@ warn()  { printf "\033[1;33m⚠ %s\033[0m\n" "$*"; }
 die()   { printf "\033[1;31m✘ %s\033[0m\n" "$*" >&2; exit 1; }
 
 require_cmd() { command -v "$1" &>/dev/null || die "'$1' is required but not found."; }
+
+# Print the exact commands to finish the bake by hand from an already-provisioned
+# builder. Called whenever we fail AFTER the builder exists and is baked, so a
+# late failure (esp. expired AWS creds during the long install) never strands the
+# instance silently — you refresh creds and resume from create-image, no rebake.
+recovery_hint() {
+  local iid="$1"
+  cat >&2 <<HINT
+
+────────────────────────────────────────────────────────────────────────
+  RECOVER WITHOUT REBAKING
+────────────────────────────────────────────────────────────────────────
+  The builder instance is fully provisioned and LEFT RUNNING:
+
+    Instance : ${iid}
+    Region   : ${REGION}
+
+  The software install already succeeded — do NOT re-run build-ami.sh.
+  Refresh your AWS credentials, then finish the bake by hand:
+
+    aws sts get-caller-identity --region ${REGION}   # confirm creds are live
+
+    AMI_ID=\$(aws ec2 create-image --region ${REGION} \\
+      --instance-id ${iid} \\
+      --name "${AMI_NAME}" \\
+      --description "CRUX-in-a-box base image (install.sh baked, no secrets)" \\
+      --no-reboot --query 'ImageId' --output text)
+    echo "AMI: \$AMI_ID"
+
+    aws ec2 wait image-available --region ${REGION} --image-ids "\$AMI_ID"
+    aws ec2 terminate-instances --region ${REGION} --instance-ids ${iid}
+
+  Then launch a run:
+    ./create-new-crux-box.sh --ami \$AMI_ID placeholders.txt
+────────────────────────────────────────────────────────────────────────
+HINT
+}
 
 usage() {
   cat <<USAGE
@@ -125,17 +174,19 @@ else
   ok "Security group '$SG_NAME' already exists: $SG_ID"
 fi
 
-# ====== 3. RESOLVE BASE AMI (raw Ubuntu 22.04) ======
-info "Resolving latest Ubuntu 22.04 AMI..."
+# ====== 3. RESOLVE BASE AMI (raw Ubuntu 24.04 LTS / noble) ======
+# Noble images live under the hvm-ssd-gp3 prefix; the wildcard also matches the
+# legacy hvm-ssd path so this keeps resolving if Canonical shifts naming again.
+info "Resolving latest Ubuntu 24.04 LTS (noble) AMI..."
 BASE_AMI_ID=$(aws ec2 describe-images \
   --region "$REGION" --owners 099720109477 \
   --filters \
-    "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+    "Name=name,Values=ubuntu/images/hvm-ssd*/ubuntu-noble-24.04-amd64-server-*" \
     "Name=state,Values=available" \
   --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
   --output text)
 [ "$BASE_AMI_ID" = "None" ] || [ -z "$BASE_AMI_ID" ] \
-  && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
+  && die "Could not resolve an Ubuntu 24.04 AMI in $REGION"
 ok "Base AMI: $BASE_AMI_ID"
 
 # ====== 4. LAUNCH BUILDER INSTANCE ======
@@ -147,7 +198,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --key-name "$KEY_NAME" \
   --security-group-ids "$SG_ID" \
   --block-device-mappings \
-    "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\"}}]" \
+    "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT}}}]" \
   --tag-specifications \
     "ResourceType=instance,Tags=[{Key=Name,Value=$BUILDER_NAME}]" \
   --query 'Instances[0].InstanceId' --output text)
@@ -198,17 +249,33 @@ ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
 ok "Software install complete"
 
 # On install failure, set -e aborts here and the builder instance is left
-# running for inspection (ssh -i $KEY_FILE ubuntu@$PUBLIC_IP).
+# running for inspection (ssh -i $KEY_FILE ubuntu@$PUBLIC_IP). Failures from
+# here on (create-image, AMI wait) also leave it running and print recovery
+# steps via recovery_hint so a late failure never strands it silently.
 
 # ====== 8. CREATE AMI ======
+# Re-check auth here, not just at the top: the install above takes 10-15 min,
+# which is long enough for a short-lived STS/SSO session token to expire. Without
+# this, create-image fails with a raw "RequestExpired" and set -e strands the
+# builder. Fail early with a clear message + recovery steps instead.
+if ! aws sts get-caller-identity --region "$REGION" &>/dev/null; then
+  warn "AWS credentials are no longer valid (they likely expired during the ~10-15 min install)."
+  recovery_hint "$INSTANCE_ID"
+  die "Refresh AWS credentials and resume from create-image using the steps above."
+fi
+
 info "Creating AMI '$AMI_NAME' from $INSTANCE_ID..."
-AMI_ID=$(aws ec2 create-image \
+if ! AMI_ID=$(aws ec2 create-image \
   --region "$REGION" \
   --instance-id "$INSTANCE_ID" \
   --name "$AMI_NAME" \
   --description "CRUX-in-a-box base image (install.sh baked, no secrets)" \
   --no-reboot \
-  --query 'ImageId' --output text)
+  --query 'ImageId' --output text); then
+  warn "create-image failed (see the AWS error above)."
+  recovery_hint "$INSTANCE_ID"
+  die "AMI creation did not start. Fix the issue above and resume — no rebake needed."
+fi
 ok "AMI creation started: $AMI_ID"
 
 # ====== 9. WAIT FOR AMI ======
@@ -219,7 +286,11 @@ while true; do
     --query 'Images[0].State' --output text 2>/dev/null || echo "unknown")
   case "$AMI_STATE" in
     available) echo ""; ok "AMI is available"; break ;;
-    failed|error) echo ""; die "AMI bake failed (state: $AMI_STATE). Builder $INSTANCE_ID left running for inspection." ;;
+    failed|error)
+      echo ""
+      warn "AMI entered state '$AMI_STATE' (bake failed after create-image was accepted)."
+      recovery_hint "$INSTANCE_ID"
+      die "AMI bake failed (state: $AMI_STATE)." ;;
     *) printf "." ; sleep 30 ;;
   esac
 done

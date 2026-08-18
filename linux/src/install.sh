@@ -2,12 +2,14 @@
 set -euo pipefail
 
 # ==========================================================================
-# install.sh  –  runs ON the Linux (Ubuntu 22.04) EC2 instance
+# install.sh  –  runs ON the Linux (Ubuntu 24.04 LTS) EC2 instance
 # ==========================================================================
 # BAKE PHASE: installs all software — desktop environment, VNC, openclaw,
-# telemetry, service CLIs (gh, aws, gog), and the thinking-signature
-# watchdog. Consumes NO secrets and NO per-run configuration, so the result
-# can be baked into an AMI (see linux/build-ami.sh).
+# telemetry, service CLIs (gh, aws, gog), the thinking-signature watchdog, and
+# pre-touches the openclaw gateway install path (leaving only a placeholder unit;
+# configure.sh generates the real one per run). Consumes NO secrets and NO
+# per-run configuration, so the result can be baked into an AMI (see
+# linux/build-ami.sh).
 #
 # Per-run configuration (Telegram, model, API keys, gog auth, GitHub auth,
 # harness workspace, gateway start) lives in configure.sh.
@@ -233,9 +235,28 @@ else
   echo "⚠ Could not download gogcli from $GOGCLI_URL — gog will be unavailable (update the pinned GOGCLI_VERSION in install.sh to a valid release tag)."
 fi
 
-# NOTE: the openclaw gateway service is NOT installed here — gateway install
-# starts the service, which requires API keys already present in
-# ~/.openclaw/.env. configure.sh installs + starts it after writing secrets.
+# ====== OPENCLAW GATEWAY (pre-touched at bake; real unit generated per-run) ======
+# We run `openclaw gateway install` once here so the gateway's install path and
+# node/runtime deps are exercised and cached in the AMI. IMPORTANT: at bake time
+# there is NO config yet (gateway.mode is set per-run by configure.sh), so this
+# install writes only a PLACEHOLDER unit that systemd reports as masked (an empty
+# 0-byte unit file). That is expected and fine — it consumes no secrets.
+#
+# configure.sh regenerates the real unit per run with `openclaw gateway install
+# --force` once gateway.mode=local + secrets are written, then enables + starts
+# it. So we intentionally do NOT try to "normalize" or start anything here; the
+# authoritative unit is always produced by configure.sh at launch.
+#
+# The gateway runs as a --user service, so enable lingering now (harmless, no
+# secrets) so the per-run start can survive without an active login session.
+REAL_UID=$(id -u "$REAL_USER")
+loginctl enable-linger "$REAL_USER" || true
+
+sudo -u "$REAL_USER" \
+  XDG_RUNTIME_DIR="/run/user/${REAL_UID}" \
+  DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${REAL_UID}/bus" \
+  "$REAL_HOME/.npm-global/bin/openclaw" gateway install || true
+echo "✔ openclaw gateway deps pre-installed at bake (placeholder unit; configure.sh regenerates + starts it per run)"
 
 # ====== THINKING-SIGNATURE WATCHDOG ======
 # Auto-recovers the main session when it wedges on cascading

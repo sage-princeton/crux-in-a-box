@@ -16,7 +16,7 @@ set -euo pipefail
 # What this script does:
 #   1. Creates (or reuses) an EC2 key-pair and security group.
 #   2. Launches an instance — from a pre-baked AMI (--ami, fast: software is
-#      already installed) or from raw Ubuntu 22.04 (fallback: full install).
+#      already installed) or from raw Ubuntu 24.04 LTS (fallback: full install).
 #   3. Waits for the instance to be reachable via SSH.
 #   4. Copies the linux/ directory to the instance.
 #   5. Runs the remote bootstrap:
@@ -44,7 +44,7 @@ Flags:
   --ami <AMI_ID>                 Launch from a pre-baked CRUX AMI (built with
                                    build-ami.sh). Skips the ~10-15 min software
                                    install; only per-run configuration runs.
-                                   Without it, raw Ubuntu 22.04 is used and the
+                                   Without it, raw Ubuntu 24.04 LTS is used and the
                                    full install runs first.
   --instance-suffix <SUFFIX>     Suffix appended to the instance name
                                    (e.g. --instance-suffix 2 → crux-in-a-box-2).
@@ -259,6 +259,11 @@ IAM_ROLE_NAME="crux-in-a-box-role"
 INSTANCE_PROFILE_NAME="crux-in-a-box-profile"
 SSH_USER="ubuntu"
 DISK_SIZE_GB=80
+# gp3 defaults are 3000 IOPS / 125 MB/s. Raise them so the volume has more
+# headroom while EBS lazily hydrates first-touched blocks from S3 (the cold-boot
+# I/O tax). Cheap: the first 3000 IOPS + 125 MB/s are free; only the delta bills.
+ROOT_IOPS=6000
+ROOT_THROUGHPUT=250
 VNC_PORT=5901
 # Oldest day the cost tracker should sum from when establishing the baseline.
 # Today (UTC) so the run measures only spend from launch onward.
@@ -385,16 +390,16 @@ if [ -n "$AMI_ID_ARG" ]; then
   AMI_ID="$AMI_ID_ARG"
   ok "AMI: $AMI_ID (pre-baked CRUX AMI — configure.sh only, install skipped)"
 else
-  info "Resolving latest Ubuntu 22.04 AMI..."
+  info "Resolving latest Ubuntu 24.04 LTS (noble) AMI..."
   AMI_ID=$(aws ec2 describe-images \
     --region "$REGION" --owners 099720109477 \
     --filters \
-      "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+      "Name=name,Values=ubuntu/images/hvm-ssd*/ubuntu-noble-24.04-amd64-server-*" \
       "Name=state,Values=available" \
     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
     --output text)
   [ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
-    && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
+    && die "Could not resolve an Ubuntu 24.04 AMI in $REGION"
   ok "AMI: $AMI_ID (raw Ubuntu — install.sh will run the full software install)"
 fi
 
@@ -482,7 +487,7 @@ else
     --security-group-ids "$SG_ID" \
     --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
     --block-device-mappings \
-      "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\"}}]" \
+      "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT}}}]" \
     --tag-specifications \
       "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=LlmProvider,Value=$LLM_PROVIDER},{Key=ApiKeySuffix,Value=$API_KEY_SUFFIX},{Key=ApiSpendAtCreation,Value=$INITIAL_SPEND}]" \
     --query 'Instances[0].InstanceId' --output text)
