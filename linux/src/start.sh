@@ -266,7 +266,7 @@ THINKING_LEVEL="${REASONING_EFFORT:-xhigh}"
 # default). The heartbeat cadence is 30m, so turns are routinely spaced past the
 # 5-min TTL — without this, the large re-read workspace prompt is a full cache
 # MISS every turn; "long" keeps it warm across the gaps → cache-read pricing.
-CACHE_RETENTION="${CACHE_RETENTION:-long}"
+CACHE_RETENTION="long"
 
 # Per-request LLM idle watchdog. OpenClaw's default is 120s
 # (DEFAULT_LLM_IDLE_TIMEOUT_MS) — too short for heavy reasoning (xhigh/max), whose
@@ -276,13 +276,7 @@ CACHE_RETENTION="${CACHE_RETENTION:-long}"
 # 600s covers xhigh; raise toward ~900+ if you switch the default to max. Provider
 # id = the part before the "/".
 PROVIDER_ID="${DEFAULT_LLM_MODEL%%/*}"
-PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
-
-# Whole-turn ceiling. OpenClaw's default is too short for xhigh research turns
-# (deep thinking + long tool loops) — both pilot boxes hit "Request timed out
-# before a response was generated... increase agents.defaults.timeoutSeconds".
-# 3600s = 1h per turn; the 30m heartbeat sweeper bounds the cost of a runaway.
-AGENT_TURN_TIMEOUT_SECONDS="${AGENT_TURN_TIMEOUT_SECONDS:-3600}"
+PROVIDER_REQUEST_TIMEOUT_SECONDS=600
 
 TMP_CONFIG=$(mktemp)
 jq --arg model "$DEFAULT_LLM_MODEL" --arg reasoning "$THINKING_LEVEL" \
@@ -417,10 +411,10 @@ rm -rf /tmp/aws /tmp/awscliv2.zip
 
 # install gogcli (Google Workspace CLI) from the GitHub release.
 # Homebrew isn't available on this box, so we pull the prebuilt linux binary.
-# Pin via GOGCLI_VERSION (default tracks a known-good tag).
-# v0.28.0+ honors GOG_HOME (older versions like 0.9.0 ignore it and write to
-# the platform default config dir, which breaks the portable-bundle approach).
-GOGCLI_VERSION="${GOGCLI_VERSION:-v0.28.0}"
+# Pinned to a known-good tag: v0.28.0+ honors GOG_HOME (older versions like
+# 0.9.0 ignore it and write to the platform default config dir, which breaks
+# the portable-bundle approach).
+GOGCLI_VERSION="v0.28.0"
 GOGCLI_ARCH="$(dpkg --print-architecture)"   # amd64 or arm64
 GOGCLI_TARBALL="gogcli_${GOGCLI_VERSION#v}_linux_${GOGCLI_ARCH}.tar.gz"
 GOGCLI_URL="https://github.com/openclaw/gogcli/releases/download/${GOGCLI_VERSION}/${GOGCLI_TARBALL}"
@@ -435,7 +429,7 @@ if curl -fsSL "$GOGCLI_URL" -o /tmp/gogcli.tar.gz; then
     echo "⚠ gogcli install ran but 'gog' is not on PATH — check $GOGCLI_URL"
   fi
 else
-  echo "⚠ Could not download gogcli from $GOGCLI_URL — gog will be unavailable (set GOGCLI_VERSION to a valid release tag)."
+  echo "⚠ Could not download gogcli from $GOGCLI_URL — gog will be unavailable (update the pinned GOGCLI_VERSION in start.sh to a valid release tag)."
 fi
 
 
@@ -512,8 +506,8 @@ if [ -d "$HARNESS_SRC" ]; then
 
   # --- Step 2: Resolve environment-derived placeholders ---
   # Use '#' as sed delimiter to avoid clashes with '|' in placeholder defaults.
-  AGENT_NAME="${AGENT_NAME:-crux}"
-  OPERATOR_NAME="${OPERATOR_NAME:-operator}"
+  AGENT_NAME="crux"
+  OPERATOR_NAME="operator"
   find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec sed -i \
     -e "s#{{AGENT_NAME}}#${AGENT_NAME}#g" \
     -e "s#{{OPERATOR_NAME}}#${OPERATOR_NAME}#g" \

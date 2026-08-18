@@ -31,7 +31,7 @@ set -euo pipefail
 # ====== FIXED CONFIGURATION ======
 BUCKET="hal-crux-backups"
 REGION="us-east-1"
-KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
+KEY_NAME="crux-in-a-box"
 SSH_USER="ubuntu"
 SOURCE_DIR=".openclaw"   # relative to the instance user's home
 

@@ -63,14 +63,6 @@ absent or blank):
 
 Optional keys:
     ...any workspace placeholder with a default (PAGE_BUDGET, VENUE, etc.)
-
-Optional (override via env vars):
-  AWS_REGION                     AWS region (default: us-east-1)
-  CRUX_INSTANCE_TYPE             EC2 instance type (default: t3.2xlarge)
-  CRUX_KEY_NAME                  EC2 key pair name (default: crux-in-a-box)
-  CRUX_SG_NAME                   Security group name (default: crux-in-a-box-sg)
-  CRUX_INSTANCE_NAME             Instance Name tag (default: crux-in-a-box)
-  CRUX_DISK_SIZE_GB              Root volume size in GB (default: 80)
 USAGE
   exit 1
 }
@@ -238,24 +230,23 @@ TELEGRAM_BOT_TOKEN=$(jq -r --arg name "$TELEGRAM_BOT_NAME" '.[$name] // empty' "
        echo "  Available bots: $(jq -r 'keys | join(", ")' "$TELEGRAM_BOTS_FILE")" >&2
        exit 1; }
 
-# ====== CONFIGURATION (override via env vars) ======
-REGION="${AWS_REGION:-us-east-1}"
-INSTANCE_TYPE="${CRUX_INSTANCE_TYPE:-t3.2xlarge}"
-KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
-SG_NAME="${CRUX_SG_NAME:-crux-in-a-box-sg}"
-INSTANCE_NAME="${CRUX_INSTANCE_NAME:-crux-in-a-box}"
+# ====== FIXED CONFIGURATION ======
+REGION="us-east-1"
+INSTANCE_TYPE="t3.2xlarge"
+KEY_NAME="crux-in-a-box"
+SG_NAME="crux-in-a-box-sg"
+INSTANCE_NAME="crux-in-a-box"
 if [ -n "$INSTANCE_SUFFIX" ]; then
   INSTANCE_NAME="${INSTANCE_NAME}-${INSTANCE_SUFFIX}"
 fi
-IAM_ROLE_NAME="${CRUX_IAM_ROLE:-crux-in-a-box-role}"
-INSTANCE_PROFILE_NAME="${CRUX_INSTANCE_PROFILE:-crux-in-a-box-profile}"
+IAM_ROLE_NAME="crux-in-a-box-role"
+INSTANCE_PROFILE_NAME="crux-in-a-box-profile"
 SSH_USER="ubuntu"
-DISK_SIZE_GB="${CRUX_DISK_SIZE_GB:-80}"
+DISK_SIZE_GB=80
 VNC_PORT=5901
 # Oldest day the cost tracker should sum from when establishing the baseline.
-# Defaults to today (UTC) so the run measures only spend from launch onward;
-# override with CRUX_COST_START_DATE=YYYY-MM-DD for a different window.
-COST_START_DATE="${CRUX_COST_START_DATE:-$(date -u +%F)}"
+# Today (UTC) so the run measures only spend from launch onward.
+COST_START_DATE="$(date -u +%F)"
 
 # ====== HELPERS ======
 info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
@@ -374,21 +365,17 @@ else
 fi
 
 # ====== 3. RESOLVE AMI ======
-if [ -n "$AMI_ID" ]; then
-  ok "AMI: $AMI_ID (pre-built CRUX base — configure.sh will be used instead of start.sh)"
-else
-  info "Resolving latest Ubuntu 22.04 AMI..."
-  AMI_ID=$(aws ec2 describe-images \
-    --region "$REGION" --owners 099720109477 \
-    --filters \
-      "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
-      "Name=state,Values=available" \
-    --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-    --output text)
-  [ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
-    && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
-  ok "AMI: $AMI_ID (raw Ubuntu — start.sh will run full install)"
-fi
+info "Resolving latest Ubuntu 22.04 AMI..."
+AMI_ID=$(aws ec2 describe-images \
+  --region "$REGION" --owners 099720109477 \
+  --filters \
+    "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+    "Name=state,Values=available" \
+  --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+  --output text)
+[ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
+  && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
+ok "AMI: $AMI_ID (raw Ubuntu — start.sh will run full install)"
 
 # ====== 3b. DUPLICATE API KEY CHECK ======
 API_KEY_SUFFIX="${LLM_API_KEY: -6}"
@@ -575,8 +562,8 @@ REMOTE_ENV=$(build_remote_env \
 # expects; rename the assignment without touching the (already escaped) value.
 REMOTE_ENV="${REMOTE_ENV/GOG_HOME_TARBALL_REMOTE=/GOG_HOME_TARBALL=}"
 
-REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/${BOOTSTRAP_SCRIPT} \
-   && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/${BOOTSTRAP_SCRIPT}"
+REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/start.sh \
+   && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/start.sh"
 
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
   "$REMOTE_CMD"
