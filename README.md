@@ -17,9 +17,10 @@ This repository is designed to facilitate creating the architecture for [CRUX-st
 
 1. Deploy the cost-tracking Lambda (`lambda/cost_tracker/deploy.sh`). This lets agents track their costs/usage in near-real-time.
 2. Run `utils/bootstrap-gog.sh` once to build the pre-authenticated Gmail bundle.
-3. In `linux/`, copy `placeholders.txt.example`, fill it in, and run `./setup-device.sh placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot.
-4. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
-5. Verify accounts per `run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
+3. In `linux/`, bake the base AMI once with `./build-ami.sh` and record the AMI ID.
+4. Still in `linux/`, copy `placeholders.txt.example`, fill it in, and run `./create-new-crux-box.sh --ami <AMI_ID> placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot. (Omit `--ami` to install from raw Ubuntu instead.)
+5. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
+6. Verify accounts per `run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
 
 ## External services for your agent to use
 
@@ -27,7 +28,7 @@ Installed by default:
 
 | Service              | How it's configured                           | How to authenticate                          |
 | -------------------- | --------------------------------------------- | -------------------------------------------- |
-| GitHub               | `gh` CLI                                      | PAT in the config; `start.sh` runs `gh auth` |
+| GitHub               | `gh` CLI                                      | PAT in the config; `configure.sh` runs `gh auth` |
 | Gmail                | `gog` CLI via [gogcli.sh](https://gogcli.sh/) | pre-built bundle (`GOG_*` keys), no browser  |
 | RunPod (GPUs)        | `RUNPOD_API_KEY` in `~/.openclaw/.env`        | key in the config                            |
 | refine.ink (reviews) | `REFINE_INK_API_KEY` in `~/.openclaw/.env`    | key in the config                            |
@@ -35,7 +36,7 @@ Installed by default:
 
 > [!NOTE]
 > It is important to verify each of these before launch. While the
-> `setup_device.sh` script attempts to verify each of these is configured
+> `create-new-crux-box.sh` script attempts to verify each of these is configured
 > correctly on the remote, misconfiguration could lead to an underprovisioned
 > run.
 

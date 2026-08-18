@@ -8,19 +8,31 @@ How to set up, launch, and live with a run of this harness. Every mechanism exis
 
 ## 1. Pre-launch checklist
 
-### Step 1: Run `setup-device.sh`
+### Step 0 (once): Bake the base AMI with `build-ami.sh`
+
+The software install (desktop + VNC, OpenClaw, telemetry, gh/aws/gog CLIs, watchdog) takes 10–15 minutes and is identical for every run, so it's baked into an AMI once instead of re-run per launch:
+
+```bash
+cd linux/
+./build-ami.sh          # launches a temp builder, runs install.sh, bakes the AMI, terminates the builder
+```
+
+Record the printed AMI ID and pass it to every launch with `--ami`. No secrets ever enter the AMI — `install.sh` (the bake phase) consumes no env vars; all secrets arrive per-run via `configure.sh`. Re-bake when the software stack changes (a new pinned CLI version, an `install.sh` edit).
+
+### Step 1: Run `create-new-crux-box.sh`
 
 This provisions an EC2 instance and bootstraps the full environment automatically: desktop + VNC, OpenClaw, Telegram, monitoring, telemetry, services (GitHub CLI, AWS CLI, gog), and the harness workspace. It also configures `openclaw.json` with the model, tools profile, heartbeat, subagent limits, Telegram channel, and owner authorization.
 
 The script tags the instance with `LlmProvider`, `ApiKeySuffix` (last 6 chars of the API key), and `ApiSpendAtCreation` (API spend at launch time, queried from the cost-tracking Lambda). It warns if another running instance already uses the same API key.
 
-All configuration lives in a single KEY=VALUE config file. Copy `placeholders.txt.example` to `placeholders.txt`, fill it in, and pass it as the positional argument (it's also the default if omitted). The only command-line flag is `--instance-suffix`:
+All configuration lives in a single KEY=VALUE config file. Copy `placeholders.txt.example` to `placeholders.txt`, fill it in, and pass it as the positional argument (it's also the default if omitted). The only command-line flags are `--ami` and `--instance-suffix`:
 
 ```bash
 cd linux/
 cp placeholders.txt.example placeholders.txt   # then edit it
-./setup-device.sh placeholders.txt
-# parallel instance: ./setup-device.sh --instance-suffix 2 placeholders.txt
+./create-new-crux-box.sh --ami <AMI_ID> placeholders.txt   # fast path: pre-baked AMI, per-run config only
+# parallel instance: ./create-new-crux-box.sh --ami <AMI_ID> --instance-suffix 2 placeholders.txt
+# no AMI yet? omit --ami: raw Ubuntu is used and install.sh runs the full software install first
 ```
 
 Required keys (the script validates all of these up front, before any AWS work, and lists every missing one at once):
@@ -29,9 +41,9 @@ Required keys (the script validates all of these up front, before any AWS work, 
 - **gog (Google Workspace CLI):** `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, `GOG_HOME_TARBALL`
 - **Workspace placeholders:** `GITHUB_USER`, `CLOUD_SPEND_LIMIT`, `API_BUDGET`
 
-`RUNPOD_API_KEY` and `REFINE_INK_API_KEY` are written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read them. **gog** is auto-authenticated from a pre-built bundle: run `utils/bootstrap-gog.sh` once on your laptop (one browser consent) to turn your Google OAuth client JSON into `gog-home.tar.gz`, then set `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, and `GOG_HOME_TARBALL` — `setup-device.sh` ships the bundle to the box and `start.sh` unpacks it + wires the file-keyring env, so gog reads Gmail with no browser. The config file holds secrets (incl. a live Gmail refresh token in the tarball) — keep it out of git (it is `.gitignore`d). `--instance-suffix <SUFFIX>` (the one flag) names the instance `crux-in-a-box-<SUFFIX>` for running instances in parallel.
+`RUNPOD_API_KEY` and `REFINE_INK_API_KEY` are written to `~/.openclaw/.env` so the agent's tool calls (RunPod GPU pods, refine.ink reviews) can read them. **gog** is auto-authenticated from a pre-built bundle: run `utils/bootstrap-gog.sh` once on your laptop (one browser consent) to turn your Google OAuth client JSON into `gog-home.tar.gz`, then set `GOG_ACCOUNT`, `GOG_KEYRING_PASSWORD`, and `GOG_HOME_TARBALL` — `create-new-crux-box.sh` ships the bundle to the box and `configure.sh` unpacks it + wires the file-keyring env, so gog reads Gmail with no browser. The config file holds secrets (incl. a live Gmail refresh token in the tarball) — keep it out of git (it is `.gitignore`d). `--instance-suffix <SUFFIX>` names the instance `crux-in-a-box-<SUFFIX>` for running instances in parallel.
 
-Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `setup-device.sh --help` for the full key list. Provisioning values (region `us-east-1`, instance type `t3.2xlarge`, 80GB disk, key/SG/role names) are fixed in `setup-device.sh`.
+Prerequisites on your local machine: AWS CLI v2 authenticated (`aws sts get-caller-identity`), `ssh`, `scp`, `jq`. See `create-new-crux-box.sh --help` for the full key list. Provisioning values (region `us-east-1`, instance type `t3.2xlarge`, 80GB disk, key/SG/role names) are fixed in `create-new-crux-box.sh`.
 
 The script will print connection details (SSH + VNC) and a list of any remaining unresolved `{{PLACEHOLDER}}` values in the workspace.
 
@@ -87,6 +99,8 @@ You will receive the scheduled snapshots — one-way status updates; nothing in 
 - **Don't message mid-run.** Every unsolicited instruction is an intervention: it can stall the agent, reshape its scope, or rescue it — all of which confound what the run measures. The agent treats your instruction as binding and logs it verbatim; if you must intervene, record it on your side too.
 - **Decision authority is fully delegated.** Hard decisions happen internally: logged memos, critic-subagent review for contribution-changing calls, reversible defaults on branches. There is no consent window and nothing for you to approve. The log is the report.
 - **The one intervention worth making:** confabulation. If you spot a number in prose that traces to no artifact, point at it — the agent must fix it everywhere, add a Lessons Learned entry, and tie the number to its source artifact (the _artifact-or-it-didn't-happen_ heuristic). If it recurs, lengthen milestones; never remove them.
+
+**Preserving instance state.** To snapshot a box (before a risky change, or periodically as a backup), run `linux/snapshot-instance.sh [--instance-suffix <SUFFIX>]` from your laptop. It takes an EBS snapshot of the instance's root volume, prints the snapshot ID + AWS console URL, and polls to completion — Ctrl-C is safe (the snapshot continues server-side; monitor via the printed URL). Restore by creating a volume or AMI from the snapshot in the console.
 
 ## 3. The heartbeat, properly understood
 
@@ -151,7 +165,7 @@ To compare regimes, log per run: fraction of beats that took a forward action; m
 
 ## 6. Gate enforcement: cooperative by default; the optional enforcer guards SHIP only
 
-**The default is cooperative.** `scripts/gate_artifact.sh` is a _cooperative_ control: the agent is instructed (in `BRIEF.md`, `PLAN.md` milestone rows, `playbooks/review.md`) to run it and honor its exit code. The agent runs the checks and acts on the isolated critics' written verdicts; the honesty comes from the unauthorable critic, not from hard runtime walls. The form/hygiene checks, the two artifact-reading ship-time checks (evidence-adequacy reading `reviews/power_critic_ship.md`; the light ship-authorization backstop reading `reviews/final_review.md` + `locks/budget.json`), and the external-review existence check are all cooperative by default. Only the single irreversible action — **shipping** — is worth optionally hard-guarding. If you want the ship gate _non-bypassable_, wire it to OpenClaw's runtime veto primitives. These live in the **provisioning layer** (`openclaw.json` + `setup-device.sh`), which is off this repo, so they are an operator step, not an agent one.
+**The default is cooperative.** `scripts/gate_artifact.sh` is a _cooperative_ control: the agent is instructed (in `BRIEF.md`, `PLAN.md` milestone rows, `playbooks/review.md`) to run it and honor its exit code. The agent runs the checks and acts on the isolated critics' written verdicts; the honesty comes from the unauthorable critic, not from hard runtime walls. The form/hygiene checks, the two artifact-reading ship-time checks (evidence-adequacy reading `reviews/power_critic_ship.md`; the light ship-authorization backstop reading `reviews/final_review.md` + `locks/budget.json`), and the external-review existence check are all cooperative by default. Only the single irreversible action — **shipping** — is worth optionally hard-guarding. If you want the ship gate _non-bypassable_, wire it to OpenClaw's runtime veto primitives. These live in the **provisioning layer** (`openclaw.json` + `create-new-crux-box.sh`/`configure.sh`), which is off this repo, so they are an operator step, not an agent one.
 
 OpenClaw exposes two hard-enforcement surfaces (verify both exist in your pinned version — these are current-docs facts, API may drift):
 

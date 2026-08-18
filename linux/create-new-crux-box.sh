@@ -3,7 +3,7 @@ set -euo pipefail
 # TODO: prevent dupe telegram bots on instances
 
 # ==========================================================================
-# setup-device.sh
+# create-new-crux-box.sh
 # ==========================================================================
 # Run this on your LOCAL machine (macOS / Linux) to provision and bootstrap
 # an AWS EC2 instance with a full GUI desktop ready for CRUX experiments.
@@ -15,27 +15,37 @@ set -euo pipefail
 #
 # What this script does:
 #   1. Creates (or reuses) an EC2 key-pair and security group.
-#   2. Launches an Ubuntu 22.04 instance (configurable).
+#   2. Launches an instance — from a pre-baked AMI (--ami, fast: software is
+#      already installed) or from raw Ubuntu 22.04 (fallback: full install).
 #   3. Waits for the instance to be reachable via SSH.
 #   4. Copies the linux/ directory to the instance.
-#   5. Runs the remote bootstrap (start.sh) which installs a desktop
-#      environment, VNC server, openclaw, monitoring, services, etc.
+#   5. Runs the remote bootstrap:
+#        --ami path   : configure.sh only (per-run secrets + workspace)
+#        fallback path : install.sh (full software install) then configure.sh
 #   6. Prints connection details (SSH + VNC).
+#
+# Bake the AMI once with ./build-ami.sh and pass its ID here with --ami.
 # ==========================================================================
 
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 [--instance-suffix <SUFFIX>] [CONFIG_FILE]
+Usage: $0 [--ami <AMI_ID>] [--instance-suffix <SUFFIX>] [CONFIG_FILE]
 
 All configuration lives in a single KEY=VALUE config file (default:
 placeholders.txt). Copy placeholders.txt.example, fill it in, and pass it as
-the positional argument. The only command-line flag is --instance-suffix.
+the positional argument. The only command-line flags are --ami and
+--instance-suffix.
 
-  ./setup-device.sh placeholders.txt
-  ./setup-device.sh --instance-suffix 2 placeholders.txt
+  ./create-new-crux-box.sh --ami ami-0123456789abcdef0 placeholders.txt
+  ./create-new-crux-box.sh --instance-suffix 2 placeholders.txt
 
 Flags:
+  --ami <AMI_ID>                 Launch from a pre-baked CRUX AMI (built with
+                                   build-ami.sh). Skips the ~10-15 min software
+                                   install; only per-run configuration runs.
+                                   Without it, raw Ubuntu 22.04 is used and the
+                                   full install runs first.
   --instance-suffix <SUFFIX>     Suffix appended to the instance name
                                    (e.g. --instance-suffix 2 → crux-in-a-box-2).
                                    Allows running multiple instances in parallel.
@@ -68,13 +78,19 @@ USAGE
 }
 
 # ====== PARSE ARGS ======
-# One positional argument (the config file, default placeholders.txt) and one
-# flag (--instance-suffix). Everything else lives in the config file.
+# One positional argument (the config file, default placeholders.txt) and two
+# flags (--ami, --instance-suffix). Everything else lives in the config file.
 CONFIG_FILE=""
 INSTANCE_SUFFIX=""
+AMI_ID_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --ami)
+      [ -z "${2:-}" ] && { echo "Error: --ami requires a value" >&2; usage; }
+      AMI_ID_ARG="$2"
+      shift 2
+      ;;
     --instance-suffix)
       [ -z "${2:-}" ] && { echo "Error: --instance-suffix requires a value" >&2; usage; }
       INSTANCE_SUFFIX="$2"
@@ -84,7 +100,7 @@ while [[ $# -gt 0 ]]; do
       usage
       ;;
     -*)
-      echo "Error: unknown flag '$1'. The only flag is --instance-suffix; everything else lives in the config file." >&2
+      echo "Error: unknown flag '$1'. The only flags are --ami and --instance-suffix; everything else lives in the config file." >&2
       usage
       ;;
     *)
@@ -159,7 +175,7 @@ fi
 
 # ====== ASSIGN OPERATIONAL VALUES ======
 # These keys drive provisioning logic (AWS tagging, baseline spend query, SSH
-# env-forwarding to start.sh), so they get their own variables.
+# env-forwarding to configure.sh), so they get their own variables.
 TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]}"
 TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]}"
 DEFAULT_LLM_MODEL="${CFG[DEFAULT_LLM_MODEL]}"
@@ -173,16 +189,16 @@ else
   LLM_API_KEY="$OPENAI_API_KEY"
   LLM_PROVIDER="openai"
 fi
-# Extended-thinking level — enables extended thinking. Default "xhigh"; start.sh
-# writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
-# config file.
+# Extended-thinking level — enables extended thinking. Default "xhigh";
+# configure.sh writes it to openclaw.json as .agents.defaults.thinkingDefault.
+# Optional in the config file.
 REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
 # GitHub classic PAT — a secret credential (NOT a workspace placeholder); used
-# by start.sh to authenticate the gh CLI non-interactively and to let git push
-# over HTTPS. Kept out of the placeholder map so it's never sed'd into files.
+# by configure.sh to authenticate the gh CLI non-interactively and to let git
+# push over HTTPS. Kept out of the placeholder map so it's never sed'd into files.
 GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN="${CFG[GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN]}"
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
 
@@ -201,7 +217,7 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 
 # ====== BUILD WORKSPACE PLACEHOLDER MAP ======
 # Every config key EXCEPT the operational/runtime ones above is forwarded to
-# start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
+# configure.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
 NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
@@ -365,17 +381,22 @@ else
 fi
 
 # ====== 3. RESOLVE AMI ======
-info "Resolving latest Ubuntu 22.04 AMI..."
-AMI_ID=$(aws ec2 describe-images \
-  --region "$REGION" --owners 099720109477 \
-  --filters \
-    "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
-    "Name=state,Values=available" \
-  --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-  --output text)
-[ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
-  && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
-ok "AMI: $AMI_ID (raw Ubuntu — start.sh will run full install)"
+if [ -n "$AMI_ID_ARG" ]; then
+  AMI_ID="$AMI_ID_ARG"
+  ok "AMI: $AMI_ID (pre-baked CRUX AMI — configure.sh only, install skipped)"
+else
+  info "Resolving latest Ubuntu 22.04 AMI..."
+  AMI_ID=$(aws ec2 describe-images \
+    --region "$REGION" --owners 099720109477 \
+    --filters \
+      "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+      "Name=state,Values=available" \
+    --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+    --output text)
+  [ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
+    && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
+  ok "AMI: $AMI_ID (raw Ubuntu — install.sh will run the full software install)"
+fi
 
 # ====== 3b. DUPLICATE API KEY CHECK ======
 API_KEY_SUFFIX="${LLM_API_KEY: -6}"
@@ -512,7 +533,7 @@ else
   warn "run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
 fi
 
-# Copy the pre-authorized gog bundle (if provided). start.sh unpacks it into
+# Copy the pre-authorized gog bundle (if provided). configure.sh unpacks it into
 # GOG_HOME and wires the keyring env so gog is authenticated with no browser.
 GOG_HOME_TARBALL_REMOTE=""
 if [ -n "$GOG_HOME_TARBALL" ]; then
@@ -524,7 +545,11 @@ if [ -n "$GOG_HOME_TARBALL" ]; then
 fi
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
-info "Running remote bootstrap (start.sh) — this will take several minutes..."
+# Two paths:
+#   --ami given   : the software is already baked in — run configure.sh only
+#                   (per-run secrets + workspace + gateway start).
+#   no --ami      : raw Ubuntu — run install.sh first (full software install,
+#                   no secrets), then configure.sh.
 
 # Build the remote command safely. Values like PLACEHOLDERS can contain
 # apostrophes, parentheses, spaces and newlines (e.g. RESEARCH_CONTEXT prose),
@@ -562,8 +587,16 @@ REMOTE_ENV=$(build_remote_env \
 # expects; rename the assignment without touching the (already escaped) value.
 REMOTE_ENV="${REMOTE_ENV/GOG_HOME_TARBALL_REMOTE=/GOG_HOME_TARBALL=}"
 
-REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/start.sh \
-   && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/start.sh"
+if [ -n "$AMI_ID_ARG" ]; then
+  info "Running remote configuration (configure.sh) — software pre-baked in the AMI..."
+  REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/configure.sh \
+     && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/configure.sh"
+else
+  info "Running remote bootstrap (install.sh + configure.sh) — this will take several minutes..."
+  REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/install.sh ~/crux-in-a-box-linux/src/configure.sh \
+     && sudo bash ~/crux-in-a-box-linux/src/install.sh \
+     && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/configure.sh"
+fi
 
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
   "$REMOTE_CMD"
