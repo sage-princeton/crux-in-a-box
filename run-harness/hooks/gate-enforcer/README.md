@@ -60,4 +60,4 @@ In `~/.openclaw/exec-approvals.json`, force the ship path through a wrapper and 
 
 ## Hard caps OpenClaw does NOT give you
 
-OpenClaw has **no native API-spend ceiling**. Set the Anthropic console limit (Settings → Limits) as an independent backstop — it is the only real hard `$` cap. Cron can wake the agent to re-check a gate but cannot force compliance — always pair a "must happen" cron with this plugin.
+OpenClaw has **no native API-spend ceiling**. Set a hard spend limit in your provider console (Anthropic: Settings → Limits; OpenAI: platform.openai.com/settings/organization/limits) as an independent backstop — it is the only real hard `$` cap. Cron can wake the agent to re-check a gate but cannot force compliance — always pair a "must happen" cron with this plugin.

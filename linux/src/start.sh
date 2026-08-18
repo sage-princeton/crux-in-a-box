@@ -18,16 +18,16 @@ export DEBIAN_FRONTEND=noninteractive
 
 
 # ====== DEPENDENCIES ======
-apt-get update -y
-apt-get upgrade -y
-apt-get install -y \
+apt-get update -y --allow-insecure-repositories
+apt-get upgrade -y --allow-unauthenticated
+apt-get install -y --allow-unauthenticated \
   build-essential curl git wget unzip jq \
   software-properties-common apt-transport-https
 
 # ====== GUI DESKTOP ======
 # Install a lightweight XFCE desktop and TigerVNC so the instance has a GUI
-apt-get install -y xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
-apt-get install -y tigervnc-standalone-server tigervnc-common
+apt-get install -y --allow-unauthenticated xfce4 xfce4-goodies dbus-x11 x11-xserver-utils
+apt-get install -y --allow-unauthenticated tigervnc-standalone-server tigervnc-common
 
 # Set a default login password for the user (for VNC desktop / sudo prompts)
 echo "$REAL_USER:cruxbox1" | chpasswd
@@ -228,19 +228,18 @@ if [ -n "${TELEGRAM_OWNER_ID:-}" ]; then
   echo "✔ commands.ownerAllowFrom configured: telegram:$TELEGRAM_OWNER_ID"
 fi
 
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart || true
 
 # ====== AI Provider and Model ======
-# Requires ANTHROPIC_MODEL and ANTHROPIC_API_KEY to be set as env vars
-# (passed in by setup-device.sh).
+# Requires DEFAULT_LLM_MODEL and one of ANTHROPIC_API_KEY or OPENAI_API_KEY
+# to be set as env vars (passed in by setup-device.sh).
 
-if [ -z "${ANTHROPIC_MODEL:-}" ]; then
-  echo "Error: ANTHROPIC_MODEL is required (e.g. anthropic/claude-opus-4-6)" >&2
+if [ -z "${DEFAULT_LLM_MODEL:-}" ]; then
+  echo "Error: DEFAULT_LLM_MODEL is required (e.g. anthropic/claude-opus-4-8 or openai/gpt-4o)" >&2
   exit 1
 fi
 
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  echo "Error: ANTHROPIC_API_KEY is required" >&2
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "Error: ANTHROPIC_API_KEY or OPENAI_API_KEY is required" >&2
   exit 1
 fi
 
@@ -276,7 +275,7 @@ CACHE_RETENTION="${CACHE_RETENTION:-long}"
 # (agents.defaults.timeoutSeconds only bounds it DOWN; its 48-min default is fine).
 # 600s covers xhigh; raise toward ~900+ if you switch the default to max. Provider
 # id = the part before the "/".
-PROVIDER_ID="${ANTHROPIC_MODEL%%/*}"
+PROVIDER_ID="${DEFAULT_LLM_MODEL%%/*}"
 PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
 
 # Whole-turn ceiling. OpenClaw's default is too short for xhigh research turns
@@ -286,39 +285,58 @@ PROVIDER_REQUEST_TIMEOUT_SECONDS="${PROVIDER_REQUEST_TIMEOUT_SECONDS:-600}"
 AGENT_TURN_TIMEOUT_SECONDS="${AGENT_TURN_TIMEOUT_SECONDS:-3600}"
 
 TMP_CONFIG=$(mktemp)
-jq --arg model "$ANTHROPIC_MODEL" --arg reasoning "$THINKING_LEVEL" \
+jq --arg model "$DEFAULT_LLM_MODEL" --arg reasoning "$THINKING_LEVEL" \
    --arg cache "$CACHE_RETENTION" --arg provider "$PROVIDER_ID" \
    --argjson ptimeout "$PROVIDER_REQUEST_TIMEOUT_SECONDS" '
+  .gateway.mode = "local" |
   .agents.defaults.model.primary = $model |
   .agents.defaults.thinkingDefault = $reasoning |
   .agents.defaults.params.cacheRetention = $cache |
   .models.providers[$provider].timeoutSeconds = $ptimeout |
   .tools.profile = "full" |
-  .agents.defaults.heartbeat.every = "30m" |
-  .agents.defaults.heartbeat.skipWhenBusy = true |
-  .agents.defaults.heartbeat.target = "none" |
-  .agents.defaults.subagents.maxConcurrent = 5
+   .agents.defaults.heartbeat.every = "30m" |
+   .agents.defaults.heartbeat.skipWhenBusy = true |
+   .agents.defaults.heartbeat.target = "none" |
+    .agents.defaults.subagents.maxConcurrent = 5 |
+    .tools.exec.security = "full" |
+    (.agents.list //= []) |
+    if any(.agents.list[]; .id == "main") then
+      .agents.list = [.agents.list[] | if .id == "main" then .tools.exec.security = "full" else . end]
+    else
+      .agents.list += [{"id": "main", "tools": {"exec": {"security": "full"}}}]
+    end |
+    .plugins.entries.codex.config.appServer.approvalPolicy = "never" |
+    .plugins.entries.codex.config.appServer.sandbox = "danger-full-access"
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
-echo "✔ Model configured: $ANTHROPIC_MODEL"
+echo "✔ Model configured: $DEFAULT_LLM_MODEL"
 echo "✔ Extended thinking configured: thinkingDefault=$THINKING_LEVEL (verify key vs pinned OpenClaw; unknown key => thinking stays off, run unaffected)"
 echo "✔ Prompt cache retention: $CACHE_RETENTION (1h TTL — survives the 30m heartbeat gaps)"
 echo "✔ Provider request timeout: ${PROVIDER_REQUEST_TIMEOUT_SECONDS}s for '$PROVIDER_ID' (raises the 120s idle watchdog for heavy reasoning)"
 echo "✔ Tools profile set to full"
 echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
 echo "✔ Subagents maxConcurrent: 5"
+echo "✔ Exec security: tools.exec.security=full, agents.list[main].tools.exec.security=full"
+echo "✔ Codex app-server: approvalPolicy=never, sandbox=danger-full-access"
 
-# Append ANTHROPIC_API_KEY to ~/.openclaw/.env for daemon/gateway use
+# Append the LLM API key to ~/.openclaw/.env for daemon/gateway use.
+# Write whichever of ANTHROPIC_API_KEY / OPENAI_API_KEY is set; both if both.
 OPENCLAW_ENV="$REAL_HOME/.openclaw/.env"
-# Remove any existing ANTHROPIC_API_KEY line to avoid duplicates
 if [ -f "$OPENCLAW_ENV" ]; then
   sed -i '/^ANTHROPIC_API_KEY=/d' "$OPENCLAW_ENV"
+  sed -i '/^OPENAI_API_KEY=/d' "$OPENCLAW_ENV"
 fi
-echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$OPENCLAW_ENV"
+if [ -n "${ANTHROPIC_API_KEY:-}" ]; then
+  echo "ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}" >> "$OPENCLAW_ENV"
+  echo "✔ Anthropic API key written to ~/.openclaw/.env"
+fi
+if [ -n "${OPENAI_API_KEY:-}" ]; then
+  echo "OPENAI_API_KEY=${OPENAI_API_KEY}" >> "$OPENCLAW_ENV"
+  echo "✔ OpenAI API key written to ~/.openclaw/.env"
+fi
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
 chmod 600 "$OPENCLAW_ENV"
-echo "✔ Anthropic API key written to ~/.openclaw/.env"
 
 # Append the agent's tool-call API keys (optional). Unlike ANTHROPIC_API_KEY
 # (used by the gateway's model calls), these are consumed by the agent's bash
@@ -388,8 +406,8 @@ echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-un
   && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
   && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-  && apt-get update \
-  && apt-get install gh -y
+  && apt-get update --allow-insecure-repositories \
+  && apt-get install gh -y --allow-unauthenticated
 
 # install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
@@ -421,9 +439,9 @@ else
 fi
 
 
-# set up gateway
+# set up gateway — install the systemd service and start it once, with all
+# config already written above (Telegram, model, API keys, env vars).
 sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway install
-sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ======
 
@@ -545,4 +563,3 @@ echo "✔ Thinking-signature watchdog installed (cron */5 min)"
 
 echo ""
 echo "✔ Linux CRUX-in-a-box bootstrap complete."
-

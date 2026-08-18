@@ -42,7 +42,7 @@ Full text: PDF at `https://arxiv.org/pdf/<id>`, LaTeX source at `https://arxiv.o
 
 ## Spend measurement
 
-- **API:** `python3 scripts/telemetry_costs.py` — queries the cost-tracking service (Anthropic Admin API via Lambda). Canonical source of API spend. Never hand-estimate.
+- **API:** `python3 scripts/telemetry_costs.py` — queries the cost-tracking service (provider billing API via Lambda; auto-detects Anthropic or OpenAI from key). Canonical source of API spend. Never hand-estimate.
 - **Cloud (RunPod):** RunPod has no Cost Explorer. Track spend as the drop in account credit since launch — record `clientBalance` at run start, then spend ≈ `start_balance − current clientBalance`. Query via the RunPod GraphQL API:
 
 ```
