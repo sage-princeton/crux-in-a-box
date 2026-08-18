@@ -523,16 +523,29 @@ done
 ok "SSH is up"
 
 # ====== 7. COPY FILES ======
+# Copy the CONTENTS of linux/ into ~/crux-in-a-box-linux so paths are stable
+# (status.sh -> ~/crux-in-a-box-linux/status.sh, src/ -> ~/crux-in-a-box-linux/src).
+# `scp -r "$SCRIPT_DIR" dest` is ambiguous: if dest already exists (e.g. a leftover
+# dir from a prior launch attempt on a re-run), scp nests the copy as
+# dest/linux/, which breaks the status.sh path and can leave stale files behind.
+# Remove any prior dir first, then copy the directory's contents with a trailing
+# "/." so the layout is deterministic regardless of what was there before.
 info "Copying linux/ directory to instance..."
+ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+  'rm -rf ~/crux-in-a-box-linux && mkdir -p ~/crux-in-a-box-linux'
 scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
-  "$SCRIPT_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux"
+  "$SCRIPT_DIR/." "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux/"
 ok "Linux files copied"
 
 HARNESS_DIR="$SCRIPT_DIR/../run-harness"
 if [ -d "$HARNESS_DIR" ]; then
+  # Same deterministic copy as linux/ above: clean the dest, then copy contents so
+  # configure.sh reliably finds ~/crux-in-a-box-harness/workspace (never nested).
   info "Copying run-harness/ to instance..."
+  ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+    'rm -rf ~/crux-in-a-box-harness && mkdir -p ~/crux-in-a-box-harness'
   scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
-    "$HARNESS_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-harness"
+    "$HARNESS_DIR/." "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-harness/"
   ok "Harness files copied"
 else
   warn "run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"

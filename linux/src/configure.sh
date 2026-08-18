@@ -330,16 +330,11 @@ else
 fi
 
 # ====== GATEWAY ======
-# install.sh runs `openclaw gateway install` at bake time, but that happens
-# BEFORE gateway.mode/config exists, so it lays down a placeholder unit that
-# systemd reports as MASKED — specifically a 0-byte empty regular file at
-# ~/.config/systemd/user/openclaw-gateway.service (systemd treats an empty unit
-# file as masked, the SAME as a /dev/null symlink). `systemctl --user unmask`
-# only clears /dev/null-symlink masks, NOT empty-file masks, so it can't repair
-# this — the fix is to REGENERATE the unit now that config is complete.
-#
-# We've written gateway.mode=local and all secrets above, so `gateway install
-# --force` regenerates a proper, non-masked unit. Then enable + start it.
+# The gateway is installed HERE, not at bake time. Installing it before config
+# exists lays down a broken placeholder unit systemd reports as masked (a 0-byte
+# unit file) that can't be unmasked and fights every launch. So install.sh skips
+# it, and we generate the unit here from a clean slate now that gateway.mode=local
+# and all secrets are written above.
 REAL_UID=$(id -u "$REAL_USER")
 loginctl enable-linger "$REAL_USER" || true
 
@@ -352,28 +347,57 @@ uctl() {
     "$@"
 }
 
-# Regenerate the unit with config present. --force overwrites the baked
-# placeholder (empty/masked) unit with a real one. Remove the stale wants-symlink
-# first so the reinstall + enable start from a clean slate.
+# Generate the unit. --force is defensive: if this box was launched from an older
+# AMI that DID bake a (masked/placeholder) unit, --force overwrites it cleanly;
+# on a current AMI there's nothing there and it just installs. Clear any stale
+# wants-symlink and user-level mask first so we start from a known state.
 rm -f "$REAL_HOME/.config/systemd/user/default.target.wants/openclaw-gateway.service" 2>/dev/null || true
 uctl systemctl --user unmask openclaw-gateway.service >/dev/null 2>&1 || true
 uctl "$REAL_HOME/.npm-global/bin/openclaw" gateway install --force
+
+# --- Restart-policy hardening (fixes the migration crash-loop) ---
+# On first boot the gateway runs one-time SQLite startup migrations that take
+# ~15-30s and hold a lock. The generated unit ships RestartSec=5, so if the
+# process is (re)started while a migration is mid-flight, systemd relaunches it in
+# 5s; the new instance sees "startup migrations are already running ... retry
+# after <~4 min from now>", exits 1, and this LOOPS — the retry deadline keeps
+# getting pushed, so it never converges until that 4-min window happens to pass.
+# A drop-in override lengthens RestartSec so a crashed/slow start backs off long
+# enough for migrations to finish, and widens the start-rate limit so the unit
+# isn't wedged as "start-limit-hit". Drop-ins don't touch the generated unit, so
+# a future `gateway install --force` won't clobber this.
+OVERRIDE_DIR="$REAL_HOME/.config/systemd/user/openclaw-gateway.service.d"
+sudo -u "$REAL_USER" mkdir -p "$OVERRIDE_DIR"
+cat > "$OVERRIDE_DIR/10-migration-backoff.conf" <<'OVERRIDE'
+[Service]
+# Back off long enough that a first-boot migration completes uninterrupted
+# instead of being relaunched into an "already running" lock every 5s.
+RestartSec=45
+# Give a slow migration room before systemd's start timeout fires.
+TimeoutStartSec=180
+
+[Unit]
+# Allow more attempts over a much wider window so transient first-boot crashes
+# don't trip the start-rate limiter and wedge the unit.
+StartLimitBurst=10
+StartLimitIntervalSec=600
+OVERRIDE
+chown -R "$REAL_USER:$REAL_USER" "$OVERRIDE_DIR"
+
 uctl systemctl --user daemon-reload || true
 uctl systemctl --user enable openclaw-gateway.service || true
 
-# Clear any leftover failed/rate-limited state from prior attempts, then start.
-# (Not `restart`: a fresh install has nothing running to restart, and start is
-# the documented path; reset-failed avoids systemd's "start repeated too quickly"
-# rate-limit if configure.sh is re-run.)
+# Clear any leftover failed/rate-limited state, then start once.
 uctl systemctl --user reset-failed openclaw-gateway.service >/dev/null 2>&1 || true
 uctl systemctl --user restart openclaw-gateway.service
 
-# Verify. The gateway runs one-time startup migrations on first boot that briefly
-# hold a lock; give it a few seconds and poll rather than judging on the first
-# read, so a slow-but-healthy start isn't misreported as a failure.
+# Verify. Poll for up to ~90s: first-boot migrations mean "active" can lag, and
+# with the 45s backoff a legitimately-recovering start needs room. We check for a
+# STABLE active state (not mid-migration-crash) before declaring success.
 gw_ok=""
-for _ in 1 2 3 4 5 6; do
-  if uctl systemctl --user is-active openclaw-gateway.service >/dev/null 2>&1; then
+for _ in $(seq 1 18); do
+  state=$(uctl systemctl --user is-active openclaw-gateway.service 2>/dev/null || true)
+  if [ "$state" = "active" ]; then
     gw_ok=1; break
   fi
   sleep 5
@@ -381,9 +405,9 @@ done
 if [ -n "$gw_ok" ]; then
   echo "✔ openclaw gateway active with full run config"
 else
-  echo "✘ openclaw gateway failed to start — dumping status + logs:" >&2
+  echo "✘ openclaw gateway failed to reach active — dumping status + logs:" >&2
   uctl systemctl --user --no-pager status openclaw-gateway.service >&2 || true
-  uctl journalctl --user -u openclaw-gateway.service --no-pager -n 30 >&2 || true
+  uctl journalctl --user -u openclaw-gateway.service --no-pager -n 40 >&2 || true
   exit 1
 fi
 
