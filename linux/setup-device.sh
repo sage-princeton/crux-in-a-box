@@ -67,7 +67,6 @@ Optional keys:
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
   CRUX_INSTANCE_TYPE             EC2 instance type (default: t3.2xlarge)
-  CRUX_AMI_ID                    AMI ID (default: latest Ubuntu 22.04)
   CRUX_KEY_NAME                  EC2 key pair name (default: crux-in-a-box)
   CRUX_SG_NAME                   Security group name (default: crux-in-a-box-sg)
   CRUX_INSTANCE_NAME             Instance Name tag (default: crux-in-a-box)
@@ -186,9 +185,6 @@ fi
 # writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
 # config file.
 REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
-# Pre-built base AMI (optional). When set, setup-device.sh skips the 10-15 min
-# apt/openclaw install and runs configure.sh only (~60-90s). Build with build-ami.sh.
-CRUX_AMI_ID="${CRUX_AMI_ID:-${CFG[CRUX_AMI_ID]:-}}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
@@ -216,7 +212,7 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT CRUX_AMI_ID COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -245,7 +241,6 @@ TELEGRAM_BOT_TOKEN=$(jq -r --arg name "$TELEGRAM_BOT_NAME" '.[$name] // empty' "
 # ====== CONFIGURATION (override via env vars) ======
 REGION="${AWS_REGION:-us-east-1}"
 INSTANCE_TYPE="${CRUX_INSTANCE_TYPE:-t3.2xlarge}"
-AMI_ID="${CRUX_AMI_ID:-}"
 KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
 SG_NAME="${CRUX_SG_NAME:-crux-in-a-box-sg}"
 INSTANCE_NAME="${CRUX_INSTANCE_NAME:-crux-in-a-box}"
@@ -542,15 +537,7 @@ if [ -n "$GOG_HOME_TARBALL" ]; then
 fi
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
-# Route to configure.sh (fast, ~60-90s) when a pre-built CRUX AMI is used,
-# or start.sh (full install, ~15 min) for raw Ubuntu.
-if [ -n "$CRUX_AMI_ID" ]; then
-  BOOTSTRAP_SCRIPT="configure.sh"
-  info "Running configure.sh (AMI-based — ~60-90s)..."
-else
-  BOOTSTRAP_SCRIPT="start.sh"
-  info "Running start.sh (raw Ubuntu — this will take several minutes)..."
-fi
+info "Running remote bootstrap (start.sh) — this will take several minutes..."
 
 # Build the remote command safely. Values like PLACEHOLDERS can contain
 # apostrophes, parentheses, spaces and newlines (e.g. RESEARCH_CONTEXT prose),
