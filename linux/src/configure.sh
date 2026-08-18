@@ -318,8 +318,8 @@ if [ -d "$HARNESS_SRC" ]; then
 
   echo "✔ Harness workspace copied to $OPENCLAW_WORKSPACE"
 
-  # Report any remaining unresolved placeholders (those without defaults)
-  REMAINING=$(grep -rn '{{' "$OPENCLAW_WORKSPACE" --include='*.md' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'grep for {{' | head -20 || true)
+  # Report any remaining unresolved placeholders (those without defaults).
+  REMAINING=$(grep -rEn '\{\{[A-Z_]+(\|[^}]*)?\}\}' "$OPENCLAW_WORKSPACE" --include='*.md' --include='*.sh' --include='*.py' 2>/dev/null | grep -v 'grep for {{' | head -20 || true)
   if [ -n "$REMAINING" ]; then
     echo ""
     echo "⚠ Unresolved placeholders (resolve manually or via the config file before launch):"
