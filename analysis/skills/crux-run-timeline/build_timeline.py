@@ -6,8 +6,22 @@ Usage:
 
 <clean-room-dir> must contain:
     workspace/LOG.md      the run's research log (required)
-    .telemetry.jsonl      raw telemetry (optional; used for operator messages)
+    .telemetry.jsonl      raw telemetry (optional; ground-truth activity data)
     narrative.json        your written analysis (beats + 5-whys + meta)
+
+Telemetry shape (observed on real CRUX boxes — do NOT invent fields):
+    Each line is one JSON object with a "type":
+      tool.start   {type,sessionKey,agentId,toolName,params}
+      tool.end     {type,sessionKey,agentId,toolName,success,durationMs?,error?}
+      agent.start  {type,sessionKey,agentId,prompt,promptLength}
+      message.in   {type,channel,from,content,contentLength,timestamp,metadata}
+      message.sending / message.out  {type,channel,to,content,success?,error?}
+  Only message.in carries a wall-clock "timestamp" (epoch ms). Tool events are
+  ordered but NOT individually timestamped, and durationMs is present on only a
+  subset of tools (never exec/apply_patch). This module therefore reports
+  *counts and shapes* it can prove from the stream, and only claims timing for
+  records that actually carry a timestamp. Every rendered number below is
+  computed from the file, never assumed.
 
 Output:
     <clean-room-dir>/timeline.html   self-contained, no external assets
@@ -85,6 +99,81 @@ for e in entries:
     cm = re.search(r"[Cc]andidate[- ](\d+)", e["title"]); e["cand"] = f"C{cm.group(1)}" if cm else ""
     mm = re.search(r"\bM-(\d+)\b", e["title"]);          e["memo"] = f"M-{mm.group(1)}" if mm else ""
 
+# ---- parse telemetry (optional; strictly ground-truthed) ----------------------
+# We only report facts we can count directly from the stream. No field is
+# assumed; unknown/missing values are simply not reported.
+from collections import Counter as _Counter
+
+tel = {
+    "present": False, "lines": 0, "bad": 0, "types": _Counter(),
+    "tools": _Counter(),          # toolName -> count (from tool.start)
+    "tool_fail": _Counter(),      # toolName -> failed tool.end count
+    "tool_err": [],               # (toolName, scrubbed error) samples
+    "sessions": set(),            # distinct sessionKey
+    "agents": _Counter(),         # agentId -> agent.start count
+    "spawns": [],                 # scrubbed subagent task_name values, in order
+    "op_msgs": [],                # {dir,dt,len} for message.in/out (dir=in/out)
+    "starts": 0, "ends": 0,
+}
+
+def _epoch_ms_to_utc(ms):
+    try:
+        return datetime.datetime.fromtimestamp(int(ms) / 1000, datetime.timezone.utc)
+    except Exception:
+        return None
+
+if TEL.exists():
+    tel["present"] = True
+    with TEL.open(encoding="utf-8", errors="replace") as fh:
+        for ln in fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            tel["lines"] += 1
+            try:
+                o = json.loads(ln)
+            except Exception:
+                tel["bad"] += 1
+                continue
+            if not isinstance(o, dict):
+                tel["bad"] += 1
+                continue
+            t = o.get("type", "?")
+            tel["types"][t] += 1
+            sk = o.get("sessionKey")
+            if sk:
+                tel["sessions"].add(sk)
+            if t == "tool.start":
+                tel["starts"] += 1
+                name = o.get("toolName") or "?"
+                tel["tools"][name] += 1
+                if name == "collaborationspawn_agent":
+                    p = o.get("params")
+                    tn = p.get("task_name") if isinstance(p, dict) else None
+                    if isinstance(tn, str) and tn.strip():
+                        tel["spawns"].append(scrub(tn.strip()))
+            elif t == "tool.end":
+                tel["ends"] += 1
+                name = o.get("toolName") or "?"
+                if o.get("success") is False:
+                    tel["tool_fail"][name] += 1
+                err = o.get("error")
+                if err:
+                    tel["tool_err"].append((name, scrub(str(err))[:140]))
+            elif t == "agent.start":
+                tel["agents"][o.get("agentId") or "?"] += 1
+            elif t in ("message.in", "message.out"):
+                dt = _epoch_ms_to_utc(o.get("timestamp")) if o.get("timestamp") else None
+                clen = o.get("contentLength")
+                if clen is None and isinstance(o.get("content"), str):
+                    clen = len(o["content"])
+                tel["op_msgs"].append({
+                    "dir": "in" if t == "message.in" else "out",
+                    "dt": dt, "len": clen,
+                })
+
+tel_present = tel["present"] and tel["lines"] > 0
+
 CLS_META = {
     "credential": ("#e11d48", "Key / credential"),
     "kill":       ("#b91c1c", "Stopped for good"),
@@ -150,6 +239,93 @@ for w in whys:
     <div class="why-root"><span class="why-label root">Root cause</span>{esc(w.get("root",""))}</div>
     <div class="why-fixes"><span class="why-label fix">What would prevent it</span><ul>{fixes}</ul></div>
   </div>''')
+
+# ---- telemetry activity panel (only if telemetry present) --------------------
+def _bar_rows(counter, top=15):
+    items = counter.most_common(top)
+    mx = max((c for _, c in items), default=1)
+    out = []
+    for name, c in items:
+        pct = max(2, round(100 * c / mx))
+        out.append(
+            f'<div class="tbar"><div class="tbar-l">{esc(name)}</div>'
+            f'<div class="tbar-track"><div class="tbar-fill" style="width:{pct}%"></div></div>'
+            f'<div class="tbar-n">{c:,}</div></div>'
+        )
+    return "".join(out)
+
+tel_html = ""
+if tel_present:
+    total_tools = sum(tel["tools"].values())
+    n_fail = sum(tel["tool_fail"].values())
+    n_spawn = len(tel["spawns"])
+    n_sess = len(tel["sessions"])
+    n_ops = len(tel["op_msgs"])
+    op_in = sum(1 for m in tel["op_msgs"] if m["dir"] == "in")
+    op_out = n_ops - op_in
+
+    # headline stat cards — every number is counted from the file
+    cards = [
+        (f"{total_tools:,}", "tool calls"),
+        (f"{n_spawn:,}", "subagents spawned"),
+        (f"{n_sess:,}", "distinct sessions"),
+        (f"{n_fail:,}", "failed tool calls"),
+    ]
+    cards_html = "".join(
+        f'<div class="tstat"><div class="tstat-n">{v}</div><div class="tstat-l">{esc(l)}</div></div>'
+        for v, l in cards
+    )
+
+    # tool histogram
+    tool_bars = _bar_rows(tel["tools"], top=15)
+
+    # subagent tasks (task_name is descriptive and safe; scrubbed anyway)
+    spawn_html = ""
+    if tel["spawns"]:
+        uniq = list(dict.fromkeys(tel["spawns"]))
+        chips = "".join(f'<span class="tchip">{s}</span>' for s in uniq[:60])
+        more = f' <span class="tmore">+{len(uniq) - 60} more</span>' if len(uniq) > 60 else ""
+        spawn_html = (
+            f'<h3 class="tsub">Delegated work ({len(uniq)} distinct subagent tasks)</h3>'
+            f'<div class="tchips">{chips}{more}</div>'
+        )
+
+    # tool errors (proven failures only)
+    err_html = ""
+    if tel["tool_err"]:
+        lis = "".join(
+            f'<li><code>{esc(n)}</code> — {esc(msg)}</li>' for n, msg in tel["tool_err"][:20]
+        )
+        err_html = f'<h3 class="tsub">Tool failures ({len(tel["tool_err"])})</h3><ul class="terr">{lis}</ul>'
+
+    # operator messages with real timestamps (only message.in carries one)
+    op_html = ""
+    if tel["op_msgs"]:
+        rows_op = []
+        for m in tel["op_msgs"]:
+            when = m["dt"].strftime("%Y-%m-%d %H:%M UTC") if m["dt"] else "time not recorded"
+            arrow = "operator → agent" if m["dir"] == "in" else "agent → operator"
+            ln = f' · {m["len"]} chars' if m["len"] is not None else ""
+            rows_op.append(f'<li><span class="topd">{esc(when)}</span> {esc(arrow)}{esc(ln)}</li>')
+        op_html = (
+            f'<h3 class="tsub">Operator messages ({op_in} in / {op_out} out)</h3>'
+            '<p class="note" style="margin:0 0 8px">Only inbound messages carry a wall-clock timestamp in telemetry.</p>'
+            f'<ul class="tops">{"".join(rows_op)}</ul>'
+        )
+
+    src = (
+        f'{tel["lines"]:,} telemetry records'
+        + (f' ({tel["bad"]:,} unparseable)' if tel["bad"] else "")
+        + '. Every figure here is counted directly from <code>.telemetry.jsonl</code>.'
+    )
+    tel_html = (
+        '<h2>What the agent actually did (from telemetry)</h2>'
+        f'<p class="note" style="margin:0 0 14px">{src}</p>'
+        f'<div class="tstats">{cards_html}</div>'
+        f'<h3 class="tsub">Tools used (top 15 of {len(tel["tools"])})</h3>'
+        f'<div class="tbars">{tool_bars}</div>'
+        f'{spawn_html}{err_html}{op_html}'
+    )
 
 from collections import Counter
 counts = Counter(e["cls"] for e in entries)
@@ -244,6 +420,24 @@ code{{background:var(--primary-50);padding:1px 5px;border-radius:4px;font-family
 .why-q{{font-weight:700;color:var(--ink)}} .why-a{{color:var(--mut);font-size:13px;margin-top:2px}}
 .why-root{{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin:12px 0 14px;color:#7f1d1d;font-size:14px}}
 .why-fixes ul{{margin:6px 0 0;padding-left:20px}} .why-fixes li{{color:#334155;font-size:13.5px;margin:4px 0}}
+/* telemetry activity panel */
+.tstats{{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:0 0 20px}}
+.tstat{{background:var(--primary-50);border:1px solid var(--primary-400);border-radius:8px;padding:14px 16px}}
+.tstat-n{{font-size:26px;font-weight:800;color:var(--accent);line-height:1.1}}
+.tstat-l{{color:var(--mut);font-size:12.5px;margin-top:2px}}
+.tsub{{font-size:15px;font-weight:800;color:var(--ink);margin:22px 0 10px}}
+.tbars{{display:flex;flex-direction:column;gap:5px}}
+.tbar{{display:grid;grid-template-columns:170px 1fr 56px;gap:10px;align-items:center;font-size:12.5px}}
+.tbar-l{{font-family:ui-monospace,Menlo,monospace;color:#2b5457;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
+.tbar-track{{background:var(--primary-50);border:1px solid var(--line);border-radius:5px;height:16px;overflow:hidden}}
+.tbar-fill{{height:100%;background:var(--primary-400)}}
+.tbar-n{{text-align:right;color:var(--mut);font-family:ui-monospace,Menlo,monospace}}
+.tchips{{display:flex;flex-wrap:wrap;gap:6px}}
+.tchip{{background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:12px;padding:2px 9px;font-size:11.5px;font-family:ui-monospace,Menlo,monospace}}
+.tmore{{color:var(--mut);font-size:12px;align-self:center}}
+.terr{{margin:6px 0 0;padding-left:20px}} .terr li{{color:#7f1d1d;font-size:12.5px;margin:4px 0}}
+.tops{{list-style:none;margin:0;padding:0}} .tops li{{padding:5px 0;border-bottom:1px dashed var(--line);font-size:13px;color:#374151}}
+.topd{{font-family:ui-monospace,Menlo,monospace;color:var(--accent);font-weight:700}}
 </style></head>
 <body>
 <div class="prelim">⚠ <span>This is preliminary analysis</span> — not reviewed or final; details may change.</div>
@@ -257,6 +451,7 @@ code{{background:var(--primary-50);padding:1px 5px;border-radius:4px;font-family
   {section(lead, f'<h2>The short version</h2><p class="lead">{esc(lead)}</p>')}
   {section(beat_html, f'<h2>The story in {len(beat_html)} steps</h2><div class="beats">{"".join(beat_html)}</div>')}
   {section(whys_html, '<h2>Why it happened (5 Whys)</h2><p class="note" style="margin:0 0 16px">For each failure, keep asking &ldquo;why&rdquo; until the answer is a fixable cause, not another symptom.</p>' + "".join(whys_html))}
+  {section(tel_html, tel_html)}
 
   <h2>Every logged event</h2>
   <div class="tools">
@@ -282,4 +477,12 @@ document.getElementById('collapse').onclick=()=>document.querySelectorAll('detai
 leaks = SECRET.findall(HTML)
 assert not leaks, f"SECRET LEAK in output: {leaks[:1]}"
 OUT.write_text(HTML, encoding="utf-8")
-print(f"wrote {OUT} ({len(HTML)} bytes) — {len(entries)} entries, {len(beat_html)} beats, {len(whys_html)} why-chains")
+tel_note = (
+    f", {tel['lines']} telemetry records ({sum(tel['tools'].values())} tool calls, "
+    f"{len(tel['spawns'])} spawns)"
+    if tel_present else " (no telemetry)"
+)
+print(
+    f"wrote {OUT} ({len(HTML)} bytes) — {len(entries)} entries, "
+    f"{len(beat_html)} beats, {len(whys_html)} why-chains{tel_note}"
+)

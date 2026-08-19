@@ -12,7 +12,14 @@ description: >-
 
 Turn a running or finished CRUX box into one shareable `timeline.html` that a
 non-expert can read: a short summary, a stepwise story, a 5-Whys root-cause
-analysis, and the full searchable event log.
+analysis, a telemetry-derived activity panel (what the agent actually did), and
+the full searchable event log.
+
+The `LOG.md` is the agent's own *narration*; `telemetry.jsonl` is the *ground
+truth* of every tool call, subagent spawn, and operator message. Use telemetry
+to check the log's story and to quantify activity the log only summarises. Every
+number this skill puts on the page is counted directly from telemetry — never
+estimated, never inferred from the prose.
 
 - **Input:** an SSH connection string, e.g.
   `ssh -i /path/key.pem ubuntu@HOST`
@@ -34,9 +41,12 @@ Bundled files (this skill's directory):
    not, add `analysis/clean-room` to `.gitignore` first. Never commit anything
    from this tree.
 3. **Never print, log, or paste credentials.** The raw `.telemetry.jsonl` and
-   the box's `.env` files hold live keys. The generator scrubs known key shapes
-   from the HTML and hard-fails if one survives, but you must also avoid echoing
-   secrets in the chat.
+   the box's `.env` files hold live keys. Telemetry `tool.start` records embed
+   full command/patch `params`, so their bodies can contain secrets — treat the
+   raw file as sensitive. The generator only emits *counts, tool names, subagent
+   task names, and message timing/lengths* from telemetry (never raw params or
+   message bodies) and scrubs every rendered string against the key regex,
+   hard-failing if one survives. You must also avoid echoing secrets in the chat.
 4. **Treat a live box as read-only.** Only `ls`, `stat`, `du`, and file
    downloads. Do not restart services or edit box state — a running CRUX box is
    an active experiment.
@@ -69,21 +79,26 @@ $SSH 'sudo find /home -maxdepth 4 -name LOG.md 2>/dev/null; sudo find /home -max
 
 ### 3. Download into the clean room
 
-`LOG.md` is required; telemetry is optional (used only for operator-message
-timing). The full `workspace/` mirror is optional — pull it only if you need to
-read code/reviews for the analysis; it can be multiple GB.
+`LOG.md` is required. Telemetry is strongly recommended — it is the ground truth
+for the activity panel and for checking the log's claims; pull it whenever it
+exists (it is typically tens of MB). The full `workspace/` mirror is optional —
+pull it only if you need to read code/reviews for the analysis; it can be
+multiple GB.
 
 ```
 # required: the log (small)
 scp -i /path/key.pem ubuntu@HOST:.openclaw/workspace/LOG.md "$DIR/workspace/LOG.md"   # mkdir -p "$DIR/workspace" first
-# optional: telemetry (tens of MB) — enables operator-message timestamps
+# recommended: telemetry (tens of MB) — ground-truth activity + message timing
 scp -i /path/key.pem ubuntu@HOST:.openclaw/logs/telemetry.jsonl "$DIR/.telemetry.jsonl"
 # optional: full workspace mirror (large) — only if you must inspect code/reviews
 rsync -az -e "ssh -i /path/key.pem" --exclude '.git' --exclude '.venv' \
   ubuntu@HOST:.openclaw/workspace/ "$DIR/workspace/"
 ```
 
-The generator expects `LOG.md` at `$DIR/workspace/LOG.md`.
+The generator expects `LOG.md` at `$DIR/workspace/LOG.md` and (optionally)
+telemetry at `$DIR/.telemetry.jsonl`. If telemetry is present the build adds a
+"What the agent actually did" panel; if absent, the build still works from the
+log alone.
 
 ### 4. Read and understand the run
 
@@ -93,8 +108,35 @@ with `rg '^### '`, then read the memos — lines starting `MEMO M-`). Identify:
 - the major turning points (pivots, kills, credential events, milestone gates),
 - what actually failed, and the *why-behind-the-why* for each failure.
 
-Spot-check surprising claims against artifacts before you rely on them. If you
-downloaded the full workspace, read the relevant `reviews/*.md` and `code/`.
+**Ground-truth against telemetry.** The log is the agent's narration; telemetry
+is what actually happened. `.telemetry.jsonl` is one JSON object per line. The
+record types observed on real boxes are exactly these (do **not** invent fields):
+
+| type | fields | use it for |
+|---|---|---|
+| `tool.start` | `sessionKey, agentId, toolName, params` | which tools ran and how often; `params.task_name` on `collaborationspawn_agent` names each delegated subagent |
+| `tool.end` | `sessionKey, agentId, toolName, success, durationMs?, error?` | proven tool failures (`success:false` / `error`); durations exist on only *some* tools |
+| `agent.start` | `agentId, prompt, promptLength` | turn/session starts |
+| `message.in` | `channel, from, content, contentLength, timestamp, metadata` | operator→agent messages **with a wall-clock timestamp** (epoch ms) |
+| `message.out` / `message.sending` | `channel, to, content, success?, error?` | agent→operator replies (no timestamp) |
+
+Hard constraints when reasoning from telemetry:
+- **Only `message.in` carries a timestamp.** Tool events are *ordered* but not
+  individually time-stamped, so you cannot assign a clock time to a tool call
+  from telemetry alone — cross-reference `LOG.md` for timing.
+- **`durationMs` is present on only a subset of tools** (never `exec` /
+  `apply_patch`). Do not report a per-tool runtime you cannot see.
+- Quote a telemetry number only if you (or the generator) counted it from the
+  file. Quick checks you can run yourself, e.g. tool histogram:
+  ```
+  python3 -c "import json,collections as c;t=c.Counter(json.loads(l).get('toolName') for l in open('$DIR/.telemetry.jsonl') if l.strip() and json.loads(l).get('type')=='tool.start');print(t.most_common(15))"
+  ```
+
+If the log claims something the telemetry contradicts (e.g. "ran the reviewer
+20 times" but the tool count is 3), trust the telemetry and say so in the
+narrative. Spot-check surprising claims against artifacts before you rely on
+them. If you downloaded the full workspace, read the relevant `reviews/*.md` and
+`code/`.
 
 ### 5. Write the narrative
 
@@ -125,7 +167,11 @@ python3 analysis/skills/crux-run-timeline/build_timeline.py "$DIR"
 This writes `$DIR/timeline.html`. It parses every `### date time — title` entry
 in `LOG.md`, auto-classifies and colour-codes them, renders your beats + whys on
 top, and appends the full searchable/filterable event stream with each entry's
-verbatim (scrubbed) body behind a "details" toggle.
+verbatim (scrubbed) body behind a "details" toggle. If `.telemetry.jsonl` is
+present it also inserts a "What the agent actually did" panel — tool-call
+histogram, subagent-spawn list, proven tool failures, and operator-message
+timing — with every figure counted straight from the telemetry file. The build
+prints those counts so you can sanity-check them against your narrative.
 
 ### 7. Verify before sharing
 
@@ -142,9 +188,14 @@ commit the file if the tree isn't a place they intend to publish.
 ## Notes
 
 - The event stream is **source data** (the run's own log) and is shown unedited
-  except for credential scrubbing. Only the summary/beats/whys are your prose,
-  and they live in `narrative.json` — so re-running the build never touches your
-  analysis and the same script serves any run.
+  except for credential scrubbing. The telemetry panel is likewise **derived
+  source data** — pure counts/names/timing computed from `.telemetry.jsonl`, not
+  prose. Only the summary/beats/whys are your prose, and they live in
+  `narrative.json` — so re-running the build never touches your analysis and the
+  same script serves any run.
+- The generator never renders raw telemetry `params` or message bodies (which can
+  hold secrets); it emits only tool names, counts, subagent `task_name`s, message
+  timing, and lengths, each scrubbed against the key regex.
 - If a run uses credential shapes not covered by the scrubber, extend the
   `SECRET` regex at the top of `build_timeline.py` before building.
 - Re-run step 6 freely as you refine `narrative.json`. To refresh a live run,

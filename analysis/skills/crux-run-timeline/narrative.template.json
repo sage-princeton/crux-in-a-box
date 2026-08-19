@@ -33,6 +33,7 @@
     "cls_values": ["start","credential","kill","block","memo","progress","launch","heartbeat","other"],
     "cls_meaning": "start=run begins; credential=key/secret event; kill=stopped for good; block=blocked/failed; memo=decision; progress=passed a gate; launch=started work; heartbeat=routine check; other=everything else",
     "whys_count": "Do 5–7 whys per chain. One chain per distinct root failure (usually 1–3 chains).",
-    "style": "ISO house style: short sentences, plain words, active voice, neutral tone, no insider jargon."
+    "style": "ISO house style: short sentences, plain words, active voice, neutral tone, no insider jargon.",
+    "ground_truth": "Check every claim against telemetry, not just the log. Any quantity you state in a beat or why (tool counts, subagent counts, retries, message timing) must be countable from .telemetry.jsonl. Only message.in records have a wall-clock timestamp; tool events are ordered but not timestamped, and durationMs exists on only some tools. Do not invent timing or counts the telemetry cannot support. The build renders the counts panel for you — mirror those numbers, don't guess."
   }
 }
