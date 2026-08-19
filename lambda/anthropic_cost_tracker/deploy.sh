@@ -227,6 +227,6 @@ cat <<EOF
       -H 'Content-Type: application/json' \\
       -d '{"api_key": "sk-ant-api03-...", "start_date": "2026-01-01"}'
 
-  Set this URL as COST_TRACKER_URL in placeholders.txt for setup-device.sh.
+  Set this URL as COST_TRACKER_URL in placeholders.txt for create-new-crux-box.sh.
 ============================================
 EOF

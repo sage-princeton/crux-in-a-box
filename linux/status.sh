@@ -24,7 +24,7 @@ fi
 
 # ----- GitHub CLI -----
 if command -v gh &>/dev/null; then
-  # start.sh persists gh creds to ~/.config/gh AND writes GH_TOKEN to
+  # configure.sh persists gh creds to ~/.config/gh AND writes GH_TOKEN to
   # ~/.openclaw/.env; pick up the latter as a fallback for tool-env parity.
   GH_TOK=$(grep -E '^GH_TOKEN=' "$HOME/.openclaw/.env" 2>/dev/null | head -1 | cut -d= -f2-)
   if gh auth status &>/dev/null || GH_TOKEN="$GH_TOK" gh auth status &>/dev/null; then
@@ -50,7 +50,7 @@ fi
 # ----- gogcli -----
 if command -v gog &>/dev/null; then
   # The keyring env (GOG_HOME / GOG_KEYRING_BACKEND / GOG_KEYRING_PASSWORD /
-  # GOG_ACCOUNT) is written to ~/.openclaw/.env by start.sh, not the shell —
+  # GOG_ACCOUNT) is written to ~/.openclaw/.env by configure.sh, not the shell —
   # load it so gog can decrypt the file keyring non-interactively.
   OPENCLAW_ENV="$HOME/.openclaw/.env"
   GOG_ENV=()

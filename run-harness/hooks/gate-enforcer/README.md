@@ -23,7 +23,7 @@ It guards **ship only**. Drafting is gated cooperatively by the isolated explora
 - `COMPLETION_MARKER` (regex) — matches the completion-report body so snapshots/Tier-3 pings are not blocked. Align with `USER.md` § Status updates.
 - `OPENCLAW_WORKSPACE` — set this env var to your provisioning workspace path; the default `$HOME/.openclaw/workspace` assumes the standard layout.
 
-## Wiring into `openclaw.json` (provisioning step — `setup-device.sh`)
+## Wiring into `openclaw.json` (provisioning step — `create-new-crux-box.sh`)
 
 ```jsonc
 {
@@ -39,7 +39,7 @@ It guards **ship only**. Drafting is gated cooperatively by the isolated explora
 }
 ```
 
-Set the workspace path your provisioning uses (`~/.openclaw/workspace`). Because `openclaw.json` and `setup-device.sh` live in the provisioning repo (not this one), this is an **operator** step, done once before launch — and an optional one: skip it entirely if you want the pure cooperative posture.
+Set the workspace path your provisioning uses (`~/.openclaw/workspace`). Because `openclaw.json` and `create-new-crux-box.sh` live in the provisioning repo (not this one), this is an **operator** step, done once before launch — and an optional one: skip it entirely if you want the pure cooperative posture.
 
 ## Exec-approval backstop (optional, strongest)
 

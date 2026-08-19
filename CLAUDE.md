@@ -14,13 +14,13 @@ The main activity here is **post-run scaffold revision**: a run finishes, someth
    - **Cooperative by default** — the agent runs checks and honors exit codes; only shipping is optionally hard-enforced.
    - **Two halves per quality mechanism**: a _mechanical_ half (a grep/script in `gate_artifact.sh`, behind a `REQUIRE_*=1` flag) and a _judgment_ half (an isolated critic or cold-reader subagent the agent cannot author). Never an agent-typed certification string.
    - **Heuristics over hard rules** in the prose files — state the why, trust deliberation; counters and ceremony are what the V2 redesign removed.
-   - Operator-tunable values go in as `{{KEY|default}}` placeholders (resolved by `start.sh`; document overrides in `linux/placeholders.txt.example`).
+   - Operator-tunable values go in as `{{KEY|default}}` placeholders (resolved by `configure.sh`; document overrides in `linux/placeholders.txt.example`).
 
 4. **Propagate to every file that references the concept.** The scaffold is a web of cross-references; a change applied to one file leaves the others lying. `grep -ri` the concept name across `run-harness/` and update **all** of:
    - `workspace/` — `AGENTS.md`, `BRIEF.md`, `PLAN.md` (milestone table **and** its rules), `HEARTBEAT.md`, `TOOLS.md`, `REGISTRY.md`, the relevant `playbooks/*.md`, `scripts/gate_artifact.sh`, `locks/`
    - `PROMPT.md` (the launch message) and `OPERATOR_GUIDE.md` (incl. its flag lists and variations register)
    - `harness-overview.html` (the human-facing overview — lifecycle, gates boxes, failure table, architecture cards)
-   - `linux/placeholders.txt.example` and, for provisioning-level changes, `linux/src/start.sh`
+   - `linux/placeholders.txt.example` and, for provisioning-level changes, `linux/src/install.sh` (software bake) / `linux/src/configure.sh` (per-run config)
      A rename (e.g. "Readability" → "Presentation Overhaul") isn't done until a grep for the old name returns nothing meaningful.
 
 5. **Test gates with fixtures before trusting them.** For any new `gate_artifact.sh` check: a passing case, one fixture per failure mode, and a flag-off case proving it stays dormant at earlier milestones. Run them in the scratchpad, not the repo.
