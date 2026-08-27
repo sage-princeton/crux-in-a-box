@@ -22,3 +22,6 @@ tabpfn_telemetry.jsonl
 # local env files hold live API keys — never commit (rotate the key if one leaks)
 .env
 .env.*
+
+# papers fed to verifier-calibration are review inputs, not repo source
+/*.pdf
