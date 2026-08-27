@@ -19,6 +19,9 @@ tabpfn_telemetry.jsonl
 .mypy_cache/
 .claude/settings.local.json
 
-verifier-calibration/
-
+# local env files hold live API keys — never commit (rotate the key if one leaks)
 .env
+.env.*
+
+# papers fed to verifier-calibration are review inputs, not repo source
+/*.pdf
