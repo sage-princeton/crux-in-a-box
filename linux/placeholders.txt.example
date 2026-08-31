@@ -1,23 +1,28 @@
-# placeholders.txt — single config file for setup-device.sh
+# placeholders.txt — single config file for create-new-crux-box.sh
 #
-# Usage: ./setup-device.sh placeholders.txt
+# Usage: ./create-new-crux-box.sh --ami <AMI_ID> placeholders.txt
 #   (placeholders.txt is also the default if no argument is given)
-#   The only command-line flag is --instance-suffix <SUFFIX> (run multiple
-#   instances in parallel, e.g. ./setup-device.sh --instance-suffix 2 placeholders.txt).
+#   Flags: --ami <AMI_ID> (pre-baked AMI from build-ami.sh — skips the software
+#   install; omit to run the full install on raw Ubuntu) and
+#   --instance-suffix <SUFFIX> (run multiple instances in parallel,
+#   e.g. ./create-new-crux-box.sh --instance-suffix 2 placeholders.txt).
 #
 # Lines are KEY=VALUE. Comments (#) and blank lines are ignored.
-# All configuration lives here. setup-device.sh validates that every Required
-# key below is present and non-blank BEFORE doing any AWS work, and lists all
-# missing keys at once.
+# All configuration lives here. create-new-crux-box.sh validates that every
+# Required key below is present and non-blank BEFORE doing any AWS work, and
+# lists all missing keys at once.
 
-# ── Required: provisioning / runtime (used by setup-device.sh itself) ──
+# ── Required: provisioning / runtime (used by create-new-crux-box.sh itself) ──
 
 TELEGRAM_BOT_NAME=your-bot-name          # must exist as a key in telegram_bots.json
 TELEGRAM_OWNER_ID=123456789              # your Telegram user ID
-ANTHROPIC_MODEL=anthropic/claude-opus-4-8
-REASONING_EFFORT=xhigh                   # enables extended thinking.
-                                         # accepted: off|minimal|low|medium|high|xhigh|adaptive|max
-ANTHROPIC_API_KEY=sk-ant-...             # secret — keep this file out of git
+
+DEFAULT_LLM_MODEL=anthropic/claude-opus-4-8   # or e.g. openai/gpt-4o for an OpenAI run
+REASONING_EFFORT=xhigh                        # enables extended thinking.
+                                              # accepted: off|minimal|low|medium|high|xhigh|adaptive|max
+# Set exactly one of ANTHROPIC_API_KEY or OPENAI_API_KEY (secrets — keep this file out of git):
+ANTHROPIC_API_KEY=sk-ant-...
+# OPENAI_API_KEY=sk-proj-...
 COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
 RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env
 REFINE_INK_API_KEY=...                   # secret — written to ~/.openclaw/.env

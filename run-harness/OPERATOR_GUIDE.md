@@ -8,15 +8,34 @@ How to set up, launch, and live with a run of this harness.
 
 ## 1. Pre-launch checklist
 
-### Step 1: Run `setup-device.sh`
+### Step 0 (once): Bake the base AMI with `build-ami.sh`
+
+The software install (desktop + VNC, OpenClaw, telemetry, gh/aws/gog CLIs, watchdog) takes 10–15 minutes and is identical for every run, so it's baked into an AMI once instead of re-run per launch:
+
+```bash
+cd linux/
+./build-ami.sh          # launches a temp builder, runs install.sh, bakes the AMI, terminates the builder
+```
+
+Record the printed AMI ID and pass it to every launch with `--ami`. No secrets ever enter the AMI — `install.sh` (the bake phase) consumes no env vars; all secrets arrive per-run via `configure.sh`. Re-bake when the software stack changes (a new pinned CLI version, an `install.sh` edit).
+
+### Step 1: Run `create-new-crux-box.sh`
+
+<!-- FIXME(merge v3): this section describes the INTENDED provisioning. After the
+v3 merge, create-new-crux-box.sh runs install.sh + configure.sh, which currently
+install ONLY the thinking watchdog — the auth watchdog, session snapshot, and
+final-pass injector are NOT yet installed by that path (they live in the orphaned
+linux/src/start.sh). See the FIXME in linux/src/configure.sh. Verify `crontab -l`
+on the box shows all four jobs before trusting a run. -->
 
 Provisions an EC2 instance and bootstraps the environment: desktop + VNC, the agent framework, Telegram, telemetry (the pinned plugin and its config block), services (git, AWS CLI, gog), the box-side crons (thinking watchdog, auth watchdog, session snapshot, final-pass injector), and the harness workspace. All configuration lives in one KEY=VALUE config file:
 
 ```bash
 cd linux/
 cp placeholders.txt.example placeholders.txt   # then edit it
-./setup-device.sh placeholders.txt
-# parallel instance: ./setup-device.sh --instance-suffix 2 placeholders.txt
+./create-new-crux-box.sh --ami <AMI_ID> placeholders.txt   # fast path: pre-baked AMI, per-run config only
+# parallel instance: ./create-new-crux-box.sh --ami <AMI_ID> --instance-suffix 2 placeholders.txt
+# no AMI yet? omit --ami: raw Ubuntu is used and install.sh runs the full software install first
 ```
 
 The script validates every required key up front and lists all missing ones at once. It also tags the instance with the API-key suffix and spend-at-creation, and warns if another running instance uses the same key. The config file holds secrets — keep it out of git (it is `.gitignore`d).

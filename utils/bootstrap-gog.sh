@@ -3,7 +3,7 @@ set -euo pipefail
 
 # bootstrap-gog.sh — One-time, run on YOUR LOCAL machine, to turn a Google
 # OAuth client JSON into a portable, pre-authorized gog state bundle that
-# setup-device.sh can ship to every Linux box for zero-touch auth.
+# create-new-crux-box.sh can ship to every Linux box for zero-touch auth.
 #
 # Why this exists:
 #   The JSON you download from Google (client_secret_*.json) is only your app
@@ -24,14 +24,14 @@ set -euo pipefail
 # Environment:
 #   GOG_KEYRING_PASSWORD  REQUIRED. Passphrase that encrypts the file keyring.
 #                           This never expires; ship the SAME value to every box
-#                           (via setup-device.sh) so it can decrypt the token.
+#                           (via create-new-crux-box.sh) so it can decrypt the token.
 #   GOG_SERVICES          Optional. Comma-separated scopes to authorize.
 #                           Default: gmail (add calendar,drive,... if needed).
 #
 # Output:
 #   A tarball of the authorized GOG_HOME (config + credentials + encrypted
 #   keyring holding the refresh token). Pass this + GOG_KEYRING_PASSWORD to
-#   setup-device.sh. Treat both as SECRETS — never commit them.
+#   create-new-crux-box.sh. Treat both as SECRETS — never commit them.
 #
 # PREREQUISITE (do this once in Google Cloud, or the token expires in 7 days):
 #   In your Cloud project → Audience → "Publish app" → Confirm. This flips the
@@ -152,7 +152,7 @@ echo
 echo "✔ Done. Created: $OUTPUT"
 echo
 echo "  This bundle + GOG_KEYRING_PASSWORD authenticate gog on every box."
-echo "  Pass them to setup-device.sh, e.g. in placeholders.txt:"
+echo "  Pass them to create-new-crux-box.sh, e.g. in placeholders.txt:"
 echo "      GOG_HOME_TARBALL=$OUTPUT"
 echo "      GOG_KEYRING_PASSWORD=<the same passphrase you used here>"
 echo "      GOG_ACCOUNT=$GOG_ACCOUNT_EMAIL"

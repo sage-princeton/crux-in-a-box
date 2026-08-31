@@ -47,7 +47,7 @@ fi
 # ----- gogcli -----
 if command -v gog &>/dev/null; then
   # The keyring env (GOG_HOME / GOG_KEYRING_BACKEND / GOG_KEYRING_PASSWORD /
-  # GOG_ACCOUNT) is written to ~/.openclaw/.env by start.sh, not the shell —
+  # GOG_ACCOUNT) is written to ~/.openclaw/.env by configure.sh, not the shell —
   # load it so gog can decrypt the file keyring non-interactively.
   OPENCLAW_ENV="$HOME/.openclaw/.env"
   GOG_ENV=()

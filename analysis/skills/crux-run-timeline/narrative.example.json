@@ -1,0 +1,71 @@
+{
+  "_note": "FICTIONAL EXAMPLE. Invented run used only to show the expected shape, tone, and level of detail. Do not treat any fact here as real. Replace every field with your own analysis in narrative.json.",
+  "meta": {
+    "title": "Research agent run — what happened",
+    "subtitle": "Example write-up. The task: measure whether a small model can match a large model on a benchmark. · Built from the run's own log. Credentials removed."
+  },
+  "lead": "The agent lost most of its time to a tool it could not get working, kept retrying the same broken step instead of switching approaches, and ran out of budget before it could finish the main experiment.",
+  "beats": [
+    {
+      "time": "01-01 09:00 UTC",
+      "title": "Run starts",
+      "desc": "The operator asks the agent to compare a small model against a large one on a standard benchmark. The agent has five days, a fixed API budget, and a single GPU.",
+      "cls": "start"
+    },
+    {
+      "time": "01-01 10:30 UTC",
+      "title": "Setup passes",
+      "desc": "The agent installs its tools, downloads the benchmark, and confirms it can run a tiny test case end to end.",
+      "cls": "progress"
+    },
+    {
+      "time": "01-01 14:00 UTC",
+      "title": "The GPU tool will not start",
+      "desc": "The agent tries to launch the large model on the GPU, but the serving tool crashes on start. It begins debugging.",
+      "cls": "block"
+    },
+    {
+      "time": "01-02 11:00 UTC",
+      "title": "Same fix tried many times",
+      "desc": "Over a full day the agent reinstalls and reconfigures the same serving tool again and again. Each attempt fails the same way. It does not try a different tool.",
+      "cls": "block"
+    },
+    {
+      "time": "01-03 08:00 UTC",
+      "title": "The agent switches tools, too late",
+      "desc": "The agent finally swaps in a different serving tool, which works within an hour. Two of the five days are already gone.",
+      "cls": "progress"
+    },
+    {
+      "time": "01-04 20:00 UTC",
+      "title": "Budget runs low",
+      "desc": "The main experiment is only half finished when the API budget nears its limit. The agent narrows the experiment to fit.",
+      "cls": "memo"
+    },
+    {
+      "time": "01-05 09:00 UTC",
+      "title": "Where things stand",
+      "desc": "The agent produces a partial result on a reduced benchmark. It is honest about the gap but cannot answer the original question in full.",
+      "cls": "other"
+    }
+  ],
+  "whys": [
+    {
+      "problem": "The agent lost two of its five days to a tool that would not start.",
+      "chain": [
+        ["Why were two days lost?", "The agent could not get the large model serving on the GPU, and work stalled until it did."],
+        ["Why did it stay stalled so long?", "It kept retrying the same serving tool instead of trying a different one."],
+        ["Why did it keep retrying the same tool?", "Each attempt failed in a slightly different way, so the agent believed it was close to a fix."],
+        ["Why did it believe it was close?", "It had no rule to stop after a fixed number of failed attempts and step back."],
+        ["Why was there no such rule?", "Its guidance told it to keep making forward progress but did not define when repeating an approach counts as being stuck."],
+        ["Why was 'stuck' undefined?", "The guidance assumed failures would be obvious and did not set a concrete threshold, such as three failed attempts at the same step."]
+      ],
+      "root": "The agent had no concrete stop rule for a failing approach, so it treated repeated attempts as progress instead of switching methods or asking for help.",
+      "fixes": [
+        "Add a rule: after a set number of failed attempts at the same step, switch approach or escalate.",
+        "Try a known-good alternative tool early, before spending a full day on one option.",
+        "Track time lost per blocker so a long stall triggers a review."
+      ]
+    }
+  ]
+}

@@ -3,7 +3,7 @@ set -euo pipefail
 # TODO: prevent dupe telegram bots on instances
 
 # ==========================================================================
-# setup-device.sh
+# create-new-crux-box.sh
 # ==========================================================================
 # Run this on your LOCAL machine (macOS / Linux) to provision and bootstrap
 # an AWS EC2 instance with a full GUI desktop ready for CRUX experiments.
@@ -15,27 +15,37 @@ set -euo pipefail
 #
 # What this script does:
 #   1. Creates (or reuses) an EC2 key-pair and security group.
-#   2. Launches an Ubuntu 22.04 instance (configurable).
+#   2. Launches an instance — from a pre-baked AMI (--ami, fast: software is
+#      already installed) or from raw Ubuntu 24.04 LTS (fallback: full install).
 #   3. Waits for the instance to be reachable via SSH.
 #   4. Copies the linux/ directory to the instance.
-#   5. Runs the remote bootstrap (start.sh) which installs a desktop
-#      environment, VNC server, openclaw, monitoring, services, etc.
+#   5. Runs the remote bootstrap:
+#        --ami path   : configure.sh only (per-run secrets + workspace)
+#        fallback path : install.sh (full software install) then configure.sh
 #   6. Prints connection details (SSH + VNC).
+#
+# Bake the AMI once with ./build-ami.sh and pass its ID here with --ami.
 # ==========================================================================
 
 # ====== USAGE ======
 usage() {
   cat <<USAGE
-Usage: $0 [--instance-suffix <SUFFIX>] [CONFIG_FILE]
+Usage: $0 [--ami <AMI_ID>] [--instance-suffix <SUFFIX>] [CONFIG_FILE]
 
 All configuration lives in a single KEY=VALUE config file (default:
 placeholders.txt). Copy placeholders.txt.example, fill it in, and pass it as
-the positional argument. The only command-line flag is --instance-suffix.
+the positional argument. The only command-line flags are --ami and
+--instance-suffix.
 
-  ./setup-device.sh placeholders.txt
-  ./setup-device.sh --instance-suffix 2 placeholders.txt
+  ./create-new-crux-box.sh --ami ami-0123456789abcdef0 placeholders.txt
+  ./create-new-crux-box.sh --instance-suffix 2 placeholders.txt
 
 Flags:
+  --ami <AMI_ID>                 Launch from a pre-baked CRUX AMI (built with
+                                   build-ami.sh). Skips the ~10-15 min software
+                                   install; only per-run configuration runs.
+                                   Without it, raw Ubuntu 24.04 LTS is used and the
+                                   full install runs first.
   --instance-suffix <SUFFIX>     Suffix appended to the instance name
                                    (e.g. --instance-suffix 2 → crux-in-a-box-2).
                                    Allows running multiple instances in parallel.
@@ -47,8 +57,9 @@ absent or blank):
     TELEGRAM_BOT_NAME    Bot name as defined in telegram_bots.json
                            (e.g. cruxlinuxtest). The token is looked up automatically.
     TELEGRAM_OWNER_ID    Telegram user ID for commands.ownerAllowFrom
-    ANTHROPIC_MODEL      Anthropic model ID (e.g. anthropic/claude-opus-4-6)
-    ANTHROPIC_API_KEY    Anthropic API key
+    DEFAULT_LLM_MODEL      Model ID (e.g. anthropic/claude-opus-4-8 or openai/gpt-4o)
+    ANTHROPIC_API_KEY    Anthropic API key (set this OR OPENAI_API_KEY)
+    OPENAI_API_KEY       OpenAI API key    (set this OR ANTHROPIC_API_KEY)
     COST_TRACKER_URL     Cost-tracking Lambda URL (from lambda/cost_tracker/deploy.sh)
     RUNPOD_API_KEY       RunPod API key — written to ~/.openclaw/.env as
                            RUNPOD_API_KEY for the agent's GPU-pod tool calls.
@@ -79,13 +90,19 @@ USAGE
 }
 
 # ====== PARSE ARGS ======
-# One positional argument (the config file, default placeholders.txt) and one
-# flag (--instance-suffix). Everything else lives in the config file.
+# One positional argument (the config file, default placeholders.txt) and two
+# flags (--ami, --instance-suffix). Everything else lives in the config file.
 CONFIG_FILE=""
 INSTANCE_SUFFIX=""
+AMI_ID_ARG=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --ami)
+      [ -z "${2:-}" ] && { echo "Error: --ami requires a value" >&2; usage; }
+      AMI_ID_ARG="$2"
+      shift 2
+      ;;
     --instance-suffix)
       [ -z "${2:-}" ] && { echo "Error: --instance-suffix requires a value" >&2; usage; }
       INSTANCE_SUFFIX="$2"
@@ -95,7 +112,7 @@ while [[ $# -gt 0 ]]; do
       usage
       ;;
     -*)
-      echo "Error: unknown flag '$1'. The only flag is --instance-suffix; everything else lives in the config file." >&2
+      echo "Error: unknown flag '$1'. The only flags are --ami and --instance-suffix; everything else lives in the config file." >&2
       usage
       ;;
     *)
@@ -134,8 +151,7 @@ done < "$CONFIG_FILE"
 REQUIRED_KEYS=(
   TELEGRAM_BOT_NAME
   TELEGRAM_OWNER_ID
-  ANTHROPIC_MODEL
-  ANTHROPIC_API_KEY
+  DEFAULT_LLM_MODEL
   COST_TRACKER_URL
   RUNPOD_API_KEY
   REFINE_INK_API_KEY
@@ -155,6 +171,10 @@ for key in "${REQUIRED_KEYS[@]}"; do
     MISSING_KEYS+=("$key")
   fi
 done
+# Exactly one of ANTHROPIC_API_KEY or OPENAI_API_KEY must be set.
+if [ -z "${CFG[ANTHROPIC_API_KEY]:-}" ] && [ -z "${CFG[OPENAI_API_KEY]:-}" ]; then
+  MISSING_KEYS+=("ANTHROPIC_API_KEY or OPENAI_API_KEY")
+fi
 if [ "${#MISSING_KEYS[@]}" -gt 0 ]; then
   echo "Error: the following required keys are missing or blank in $CONFIG_FILE:" >&2
   for key in "${MISSING_KEYS[@]}"; do
@@ -167,19 +187,31 @@ fi
 
 # ====== ASSIGN OPERATIONAL VALUES ======
 # These keys drive provisioning logic (AWS tagging, baseline spend query, SSH
-# env-forwarding to start.sh), so they get their own variables.
+# env-forwarding to configure.sh), so they get their own variables.
 TELEGRAM_BOT_NAME="${CFG[TELEGRAM_BOT_NAME]}"
 TELEGRAM_OWNER_ID="${CFG[TELEGRAM_OWNER_ID]}"
-ANTHROPIC_MODEL="${CFG[ANTHROPIC_MODEL]}"
-ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]}"
-# Extended-thinking level — enables extended thinking. Default "xhigh"; start.sh
-# writes it to openclaw.json as .agents.defaults.thinkingDefault. Optional in the
-# config file.
+DEFAULT_LLM_MODEL="${CFG[DEFAULT_LLM_MODEL]}"
+ANTHROPIC_API_KEY="${CFG[ANTHROPIC_API_KEY]:-}"
+OPENAI_API_KEY="${CFG[OPENAI_API_KEY]:-}"
+# Whichever provider key is set becomes the active one for cost tracking and tagging.
+if [ -n "$ANTHROPIC_API_KEY" ]; then
+  LLM_API_KEY="$ANTHROPIC_API_KEY"
+  LLM_PROVIDER="anthropic"
+else
+  LLM_API_KEY="$OPENAI_API_KEY"
+  LLM_PROVIDER="openai"
+fi
+# Extended-thinking level — enables extended thinking. Default "xhigh";
+# configure.sh writes it to openclaw.json as .agents.defaults.thinkingDefault.
+# Optional in the config file.
 REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
 OPENROUTER_API_KEY="${CFG[OPENROUTER_API_KEY]}"
+# FIXME(merge v3): our stack is local-git-only (no GitHub remote), so we drop
+# main's GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN / gh-auth path. If GitHub push is
+# ever reintroduced, re-add the PAT here AND the configure.sh gh-auth step.
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
 
 # gog (Google Workspace CLI) — required; auto-configured on the box.
@@ -197,10 +229,13 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 
 # ====== BUILD WORKSPACE PLACEHOLDER MAP ======
 # Every config key EXCEPT the operational/runtime ones above is forwarded to
-# start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
+# configure.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps CLOUD_SPEND_LIMIT, OPENROUTER_BUDGET, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY OPENROUTER_API_KEY INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+# FIXME(merge v3): operational keys are excluded from placeholder substitution.
+# We keep main's dual-provider keys (DEFAULT_LLM_MODEL, OPENAI_API_KEY) AND our
+# OPENROUTER_API_KEY; GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN is dropped (local-git-only).
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY OPENROUTER_API_KEY INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -226,25 +261,28 @@ TELEGRAM_BOT_TOKEN=$(jq -r --arg name "$TELEGRAM_BOT_NAME" '.[$name] // empty' "
        echo "  Available bots: $(jq -r 'keys | join(", ")' "$TELEGRAM_BOTS_FILE")" >&2
        exit 1; }
 
-# ====== CONFIGURATION (override via env vars) ======
-REGION="${AWS_REGION:-us-east-1}"
-INSTANCE_TYPE="${CRUX_INSTANCE_TYPE:-t3.xlarge}"
-AMI_ID="${CRUX_AMI_ID:-}"
-KEY_NAME="${CRUX_KEY_NAME:-crux-in-a-box}"
-SG_NAME="${CRUX_SG_NAME:-crux-in-a-box-sg}"
-INSTANCE_NAME="${CRUX_INSTANCE_NAME:-crux-in-a-box}"
+# ====== FIXED CONFIGURATION ======
+REGION="us-east-1"
+INSTANCE_TYPE="t3.2xlarge"
+KEY_NAME="crux-in-a-box"
+SG_NAME="crux-in-a-box-sg"
+INSTANCE_NAME="crux-in-a-box"
 if [ -n "$INSTANCE_SUFFIX" ]; then
   INSTANCE_NAME="${INSTANCE_NAME}-${INSTANCE_SUFFIX}"
 fi
-IAM_ROLE_NAME="${CRUX_IAM_ROLE:-crux-in-a-box-role}"
-INSTANCE_PROFILE_NAME="${CRUX_INSTANCE_PROFILE:-crux-in-a-box-profile}"
+IAM_ROLE_NAME="crux-in-a-box-role"
+INSTANCE_PROFILE_NAME="crux-in-a-box-profile"
 SSH_USER="ubuntu"
-DISK_SIZE_GB="${CRUX_DISK_SIZE_GB:-80}"
+DISK_SIZE_GB=80
+# gp3 defaults are 3000 IOPS / 125 MB/s. Raise them so the volume has more
+# headroom while EBS lazily hydrates first-touched blocks from S3 (the cold-boot
+# I/O tax). Cheap: the first 3000 IOPS + 125 MB/s are free; only the delta bills.
+ROOT_IOPS=6000
+ROOT_THROUGHPUT=250
 VNC_PORT=5901
 # Oldest day the cost tracker should sum from when establishing the baseline.
-# Defaults to today (UTC) so the run measures only spend from launch onward;
-# override with CRUX_COST_START_DATE=YYYY-MM-DD for a different window.
-COST_START_DATE="${CRUX_COST_START_DATE:-$(date -u +%F)}"
+# Today (UTC) so the run measures only spend from launch onward.
+COST_START_DATE="$(date -u +%F)"
 
 # ====== HELPERS ======
 info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
@@ -363,26 +401,28 @@ else
 fi
 
 # ====== 3. RESOLVE AMI ======
-if [ -z "$AMI_ID" ]; then
-  info "Resolving latest Ubuntu 22.04 AMI..."
+if [ -n "$AMI_ID_ARG" ]; then
+  AMI_ID="$AMI_ID_ARG"
+  ok "AMI: $AMI_ID (pre-baked CRUX AMI — configure.sh only, install skipped)"
+else
+  info "Resolving latest Ubuntu 24.04 LTS (noble) AMI..."
   AMI_ID=$(aws ec2 describe-images \
     --region "$REGION" --owners 099720109477 \
     --filters \
-      "Name=name,Values=ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*" \
+      "Name=name,Values=ubuntu/images/hvm-ssd*/ubuntu-noble-24.04-amd64-server-*" \
       "Name=state,Values=available" \
     --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
     --output text)
+  [ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
+    && die "Could not resolve an Ubuntu 24.04 AMI in $REGION"
+  ok "AMI: $AMI_ID (raw Ubuntu — install.sh will run the full software install)"
 fi
 
-[ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
-  && die "Could not resolve an Ubuntu 22.04 AMI in $REGION"
-ok "AMI: $AMI_ID"
-
 # ====== 3b. DUPLICATE API KEY CHECK ======
-API_KEY_SUFFIX="${ANTHROPIC_API_KEY: -6}"
+API_KEY_SUFFIX="${LLM_API_KEY: -6}"
 DUPE_IDS=$(aws ec2 describe-instances --region "$REGION" \
   --filters \
-    "Name=tag:AnthropicKeySuffix,Values=$API_KEY_SUFFIX" \
+    "Name=tag:ApiKeySuffix,Values=$API_KEY_SUFFIX" \
     "Name=instance-state-name,Values=running,pending" \
   --query 'Reservations[].Instances[].InstanceId' \
   --output text 2>/dev/null | tr '\t' ' ' | xargs)
@@ -398,11 +438,10 @@ fi
 
 # ====== 3c. SNAPSHOT INITIAL API SPEND ======
 # Cost-tracker contract: POST {"api_key": "<full key>", "start_date": "YYYY-MM-DD"}
-# -> {"total_spend": <float>}. We send the FULL key (the Lambda matches it to the
-# org key by partial_key_hint and never echoes it) and a far-back start_date so
-# the baseline is the key's total spend-to-date.
-info "Querying current API spend for key ...$API_KEY_SUFFIX (since $COST_START_DATE)..."
-COST_REQUEST=$(jq -n --arg key "$ANTHROPIC_API_KEY" --arg start "$COST_START_DATE" \
+# -> {"total_spend": <float>}. For Anthropic, the Lambda uses the key to identify
+# the caller. For OpenAI, the Lambda ignores it (project is baked in at deploy time).
+info "Querying current API spend ($LLM_PROVIDER, key ...$API_KEY_SUFFIX, since $COST_START_DATE)..."
+COST_REQUEST=$(jq -n --arg key "$LLM_API_KEY" --arg start "$COST_START_DATE" \
   '{api_key: $key, start_date: $start}')
 INITIAL_SPEND=$(curl -sf -X POST "$COST_TRACKER_URL" \
   -H "Content-Type: application/json" \
@@ -417,7 +456,7 @@ ok "Current API spend: \$$INITIAL_SPEND"
 
 # If there's already money on this key, make the operator acknowledge the baseline.
 if [ "$(echo "$INITIAL_SPEND > 0" | bc -l 2>/dev/null || echo "0")" = "1" ]; then
-  warn "This API key already has \$$INITIAL_SPEND of spend on it."
+  warn "This API key/project already has \$$INITIAL_SPEND of spend on it."
   warn "Instance-attributable cost = current spend minus this baseline (\$$INITIAL_SPEND)."
   printf "\033[1;33m   Continue with this baseline? [y/N]: \033[0m"
   read -r REPLY
@@ -447,8 +486,9 @@ if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
     # Tag the existing instance with API key info
     aws ec2 create-tags --resources "$INSTANCE_ID" --region "$REGION" \
       --tags \
-        "Key=AnthropicKeySuffix,Value=$API_KEY_SUFFIX" \
-        "Key=AnthropicSpendAtCreation,Value=$INITIAL_SPEND"
+        "Key=LlmProvider,Value=$LLM_PROVIDER" \
+        "Key=ApiKeySuffix,Value=$API_KEY_SUFFIX" \
+        "Key=ApiSpendAtCreation,Value=$INITIAL_SPEND"
   else
     die "Aborted. To launch a parallel instance, set INSTANCE_SUFFIX in the config file and re-run."
   fi
@@ -462,9 +502,9 @@ else
     --security-group-ids "$SG_ID" \
     --iam-instance-profile "Name=$INSTANCE_PROFILE_NAME" \
     --block-device-mappings \
-      "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\"}}]" \
+      "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT}}}]" \
     --tag-specifications \
-      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=AnthropicKeySuffix,Value=$API_KEY_SUFFIX},{Key=AnthropicSpendAtCreation,Value=$INITIAL_SPEND}]" \
+      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=LlmProvider,Value=$LLM_PROVIDER},{Key=ApiKeySuffix,Value=$API_KEY_SUFFIX},{Key=ApiSpendAtCreation,Value=$INITIAL_SPEND}]" \
     --query 'Instances[0].InstanceId' --output text)
   ok "Instance launched: $INSTANCE_ID"
 fi
@@ -498,22 +538,35 @@ done
 ok "SSH is up"
 
 # ====== 7. COPY FILES ======
+# Copy the CONTENTS of linux/ into ~/crux-in-a-box-linux so paths are stable
+# (status.sh -> ~/crux-in-a-box-linux/status.sh, src/ -> ~/crux-in-a-box-linux/src).
+# `scp -r "$SCRIPT_DIR" dest` is ambiguous: if dest already exists (e.g. a leftover
+# dir from a prior launch attempt on a re-run), scp nests the copy as
+# dest/linux/, which breaks the status.sh path and can leave stale files behind.
+# Remove any prior dir first, then copy the directory's contents with a trailing
+# "/." so the layout is deterministic regardless of what was there before.
 info "Copying linux/ directory to instance..."
+ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+  'rm -rf ~/crux-in-a-box-linux && mkdir -p ~/crux-in-a-box-linux'
 scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
-  "$SCRIPT_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux"
+  "$SCRIPT_DIR/." "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-linux/"
 ok "Linux files copied"
 
-HARNESS_DIR="$SCRIPT_DIR/../next-run-harness"
+HARNESS_DIR="$SCRIPT_DIR/../run-harness"
 if [ -d "$HARNESS_DIR" ]; then
-  info "Copying next-run-harness/ to instance..."
+  # Same deterministic copy as linux/ above: clean the dest, then copy contents so
+  # configure.sh reliably finds ~/crux-in-a-box-harness/workspace (never nested).
+  info "Copying run-harness/ to instance..."
+  ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
+    'rm -rf ~/crux-in-a-box-harness && mkdir -p ~/crux-in-a-box-harness'
   scp -o StrictHostKeyChecking=no -i "$KEY_FILE" -r \
-    "$HARNESS_DIR" "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-harness"
+    "$HARNESS_DIR/." "${SSH_USER}@${PUBLIC_IP}:~/crux-in-a-box-harness/"
   ok "Harness files copied"
 else
-  warn "next-run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
+  warn "run-harness/ not found at $HARNESS_DIR — workspace setup will be skipped"
 fi
 
-# Copy the pre-authorized gog bundle (if provided). start.sh unpacks it into
+# Copy the pre-authorized gog bundle (if provided). configure.sh unpacks it into
 # GOG_HOME and wires the keyring env so gog is authenticated with no browser.
 GOG_HOME_TARBALL_REMOTE=""
 if [ -n "$GOG_HOME_TARBALL" ]; then
@@ -525,7 +578,11 @@ if [ -n "$GOG_HOME_TARBALL" ]; then
 fi
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
-info "Running remote bootstrap (start.sh) — this will take several minutes..."
+# Two paths:
+#   --ami given   : the software is already baked in — run configure.sh only
+#                   (per-run secrets + workspace + gateway start).
+#   no --ami      : raw Ubuntu — run install.sh first (full software install,
+#                   no secrets), then configure.sh.
 
 # Build the remote command safely. Values like PLACEHOLDERS can contain
 # apostrophes, parentheses, spaces and newlines (e.g. RESEARCH_CONTEXT prose),
@@ -545,8 +602,9 @@ build_remote_env() {
 REMOTE_ENV=$(build_remote_env \
   TELEGRAM_BOT_TOKEN \
   TELEGRAM_OWNER_ID \
-  ANTHROPIC_MODEL \
+  DEFAULT_LLM_MODEL \
   ANTHROPIC_API_KEY \
+  OPENAI_API_KEY \
   REASONING_EFFORT \
   COST_TRACKER_URL \
   API_KEY_SUFFIX \
@@ -562,8 +620,16 @@ REMOTE_ENV=$(build_remote_env \
 # expects; rename the assignment without touching the (already escaped) value.
 REMOTE_ENV="${REMOTE_ENV/GOG_HOME_TARBALL_REMOTE=/GOG_HOME_TARBALL=}"
 
-REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/start.sh \
-   && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/start.sh"
+if [ -n "$AMI_ID_ARG" ]; then
+  info "Running remote configuration (configure.sh) — software pre-baked in the AMI..."
+  REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/configure.sh \
+     && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/configure.sh"
+else
+  info "Running remote bootstrap (install.sh + configure.sh) — this will take several minutes..."
+  REMOTE_CMD="chmod +x ~/crux-in-a-box-linux/src/install.sh ~/crux-in-a-box-linux/src/configure.sh \
+     && sudo bash ~/crux-in-a-box-linux/src/install.sh \
+     && sudo ${REMOTE_ENV} bash ~/crux-in-a-box-linux/src/configure.sh"
+fi
 
 ssh -o StrictHostKeyChecking=no -i "$KEY_FILE" "${SSH_USER}@${PUBLIC_IP}" \
   "$REMOTE_CMD"

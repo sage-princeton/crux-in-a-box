@@ -2,9 +2,11 @@
 set -euo pipefail
 
 # ==========================================================================
-# deploy.sh — Deploy the cost-tracking Lambda + API Gateway
+# deploy.sh — Deploy the OpenAI cost-tracking Lambda + API Gateway
 # ==========================================================================
 # Creates (or updates) an AWS Lambda function fronted by an HTTP API Gateway.
+# Resolves the project name to a project ID at deploy time and bakes it into
+# the Lambda's environment so no lookup happens at runtime.
 # Prints the invoke URL on success.
 #
 # Prerequisites:
@@ -12,23 +14,29 @@ set -euo pipefail
 #   - jq installed
 #
 # Usage:
-#   ./deploy.sh --admin-key <ANTHROPIC_ADMIN_KEY>
+#   ./deploy.sh --admin-key <OPENAI_ADMIN_KEY> --project-name "CRUX 2-Third Paper Run"
 # ==========================================================================
 
 # ====== DEFAULTS ======
 REGION="${AWS_REGION:-us-east-1}"
-FUNCTION_NAME="crux-cost-tracker"
-API_NAME="crux-cost-tracker-api"
-ROLE_NAME="crux-cost-tracker-role"
-ANTHROPIC_ADMIN_KEY=""
+FUNCTION_NAME="openai-cost-tracker"
+API_NAME="openai-cost-tracker-api"
+ROLE_NAME="openai-cost-tracker-role"
+# OPENAI_ADMIN_KEY may also be pre-set in the environment
+OPENAI_ADMIN_KEY="${OPENAI_ADMIN_KEY:-}"
+PROJECT_NAME=""
 
 # ====== PARSE ARGS ======
 usage() {
   cat <<USAGE
-Usage: $0 --admin-key <ANTHROPIC_ADMIN_KEY>
+Usage: $0 --project-name <PROJECT_NAME> [--admin-key <OPENAI_ADMIN_KEY>]
 
 Required:
-  --admin-key <KEY>        Anthropic Admin API key (sk-ant-admin...)
+  --project-name <NAME>    OpenAI project name (e.g. "CRUX 2-Third Paper Run")
+
+Optional:
+  --admin-key <KEY>        OpenAI Admin API key (sk-admin-...).
+                           Defaults to \$OPENAI_ADMIN_KEY env var.
 USAGE
   exit 1
 }
@@ -37,7 +45,12 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --admin-key)
       [ -z "${2:-}" ] && { echo "Error: --admin-key requires a value" >&2; usage; }
-      ANTHROPIC_ADMIN_KEY="$2"
+      OPENAI_ADMIN_KEY="$2"
+      shift 2
+      ;;
+    --project-name)
+      [ -z "${2:-}" ] && { echo "Error: --project-name requires a value" >&2; usage; }
+      PROJECT_NAME="$2"
       shift 2
       ;;
     -h|--help) usage ;;
@@ -45,7 +58,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -z "$ANTHROPIC_ADMIN_KEY" ] && { echo "Error: --admin-key is required" >&2; usage; }
+[ -z "$OPENAI_ADMIN_KEY" ] && { echo "Error: --admin-key is required (or set OPENAI_ADMIN_KEY)" >&2; usage; }
+[ -z "$PROJECT_NAME" ]     && { echo "Error: --project-name is required" >&2; usage; }
 
 info()  { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()    { printf "\033[1;32m✔ %s\033[0m\n" "$*"; }
@@ -58,7 +72,41 @@ require_cmd jq
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
 
-# ====== 1. IAM ROLE ======
+# ====== 1. RESOLVE PROJECT NAME → ID ======
+info "Resolving project name '${PROJECT_NAME}' via OpenAI Admin API..."
+PROJECT_ID=$(OPENAI_ADMIN_KEY="$OPENAI_ADMIN_KEY" PROJECT_NAME="$PROJECT_NAME" python3 - <<'PYEOF'
+import json, os, sys, urllib.request, urllib.parse
+
+admin_key = os.environ["OPENAI_ADMIN_KEY"]
+project_name = os.environ["PROJECT_NAME"]
+after = None
+while True:
+    params = {"limit": 100}
+    if after:
+        params["after"] = after
+    qs = urllib.parse.urlencode(params)
+    req = urllib.request.Request(
+        f"https://api.openai.com/v1/organization/projects?{qs}",
+        headers={"Authorization": f"Bearer {admin_key}"},
+    )
+    with urllib.request.urlopen(req) as r:
+        payload = json.loads(r.read())
+    for p in payload.get("data", []):
+        if p.get("name", "").lower() == project_name.lower():
+            print(p["id"])
+            sys.exit(0)
+    if not payload.get("has_more"):
+        break
+    data = payload.get("data", [])
+    if not data:
+        break
+    after = data[-1]["id"]
+sys.exit(1)
+PYEOF
+) || die "Project '${PROJECT_NAME}' not found in OpenAI organization"
+ok "Resolved project '${PROJECT_NAME}' → ${PROJECT_ID}"
+
+# ====== 2. IAM ROLE ======
 ROLE_ARN=$(aws iam get-role --role-name "$ROLE_NAME" \
   --query 'Role.Arn' --output text 2>/dev/null || true)
 
@@ -85,13 +133,13 @@ else
   ok "IAM role '$ROLE_NAME' already exists: $ROLE_ARN"
 fi
 
-# ====== 2. PACKAGE LAMBDA ======
+# ====== 3. PACKAGE LAMBDA ======
 info "Packaging Lambda function..."
-TMP_ZIP=$(mktemp /tmp/cost-tracker-XXXX).zip
+TMP_ZIP=$(mktemp /tmp/openai-cost-tracker-XXXX).zip
 (cd "$SCRIPT_DIR" && zip -j "$TMP_ZIP" lambda_function.py)
 ok "Lambda packaged: $TMP_ZIP"
 
-# ====== 3. CREATE / UPDATE LAMBDA ======
+# ====== 4. CREATE / UPDATE LAMBDA ======
 EXISTING_FUNC=$(aws lambda get-function --function-name "$FUNCTION_NAME" \
   --region "$REGION" --query 'Configuration.FunctionName' --output text 2>/dev/null || true)
 
@@ -102,12 +150,11 @@ if [ "$EXISTING_FUNC" = "$FUNCTION_NAME" ]; then
     --region "$REGION" \
     --zip-file "fileb://$TMP_ZIP" \
     --query 'FunctionArn' --output text > /dev/null
-  # Wait for the update to complete before changing config
   aws lambda wait function-updated --function-name "$FUNCTION_NAME" --region "$REGION" 2>/dev/null || sleep 5
   aws lambda update-function-configuration \
     --function-name "$FUNCTION_NAME" \
     --region "$REGION" \
-    --environment "Variables={ANTHROPIC_ADMIN_KEY=$ANTHROPIC_ADMIN_KEY}" \
+    --environment "Variables={OPENAI_ADMIN_KEY=$OPENAI_ADMIN_KEY,OPENAI_PROJECT_ID=$PROJECT_ID}" \
     --timeout 30 \
     --query 'FunctionArn' --output text > /dev/null
   ok "Lambda function updated"
@@ -120,7 +167,7 @@ else
     --handler lambda_function.lambda_handler \
     --role "$ROLE_ARN" \
     --zip-file "fileb://$TMP_ZIP" \
-    --environment "Variables={ANTHROPIC_ADMIN_KEY=$ANTHROPIC_ADMIN_KEY}" \
+    --environment "Variables={OPENAI_ADMIN_KEY=$OPENAI_ADMIN_KEY,OPENAI_PROJECT_ID=$PROJECT_ID}" \
     --timeout 30 \
     --query 'FunctionArn' --output text > /dev/null
   ok "Lambda function created"
@@ -129,7 +176,7 @@ fi
 LAMBDA_ARN="arn:aws:lambda:${REGION}:${ACCOUNT_ID}:function:${FUNCTION_NAME}"
 rm -f "$TMP_ZIP" "${TMP_ZIP%.zip}"
 
-# ====== 4. HTTP API GATEWAY ======
+# ====== 5. HTTP API GATEWAY ======
 API_ID=$(aws apigatewayv2 get-apis --region "$REGION" \
   --query "Items[?Name=='${API_NAME}'].ApiId | [0]" --output text 2>/dev/null || true)
 
@@ -215,18 +262,19 @@ INVOKE_URL="https://${API_ID}.execute-api.${REGION}.amazonaws.com/cost"
 cat <<EOF
 
 ============================================
-  Cost Tracker Lambda deployed!
+  OpenAI Cost Tracker Lambda deployed!
 ============================================
 
-  Function : $FUNCTION_NAME
-  API ID   : $API_ID
-  URL      : $INVOKE_URL
+  Function   : $FUNCTION_NAME
+  Project    : $PROJECT_NAME ($PROJECT_ID)
+  API ID     : $API_ID
+  URL        : $INVOKE_URL
 
   Test it:
     curl -s -X POST $INVOKE_URL \\
       -H 'Content-Type: application/json' \\
-      -d '{"api_key": "sk-ant-api03-...", "start_date": "2026-01-01"}'
+      -d '{"start_date": "2026-01-01"}'
 
-  Set this URL as COST_TRACKER_URL in placeholders.txt for setup-device.sh.
+  Set this URL as OPENAI_COST_TRACKER_URL in placeholders.txt for create-new-crux-box.sh.
 ============================================
 EOF

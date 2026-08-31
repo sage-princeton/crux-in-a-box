@@ -28,3 +28,6 @@ tabpfn_telemetry.jsonl
 
 # scrubbed run records pulled by utils/export-run.sh — local diagnostics, never commit
 runs-export/
+
+clean-room-old
+logs-for-release

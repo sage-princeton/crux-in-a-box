@@ -7,7 +7,18 @@ set -euo pipefail
 # Mirrors mac/start.sh: installs a desktop environment, VNC, openclaw,
 # monitoring, telemetry, and external service CLIs.
 #
-# Expected to be run as root (or via sudo) by setup-device.sh.
+# FIXME(merge v3): ORPHANED after the v3 merge. The provisioning entrypoint is
+# now linux/create-new-crux-box.sh, which invokes main's linux/src/install.sh
+# (software bake) + linux/src/configure.sh (per-run config) — NOT this script.
+# start.sh is retained because it is the ONLY place that installs the v3
+# crux-auth-watchdog / crux-session-snapshot / final-pass-injector jobs and wires
+# the OpenRouter key. Either (a) port those blocks into install.sh/configure.sh
+# and delete this file, or (b) re-point create-new-crux-box.sh at start.sh. Until
+# then this file is not executed by any current code path. See the matching
+# FIXME in linux/src/configure.sh (§ MISSING WATCHDOGS + FINAL-PASS INJECTOR).
+#
+# (Historical) Expected to be run as root (or via sudo) by setup-device.sh —
+# now renamed to create-new-crux-box.sh.
 # ==========================================================================
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
@@ -680,7 +691,7 @@ echo "✔ git configured for local commits (no remote, no credentials)"
 # see: https://gogcli.sh/quickstart.html
 
 # ====== HARNESS WORKSPACE ======
-# Copy the next-run-harness workspace into the agent's OpenClaw workspace
+# Copy the run-harness workspace into the agent's OpenClaw workspace
 # and resolve placeholders that are known at provisioning time.
 HARNESS_SRC="$REAL_HOME/crux-in-a-box-harness/workspace"
 # OPENCLAW_WORKSPACE is set in PLACEHOLDER RESOLUTION (top of file).
