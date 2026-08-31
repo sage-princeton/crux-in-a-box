@@ -1,0 +1,834 @@
+diff --git a/index.ts b/index.ts
+index 3a578a3..542a0df 100644
+--- a/index.ts
++++ b/index.ts
+@@ -1,23 +1,19 @@
+ import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
++import { createHash } from "node:crypto";
+ import { createTelemetryService } from "./src/service.js";
+-import { appendFileSync, mkdirSync } from "node:fs";
+-import { dirname } from "node:path";
+-import { homedir } from "node:os";
+-
+-const FALLBACK_FILE_PATH =
+-  process.env.OPENCLAW_TELEMETRY_FILE ?? `${homedir()}/.openclaw/logs/telemetry.jsonl`;
+-
+-function safeSerialize(payload: Record<string, unknown>): string {
+-  const seen = new WeakSet<object>();
+-  return JSON.stringify(payload, (_key, value) => {
+-    if (typeof value === "bigint") return value.toString();
+-    if (typeof value === "object" && value !== null) {
+-      if (seen.has(value)) return "[Circular]";
+-      seen.add(value);
+-    }
+-    return value;
+-  });
+-}
++
++/**
++ * Upper bound on the number of context messages copied into a single
++ * agent.start / agent.end event. The first event after a gateway (re)start has
++ * no cursor for the session, so the whole history would otherwise be copied
++ * once; the session store already holds the full transcript, so we keep the
++ * tail only and mark the truncation.
++ */
++const MAX_DELTA_MESSAGES = 50;
++/** Bound on the run-id dedupe set (insertion-ordered; oldest evicted). */
++const MAX_TRACKED_RUNS = 2000;
++/** Bound on the per-session system-prompt hash map (insertion-ordered). */
++const MAX_TRACKED_SESSIONS = 500;
+ 
+ export default {
+   id: "telemetry-hal",
+@@ -27,24 +23,96 @@ export default {
+     const svc = createTelemetryService();
+     api.registerService(svc);
+     const ctxOf = (evt: any, legacyCtx?: any) => legacyCtx ?? evt?.context ?? evt?.ctx ?? {};
+-    const emit = (payload: Record<string, unknown>) => {
+-      try {
+-        svc.write(payload as any);
+-      } catch {}
+-      try {
+-        mkdirSync(dirname(FALLBACK_FILE_PATH), { recursive: true });
+-        appendFileSync(FALLBACK_FILE_PATH, `${safeSerialize(payload)}\n`);
+-      } catch {}
++
++    // Envelope shared by every event: identity fields come from the typed hook
++    // context first (PluginHookAgentContext / PluginHookMessageContext), then
++    // from the event itself. Undefined fields are dropped by JSON.stringify.
++    const envelope = (evt: any, ctx: any) => ({
++      sessionKey: ctx.sessionKey ?? evt?.sessionKey,
++      agentId: ctx.agentId ?? evt?.agentId,
++      sessionId: ctx.sessionId ?? evt?.sessionId,
++      runId: evt?.runId ?? ctx.runId,
++    });
++
++    // svc.write() never throws: when the service has not started it writes a
++    // stamped + redacted fallback line itself (see service.ts). The old
++    // unconditional appendFileSync here produced a second, unredacted,
++    // unstamped copy of every event whenever the service WAS enabled.
++    const emit = (payload: Record<string, unknown>) => svc.write(payload as any);
++
++    // Insertion-ordered bounded map: the oldest key is evicted past `max`.
++    const remember = <V>(map: Map<string, V>, key: string, value: V, max: number) => {
++      map.set(key, value);
++      if (map.size > max) {
++        const oldest = map.keys().next().value;
++        if (oldest !== undefined) map.delete(oldest);
++      }
++    };
++
++    // ---- context delta tracking -------------------------------------------
++    // before_agent_start / agent_end hand us the session's full message array
++    // every turn. Logging it wholesale is O(n^2) over a run (the fable run
++    // wrote 552 MB of agent.start for 3.9 MB of actual new messages). We keep a
++    // per-session cursor and log only what was appended since the previous
++    // event for that session, plus counts.
++    const cursors = new Map<string, number>();
++    const contextDelta = (sessionKey: string | undefined, messages: unknown) => {
++      if (!Array.isArray(messages)) return {};
++      const key = sessionKey ?? "?";
++      const prev = cursors.get(key) ?? 0;
++      const reset = messages.length < prev; // compaction / reset / history reload
++      const start = reset ? 0 : prev;
++      const delta = messages.slice(start);
++      cursors.set(key, messages.length);
++      const truncated = delta.length > MAX_DELTA_MESSAGES;
++      return {
++        messageCount: messages.length,
++        newMessageCount: delta.length,
++        ...(reset ? { contextReset: true, previousMessageCount: prev } : {}),
++        newMessages: truncated ? delta.slice(-MAX_DELTA_MESSAGES) : delta,
++        ...(truncated ? { newMessagesTruncated: delta.length - MAX_DELTA_MESSAGES } : {}),
++      };
+     };
+ 
++    // ---- agent.start dedupe -------------------------------------------------
++    // On OpenClaw 2026.7.x the deprecated before_agent_start hook fires TWICE
++    // per run: once in the model-resolve phase ({prompt} only) and once in the
++    // prompt-build phase ({prompt, messages}); the fable run logged 716
++    // agent.start for 358 runs. before_prompt_build fires exactly once with
++    // {prompt, messages} and is not deprecated, so it is the primary source;
++    // before_agent_start is kept for older gateways and only honoured when it
++    // carries messages and the run has not been logged yet.
++    const loggedRuns = new Map<string, true>();
++    const onAgentStart = (hook: "before_prompt_build" | "before_agent_start") =>
++      (evt: any, legacyCtx?: any) => {
++        const ctx = ctxOf(evt, legacyCtx);
++        const env = envelope(evt, ctx);
++        if (hook === "before_agent_start" && !Array.isArray(evt?.messages)) return;
++        const runKey =
++          env.runId ??
++          `${env.sessionKey ?? "?"}|${evt?.prompt?.length ?? 0}|${evt?.messages?.length ?? 0}`;
++        if (loggedRuns.has(runKey)) return;
++        remember(loggedRuns, runKey, true, MAX_TRACKED_RUNS);
++        emit({
++          type: "agent.start",
++          ...env,
++          hook,
++          trigger: ctx.trigger,
++          channel: ctx.channelId ?? ctx.channel,
++          prompt: evt.prompt,
++          promptLength: evt.prompt?.length,
++          ...contextDelta(env.sessionKey, evt.messages),
++        });
++      };
++
+     api.on("before_tool_call", (evt: any, legacyCtx?: any) => {
+       const ctx = ctxOf(evt, legacyCtx);
+       emit({
+         type: "tool.start",
++        ...envelope(evt, ctx),
+         toolName: evt.toolName,
++        toolCallId: evt.toolCallId,
+         params: evt.params,
+-        sessionKey: ctx.sessionKey ?? evt.sessionKey,
+-        agentId: ctx.agentId ?? evt.agentId,
+       });
+     });
+ 
+@@ -52,23 +120,34 @@ export default {
+       const ctx = ctxOf(evt, legacyCtx);
+       emit({
+         type: "tool.end",
++        ...envelope(evt, ctx),
+         toolName: evt.toolName,
++        toolCallId: evt.toolCallId,
+         durationMs: evt.durationMs,
+         success: !evt.error,
+         error: evt.error,
+-        sessionKey: ctx.sessionKey ?? evt.sessionKey,
+-        agentId: ctx.agentId ?? evt.agentId,
+       });
+     });
+ 
++    // message_* hooks run at the channel layer; their ctx is a
++    // PluginHookMessageContext (channelId/accountId/conversationId/messageId and,
++    // once routed, sessionKey/runId). The old handlers dropped all of it.
++    const messageEnvelope = (evt: any, ctx: any) => ({
++      ...envelope(evt, ctx),
++      channel: ctx.channelId ?? evt.channelId ?? evt.channel ?? "unknown",
++      accountId: ctx.accountId,
++      conversationId: ctx.conversationId ?? evt.conversationId,
++      messageId: ctx.messageId ?? evt.messageId,
++    });
++
+     api.on("message_received", (evt: any, legacyCtx?: any) => {
+       const ctx = ctxOf(evt, legacyCtx);
+       emit({
+         type: "message.in",
+-        channel: ctx.channelId ?? evt.channelId ?? evt.channel ?? "unknown",
+-        from: evt.from ?? evt.senderId ?? "unknown",
++        ...messageEnvelope(evt, ctx),
++        from: evt.from ?? evt.senderId ?? ctx.senderId ?? "unknown",
+         content: evt.content ?? evt.text,
+-        contentLength: evt.content?.length,
++        contentLength: (evt.content ?? evt.text)?.length,
+         timestamp: evt.timestamp,
+         metadata: evt.metadata,
+       });
+@@ -78,7 +157,7 @@ export default {
+       const ctx = ctxOf(evt, legacyCtx);
+       emit({
+         type: "message.sending",
+-        channel: ctx.channelId ?? evt.channelId ?? evt.channel ?? "unknown",
++        ...messageEnvelope(evt, ctx),
+         to: evt.to ?? evt.target ?? "unknown",
+         content: evt.content ?? evt.text,
+       });
+@@ -88,7 +167,7 @@ export default {
+       const ctx = ctxOf(evt, legacyCtx);
+       emit({
+         type: "message.out",
+-        channel: ctx.channelId ?? evt.channelId ?? evt.channel ?? "unknown",
++        ...messageEnvelope(evt, ctx),
+         to: evt.to ?? evt.target ?? "unknown",
+         content: evt.content ?? evt.text,
+         success: evt.success ?? !evt.error,
+@@ -96,28 +175,96 @@ export default {
+       });
+     });
+ 
+-    api.on("before_agent_start", (evt: any, legacyCtx?: any) => {
++    api.on("before_prompt_build", onAgentStart("before_prompt_build"));
++    api.on("before_agent_start", onAgentStart("before_agent_start"));
++
++    // ---- system prompt ----------------------------------------------------
++    // before_prompt_build / before_agent_start carry {prompt, messages} only;
++    // the assembled system prompt is exposed by llm_input, which fires once per
++    // model submission with the history that was actually sent. llm_input is a
++    // "conversation" hook: like agent_end it is refused for non-bundled
++    // plugins unless plugins.entries.telemetry-hal.hooks.allowConversationAccess
++    // is true. We log sha256 + length on every submission and the full text
++    // once per session whenever the hash changes, so the record shows exactly
++    // what the model saw without repeating a multi-KB prompt on every turn.
++    const systemPromptHashes = new Map<string, string>();
++    api.on("llm_input", (evt: any, legacyCtx?: any) => {
+       const ctx = ctxOf(evt, legacyCtx);
++      const env = envelope(evt, ctx);
++      const systemPrompt = typeof evt?.systemPrompt === "string" ? evt.systemPrompt : undefined;
++      const sha256 =
++        systemPrompt === undefined
++          ? undefined
++          : createHash("sha256").update(systemPrompt).digest("hex");
++      const sessionKey = env.sessionKey ?? env.sessionId ?? "?";
++      if (sha256 !== undefined && systemPromptHashes.get(sessionKey) !== sha256) {
++        remember(systemPromptHashes, sessionKey, sha256, MAX_TRACKED_SESSIONS);
++        emit({
++          type: "system.prompt",
++          ...env,
++          provider: evt.provider,
++          model: evt.model,
++          sha256,
++          length: systemPrompt?.length,
++          text: systemPrompt,
++        });
++      }
+       emit({
+-        type: "agent.start",
+-        sessionKey: ctx.sessionKey ?? evt.sessionKey,
+-        agentId: ctx.agentId ?? evt.agentId,
+-        prompt: evt.prompt,
++        type: "llm.input",
++        ...env,
++        provider: evt.provider,
++        model: evt.model,
++        systemPromptSha256: sha256,
++        systemPromptLength: systemPrompt?.length,
+         promptLength: evt.prompt?.length,
+-        messages: evt.messages,
++        historyMessageCount: Array.isArray(evt.historyMessages) ? evt.historyMessages.length : undefined,
++        imagesCount: evt.imagesCount,
++        toolCount: Array.isArray(evt.tools) ? evt.tools.length : undefined,
++      });
++    });
++
++    // ---- llm.usage fallback -----------------------------------------------
++    // The service subscribes to the gateway's internal diagnostic bus for
++    // model.usage (per run, with the gateway's cost estimate). If that
++    // subscription could not be established (an SDK without the
++    // diagnostic-runtime subpath, or one that moves it) and nothing has
++    // arrived through the public listener either, llm_output -- a typed hook
++    // carrying the same per-run token usage, minus cost -- takes over, so
++    // every run still yields one llm.usage line. (Also active while the
++    // service has not started: the line then goes to the fallback file.)
++    api.on("llm_output", (evt: any, legacyCtx?: any) => {
++      if (svc.busDeliversUsage()) return;
++      const ctx = ctxOf(evt, legacyCtx);
++      emit({
++        type: "llm.usage",
++        ...envelope(evt, ctx),
++        source: "llm_output",
++        provider: evt.provider,
++        model: evt.model,
++        resolvedRef: evt.resolvedRef,
++        inputTokens: evt.usage?.input,
++        outputTokens: evt.usage?.output,
++        cacheTokens: evt.usage?.cacheRead,
++        cacheWriteTokens: evt.usage?.cacheWrite,
++        totalTokens: evt.usage?.total,
++        contextLimit: evt.contextTokenBudget,
+       });
+     });
+ 
++    // agent_end is a "conversation" hook: for non-bundled plugins the gateway
++    // refuses to register it unless
++    // plugins.entries.telemetry-hal.hooks.allowConversationAccess === true
++    // (the fable run's gateway log: 'typed hook "agent_end" blocked ...').
+     api.on("agent_end", (evt: any, legacyCtx?: any) => {
+       const ctx = ctxOf(evt, legacyCtx);
++      const env = envelope(evt, ctx);
+       emit({
+         type: "agent.end",
+-        sessionKey: ctx.sessionKey ?? evt.sessionKey,
+-        agentId: ctx.agentId ?? evt.agentId,
+-        messages: evt.messages,
++        ...env,
+         success: evt.success,
+         durationMs: evt.durationMs,
+         error: evt.error,
++        ...contextDelta(env.sessionKey, evt.messages),
+       });
+     });
+   },
+diff --git a/src/redact.ts b/src/redact.ts
+index d72936c..0d7adc7 100644
+--- a/src/redact.ts
++++ b/src/redact.ts
+@@ -7,7 +7,23 @@ const DEFAULT_PATTERNS = [
+   "(?i)bearer\\s+[a-z0-9_-]{20,}",
+   "(?i)(aws_secret|aws_access)[a-z_]*[\"']?\\s*[:=]\\s*[\"']?[a-z0-9/+=]{20,}",
+   "sk-[a-zA-Z0-9]{32,}",
++  // Anthropic (sk-ant-api03-...), OpenAI project keys (sk-proj-...): the
++  // generic sk- pattern above stops at the first hyphen and misses both.
++  "sk-(?:ant|proj|svcacct)-[a-zA-Z0-9_-]{20,}",
++  // OpenRouter: sk-or-v1-<64 hex>.
++  "sk-or-v1-[0-9a-f]{64}",
+   "ghp_[a-zA-Z0-9]{36}",
++  "github_pat_[a-zA-Z0-9_]{60,}",
++  "rpa_[a-zA-Z0-9]{20,}",
++  "\\b[0-9]{8,10}:AA[a-zA-Z0-9_-]{30,}",
++  "AKIA[0-9A-Z]{16}",
++  "hf_[a-zA-Z0-9]{30,}",
++  "-----BEGIN [A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END [A-Z ]*PRIVATE KEY-----",
++  // Labelled 40-64 hex secrets (gateway auth token, portal/session tokens):
++  // `--token <hex>`, `Authorization: <hex>`, `TOKEN=<hex>`, `"token":"<hex>"`.
++  // A bare hex run stays untouched (it is also the shape of a git sha or a
++  // hash); the label is what marks it as a credential.
++  "(?i)(token|secret|passw(?:or)?d|api[_-]?key|auth)[a-z0-9_-]*[\"']?[\\s:=]+[\"']?[0-9a-f]{40,64}\\b",
+   "gho_[a-zA-Z0-9]{36}",
+   "glpat-[a-zA-Z0-9_-]{20,}",
+   "xox[baprs]-[a-zA-Z0-9-]{10,}",
+diff --git a/src/service.test.ts b/src/service.test.ts
+index cd262fa..748b7df 100644
+--- a/src/service.test.ts
++++ b/src/service.test.ts
+@@ -22,7 +22,7 @@ describe("TelemetryService", () => {
+   test("does not write when disabled", async () => {
+     const svc = createTelemetryService();
+     await svc.start({
+-      config: { plugins: { entries: { telemetry: { config: { enabled: false } } } } },
++      config: { plugins: { entries: { "telemetry-hal": { config: { enabled: false } } } } },
+       stateDir: TEST_DIR,
+       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+     });
+@@ -37,7 +37,7 @@ describe("TelemetryService", () => {
+     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+ 
+     await svc.start({
+-      config: { plugins: { entries: { telemetry: { config: { enabled: true, filePath } } } } },
++      config: { plugins: { entries: { "telemetry-hal": { config: { enabled: true, filePath } } } } },
+       stateDir: TEST_DIR,
+       logger,
+     });
+@@ -66,7 +66,7 @@ describe("TelemetryService", () => {
+     const logger = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+ 
+     await svc.start({
+-      config: { plugins: { entries: { telemetry: { config: { enabled: true } } } } },
++      config: { plugins: { entries: { "telemetry-hal": { config: { enabled: true } } } } },
+       stateDir: TEST_DIR,
+       logger,
+     });
+diff --git a/src/service.ts b/src/service.ts
+index f23fe5f..98c4a26 100644
+--- a/src/service.ts
++++ b/src/service.ts
+@@ -1,4 +1,7 @@
+ import { onDiagnosticEvent } from "openclaw/plugin-sdk";
++import { appendFileSync, mkdirSync } from "node:fs";
++import { homedir } from "node:os";
++import { dirname } from "node:path";
+ import { createIntegrityChain } from "./integrity.js";
+ import { createRateLimiter } from "./ratelimit.js";
+ import { createRedactor } from "./redact.js";
+@@ -22,28 +25,136 @@ type OpenClawPluginService = {
+   start: (ctx: {
+     config: Record<string, unknown> & { plugins?: { entries?: Record<string, { config?: unknown }> } };
+     stateDir: string;
+-    logger: { info: (msg: string) => void };
++    logger: { info: (msg: string) => void; warn?: (msg: string) => void };
+   }) => void | Promise<void>;
+   stop?: () => void | Promise<void>;
+ };
+ 
++/** Where llm.usage comes from once the service is running. */
++export type UsageSource = "internal" | "public" | "public-live" | "none";
++
+ export type TelemetryService = OpenClawPluginService & {
+   write: (evt: TelemetryEventInput) => void;
++  /** True once start() ran with config.enabled === true. */
++  isStarted: () => boolean;
++  /**
++   * "internal": subscribed via onInternalDiagnosticEvent (model.usage arrives).
++   * "public": only the public onDiagnosticEvent listener could be installed;
++   *   the gateway emits model.usage as a *trusted* event and the public
++   *   listener filters trusted events out, so nothing is expected to arrive
++   *   and the llm_output hook in index.ts supplies llm.usage instead.
++   * "public-live": the public listener has in fact delivered a model.usage
++   *   (a gateway that emits it untrusted); the bus is the source from then on.
++   * "none": service not started.
++   */
++  usageSource: () => UsageSource;
++  /** True when llm.usage is known to arrive from the diagnostic bus. */
++  busDeliversUsage: () => boolean;
+ };
+ 
++const PLUGIN_ID = "telemetry-hal";
++
++/**
++ * Where hook events go when the service is NOT running (no config block, or
++ * hooks firing before start()). This is the only path that may write without
++ * the writer/rotation/integrity pipeline, and it still stamps ts/seq, still
++ * redacts with the default patterns, and marks the line with fallback:true so
++ * consumers can tell the two apart.
++ */
++const FALLBACK_FILE_PATH =
++  process.env.OPENCLAW_TELEMETRY_FILE ??
++  `${process.env.OPENCLAW_STATE_DIR ?? `${homedir()}/.openclaw`}/logs/telemetry.jsonl`;
++
++/**
++ * model.usage is emitted by the gateway with emitTrustedDiagnosticEvent. The
++ * public `onDiagnosticEvent` exported from "openclaw/plugin-sdk" is a wrapper
++ * over onInternalDiagnosticEvent that DROPS trusted events, so a plugin that
++ * subscribes through it never sees model.usage (the fable run: 0 llm.usage
++ * lines even with the service on). onInternalDiagnosticEvent is exported from
++ * the "openclaw/plugin-sdk/diagnostic-runtime" subpath (2026.5.18 onwards at
++ * runtime; its .d.ts only declares it from 2026.6.x). The specifier is kept in
++ * a variable so TypeScript does not resolve the module: the plugin's lockfile
++ * pins the 2026.5.18 types, and a static import would fail to type-check there
++ * -- or fail to *load* on a gateway without the subpath. Loading it dynamically
++ * keeps the plugin usable on any version; the caller falls back to the public
++ * listener when the subpath or the export is missing.
++ */
++const DIAGNOSTIC_RUNTIME_MODULE = "openclaw/plugin-sdk/diagnostic-runtime";
++
++type DiagnosticListener = (evt: any, metadata?: any) => void;
++type DiagnosticSubscription = { unsubscribe: () => void; source: "internal" | "public" };
++
++async function subscribeModelUsage(listener: DiagnosticListener): Promise<DiagnosticSubscription> {
++  try {
++    const mod = (await import(DIAGNOSTIC_RUNTIME_MODULE)) as Record<string, unknown>;
++    const onInternal = mod.onInternalDiagnosticEvent;
++    if (typeof onInternal === "function") {
++      const unsubscribe = onInternal((evt: any, metadata: any) => {
++        if (evt?.type === "model.usage") listener(evt, metadata);
++      });
++      return { unsubscribe: typeof unsubscribe === "function" ? unsubscribe : () => {}, source: "internal" };
++    }
++  } catch {
++    // subpath not exported by this SDK version, or not aliased by the loader
++  }
++  const unsubscribe = onDiagnosticEvent((evt: any) => {
++    if (evt?.type === "model.usage") listener(evt);
++  });
++  return { unsubscribe, source: "public" };
++}
++
++function safeSerialize(evt: object): string {
++  const seen = new WeakSet<object>();
++  return JSON.stringify(evt, (_key, value) => {
++    if (typeof value === "bigint") return value.toString();
++    if (typeof value === "object" && value !== null) {
++      if (seen.has(value)) return "[Circular]";
++      seen.add(value);
++    }
++    return value;
++  });
++}
++
+ export function createTelemetryService(): TelemetryService {
+   let fileWriter: TelemetryWriter | null = null;
+   let syslogWriter: SyslogWriter | null = null;
+   let unsubDiag: (() => void) | null = null;
+-  let logger: { info: (msg: string) => void } | null = null;
++  let usageSource: UsageSource = "none";
++  let logger: { info: (msg: string) => void; warn?: (msg: string) => void } | null = null;
+   let redactor = createRedactor();
++  const fallbackRedactor = createRedactor({ enabled: true });
+   let integrity = createIntegrityChain();
+   let rateLimiter = createRateLimiter();
+   let seq = 0;
++  let started = false;
++  // "disabled" = operator explicitly set config.enabled=false: write nothing.
++  // "unconfigured" = no config block at all: fall back to raw stamped writes
++  // so a mis-provisioned box still leaves a trail (and says so in the log).
++  let mode: "starting" | "started" | "unconfigured" | "disabled" = "starting";
++  let droppedSinceLast = 0;
++
++  const fallbackWrite = (evt: TelemetryEventInput) => {
++    try {
++      const stamped = {
++        ...fallbackRedactor.redact(evt),
++        seq: ++seq,
++        ts: Date.now(),
++        fallback: true,
++      };
++      mkdirSync(dirname(FALLBACK_FILE_PATH), { recursive: true });
++      appendFileSync(FALLBACK_FILE_PATH, `${safeSerialize(stamped)}\n`);
++    } catch {}
++  };
+ 
+   const writeEvent = (evt: TelemetryEventInput) => {
++    if (!started) {
++      if (mode !== "disabled") fallbackWrite(evt);
++      return;
++    }
+     try {
+       if (!rateLimiter.allow()) {
++        // Never drop silently: the next admitted event carries the count.
++        droppedSinceLast++;
+         return;
+       }
+       const redacted = redactor.redact(evt);
+@@ -51,7 +162,9 @@ export function createTelemetryService(): TelemetryService {
+         ...redacted,
+         seq: ++seq,
+         ts: Date.now(),
++        ...(droppedSinceLast > 0 ? { droppedSinceLast } : {}),
+       } as TelemetryEvent;
++      droppedSinceLast = 0;
+       const signed = integrity.sign(enriched);
+ 
+       fileWriter?.write(signed);
+@@ -67,6 +180,7 @@ export function createTelemetryService(): TelemetryService {
+               ? `${error.name}: ${error.message}`
+               : String(error),
+           sourceType: (evt as { type?: string })?.type ?? "unknown",
++          sessionKey: (evt as { sessionKey?: string })?.sessionKey,
+         };
+         fileWriter?.write(fallback);
+       } catch {}
+@@ -75,14 +189,27 @@ export function createTelemetryService(): TelemetryService {
+   };
+ 
+   return {
+-    id: "telemetry-hal",
++    id: PLUGIN_ID,
+     write: writeEvent,
++    isStarted: () => started,
++    usageSource: () => usageSource,
++    busDeliversUsage: () => usageSource === "internal" || usageSource === "public-live",
+     async start(ctx) {
+       logger = ctx.logger;
+-      const cfg = ctx.config.plugins?.entries?.['telemetry-hal']?.config as
+-        | TelemetryConfig
+-        | undefined;
++      const warn = ctx.logger.warn ?? ctx.logger.info;
++      const entry = ctx.config.plugins?.entries?.[PLUGIN_ID];
++      const cfg = entry?.config as TelemetryConfig | undefined;
+       if (!cfg?.enabled) {
++        // This is the state the fable run was in: plugins.entries.telemetry-hal
++        // = {enabled:true} (plugin loads, hooks fire) but no .config block, so
++        // the service never started and nothing was stamped/redacted/rotated.
++        // Say so loudly instead of returning in silence.
++        mode = cfg?.enabled === false ? "disabled" : "unconfigured";
++        warn(
++          mode === "disabled"
++            ? `telemetry: service disabled by plugins.entries.${PLUGIN_ID}.config.enabled=false; hook events are discarded`
++            : `telemetry: plugins.entries.${PLUGIN_ID}.config.enabled is not set; service NOT started (no rotation/integrity/llm.usage). Hook events fall back to ${FALLBACK_FILE_PATH} with default redaction`,
++        );
+         return;
+       }
+ 
+@@ -91,9 +218,29 @@ export function createTelemetryService(): TelemetryService {
+       ctx.logger.info(`telemetry: ${filePath}`);
+ 
+       if (cfg.rotate?.enabled) ctx.logger.info("telemetry: rotation enabled");
+-      if (cfg.redact?.enabled) {
+-        redactor = createRedactor(cfg.redact);
+-        ctx.logger.info("telemetry: redaction enabled");
++      // Redaction is ON unless the operator explicitly turns it off. The
++      // upstream default (off unless redact.enabled === true) meant a service
++      // enabled by hand wrote raw tool arguments and message bodies -- the
++      // not-started fallback path already redacted by default, so the started
++      // path must not be the weaker of the two.
++      if (cfg.redact?.enabled === false) {
++        warn("telemetry: redaction DISABLED by config.redact.enabled=false");
++      } else {
++        try {
++          redactor = createRedactor({ ...cfg.redact, enabled: true });
++          ctx.logger.info(
++            `telemetry: redaction enabled${cfg.redact?.enabled === undefined ? " (default)" : ""}`,
++          );
++        } catch (error) {
++          // A pattern that fails to compile must not take the pipeline down:
++          // keep the built-in patterns and say which config was ignored.
++          redactor = createRedactor({ enabled: true, replacement: cfg.redact?.replacement });
++          warn(
++            `telemetry: config.redact.patterns rejected (${
++              error instanceof Error ? error.message : String(error)
++            }); using default patterns`,
++          );
++        }
+       }
+       if (cfg.integrity?.enabled) {
+         integrity = createIntegrityChain(cfg.integrity);
+@@ -110,26 +257,56 @@ export function createTelemetryService(): TelemetryService {
+         );
+       }
+ 
+-      unsubDiag = onDiagnosticEvent((evt) => {
+-        if (evt.type === "model.usage") {
+-          writeEvent({
+-            type: "llm.usage",
+-            sessionKey: evt.sessionKey,
+-            provider: evt.provider,
+-            model: evt.model,
+-            inputTokens: evt.usage.input,
+-            outputTokens: evt.usage.output,
+-            cacheTokens: evt.usage.cacheRead,
+-            durationMs: evt.durationMs,
+-            costUsd: evt.costUsd,
+-          });
+-        }
++      started = true;
++      mode = "started";
++
++      // model.usage is emitted once per agent run (aggregate of every model
++      // call in the run) by the gateway when config.diagnostics.enabled !== false.
++      // costUsd is the gateway's estimate from its model cost table. The
++      // session store's per-message usage.cost is finer-grained (per call,
++      // split by bucket); this event is the cheap cross-check, not the ledger.
++      const subscription = await subscribeModelUsage((evt: any, metadata?: any) => {
++        if (usageSource === "public") usageSource = "public-live";
++        writeEvent({
++          type: "llm.usage",
++          source: "model.usage",
++          trusted: metadata?.trusted,
++          sessionKey: evt.sessionKey,
++          sessionId: evt.sessionId,
++          agentId: evt.agentId,
++          runId: evt.runId,
++          channel: evt.channel,
++          provider: evt.provider,
++          model: evt.model,
++          inputTokens: evt.usage?.input,
++          outputTokens: evt.usage?.output,
++          cacheTokens: evt.usage?.cacheRead,
++          cacheWriteTokens: evt.usage?.cacheWrite,
++          promptTokens: evt.usage?.promptTokens,
++          totalTokens: evt.usage?.total,
++          lastCallUsage: evt.lastCallUsage,
++          contextLimit: evt.context?.limit,
++          contextUsed: evt.context?.used,
++          durationMs: evt.durationMs,
++          costUsd: evt.costUsd,
++        } as TelemetryEventInput);
+       });
++      unsubDiag = subscription.unsubscribe;
++      usageSource = subscription.source;
++      if (subscription.source === "internal") {
++        ctx.logger.info("telemetry: llm.usage from the internal diagnostic bus (model.usage)");
++      } else {
++        warn(
++          `telemetry: ${DIAGNOSTIC_RUNTIME_MODULE} unavailable; public onDiagnosticEvent drops trusted model.usage, so llm.usage comes from the llm_output hook (no costUsd)`,
++        );
++      }
+     },
+     async stop() {
+       unsubDiag?.();
+       unsubDiag = null;
++      usageSource = "none";
+       logger = null;
++      started = false;
+       await fileWriter?.flush();
+       fileWriter = null;
+       await syslogWriter?.close();
+diff --git a/src/types.ts b/src/types.ts
+index 2c82227..fcbdb0f 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -3,25 +3,49 @@ export type TelemetryEventBase = {
+   seq: number;
+   sessionKey?: string;
+   agentId?: string;
++  sessionId?: string;
++  runId?: string;
++  /** Set on lines written by the not-started fallback path. */
++  fallback?: boolean;
++  /** Events dropped by the rate limiter since the previous admitted event. */
++  droppedSinceLast?: number;
++};
++
++/** Context delta attached to agent.start / agent.end instead of the full history. */
++export type TelemetryContextDelta = {
++  messageCount?: number;
++  newMessageCount?: number;
++  newMessages?: unknown[];
++  newMessagesTruncated?: number;
++  contextReset?: boolean;
++  previousMessageCount?: number;
+ };
+ 
+ export type TelemetryToolStartEvent = TelemetryEventBase & {
+   type: "tool.start";
+   toolName: string;
++  toolCallId?: string;
+   params: Record<string, unknown>;
+ };
+ 
+ export type TelemetryToolEndEvent = TelemetryEventBase & {
+   type: "tool.end";
+   toolName: string;
++  toolCallId?: string;
+   durationMs?: number;
+   success: boolean;
+   error?: string;
+ };
+ 
+-export type TelemetryMessageInEvent = TelemetryEventBase & {
+-  type: "message.in";
++export type TelemetryMessageEnvelope = {
+   channel: string;
++  accountId?: string;
++  conversationId?: string;
++  messageId?: string;
++};
++
++export type TelemetryMessageInEvent = TelemetryEventBase & TelemetryMessageEnvelope & {
++  type: "message.in";
+   from: string;
+   content?: string;
+   contentLength?: number;
+@@ -29,16 +53,14 @@ export type TelemetryMessageInEvent = TelemetryEventBase & {
+   metadata?: Record<string, unknown>;
+ };
+ 
+-export type TelemetryMessageSendingEvent = TelemetryEventBase & {
++export type TelemetryMessageSendingEvent = TelemetryEventBase & TelemetryMessageEnvelope & {
+   type: "message.sending";
+-  channel: string;
+   to: string;
+   content?: string;
+ };
+ 
+-export type TelemetryMessageOutEvent = TelemetryEventBase & {
++export type TelemetryMessageOutEvent = TelemetryEventBase & TelemetryMessageEnvelope & {
+   type: "message.out";
+-  channel: string;
+   to: string;
+   content?: string;
+   success: boolean;
+@@ -47,25 +69,68 @@ export type TelemetryMessageOutEvent = TelemetryEventBase & {
+ 
+ export type TelemetryLlmUsageEvent = TelemetryEventBase & {
+   type: "llm.usage";
++  /**
++   * "model.usage": the gateway's per-run diagnostic event (has costUsd).
++   * "llm_output": the typed hook, used only when the diagnostic bus could
++   * not be subscribed to; same token counts, no cost.
++   */
++  source?: "model.usage" | "llm_output";
++  /** Whether the diagnostic bus flagged the emission as trusted (gateway-originated). */
++  trusted?: boolean;
++  channel?: string;
+   provider?: string;
+   model?: string;
++  /** Fully resolved provider/model ref, e.g. "anthropic/claude-x" (llm_output only). */
++  resolvedRef?: string;
+   inputTokens?: number;
+   outputTokens?: number;
+   cacheTokens?: number;
++  cacheWriteTokens?: number;
++  promptTokens?: number;
++  totalTokens?: number;
++  lastCallUsage?: Record<string, number | undefined>;
++  contextLimit?: number;
++  contextUsed?: number;
+   durationMs?: number;
++  /** Gateway estimate from its model cost table (per run, not per call). */
+   costUsd?: number;
+ };
+ 
+-export type TelemetryAgentStartEvent = TelemetryEventBase & {
++/** One line per model submission: what was sent, by shape, never the text. */
++export type TelemetryLlmInputEvent = TelemetryEventBase & {
++  type: "llm.input";
++  provider?: string;
++  model?: string;
++  systemPromptSha256?: string;
++  systemPromptLength?: number;
++  promptLength?: number;
++  historyMessageCount?: number;
++  imagesCount?: number;
++  toolCount?: number;
++};
++
++/** Full system prompt text, written once per session each time its hash changes. */
++export type TelemetrySystemPromptEvent = TelemetryEventBase & {
++  type: "system.prompt";
++  provider?: string;
++  model?: string;
++  sha256: string;
++  length?: number;
++  text?: string;
++};
++
++export type TelemetryAgentStartEvent = TelemetryEventBase & TelemetryContextDelta & {
+   type: "agent.start";
++  /** Which hook produced the event (before_prompt_build, or legacy before_agent_start). */
++  hook?: string;
++  trigger?: string;
++  channel?: string;
+   prompt?: string;
+   promptLength?: number;
+-  messages?: unknown[];
+ };
+ 
+-export type TelemetryAgentEndEvent = TelemetryEventBase & {
++export type TelemetryAgentEndEvent = TelemetryEventBase & TelemetryContextDelta & {
+   type: "agent.end";
+-  messages?: unknown[];
+   success: boolean;
+   durationMs?: number;
+   error?: string;
+@@ -78,6 +143,8 @@ export type TelemetryEvent =
+   | TelemetryMessageSendingEvent
+   | TelemetryMessageOutEvent
+   | TelemetryLlmUsageEvent
++  | TelemetryLlmInputEvent
++  | TelemetrySystemPromptEvent
+   | TelemetryAgentStartEvent
+   | TelemetryAgentEndEvent;
+ 

@@ -20,6 +20,7 @@ This repository is designed to facilitate creating the architecture for [CRUX-st
 3. In `linux/`, copy `placeholders.txt.example`, fill it in, and run `./setup-device.sh placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot.
 4. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
 5. Verify accounts per `next-run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
+6. When the run is over — while the box is still up and before any key is revoked — pull the record with `utils/export-run.sh --host <alias>` (see the Operator Guide, § Post-run).
 
 ## External services for your agent to use
 
@@ -49,5 +50,5 @@ Installed by default:
 - `linux/` — provisioning, watchdog, monitoring
 - `next-run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
 - `harness-overview.html` — human-facing overview
-- `utils/` — gog bootstrap, telemetry scrubbing
-- `logs-for-release/` — scrubbed run telemetry
+- `utils/` — gog bootstrap; the post-run export pipeline (`export-run.sh` drives it: `make-blacklist.sh` and `extract_run_log.py --scrub` run on the box, `scan-secrets.py` checks the result with class-shape patterns, counts only)
+- `runs-export/` — scrubbed run records pulled by `utils/export-run.sh` (gitignored). The session store is the record; plugin telemetry is a supplement. Raw `sessions/` and raw `telemetry.jsonl*` never leave the box; `run_events.jsonl` / `run_summary.json` are what you share, after a human look

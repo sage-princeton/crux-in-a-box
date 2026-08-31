@@ -54,14 +54,18 @@ absent or blank):
                            RUNPOD_API_KEY for the agent's GPU-pod tool calls.
     REFINE_INK_API_KEY   refine.ink API key — written to ~/.openclaw/.env as
                            REFINE_INK_API_KEY for the external-review API.
+    OPENROUTER_API_KEY   OpenRouter API key — written to ~/.openclaw/.env as
+                           OPENROUTER_API_KEY for the experiments' LLM calls.
 
   Workspace placeholders (substituted into the harness files):
     GITHUB_USER          GitHub username for the gh CLI
     CLOUD_SPEND_LIMIT    RunPod GPU spend cap (e.g. \$500)
+    OPENROUTER_BUDGET    OpenRouter spend cap for the experiments' LLM calls (e.g. \$500)
     API_BUDGET           Anthropic API spend cap (e.g. \$500)
 
 Optional keys:
     ...any workspace placeholder with a default (PAGE_BUDGET, VENUE, etc.)
+    TELEMETRY_ROTATE_MAX_BYTES, TELEMETRY_ROTATE_MAX_FILES, AUTH_WATCHDOG_THRESHOLD, SESSION_SNAPSHOT_MINUTES  (box-side knobs; defaults in placeholders.txt.example)
 
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
@@ -136,12 +140,14 @@ REQUIRED_KEYS=(
   COST_TRACKER_URL
   RUNPOD_API_KEY
   REFINE_INK_API_KEY
+  OPENROUTER_API_KEY
   GOG_ACCOUNT
   GOG_KEYRING_PASSWORD
   GOG_HOME_TARBALL
   GITHUB_USER
   GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN
   CLOUD_SPEND_LIMIT
+  OPENROUTER_BUDGET
   API_BUDGET
   RESEARCH_QUESTION
   RESEARCH_CONTEXT
@@ -176,6 +182,7 @@ REASONING_EFFORT="${CFG[REASONING_EFFORT]:-xhigh}"
 COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
+OPENROUTER_API_KEY="${CFG[OPENROUTER_API_KEY]}"
 # GitHub classic PAT — a secret credential (NOT a workspace placeholder); used
 # by start.sh to authenticate the gh CLI non-interactively and to let git push
 # over HTTPS. Kept out of the placeholder map so it's never sed'd into files.
@@ -198,9 +205,9 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # ====== BUILD WORKSPACE PLACEHOLDER MAP ======
 # Every config key EXCEPT the operational/runtime ones above is forwarded to
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
-# keeps GITHUB_USER, CLOUD_SPEND_LIMIT, API_BUDGET and any optional placeholder
+# keeps GITHUB_USER, CLOUD_SPEND_LIMIT, OPENROUTER_BUDGET, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY OPENROUTER_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -552,6 +559,7 @@ REMOTE_ENV=$(build_remote_env \
   API_KEY_SUFFIX \
   RUNPOD_API_KEY \
   REFINE_INK_API_KEY \
+  OPENROUTER_API_KEY \
   GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN \
   GOG_ACCOUNT \
   GOG_KEYRING_PASSWORD \

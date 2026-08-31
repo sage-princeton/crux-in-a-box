@@ -14,7 +14,7 @@
     --c-decide:#2563eb; --c-quality:#9333ea; --c-gate:#15803d; --c-resource:#b45309;
     /* colored TEXT-on-surface tokens (separate, so dark mode can lighten them without
        affecting the white-on-color uses of --c-quality / --c-gate) */
-    --c-quality-text:#9333ea; --c-gate-text:#166534;
+    --c-quality-text:#9333ea; --c-gate-text:#166534; --c-resource-text:#92400e;
     --shadow:0 1px 2px rgba(20,22,50,.06), 0 6px 20px rgba(20,22,50,.06);
     --radius:14px; --maxw:1080px;
   }
@@ -22,12 +22,12 @@
     :root{
       --bg:#0f1118; --surface:#171a24; --surface-2:#1f2331; --ink:#e9eaf3; --muted:#a6abc6;
       --line:#2b3042; --accent:#8b8cf9; --accent-ink:#0f1118; --focus:#9db8ff;
-      --c-quality-text:#c084fc; --c-gate-text:#4ade80;
+      --c-quality-text:#c084fc; --c-gate-text:#4ade80; --c-resource-text:#fbbf24;
       --shadow:0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
     }
   }
-  :root[data-theme="light"]{ --bg:#f7f7fb; --surface:#fff; --surface-2:#f0f1f7; --ink:#1a1c2a; --muted:#565a72; --line:#dcdef0; --accent:#4f46e5; --accent-ink:#fff; --focus:#1d4ed8; --c-quality-text:#9333ea; --c-gate-text:#166534; --shadow:0 1px 2px rgba(20,22,50,.06),0 6px 20px rgba(20,22,50,.06);}
-  :root[data-theme="dark"]{ --bg:#0f1118; --surface:#171a24; --surface-2:#1f2331; --ink:#e9eaf3; --muted:#a6abc6; --line:#2b3042; --accent:#8b8cf9; --accent-ink:#0f1118; --focus:#9db8ff; --c-quality-text:#c084fc; --c-gate-text:#4ade80; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);}
+  :root[data-theme="light"]{ --bg:#f7f7fb; --surface:#fff; --surface-2:#f0f1f7; --ink:#1a1c2a; --muted:#565a72; --line:#dcdef0; --accent:#4f46e5; --accent-ink:#fff; --focus:#1d4ed8; --c-quality-text:#9333ea; --c-gate-text:#166534; --c-resource-text:#92400e; --shadow:0 1px 2px rgba(20,22,50,.06),0 6px 20px rgba(20,22,50,.06);}
+  :root[data-theme="dark"]{ --bg:#0f1118; --surface:#171a24; --surface-2:#1f2331; --ink:#e9eaf3; --muted:#a6abc6; --line:#2b3042; --accent:#8b8cf9; --accent-ink:#0f1118; --focus:#9db8ff; --c-quality-text:#c084fc; --c-gate-text:#4ade80; --c-resource-text:#fbbf24; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 24px rgba(0,0,0,.35);}
 
   *{box-sizing:border-box}
   html{scroll-behavior:smooth}
@@ -74,7 +74,8 @@
 
   /* Lifecycle stepper */
   ol.steps{list-style:none; margin:0; padding:0; display:grid; gap:14px}
-  @media(min-width:780px){ ol.steps{grid-template-columns:repeat(6,1fr); gap:10px} }
+  @media(min-width:780px){ ol.steps{grid-template-columns:repeat(4,1fr); gap:10px} }
+  @media(min-width:1080px){ ol.steps{grid-template-columns:repeat(7,1fr)} }
   /* back-edge note under the cycle */
   ol.steps li .back{display:inline-block; margin-top:8px; font-size:.72rem; color:var(--c-review); font-weight:600}
   ol.steps li{position:relative; background:var(--surface); border:1px solid var(--line); border-top:5px solid var(--step,var(--accent)); border-radius:var(--radius); padding:14px; box-shadow:var(--shadow)}
@@ -136,6 +137,9 @@
 
   pre.block{background:var(--surface-2); border:1px solid var(--line); border-radius:10px; padding:14px; overflow-x:auto; font:13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; color:var(--ink)}
 
+  .sysfig{margin:22px 0 0; background:var(--surface); border:1px solid var(--line); border-radius:var(--radius); padding:18px; box-shadow:var(--shadow)}
+  .sysfig svg{max-width:100%; height:auto; display:block}
+  .sysfig figcaption{color:var(--muted); font-size:.85rem; margin-top:10px}
   footer.site{padding:30px 0 60px; color:var(--muted); font-size:.9rem}
   footer.site a{color:var(--accent)}
   .muted{color:var(--muted)}
@@ -154,7 +158,7 @@
     <div class="hero">
       <p class="eyebrow">Autonomous research, explained</p>
       <h1>How the <span style="color:var(--accent)">crux</span> harness lets one AI agent write a research paper on its own</h1>
-      <p class="lede">Give it a research question, a deadline, and a compute budget. Then leave. This page shows the moving parts — deliberately few of them — that keep a fully autonomous agent oriented, honest, and productive from launch to the final, accessible write-up.</p>
+      <p class="lede">Give it a research question, a deadline, and a set of budgets. Then leave. This page shows the moving parts — deliberately few of them — that keep a fully autonomous agent oriented, honest, and productive from launch to the final, accessible write-up.</p>
     </div>
   </div>
 </header>
@@ -163,6 +167,7 @@
   <div class="wrap">
     <ul>
       <li><a href="#idea">The big idea</a></li>
+      <li><a href="#system">The system</a></li>
       <li><a href="#lifecycle">A run, start to finish</a></li>
       <li><a href="#workspace">The workspace</a></li>
       <li><a href="#budget">The budget ledger</a></li>
@@ -184,11 +189,178 @@
       <p class="section-intro">Long-horizon agents don't fail for lack of rules — they fail because rules spread across many files stop binding as context compacts over a multi-day run. So this harness inverts the usual instinct: <strong>one standing context file</strong> that states the construct, the evaluation, the budget, and every requirement at the top; a <strong>self-managed resource budget</strong> instead of phase gates; an anchored external check wherever self-assessment is known to drift. Everything else is a heuristic the agent applies with judgment.</p>
       <div class="stat-grid" role="list">
         <div class="stat" role="listitem"><div class="n">1</div><div class="l">standing context file (<code>AGENTS.md</code>) — nothing else adds requirements</div></div>
-        <div class="stat" role="listitem"><div class="n">15&nbsp;min</div><div class="l">heartbeat cadence — each beat re-orients before it acts</div></div>
-        <div class="stat" role="listitem"><div class="n">3</div><div class="l">budgets the agent allocates and tracks itself: time, API, GPU</div></div>
+        <div class="stat" role="listitem"><div class="n">15&nbsp;min</div><div class="l">heartbeat cadence — quiet beats short-circuit; a delta gets a full turn</div></div>
+        <div class="stat" role="listitem"><div class="n">4</div><div class="l">budgets the agent allocates and tracks itself: time, API, GPU, OpenRouter</div></div>
         <div class="stat" role="listitem"><div class="n">3</div><div class="l">reviewers per paper: one calibrated internal + two external AI reviewers</div></div>
         <div class="stat" role="listitem"><div class="n">0</div><div class="l">operator actions required mid-run — the final pass auto-dispatches on the completion report</div></div>
       </div>
+    </div>
+  </section>
+
+  <!-- SYSTEM DIAGRAM -->
+  <section id="system" aria-labelledby="sys-h">
+    <div class="wrap">
+      <h2 id="sys-h"><span class="section-tag" style="background:var(--c-decide)" aria-hidden="true"></span>The system on one page</h2>
+      <p class="section-intro">One box, one agent, and everything that wakes it, feeds it, meters it, or records it. Dashed arrows fire on a schedule — and every firing is a full model turn. Amber arrows spend one of the budgets.</p>
+      <figure class="sysfig">
+        <svg viewBox="0 0 1060 676" role="img" aria-label="System diagram: the operator launches and receives snapshots; inside the EC2 box, five schedulers wake the main agent session, which maintains the workspace, spawns subagents including an isolated reviewer, and launches background jobs; every turn lands in the session store; the model provider, OpenRouter, and RunPod each meter a budget; external reviewers and GitHub receive the paper and the code.">
+          <defs>
+            <marker id="sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+            <marker id="sarrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--c-resource-text)"/></marker>
+          </defs>
+
+          <!-- EC2 container -->
+          <rect x="180" y="28" width="600" height="604" rx="14" fill="var(--surface-2)" stroke="var(--line)"/>
+          <text x="196" y="50" font-size="12" font-weight="700" fill="var(--ink)">The box — one EC2 instance, one OpenClaw gateway</text>
+
+          <!-- Schedulers -->
+          <g>
+            <rect x="200" y="64" width="104" height="70" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+            <text x="252" y="86" font-size="12" font-weight="600" fill="var(--ink)" text-anchor="middle">Heartbeat</text>
+            <text x="252" y="102" font-size="11" fill="var(--muted)" text-anchor="middle">every 15 min</text>
+            <text x="252" y="116" font-size="11" fill="var(--muted)" text-anchor="middle">triage; quiet = OK</text>
+            <rect x="314" y="64" width="104" height="70" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+            <text x="366" y="86" font-size="12" font-weight="600" fill="var(--ink)" text-anchor="middle">Ledger beat</text>
+            <text x="366" y="102" font-size="11" fill="var(--muted)" text-anchor="middle">every 6 h (cron)</text>
+            <text x="366" y="116" font-size="11" fill="var(--muted)" text-anchor="middle">refresh + re-judge</text>
+            <rect x="428" y="64" width="104" height="70" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+            <text x="480" y="86" font-size="12" font-weight="600" fill="var(--ink)" text-anchor="middle">Snapshots</text>
+            <text x="480" y="102" font-size="11" fill="var(--muted)" text-anchor="middle">10:00 · 19:00</text>
+            <text x="480" y="116" font-size="11" fill="var(--muted)" text-anchor="middle">→ operator</text>
+            <rect x="542" y="64" width="104" height="70" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+            <text x="594" y="86" font-size="12" font-weight="600" fill="var(--ink)" text-anchor="middle">Final pass</text>
+            <text x="594" y="102" font-size="11" fill="var(--muted)" text-anchor="middle">injector · 5 min</text>
+            <text x="594" y="116" font-size="11" fill="var(--muted)" text-anchor="middle">on the report</text>
+            <rect x="656" y="64" width="104" height="70" rx="8" fill="var(--surface)" stroke="var(--line)"/>
+            <text x="708" y="86" font-size="12" font-weight="600" fill="var(--ink)" text-anchor="middle">Watchdogs</text>
+            <text x="708" y="102" font-size="11" fill="var(--muted)" text-anchor="middle">every 5 min</text>
+            <text x="708" y="116" font-size="11" fill="var(--muted)" text-anchor="middle">halt · recover</text>
+          </g>
+          <line x1="330" y1="134" x2="330" y2="196" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#sarr)"/>
+          <text x="338" y="186" font-size="11" fill="var(--muted)">each wake is a full model turn</text>
+          <line x1="594" y1="134" x2="594" y2="196" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#sarr)"/>
+          <text x="602" y="168" font-size="11" fill="var(--muted)">watches for the report</text>
+
+          <!-- Main session -->
+          <rect x="200" y="196" width="288" height="120" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="212" y="220" font-size="12" font-weight="700" fill="var(--ink)">Main agent session</text>
+          <text x="212" y="240" font-size="11" fill="var(--muted)">AGENTS.md — the whole contract,</text>
+          <text x="212" y="254" font-size="11" fill="var(--muted)">always in context</text>
+          <text x="212" y="276" font-size="11" fill="var(--muted)">triages beats · plans · spawns ·</text>
+          <text x="212" y="290" font-size="11" fill="var(--muted)">harvests · answers reviews with work</text>
+
+          <!-- Workspace -->
+          <rect x="508" y="196" width="252" height="120" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="520" y="220" font-size="12" font-weight="700" fill="var(--ink)">Workspace repo (git)</text>
+          <text x="520" y="240" font-size="11" fill="var(--muted)">PLAN.md — plan + budget ledger</text>
+          <text x="520" y="254" font-size="11" fill="var(--muted)">LOG.md — append-only record</text>
+          <text x="520" y="268" font-size="11" fill="var(--muted)">paper/ · gate_artifact.sh</text>
+          <text x="520" y="288" font-size="11" fill="var(--muted)">COMPLETION_REPORT.md → final pass</text>
+          <line x1="488" y1="234" x2="508" y2="234" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="498" y="226" font-size="11" fill="var(--muted)" text-anchor="middle">writes</text>
+          <line x1="508" y1="282" x2="488" y2="282" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="498" y="274" font-size="11" fill="var(--muted)" text-anchor="middle">reads</text>
+
+          <!-- Subagents -->
+          <rect x="200" y="356" width="288" height="120" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="212" y="380" font-size="12" font-weight="700" fill="var(--ink)">Subagents — parallel workers (≤8)</text>
+          <text x="212" y="398" font-size="11" fill="var(--muted)">lit scouts · ablations · section drafts</text>
+          <rect x="212" y="412" width="264" height="52" rx="8" fill="var(--surface-2)" stroke="var(--line)"/>
+          <text x="224" y="432" font-size="11" font-weight="600" fill="var(--ink)">Isolated reviewer, fresh each round</text>
+          <text x="224" y="447" font-size="11" fill="var(--muted)">sees only the PDF · unauthorable</text>
+          <line x1="292" y1="316" x2="292" y2="356" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="300" y="350" font-size="11" fill="var(--muted)">spawns — one unit each</text>
+          <line x1="420" y1="356" x2="420" y2="316" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="428" y="330" font-size="11" fill="var(--muted)">harvest</text>
+          <polyline points="508,300 498,300 498,438 476,438" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="503" y="336" font-size="11" fill="var(--muted)">PDF only</text>
+
+          <!-- Background jobs -->
+          <rect x="508" y="356" width="252" height="120" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="520" y="380" font-size="12" font-weight="700" fill="var(--ink)">Background jobs &amp; GPU pods</text>
+          <text x="520" y="398" font-size="11" fill="var(--muted)">nohup → runs/&lt;name&gt;/out.log</text>
+          <text x="520" y="412" font-size="11" fill="var(--muted)">experiment code — OpenRouter key</text>
+          <text x="520" y="426" font-size="11" fill="var(--muted)">pods rsync results back, then die</text>
+          <line x1="452" y1="316" x2="540" y2="356" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="548" y="348" font-size="11" fill="var(--muted)">launches (nohup)</text>
+          <line x1="700" y1="356" x2="700" y2="316" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="706" y="340" font-size="11" fill="var(--muted)">results</text>
+
+          <!-- Session store -->
+          <rect x="200" y="516" width="560" height="96" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="212" y="540" font-size="12" font-weight="700" fill="var(--ink)">Session store — the run record</text>
+          <text x="212" y="560" font-size="11" fill="var(--muted)">every main / subagent / cron turn: text, thinking, tool calls, per-call cost</text>
+          <text x="212" y="578" font-size="11" fill="var(--muted)">session-snapshot cron copies it every 10 min · the watchdogs read it · the export rebuilds the run log from it</text>
+          <line x1="320" y1="476" x2="320" y2="516" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="328" y="500" font-size="11" fill="var(--muted)">every turn recorded, priced</text>
+          <line x1="634" y1="476" x2="634" y2="516" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+
+          <!-- Operator -->
+          <rect x="12" y="196" width="104" height="120" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="64" y="222" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="middle">Operator</text>
+          <text x="64" y="242" font-size="11" fill="var(--muted)" text-anchor="middle">outside the loop</text>
+          <text x="64" y="256" font-size="11" fill="var(--muted)" text-anchor="middle">Telegram · laptop</text>
+          <line x1="116" y1="218" x2="200" y2="218" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="158" y="210" font-size="11" fill="var(--muted)" text-anchor="middle">sends PROMPT.md</text>
+          <line x1="200" y1="286" x2="116" y2="286" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="158" y="278" font-size="11" fill="var(--muted)" text-anchor="middle">snapshots · pages</text>
+          <polyline points="200,568 64,568 64,316" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="20" y="592" font-size="11" fill="var(--muted)">post-run export —</text>
+          <text x="20" y="605" font-size="11" fill="var(--muted)">scrubbed on the box</text>
+
+          <!-- External: model provider -->
+          <rect x="820" y="64" width="224" height="84" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="932" y="88" font-size="12" font-weight="700" fill="var(--ink)" text-anchor="middle">Model provider</text>
+          <text x="932" y="106" font-size="11" fill="var(--muted)" text-anchor="middle">billed by every agent turn:</text>
+          <text x="932" y="120" font-size="11" fill="var(--muted)" text-anchor="middle">main · heartbeats · subagents</text>
+          <text x="932" y="138" font-size="11" font-weight="600" fill="var(--c-resource-text)" text-anchor="middle">API budget cap</text>
+          <line x1="780" y1="100" x2="820" y2="100" stroke="var(--c-resource-text)" stroke-width="1.8" marker-end="url(#sarrA)"/>
+          <text x="800" y="92" font-size="11" fill="var(--c-resource-text)" text-anchor="middle">$</text>
+
+          <!-- External: reviewers -->
+          <rect x="820" y="196" width="224" height="92" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="832" y="220" font-size="12" font-weight="700" fill="var(--ink)">External AI reviewers</text>
+          <text x="832" y="238" font-size="11" fill="var(--muted)">CMU portal → review Gmail (gog)</text>
+          <text x="832" y="252" font-size="11" fill="var(--muted)">refine.ink (API, paid, single-shot)</text>
+          <text x="832" y="272" font-size="11" fill="var(--muted)">reviews saved verbatim</text>
+          <line x1="760" y1="228" x2="820" y2="228" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="790" y="220" font-size="11" fill="var(--muted)" text-anchor="middle">PDF</text>
+          <line x1="820" y1="258" x2="760" y2="258" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="790" y="272" font-size="11" fill="var(--muted)" text-anchor="middle">reviews</text>
+
+          <!-- External: GitHub -->
+          <rect x="820" y="308" width="224" height="64" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="832" y="332" font-size="12" font-weight="700" fill="var(--ink)">GitHub</text>
+          <text x="832" y="350" font-size="11" fill="var(--muted)">small commits · push hourly</text>
+          <polyline points="760,300 790,300 790,340 820,340" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
+          <text x="766" y="294" font-size="11" fill="var(--muted)">push</text>
+
+          <!-- External: OpenRouter -->
+          <rect x="820" y="392" width="224" height="84" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="832" y="416" font-size="12" font-weight="700" fill="var(--ink)">OpenRouter</text>
+          <text x="832" y="434" font-size="11" fill="var(--muted)">the experiments' LLM calls</text>
+          <text x="832" y="448" font-size="11" fill="var(--muted)">per-response usage.cost logged</text>
+          <text x="832" y="466" font-size="11" font-weight="600" fill="var(--c-resource-text)">hard per-key cap</text>
+          <line x1="760" y1="420" x2="820" y2="420" stroke="var(--c-resource-text)" stroke-width="1.8" marker-end="url(#sarrA)"/>
+          <text x="790" y="412" font-size="11" fill="var(--c-resource-text)" text-anchor="middle">$/call</text>
+
+          <!-- External: RunPod -->
+          <rect x="820" y="496" width="224" height="84" rx="10" fill="var(--surface)" stroke="var(--line)"/>
+          <text x="832" y="520" font-size="12" font-weight="700" fill="var(--ink)">RunPod</text>
+          <text x="832" y="538" font-size="11" fill="var(--muted)">GPU pods, billed while alive</text>
+          <text x="832" y="552" font-size="11" fill="var(--muted)">results shipped off, then killed</text>
+          <text x="832" y="570" font-size="11" font-weight="600" fill="var(--c-resource-text)">GPU spend limit</text>
+          <polyline points="760,452 795,452 795,538 820,538" fill="none" stroke="var(--c-resource-text)" stroke-width="1.8" marker-end="url(#sarrA)"/>
+          <text x="764" y="446" font-size="11" fill="var(--c-resource-text)">$/hour</text>
+
+          <!-- Legend -->
+          <line x1="200" y1="648" x2="248" y2="648" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"/>
+          <text x="256" y="652" font-size="11" fill="var(--muted)">fires on a schedule — each firing is a full model turn</text>
+          <line x1="560" y1="648" x2="608" y2="648" stroke="var(--c-resource-text)" stroke-width="1.8"/>
+          <text x="616" y="652" font-size="11" fill="var(--muted)">spends one of the budgets</text>
+        </svg>
+        <figcaption>Everything the run touches. Five schedulers wake the one main session (each wake a full, billed turn); the agent maintains the workspace, fans work out to subagents and background jobs, and every turn lands in the session store the run is analyzed from. The four budgets meter the clock, the agent's own model calls, the experiments' OpenRouter calls, and the GPU pods. The operator appears only at launch, in one-way snapshots, and at the post-run export.</figcaption>
+      </figure>
     </div>
   </section>
 
@@ -204,6 +376,7 @@
         <li style="--step:var(--c-draft)"><span class="k">4</span><h3>Draft</h3><p>Write from evidence, in the target format, around 1–3 claims stated at exactly the strength the evidence supports. Polish where readers spend attention: abstract, intro, Figure&nbsp;1.</p></li>
         <li style="--step:var(--c-review)"><span class="k">5</span><h3>Review</h3><p>The isolated internal reviewer at every complete draft, then both external reviewers. Verdict-determining issues get experiments, not qualifiers.</p><span class="back">back-edges to Experiment expected</span></li>
         <li style="--step:var(--c-ship)"><span class="k">6</span><h3>Final pass</h3><p>Auto-dispatched the moment the agent writes its completion report: a presentation-only rewrite, an accessible HTML results page, a cold-visitor README.</p><span class="gate">FINAL=1 gate_artifact.sh</span></li>
+        <li style="--step:var(--c-ship)"><span class="k">7</span><h3>Export</h3><p>After the run, from the operator's machine, while the box is still up and before any key is revoked: <code>utils/export-run.sh</code> rebuilds the run log from the session store on the box, scrubs and scans it there, and pulls only the scrubbed outputs into gitignored <code>runs-export/</code>.</p><span class="gate">scan-secrets.py on the box</span></li>
       </ol>
     </div>
   </section>
@@ -212,28 +385,35 @@
   <section id="workspace" aria-labelledby="ws-h">
     <div class="wrap">
       <h2 id="ws-h"><span class="section-tag" style="background:var(--c-decide)" aria-hidden="true"></span>The workspace — everything the agent lives in</h2>
-      <p class="section-intro">Nine files. The agent's standing context is <code class="fname">AGENTS.md</code> alone; the rest are working files it maintains or tools it runs.</p>
+      <p class="section-intro">Fourteen cards in five groups. The agent's standing context is <code class="fname">AGENTS.md</code> alone; the rest are working files it maintains, tools it runs, and — outside the workspace — the operator's messages and the box-side machinery around the run.</p>
       <p class="group-title">Standing context</p>
       <div class="cards">
-        <div class="card"><h3><code class="fname">AGENTS.md</code></h3><p>The whole contract in one file: the research question, how the paper will be evaluated and by what standard, the three budgets, the complete numbered requirements list — then the operating reference: delegation, reviews, environment, operator protocol, red lines.</p></div>
+        <div class="card"><h3><code class="fname">AGENTS.md</code></h3><p>The whole contract in one file: the research question, how the paper will be evaluated and by what standard, the four budgets, the complete numbered requirements list — then the operating reference: delegation, reviews, environment, operator protocol, red lines.</p></div>
       </div>
       <p class="group-title">Working files the agent maintains</p>
       <div class="cards">
         <div class="card"><h3><code class="fname">PLAN.md</code></h3><p>The live plan and the resource budget ledger: allocation across phases, spent/remaining per resource, candidate approaches, milestones, work in flight. The restart capsule after any context loss.</p></div>
         <div class="card"><h3><code class="fname">LOG.md</code></h3><p>Append-only decision trail — every significant decision, result, surprise, and dead end, with artifact paths.</p></div>
-        <div class="card"><h3><code class="fname">HEARTBEAT.md</code></h3><p>The 15-minute beat: re-orient (AGENTS → PLAN → LOG → live jobs), harvest finished work, refresh the ledger, commit, take the next action.</p></div>
+        <div class="card"><h3><code class="fname">HEARTBEAT.md</code></h3><p>The 15-minute beat, triage first: work healthy, nothing finished, ledger fresh, tree clean is an instant <code>HEARTBEAT_OK</code>; any delta earns re-orientation (AGENTS → PLAN → LOG → live jobs), harvest, commit, next action. Reflection belongs to the 6-hour ledger beat, not the heartbeat.</p></div>
       </div>
       <p class="group-title">Tools &amp; templates</p>
       <div class="cards">
         <div class="card"><h3><code class="fname">scripts/gate_artifact.sh</code></h3><p>Mechanical form checks before every review round; the extended <code>FINAL=1</code> set during the final pass.</p></div>
-        <div class="card"><h3><code class="fname">scripts/telemetry_costs.py</code></h3><p>Scripted API-spend measurement via the cost-tracking service — the canonical number; never hand-estimated.</p></div>
+        <div class="card"><h3><code class="fname">scripts/telemetry_costs.py</code> · <code class="fname">session_costs.py</code></h3><p>Scripted API-spend measurement, never hand-estimated. The session store's own per-call <code>usage.cost</code> (deduplicated by <code>responseId</code>) is the ledger — <code>session_costs.py</code> reads it; <code>telemetry_costs.py</code> asks the cost-tracking service for the provider's bill as the external cross-check. Both print <code>$X.XX</code> first; a persistent gap is itself a finding.</p></div>
         <div class="card"><h3><code class="fname">templates/paper_template.zip</code></h3><p>The venue LaTeX template the skeleton is built from on day 1.</p></div>
       </div>
       <p class="group-title">Operator-side (outside the workspace)</p>
       <div class="cards">
         <div class="card"><h3><code class="fname">PROMPT.md</code></h3><p>The launch message: read AGENTS.md, verify the environment, write the budget and plan, begin.</p></div>
         <div class="card"><h3><code class="fname">FINAL_PASS.md</code></h3><p>The final-stage message, auto-injected by a box-side cron the moment the agent writes its completion report; the operator sends it by hand only as a fallback.</p></div>
-        <div class="card"><h3><code class="fname">OPERATOR_GUIDE.md</code></h3><p>Setup, launch, the operator contract, and the design rationale.</p></div>
+        <div class="card"><h3><code class="fname">OPERATOR_GUIDE.md</code></h3><p>Setup, launch, the operator contract, the post-run export, and the design rationale.</p></div>
+      </div>
+      <p class="group-title">Box-side crons &amp; the export pipeline (outside the workspace)</p>
+      <div class="cards">
+        <div class="card"><h3><code class="fname">crux-thinking-watchdog.sh</code></h3><p>Every 5 min: if the main session is wedged on cascading invalid-thinking-signature errors, archive the session file, point the registry at a fresh id, restart the gateway, dispatch a recovery turn. Logs under <code class="fname">~/.openclaw/watchdog/</code>.</p></div>
+        <div class="card"><h3><code class="fname">crux-auth-watchdog.sh</code></h3><p>Every 5 min: if the newest N turns all failed for a non-transient reason — revoked key, no permission, exhausted credit — stop the gateway and page the operator over Telegram directly. Dormant while the <code>auth-halt</code> marker exists; the operator fixes the key and removes it, or the watchdog clears it itself once the gateway is back up and an error-free turn has landed. Past the daily halt cap it pages once and leaves the gateway running.</p></div>
+        <div class="card"><h3><code class="fname">crux-session-snapshot.sh</code></h3><p>Every 10 min: keep a current copy of every session-store file — the run record the gateway itself does not preserve (cron transcripts are deleted on the job's next run; a re-keyed main session orphans a generation).</p></div>
+        <div class="card"><h3><code class="fname">utils/export-run.sh</code></h3><p>After the run, from the operator's machine: rebuild the run log from the store on the box, scrub it there with a blacklist that never leaves the box, scan it (counts only), and pull only the scrubbed outputs into gitignored <code class="fname">runs-export/</code>. Plugin telemetry rides along as a supplement.</p></div>
       </div>
     </div>
   </section>
@@ -245,11 +425,11 @@
       <div class="two-col">
         <div class="panel">
           <h3>How it works</h3>
-          <p>At hour 0 the agent allocates each resource — hours, API dollars, GPU dollars — across the phases it foresees: exploration, main experiments, writing, review rounds, the final pass. From then on the ledger is kept <strong>continuously current</strong>: every meaningful spend, every finished job, every wrong estimate updates it, with measurement always scripted, never estimated. The allocation is <strong>freely revisable</strong> — a revision is a logged decision, not a failure.</p>
+          <p>At hour 0 the agent allocates each resource — hours, API dollars, GPU dollars, OpenRouter dollars — across the phases it foresees: exploration, main experiments, writing, review rounds, the final pass. From then on the ledger is kept <strong>continuously current</strong>: every meaningful spend, every finished job, every wrong estimate updates it, with measurement always scripted, never estimated. The allocation is <strong>freely revisable</strong> — a revision is a logged decision, not a failure.</p>
         </div>
         <div class="panel">
           <h3>Why a ledger and not gates</h3>
-          <p>Both failure directions are expensive: exhausting a budget early leaves no room to answer reviews with experiments; finishing with most of it unspent means the result is weaker than it could have been. A plan the agent writes, owns, and reconciles every few hours keeps both directions visible while there is still time to correct course — and it survives context compaction, because the 15-minute heartbeat re-reads it before acting. Fixed phase gates don't adapt to what the run learns; a living plan does.</p>
+          <p>Both failure directions are expensive: exhausting a budget early leaves no room to answer reviews with experiments; finishing with most of it unspent means the result is weaker than it could have been. A plan the agent writes and owns keeps both directions visible while there is still time to correct course: a scheduled <strong>ledger beat</strong> — a cron, every 6 hours — refreshes every budget number and re-judges the direction against the latest results, and the 15-minute heartbeat polices the ledger's freshness in between. Fixed phase gates don't adapt to what the run learns; a living plan does.</p>
         </div>
       </div>
     </div>
@@ -259,7 +439,7 @@
   <section id="delegation" aria-labelledby="d-h">
     <div class="wrap">
       <h2 id="d-h"><span class="section-tag" style="background:var(--c-decide)" aria-hidden="true"></span>Delegation — one unit of work per subagent</h2>
-      <p class="section-intro">The agent delegates self-contained units — a literature survey, an experiment implementation, a section draft, a review — to the framework's <strong>native subagents</strong>. Because a subagent runs through the gateway, its full trace lands in the run telemetry — the same log the whole evaluation is analyzed from — so no delegated work is invisible.</p>
+      <p class="section-intro">The agent delegates self-contained units — a literature survey, an experiment implementation, a section draft, a review — to the framework's <strong>native subagents</strong>. Because a subagent runs through the gateway, it gets its own transcript in the session store — the record the whole evaluation is analyzed from — so no delegated work is invisible. (The plugin telemetry sees only a subagent's tool calls; its reasoning, text, and final report live in the store.)</p>
       <div class="two-col">
         <div class="panel">
           <h3>Parallelism matched to the phase</h3>
@@ -349,14 +529,18 @@ EVIDENCE:    per claim, the artifact path + one command that re-verifies it</pre
         <thead><tr><th scope="col">Tendency of long-horizon research agents</th><th scope="col">Mechanism in this harness</th></tr></thead>
         <tbody>
           <tr><td>Standing instructions spread across many files stop binding as context compacts</td><td><span class="fix">One context file</span> — every requirement in a single numbered list at the top of AGENTS.md</td></tr>
-          <tr><td>Situational awareness decays: the clock, the spend, and running work get lost</td><td><span class="fix">15-minute re-orienting heartbeat</span> + scripted spend measurement, never estimates</td></tr>
+          <tr><td>Situational awareness decays: the clock, the spend, and running work get lost</td><td><span class="fix">Triage-first 15-minute heartbeat</span> — quiet beats short-circuit to HEARTBEAT_OK (each beat is a full model turn); a delta earns full re-orientation — plus scripted spend measurement, never estimates</td></tr>
           <tr><td>Budgets go unmanaged in both directions — exhausted early, or left mostly unspent</td><td><span class="fix">The resource budget ledger</span> — allocated hour 0, continuously reconciled, freely revised</td></tr>
+          <tr><td>A mediocre plan survives unexamined — every beat confirms the work is still running while the direction goes stale</td><td><span class="fix">The scheduled ledger beat</span> — a cron every 6 hours: refresh every budget number, then re-judge the direction against the latest results and reviews; the heartbeat polices its staleness and recreates a dead cron</td></tr>
           <tr><td>Commitment to the first approach that shows a positive signal on small or synthetic data</td><td><span class="fix">Exploration as budgeted work</span> — named candidates tested on real data before choosing; a reviewer that treats unmotivated data selection as verdict-determining</td></tr>
           <tr><td>Self-review drifts lenient and flat; fatal flaws tie with nitpicks</td><td><span class="fix">Calibration-tuned isolated reviewer</span> — capped verdict-determining issues, severity tags, an anchored soundness rubric, contribution-vs-flaws weighing (tested against real accept/reject decisions), spawned as a PDF-only isolated subagent</td></tr>
           <tr><td>Critique answered with qualifiers until the paper reads as having no result</td><td><span class="fix">Symmetric claim language</span> — hedging below the evidence is as damaging as overclaiming; the reviewer names the experiment that would resolve each issue; no falsification ceremony anywhere</td></tr>
           <tr><td>Presentation rots across revision rounds; the shipped artifact is illegible cold</td><td><span class="fix">The auto-dispatched final pass</span> — presentation-only rewrite, FINAL gates, accessible HTML results page, cold-visitor README; fires mechanically on the completion report</td></tr>
           <tr><td>Delegated work returns polished results that exist in no output file</td><td><span class="fix">Artifact tracing</span> — numbers enter prose only from on-disk artifacts; surprising results spot-checked; reviews unauthorable</td></tr>
-          <tr><td>Delegated work invisible to the telemetry the run is analyzed from</td><td><span class="fix">Native subagents</span> — one unit of work per subagent, run through the gateway so every call is logged; compute-heavy jobs run as background processes</td></tr>
+          <tr><td>Delegated work invisible to the record the run is analyzed from</td><td><span class="fix">Native subagents</span> — one unit of work per subagent, run through the gateway so each has a session-store transcript (reasoning, text, report, per-call cost) and its tool calls in the plugin telemetry; compute-heavy jobs run as background processes</td></tr>
+          <tr><td><em>Infrastructure —</em> the telemetry plugin degrades silently: loaded but its service never started, conversation hooks blocked, nothing noticing</td><td><span class="fix">Provisioned plugin config + status check</span> — <code>start.sh</code> pins the plugin, applies the harness patch, and writes the <code>plugins.entries.telemetry-hal</code> block; <code>status.sh</code> and the pre-launch smoke test assert <code>seq</code>/<code>ts</code>, <code>agent.end</code>, and <code>llm.usage</code></td></tr>
+          <tr><td><em>Infrastructure —</em> the provider key dies mid-run and nobody notices: six days of failed heartbeats and 490 MB of dead telemetry in one run</td><td><span class="fix">Auth watchdog</span> — halts the gateway and pages the operator directly when N consecutive turns fail for a non-transient reason (auth, permission, quota); dormant until the key is fixed and the marker removed — by the operator, or by the watchdog itself once the gateway is up and an error-free turn lands</td></tr>
+          <tr><td><em>Infrastructure —</em> the run record evaporates: cron transcripts deleted when the job next runs, a re-keyed main session orphaning a generation the CLI cannot see</td><td><span class="fix">Session-snapshot cron + extractor</span> — a copy of every changed store file every 10 minutes; <code>utils/extract_run_log.py</code> merges live + snapshots into one deduplicated run log; <code>utils/export-run.sh</code> scrubs on the box and pulls only the scrubbed outputs</td></tr>
         </tbody>
       </table>
       </div>
@@ -370,7 +554,7 @@ EVIDENCE:    per claim, the artifact path + one command that re-verifies it</pre
       <div class="two-col">
         <div class="panel">
           <h3>During the run</h3>
-          <p>Two one-way snapshots a day: position against plan, what shipped, decisions taken, the resource line, open blockers — never ending in a question. Only two messages may ever ask anything of the operator: a broken external resource the agent couldn't route around, and the completion report. Every unsolicited operator message is an intervention and is logged verbatim on both sides.</p>
+          <p>Two one-way snapshots a day: position against plan, what shipped, decisions taken, the resource line, open blockers — never ending in a question. Only two messages may ever ask anything of the operator: a broken external resource the agent couldn't route around, and the completion report. Every unsolicited operator message is an intervention and is logged verbatim on both sides. The box itself pages the operator in exactly one case: the auth watchdog stopped the gateway because the provider rejected every call — a human must supply a key.</p>
         </div>
         <div class="panel">
           <h3>At completion — automatic</h3>

@@ -25,3 +25,6 @@ tabpfn_telemetry.jsonl
 
 # papers fed to verifier-calibration are review inputs, not repo source
 /*.pdf
+
+# scrubbed run records pulled by utils/export-run.sh — local diagnostics, never commit
+runs-export/
