@@ -275,36 +275,31 @@ chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
 
 
 # ====== TELEMETRY ======
-# The telemetry plugin is PINNED to the upstream commit in
-# linux/src/telemetry-hal/UPSTREAM_COMMIT and carries a local patch
-# (linux/src/telemetry-hal/telemetry-hal.patch — see the README there). Upstream
-# HEAD logs the whole context every turn, double-writes through an unredacted
-# fallback and never sees llm.usage; a plugin that silently builds unpatched is
-# the failure this block exists to prevent, so the pin and the patch are applied
-# BEFORE the build and a patch that does not apply aborts provisioning instead of
-# shipping whatever upstream happens to be.
-TELEMETRY_SRC_DIR="$SCRIPT_DIR/telemetry-hal"
+# The whole telemetry plugin is installed by git checkout: the box clones the
+# upstream repo, detaches at the PINNED commit below, and builds it. Nothing
+# about the plugin is vendored in this harness; the openclaw.json plugins block
+# is built inline in the TELEMETRY CONFIG step below (it only needs the two
+# host-side switches plus the box-specific path and rotation — everything else
+# is the plugin's own default). The fixes the harness depends on (a real
+# not-started fallback, redaction on by default, agent context deltas instead of
+# the full history every turn, llm.usage from the internal diagnostic bus) live
+# in the pinned commit. The pin is applied BEFORE the build and a commit that is
+# not in the upstream clone aborts provisioning instead of shipping HEAD.
+TELEMETRY_REPO_URL="https://github.com/schwartzadev/openclaw-telemetry-hal"
 TELEMETRY_REPO_DIR="$REAL_HOME/openclaw-telemetry-hal"
-TELEMETRY_PATCH="$TELEMETRY_SRC_DIR/telemetry-hal.patch"
-for f in UPSTREAM_COMMIT telemetry-hal.patch openclaw_plugins_block.json; do
-  if [ ! -s "$TELEMETRY_SRC_DIR/$f" ]; then
-    echo "✘ telemetry-hal: $TELEMETRY_SRC_DIR/$f is missing or empty — cannot pin/patch/configure the plugin (was linux/src/telemetry-hal/ copied to the box?)" >&2
-    exit 1
-  fi
-done
-TELEMETRY_UPSTREAM_COMMIT=$(tr -d '[:space:]' < "$TELEMETRY_SRC_DIR/UPSTREAM_COMMIT")
+# Merge of schwartzadev/openclaw-telemetry-hal#1 on main.
+TELEMETRY_UPSTREAM_COMMIT="dc51714fa4cd1e8ec5b34e08d2a044a36941e200"
 case "$TELEMETRY_UPSTREAM_COMMIT" in
-  *[!0-9a-f]*|'') echo "✘ telemetry-hal: UPSTREAM_COMMIT must hold one git sha, got '$TELEMETRY_UPSTREAM_COMMIT'" >&2; exit 1 ;;
+  *[!0-9a-f]*|'') echo "✘ telemetry-hal: TELEMETRY_UPSTREAM_COMMIT must hold one git sha, got '$TELEMETRY_UPSTREAM_COMMIT'" >&2; exit 1 ;;
 esac
 
-# Clone (or reuse) the upstream repo, detach at the pin, apply the patch. Runs as
-# the real user (the repo is theirs). --force on the checkout discards a previous
-# provisioning's applied patch so re-running start.sh re-applies cleanly instead
-# of failing on "patch already applied"; the patch touches only tracked files.
+# Clone (or reuse) the upstream repo and detach at the pin. Runs as the real user
+# (the repo is theirs). --force on the checkout discards any local drift so
+# re-running start.sh lands cleanly on the pinned commit.
 if ! sudo -u "$REAL_USER" env \
+       TELEMETRY_REPO_URL="$TELEMETRY_REPO_URL" \
        TELEMETRY_REPO_DIR="$TELEMETRY_REPO_DIR" \
        TELEMETRY_UPSTREAM_COMMIT="$TELEMETRY_UPSTREAM_COMMIT" \
-       TELEMETRY_PATCH="$TELEMETRY_PATCH" \
        bash -s <<'TELEMETRY_PIN'
 set -eu
 # A pre-existing directory that is not a git checkout (a box restored from a
@@ -316,23 +311,18 @@ if [ -e "$TELEMETRY_REPO_DIR" ] && [ ! -d "$TELEMETRY_REPO_DIR/.git" ]; then
   echo "⚠ telemetry-hal: $TELEMETRY_REPO_DIR existed without a .git (hand-copied or restored, not a pinnable checkout) — moved aside to $moved; cloning fresh"
 fi
 if [ ! -d "$TELEMETRY_REPO_DIR/.git" ]; then
-  git clone --quiet https://github.com/schwartzadev/openclaw-telemetry-hal "$TELEMETRY_REPO_DIR"
+  git clone --quiet "$TELEMETRY_REPO_URL" "$TELEMETRY_REPO_DIR"
 fi
 cd "$TELEMETRY_REPO_DIR"
 git fetch --quiet origin || echo "⚠ telemetry-hal: git fetch failed — using the commits already cloned"
 if ! git checkout --quiet --force "$TELEMETRY_UPSTREAM_COMMIT"; then
-  echo "✘ telemetry-hal: commit $TELEMETRY_UPSTREAM_COMMIT is not in the upstream clone — UPSTREAM_COMMIT is stale or the fork moved; re-pin deliberately (README), do not fall back to HEAD" >&2
+  echo "✘ telemetry-hal: commit $TELEMETRY_UPSTREAM_COMMIT is not in the upstream clone — TELEMETRY_UPSTREAM_COMMIT in start.sh is stale or the fork moved; re-pin deliberately, do not fall back to HEAD" >&2
   exit 1
 fi
-if ! git apply --check "$TELEMETRY_PATCH"; then
-  echo "✘ telemetry-hal: $TELEMETRY_PATCH does NOT apply at $TELEMETRY_UPSTREAM_COMMIT — an unpatched plugin logs the full context every turn and never starts its service. Re-pin UPSTREAM_COMMIT and regenerate the patch (linux/src/telemetry-hal/README.md); do not skip this." >&2
-  exit 1
-fi
-git apply "$TELEMETRY_PATCH"
-echo "✔ telemetry-hal pinned at $TELEMETRY_UPSTREAM_COMMIT and patched ($(git diff --stat | tail -1))"
+echo "✔ telemetry-hal pinned at $TELEMETRY_UPSTREAM_COMMIT"
 TELEMETRY_PIN
 then
-  echo "✘ telemetry-hal: pin/patch step failed — provisioning aborted (see the ✘ line above)" >&2
+  echo "✘ telemetry-hal: pin step failed — provisioning aborted (see the ✘ line above)" >&2
   exit 1
 fi
 
@@ -346,17 +336,17 @@ sudo -u "$REAL_USER" bash -c "
   pnpm run build
   $REAL_HOME/.npm-global/bin/openclaw plugins install --link .
 "
-# The build must postdate the patched sources (tsc emits dist/index.js and
-# dist/src/*.js from index.ts and src/*.ts): a stale or missing dist would load
-# the unpatched plugin with no error anywhere.
+# The build must postdate the sources (tsc emits dist/index.js and dist/src/*.js
+# from index.ts and src/*.ts): a stale or missing dist would load an older build
+# with no error anywhere.
 for src in index.ts src/service.ts; do
   built="$TELEMETRY_REPO_DIR/dist/${src%.ts}.js"
   if [ ! -f "$built" ] || [ ! "$built" -nt "$TELEMETRY_REPO_DIR/$src" ]; then
-    echo "✘ telemetry-hal: $built is missing or older than $src — the build did not run on the patched sources" >&2
+    echo "✘ telemetry-hal: $built is missing or older than $src — the build did not run on the pinned sources" >&2
     exit 1
   fi
 done
-echo "✔ telemetry-hal built from the patched sources and linked into openclaw"
+echo "✔ telemetry-hal built from the pinned sources and linked into openclaw"
 
 # Patch the telemetry plugin manifest to ensure activation on startup
 # (upstream repo may be missing the activation block, which leaves the
@@ -508,16 +498,20 @@ echo "✔ Subagents maxConcurrent: 8 (native sessions_spawn — width for parall
 # plugins.load.paths and plugins.entries.telemetry-hal.enabled. That flag makes
 # the gateway LOAD the plugin (hooks fire); the plugin's service reads
 # plugins.entries.telemetry-hal.config.enabled and returns without starting when
-# it is absent — two different switches. With only the first set, the raw
-# fallback writer runs alone: no seq/ts, no redaction, no rotation, no
-# llm.usage, and the whole context logged every turn. One run went a week like
-# that. agent_end / llm_input / llm_output are "conversation" hooks: the gateway
+# it is absent — two different switches. With only the first set, the service
+# never starts: no rotation, no integrity, no llm.usage from the diagnostic bus,
+# and hook events go only to the stamped+redacted fallback file (the pinned build
+# makes that a real fallback; an unconfigured box still leaves a trail and says
+# so in the log). One run went a week with the service off. agent_end / llm_input
+# / llm_output are "conversation" hooks: the gateway
 # refuses them for non-bundled plugins unless hooks.allowConversationAccess=true
 # sits at the ENTRY level (next to config, not inside it — inside config it
-# fails schema validation and disables the whole plugin). The block itself is
-# linux/src/telemetry-hal/openclaw_plugins_block.json; only the box-specific
-# path and the two rotation knobs are overridden here. plugins.load.paths is
-# left exactly as the install wrote it.
+# fails schema validation and disables the whole plugin). The block is built
+# inline below — it only needs the two host-side switches (enabled +
+# hooks.allowConversationAccess), config.enabled, and the box-specific file path
+# and rotation. redact.patterns / redact.enabled are the plugin's own defaults
+# (redaction is on by default once the service starts), so they are not restated
+# here. plugins.load.paths is left exactly as the install wrote it.
 TELEMETRY_LOG_DIR="$REAL_HOME/.openclaw/logs"
 TELEMETRY_FILE="$TELEMETRY_LOG_DIR/telemetry.jsonl"
 TELEMETRY_ROTATE_MAX_BYTES=$(placeholder_value '{{TELEMETRY_ROTATE_MAX_BYTES|104857600}}')
@@ -530,15 +524,22 @@ case "$TELEMETRY_ROTATE_MAX_FILES" in
 esac
 sudo -u "$REAL_USER" mkdir -p "$TELEMETRY_LOG_DIR"
 TMP_CONFIG=$(mktemp)
-jq --slurpfile block "$TELEMETRY_SRC_DIR/openclaw_plugins_block.json" \
-   --arg path "$TELEMETRY_FILE" \
+jq --arg path "$TELEMETRY_FILE" \
    --argjson maxbytes "$TELEMETRY_ROTATE_MAX_BYTES" \
    --argjson maxfiles "$TELEMETRY_ROTATE_MAX_FILES" '
+  ({
+    enabled: true,
+    config: {
+      enabled: true,
+      filePath: $path,
+      rotate: { enabled: true, maxSizeBytes: $maxbytes, maxFiles: $maxfiles, compress: true },
+      integrity: { enabled: false },
+      rateLimit: { enabled: false }
+    },
+    hooks: { allowConversationAccess: true }
+  }) as $block |
   .plugins.entries["telemetry-hal"] =
-    ((.plugins.entries["telemetry-hal"] // {}) * $block[0]["telemetry-hal"]) |
-  .plugins.entries["telemetry-hal"].config.filePath = $path |
-  .plugins.entries["telemetry-hal"].config.rotate.maxSizeBytes = $maxbytes |
-  .plugins.entries["telemetry-hal"].config.rotate.maxFiles = $maxfiles
+    ((.plugins.entries["telemetry-hal"] // {}) * $block)
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
   && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"

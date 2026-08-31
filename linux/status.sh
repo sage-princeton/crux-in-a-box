@@ -177,7 +177,7 @@ else
   if [ -n "$TEL_JOURNAL_PATH" ]; then
     pass "Telemetry service: started since the last gateway start (journal: $TEL_JOURNAL_PATH)"
   else
-    fail "Telemetry service: no 'telemetry: <path>' line in the gateway journal since the last start — the service did not start (config.enabled missing? plugin not loaded? unpatched build?)"
+    fail "Telemetry service: no 'telemetry: <path>' line in the gateway journal since the last start — the service did not start (config.enabled missing? plugin not loaded? stale build?)"
   fi
   BLOCKED_HOOKS=$(printf '%s\n' "$GW_JOURNAL" | grep -o -E 'typed hook "[a-z_]+" blocked' | sort -u | tr '\n' ' ')
   if [ -n "$BLOCKED_HOOKS" ]; then
