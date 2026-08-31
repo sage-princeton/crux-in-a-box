@@ -58,7 +58,6 @@ absent or blank):
                            OPENROUTER_API_KEY for the experiments' LLM calls.
 
   Workspace placeholders (substituted into the harness files):
-    GITHUB_USER          GitHub username for the gh CLI
     CLOUD_SPEND_LIMIT    RunPod GPU spend cap (e.g. \$500)
     OPENROUTER_BUDGET    OpenRouter spend cap for the experiments' LLM calls (e.g. \$500)
     API_BUDGET           Anthropic API spend cap (e.g. \$500)
@@ -144,8 +143,6 @@ REQUIRED_KEYS=(
   GOG_ACCOUNT
   GOG_KEYRING_PASSWORD
   GOG_HOME_TARBALL
-  GITHUB_USER
-  GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN
   CLOUD_SPEND_LIMIT
   OPENROUTER_BUDGET
   API_BUDGET
@@ -183,10 +180,6 @@ COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
 OPENROUTER_API_KEY="${CFG[OPENROUTER_API_KEY]}"
-# GitHub classic PAT — a secret credential (NOT a workspace placeholder); used
-# by start.sh to authenticate the gh CLI non-interactively and to let git push
-# over HTTPS. Kept out of the placeholder map so it's never sed'd into files.
-GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN="${CFG[GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN]}"
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
 
 # gog (Google Workspace CLI) — required; auto-configured on the box.
@@ -205,9 +198,9 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # ====== BUILD WORKSPACE PLACEHOLDER MAP ======
 # Every config key EXCEPT the operational/runtime ones above is forwarded to
 # start.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
-# keeps GITHUB_USER, CLOUD_SPEND_LIMIT, OPENROUTER_BUDGET, API_BUDGET and any optional placeholder
+# keeps CLOUD_SPEND_LIMIT, OPENROUTER_BUDGET, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
-NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY OPENROUTER_API_KEY GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
+NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID ANTHROPIC_MODEL ANTHROPIC_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY OPENROUTER_API_KEY INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
   case "$NON_PLACEHOLDER_KEYS" in
@@ -560,7 +553,6 @@ REMOTE_ENV=$(build_remote_env \
   RUNPOD_API_KEY \
   REFINE_INK_API_KEY \
   OPENROUTER_API_KEY \
-  GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN \
   GOG_ACCOUNT \
   GOG_KEYRING_PASSWORD \
   GOG_HOME_TARBALL_REMOTE \

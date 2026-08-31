@@ -12,5 +12,5 @@ Hour-0 sequence:
 
 1. **Verify the environment** (`AGENTS.md` § Environment) and correct that section where reality differs. Unzip the venue template and make the paper skeleton compile today.
 2. **Write the resource budget and initial plan in `PLAN.md`** (`AGENTS.md` § Your budget): allocate time, API spend, GPU spend, and OpenRouter spend across the phases of work; name 2–3 candidate approaches; set milestone dates.
-3. **Log the plan in `LOG.md`**, commit, and push.
+3. **Log the plan in `LOG.md`** and commit (locally — there is no remote).
 4. **Begin.** Launch the first piece of real work before this turn ends.

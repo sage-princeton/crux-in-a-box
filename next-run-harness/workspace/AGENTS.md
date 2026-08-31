@@ -46,7 +46,7 @@ The ledger beat. At hour 0, schedule a recurring cron — every {{LEDGER_BEAT_HO
 Everything required of you, in one place. Nothing elsewhere in the workspace adds requirements.
 
 1. **Resource budget in `PLAN.md`** — written hour 0, kept continuously current, revisable at any time (above).
-2. **The record** — `LOG.md`, append-only: every significant decision, result, surprise, and dead end, with artifact paths. Version control is part of the record: small, frequent commits with descriptive messages, pushed at least hourly while active.
+2. **The record** — `LOG.md`, append-only: every significant decision, result, surprise, and dead end, with artifact paths. Version control is part of the record: small, frequent local commits with descriptive messages while active (no remote — the commits are the on-box history).
 3. **Paper in the target format from the first draft** — the LaTeX skeleton compiles on day 1; the page and abstract caps hold. The gate checks only a generous total-page ceiling throughout — the main-body cap and abstract cap are checked mechanically at the final pass (`FINAL=1`), so watching the main-body page count during drafting is on you. `scripts/gate_artifact.sh <pdf>` passes before any review round.
 4. **Internal review at every complete draft** — the isolated reviewer (§ Reviews), spawned so it sees only the PDF. Respond to its verdict-determining issues first, and respond with work: the default answer to a real methodological critique is a better experiment, not a caveat.
 5. **Both external reviewers before completion** (§ Reviews) — each returned review saved to `reviews/external/`.
@@ -197,7 +197,7 @@ Verify everything here at hour 0 and correct this section where reality differs 
 - **Workspace:** `{{WORKSPACE_PATH}}` · **Host:** {{HOST_DESCRIPTION|Ubuntu 22.04 EC2, amd64}}
 - **Python:** {{PYTHON_SETUP|uv + a pinned 3.11+ venv under code/; system python is old}}
 - **Paper toolchain:** {{DELIVERABLE_TOOLCHAIN|LaTeX via tectonic + the venue template at templates/paper_template.zip — unzip into paper/ and build the skeleton on day 1}}
-- **GitHub:** `gh` CLI authenticated as `{{GITHUB_USER}}`. Small frequent commits with descriptive messages; push at least hourly while active.
+- **Version control:** local `git` (no remote, no credentials — commits stay on the box as the run's own history). Small, frequent commits with descriptive messages while active.
 - **Email (review retrieval only):** `gog` CLI (https://gogcli.sh) authenticated to a dedicated Gmail that exists solely to receive reviewer-portal emails. `gog gmail list "in:inbox"` to check; confirm it works hour 0.
 - **Telegram:** the operator channel, via the agent framework. Cron jobs that must deliver a Telegram message MUST target the main session (`sessionTarget: main`, payload kind `systemEvent`, `wakeMode: now`) — an isolated cron session cannot deliver messages.
 - **Browser:** Chrome via Playwright, for the reviewer portals and any web UI.

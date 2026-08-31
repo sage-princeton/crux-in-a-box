@@ -28,7 +28,7 @@ Installed by default:
 
 | Service              | How it's configured                           | How to authenticate                          |
 | -------------------- | --------------------------------------------- | -------------------------------------------- |
-| GitHub               | `gh` CLI                                      | PAT in the config; `start.sh` runs `gh auth` |
+| Version control      | local `git` (no remote)                       | none — commits stay on the box, no credentials |
 | Gmail                | `gog` CLI via [gogcli.sh](https://gogcli.sh/) | pre-built bundle (`GOG_*` keys), no browser  |
 | RunPod (GPUs)        | `RUNPOD_API_KEY` in `~/.openclaw/.env`        | key in the config                            |
 | refine.ink (reviews) | `REFINE_INK_API_KEY` in `~/.openclaw/.env`    | key in the config                            |

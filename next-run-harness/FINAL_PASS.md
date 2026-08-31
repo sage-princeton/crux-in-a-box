@@ -6,7 +6,7 @@ _Operator: send it by hand only as a fallback — the completion report arrived 
 
 ---
 
-Good — before the project closes, complete the final pass. The deliverable is not finished until all four steps are done, committed, and pushed.
+Good — before the project closes, complete the final pass. The deliverable is not finished until all four steps are done and committed (locally — there is no remote).
 
 1. **Cold-read the paper end to end.** Render the PDF and read it as an expert seeing it for the first time. Restructure freely for legibility: the abstract within its word cap and readable by a non-specialist; a Figure 1 that carries the main result on its own; every technical term defined at first use; no internal vocabulary or file paths anywhere; the main body ends within the page cap (the gate locates the references boundary and checks this). Claims, numbers, and evidence are frozen — this pass changes presentation only. Run `FINAL=1 scripts/gate_artifact.sh <pdf>` and fix every failure.
 
@@ -14,4 +14,4 @@ Good — before the project closes, complete the final pass. The deliverable is 
 
 3. **Write the final README.** Rewrite the repo-root `README.md` for a visitor with zero context: what this project is and what it found (two or three sentences, at exactly the strength the evidence supports), the path to the paper, a short annotated repo map, the one-command reproduction of the headline result, and one line per dataset on where it came from.
 
-4. **Commit and push everything**, then send an updated completion report: what the final pass changed, the paths to the paper, `results.html`, and `README.md`, and the output of the final gate run.
+4. **Commit everything** (locally), then send an updated completion report: what the final pass changed, the paths to the paper, `results.html`, and `README.md`, and the output of the final gate run.

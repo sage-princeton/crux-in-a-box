@@ -629,18 +629,6 @@ echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-un
 
 # ====== SERVICES ======
 
-# install GitHub CLI
-(type -p wget >/dev/null || apt-get install wget -y) \
-  && mkdir -p -m 755 /etc/apt/keyrings \
-  && out=$(mktemp) \
-  && wget -nv -O"$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-  && cat "$out" | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
-  && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
-  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-  && apt-get update \
-  && apt-get install gh -y
-
 # install AWS CLI v2
 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "/tmp/awscliv2.zip"
 unzip -qo /tmp/awscliv2.zip -d /tmp
@@ -677,36 +665,16 @@ sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" gateway restart
 
 # ======
 
-# ====== GitHub auth (gh CLI + git over HTTPS) ======
-# Authenticate gh non-interactively with the classic PAT passed by
-# setup-device.sh. Run as the real user (gh stores creds under ~/.config/gh),
-# wire up git's credential helper, and also export the token in ~/.openclaw/.env
-# (GITHUB_TOKEN/GH_TOKEN are what gh, git, and most tooling read) so the agent's
-# tool subprocesses can push/pull and call the GitHub API.
-if [ -n "${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN:-}" ]; then
-  if command -v gh >/dev/null 2>&1; then
-    if printf '%s' "$GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN" \
-         | sudo -u "$REAL_USER" gh auth login --hostname github.com --git-protocol https --with-token; then
-      sudo -u "$REAL_USER" gh auth setup-git || true
-      echo "✔ gh CLI authenticated and git credential helper configured"
-    else
-      echo "⚠ gh auth login failed — check the GitHub classic PAT (scope/expiry)."
-    fi
-  else
-    echo "⚠ gh CLI not installed — cannot authenticate GitHub."
-  fi
-
-  # Export for the gateway/agent tool environment (gh + git read these).
-  for name in GITHUB_TOKEN GH_TOKEN; do
-    sed -i "/^${name}=/d" "$OPENCLAW_ENV"
-    echo "${name}=${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN}" >> "$OPENCLAW_ENV"
-  done
-  chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
-  chmod 600 "$OPENCLAW_ENV"
-  echo "✔ GITHUB_TOKEN/GH_TOKEN written to ~/.openclaw/.env"
-else
-  echo "⚠ GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN not provided — gh/git will be unauthenticated."
-fi
+# ====== git (local commits, no remote) ======
+# The agent keeps its work under local git version control (small, frequent
+# commits) as the run's own history. No remote is configured and no host
+# credentials are provisioned — nothing is pushed anywhere. Plain `git` is
+# installed with the base packages above; identity for commits is set here so
+# the agent's commits are attributable in the local log.
+sudo -u "$REAL_USER" git config --global user.name "crux-agent"
+sudo -u "$REAL_USER" git config --global user.email "crux-agent@localhost"
+sudo -u "$REAL_USER" git config --global init.defaultBranch main
+echo "✔ git configured for local commits (no remote, no credentials)"
 
 # Set up gog
 # see: https://gogcli.sh/quickstart.html

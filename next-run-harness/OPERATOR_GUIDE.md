@@ -10,7 +10,7 @@ How to set up, launch, and live with a run of this harness.
 
 ### Step 1: Run `setup-device.sh`
 
-Provisions an EC2 instance and bootstraps the environment: desktop + VNC, the agent framework, Telegram, telemetry (the pinned plugin and its config block), services (GitHub CLI, AWS CLI, gog), the box-side crons (thinking watchdog, auth watchdog, session snapshot, final-pass injector), and the harness workspace. All configuration lives in one KEY=VALUE config file:
+Provisions an EC2 instance and bootstraps the environment: desktop + VNC, the agent framework, Telegram, telemetry (the pinned plugin and its config block), services (git, AWS CLI, gog), the box-side crons (thinking watchdog, auth watchdog, session snapshot, final-pass injector), and the harness workspace. All configuration lives in one KEY=VALUE config file:
 
 ```bash
 cd linux/
@@ -33,7 +33,6 @@ The bootstrap auto-resolves the environment-derived placeholders (agent/operator
 | `{{API_BUDGET}}` | `AGENTS.md`, `PLAN.md` | API spend cap — required |
 | `{{CLOUD_SPEND_LIMIT}}` | `AGENTS.md`, `PLAN.md` | GPU spend cap — required |
 | `{{OPENROUTER_BUDGET}}` | `AGENTS.md`, `PLAN.md` | OpenRouter spend cap (the experiments' LLM calls) — required |
-| `{{GITHUB_USER}}` | `AGENTS.md` | GitHub username for `gh` |
 | `{{VENUE\|NeurIPS}}` | `AGENTS.md` | Target venue |
 | `{{PAGE_BUDGET\|9}}` | `AGENTS.md`, `scripts/gate_artifact.sh` | Main-body page limit |
 | `{{BACKMATTER_ALLOWANCE\|15}}` | `scripts/gate_artifact.sh` | Extra pages allowed for references/appendices in the total-page check |
@@ -50,7 +49,7 @@ Placeholders with `|defaults` may be left as-is; the agent's hour-0 environment 
 
 ### Step 3: Verify accounts — by you, not the agent
 
-- **GitHub:** `gh auth status` works on the box; project remote exists if wanted.
+- **Version control:** `git` is installed and has a commit identity (`git config --global user.name`); the agent commits locally, no remote and no credentials.
 - **Telegram pairing:** DM the bot, then `openclaw pairing list telegram` → `openclaw pairing approve telegram <CODE>`.
 - **Email CLI (`gog`):** authenticated to the dedicated review Gmail; `gog gmail list "in:inbox"` works.
 - **External reviewer platforms — dry-run now, not mid-run.** Submit a throwaway PDF to the CMU reviewer (`https://prometheus-eval.github.io/cmu-paper-reviewer/`) with delivery to the review Gmail, and confirm the review email arrives and is readable via `gog`. Confirm the refine.ink API key works.

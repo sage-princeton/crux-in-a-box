@@ -22,18 +22,15 @@ else
   fail "VNC server is NOT running"
 fi
 
-# ----- GitHub CLI -----
-if command -v gh &>/dev/null; then
-  # start.sh persists gh creds to ~/.config/gh AND writes GH_TOKEN to
-  # ~/.openclaw/.env; pick up the latter as a fallback for tool-env parity.
-  GH_TOK=$(grep -E '^GH_TOKEN=' "$HOME/.openclaw/.env" 2>/dev/null | head -1 | cut -d= -f2-)
-  if gh auth status &>/dev/null || GH_TOKEN="$GH_TOK" gh auth status &>/dev/null; then
-    pass "gh CLI: authenticated"
+# ----- git (local commits, no remote) -----
+if command -v git &>/dev/null; then
+  if [ -n "$(git config --global user.name 2>/dev/null)" ]; then
+    pass "git: installed and identity configured for local commits ($(git config --global user.name))"
   else
-    warn "gh CLI: installed but NOT authenticated (check GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN)"
+    warn "git: installed but no commit identity configured (start.sh sets user.name/user.email)"
   fi
 else
-  fail "gh CLI: not installed"
+  fail "git: not installed"
 fi
 
 # ----- AWS CLI -----

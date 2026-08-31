@@ -203,7 +203,7 @@
       <h2 id="sys-h"><span class="section-tag" style="background:var(--c-decide)" aria-hidden="true"></span>The system on one page</h2>
       <p class="section-intro">One box, one agent, and everything that wakes it, feeds it, meters it, or records it. Dashed arrows fire on a schedule — and every firing is a full model turn. Amber arrows spend one of the budgets.</p>
       <figure class="sysfig">
-        <svg viewBox="0 0 1060 676" role="img" aria-label="System diagram: the operator launches and receives snapshots; inside the EC2 box, five schedulers wake the main agent session, which maintains the workspace, spawns subagents including an isolated reviewer, and launches background jobs; every turn lands in the session store; the model provider, OpenRouter, and RunPod each meter a budget; external reviewers and GitHub receive the paper and the code.">
+        <svg viewBox="0 0 1060 676" role="img" aria-label="System diagram: the operator launches and receives snapshots; inside the EC2 box, five schedulers wake the main agent session, which maintains the workspace, spawns subagents including an isolated reviewer, and launches background jobs; every turn lands in the session store; the model provider, OpenRouter, and RunPod each meter a budget; external reviewers receive the paper and the code is versioned in a local git repo on the box.">
           <defs>
             <marker id="sarr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
             <marker id="sarrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--c-resource-text)"/></marker>
@@ -328,12 +328,12 @@
           <line x1="820" y1="258" x2="760" y2="258" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
           <text x="790" y="272" font-size="11" fill="var(--muted)" text-anchor="middle">reviews</text>
 
-          <!-- External: GitHub -->
+          <!-- On-box: local git -->
           <rect x="820" y="308" width="224" height="64" rx="10" fill="var(--surface)" stroke="var(--line)"/>
-          <text x="832" y="332" font-size="12" font-weight="700" fill="var(--ink)">GitHub</text>
-          <text x="832" y="350" font-size="11" fill="var(--muted)">small commits · push hourly</text>
+          <text x="832" y="332" font-size="12" font-weight="700" fill="var(--ink)">Local git</text>
+          <text x="832" y="350" font-size="11" fill="var(--muted)">small commits · no remote</text>
           <polyline points="760,300 790,300 790,340 820,340" fill="none" stroke="var(--muted)" stroke-width="1.5" marker-end="url(#sarr)"/>
-          <text x="766" y="294" font-size="11" fill="var(--muted)">push</text>
+          <text x="766" y="294" font-size="11" fill="var(--muted)">commit</text>
 
           <!-- External: OpenRouter -->
           <rect x="820" y="392" width="224" height="84" rx="10" fill="var(--surface)" stroke="var(--line)"/>
