@@ -369,6 +369,8 @@ chmod 600 "$OPENCLAW_ENV"
 # the experiments' LLM budget (the second, never-crossed budget). It was absent
 # from main's configure.sh; verify on a live box that it lands in ~/.openclaw/.env.
 # FIXME: investigate more here - confirm we treat OPENROUTER_API_KEY as a tool that we give the agent and NOT a way to power the agent
+# NB: experiments run in the environment with ANTHROPIC_API_KEY and OPENROUTER_API_KEY
+# we just need to make sure that experiments are running with open router and I think we're good to go
 
 for kv in "RUNPOD_API_KEY=${RUNPOD_API_KEY:-}" "REFINE_INK_API_KEY=${REFINE_INK_API_KEY:-}" "OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}"; do
   name="${kv%%=*}"; val="${kv#*=}"
@@ -418,42 +420,6 @@ done
 chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
 chmod 600 "$OPENCLAW_ENV"
 echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-unset})"
-
-# ====== GitHub auth (gh CLI + git over HTTPS) ======
-# FIXME(merge v3): our stack is local-git-only (no GitHub remote). create-new-crux-box.sh
-# no longer forwards GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN, so this whole block is
-# inert (it just prints the "not provided" warning) and status.sh checks local git
-# identity, not gh auth. Left in place so GitHub support can be revived by re-adding
-# the PAT to create-new-crux-box.sh's build_remote_env; nothing else here needs to change.
-# Authenticate gh non-interactively with the classic PAT passed by
-# create-new-crux-box.sh. Run as the real user (gh stores creds under
-# ~/.config/gh), wire up git's credential helper, and also export the token in
-# ~/.openclaw/.env (GITHUB_TOKEN/GH_TOKEN are what gh, git, and most tooling
-# read) so the agent's tool subprocesses can push/pull and call the GitHub API.
-if [ -n "${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN:-}" ]; then
-  if command -v gh >/dev/null 2>&1; then
-    if printf '%s' "$GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN" \
-         | sudo -u "$REAL_USER" gh auth login --hostname github.com --git-protocol https --with-token; then
-      sudo -u "$REAL_USER" gh auth setup-git || true
-      echo "✔ gh CLI authenticated and git credential helper configured"
-    else
-      echo "⚠ gh auth login failed — check the GitHub classic PAT (scope/expiry)."
-    fi
-  else
-    echo "⚠ gh CLI not installed — cannot authenticate GitHub."
-  fi
-
-  # Export for the gateway/agent tool environment (gh + git read these).
-  for name in GITHUB_TOKEN GH_TOKEN; do
-    sed -i "/^${name}=/d" "$OPENCLAW_ENV"
-    echo "${name}=${GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN}" >> "$OPENCLAW_ENV"
-  done
-  chown "$REAL_USER:$REAL_USER" "$OPENCLAW_ENV"
-  chmod 600 "$OPENCLAW_ENV"
-  echo "✔ GITHUB_TOKEN/GH_TOKEN written to ~/.openclaw/.env"
-else
-  echo "⚠ GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN not provided — gh/git will be unauthenticated."
-fi
 
 # ====== git (local commits, no remote) ======
 # The agent keeps its work under local git version control (small, frequent

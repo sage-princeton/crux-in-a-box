@@ -216,6 +216,9 @@ then
   exit 1
 fi
 
+# NOTE: the bash -c script below is a DOUBLE-QUOTED string — comments or text
+# with embedded double quotes inside it truncate the script mid-line and the
+# remainder executes in THIS root shell - AVOID comments in this.
 sudo -u "$REAL_USER" bash -c "
   cd $REAL_HOME
   curl -fsSL https://get.pnpm.io/install.sh | sh -
@@ -224,11 +227,7 @@ sudo -u "$REAL_USER" bash -c "
   cd $TELEMETRY_REPO_DIR
   pnpm install
   pnpm run build
-  # --force: OpenClaw trust-gates local-path plugin installs (--link . is
-  # outside ClawHub trust metadata) and otherwise cancels non-interactively
-  # (no TTY here), aborting the bake -- this is our own vetted telemetry
-  # plugin, so bypass the gate deliberately.
-  $REAL_HOME/.npm-global/bin/openclaw plugins install --force --link .
+  $REAL_HOME/.npm-global/bin/openclaw plugins install . --link --force --accept-capabilities
 "
 # The build must postdate the sources (tsc emits dist/index.js and dist/src/*.js
 # from index.ts and src/*.ts): a stale or missing dist would load an older build
