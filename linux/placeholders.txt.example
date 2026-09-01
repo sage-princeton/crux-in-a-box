@@ -65,7 +65,7 @@ GOG_HOME_TARBALL=./gog-home.tar.gz
 # DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + the venue template at templates/paper_template.zip — unzip into paper/ and build the skeleton on day 1
 
 # ── Optional: provisioning knobs with defaults (uncomment to override) ──
-# Same {{KEY|default}} grammar, but consumed by start.sh itself (openclaw.json,
+# Same {{KEY|default}} grammar, but consumed by configure.sh itself (openclaw.json,
 # the installed watchdog scripts, crontab) rather than substituted into the
 # workspace files. Positive integers only.
 

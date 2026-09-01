@@ -16,7 +16,7 @@
 # merges the copies back into one run log at export time.
 #
 # Run from cron every {{SESSION_SNAPSHOT_MINUTES|10}} minutes as the openclaw
-# user (installed by start.sh):
+# user (installed by configure.sh):
 #   */10 * * * * /home/ubuntu/.openclaw/watchdog/crux-session-snapshot.sh
 # utils/export-run.sh runs it once more right before extracting.
 #

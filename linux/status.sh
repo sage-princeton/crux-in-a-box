@@ -27,7 +27,7 @@ if command -v git &>/dev/null; then
   if [ -n "$(git config --global user.name 2>/dev/null)" ]; then
     pass "git: installed and identity configured for local commits ($(git config --global user.name))"
   else
-    warn "git: installed but no commit identity configured (start.sh sets user.name/user.email)"
+    warn "git: installed but no commit identity configured (configure.sh sets user.name/user.email)"
   fi
 else
   fail "git: not installed"
@@ -147,7 +147,7 @@ if [ -f "$OPENCLAW_CONFIG" ] && command -v jq &>/dev/null; then
   if [ "$TEL_ENTRY_ON" = "true" ] && [ "$TEL_SERVICE_ON" = "true" ]; then
     pass "Telemetry config: entry enabled + config.enabled=true (service starts)"
   else
-    fail "Telemetry config: plugins.entries.telemetry-hal enabled=$TEL_ENTRY_ON config.enabled=$TEL_SERVICE_ON — both must be true (start.sh TELEMETRY CONFIG block); without config.enabled the service never starts"
+    fail "Telemetry config: plugins.entries.telemetry-hal enabled=$TEL_ENTRY_ON config.enabled=$TEL_SERVICE_ON — both must be true (configure.sh TELEMETRY CONFIG block); without config.enabled the service never starts"
   fi
   if [ "$TEL_HOOKS_ON" = "true" ]; then
     pass "Telemetry hooks: allowConversationAccess=true at the entry level (agent_end/llm_input/llm_output allowed)"
@@ -218,14 +218,14 @@ fi
 # ----- Watchdog crons -----
 # crux-thinking-watchdog (wedged-session reset), crux-auth-watchdog (provider
 # says no to every call → halt + page), crux-session-snapshot (store copies so
-# deleted cron transcripts survive). All installed by start.sh WATCHDOGS.
+# deleted cron transcripts survive). All installed by configure.sh WATCHDOGS.
 CRON_LINES=$(crontab -l 2>/dev/null)
 for job in crux-thinking-watchdog crux-auth-watchdog crux-session-snapshot; do
   CRON_LINE=$(printf '%s\n' "$CRON_LINES" | grep -m1 "$job")
   if [ -n "$CRON_LINE" ]; then
     pass "cron: $job installed (schedule: ${CRON_LINE%% /*})"
   else
-    fail "cron: $job NOT in crontab (start.sh WATCHDOGS block did not run?)"
+    fail "cron: $job NOT in crontab (configure.sh WATCHDOGS block did not run?)"
   fi
 done
 

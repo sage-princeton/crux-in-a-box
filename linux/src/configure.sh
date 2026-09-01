@@ -23,6 +23,128 @@ SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 REAL_USER="${SUDO_USER:-ubuntu}"
 REAL_HOME=$(eval echo "~$REAL_USER")
 
+# ====== PLACEHOLDER RESOLUTION ======
+# Operator-tunable values travel as {{KEY|default}} tokens. create-new-crux-box.sh
+# forwards every non-secret config key as PLACEHOLDERS ("K=V|||K=V"). The harness
+# workspace, the installed watchdog scripts (which live OUTSIDE the workspace) and
+# configure.sh's own settings all resolve tokens through the two helpers below, in
+# the same order, so one grammar covers all three — a token resolved in one place
+# and left literal in another silently becomes a wrong default, which is the
+# failure this centralises away.
+AGENT_NAME="${AGENT_NAME:-crux}"
+OPERATOR_NAME="${OPERATOR_NAME:-operator}"
+OPENCLAW_WORKSPACE="$REAL_HOME/.openclaw/workspace"
+TELEMETRY_PATH="$REAL_HOME/.openclaw/logs/telemetry.jsonl"
+
+# placeholder_value '{{KEY|default}}' — print the operator's KEY from the config
+# file if one was given, else the token's default. For values configure.sh
+# consumes itself (jq arguments, crontab cadences) rather than files it edits.
+placeholder_value() {
+  local token="$1" key default rest pair
+  local re='^\{\{([A-Z_][A-Z0-9_]*)(\|(.*))?\}\}$'
+  if [[ ! "$token" =~ $re ]]; then
+    echo "placeholder_value: not a {{KEY|default}} token: $token" >&2
+    return 1
+  fi
+  key="${BASH_REMATCH[1]}"
+  default="${BASH_REMATCH[3]}"
+  # Split on the LITERAL '|||' delimiter (IFS='|||' would split on every
+  # single '|', silently truncating any value that contains one).
+  rest="${PLACEHOLDERS:-}|||"
+  while [ -n "$rest" ]; do
+    pair="${rest%%|||*}"
+    rest="${rest#*|||}"
+    [ -z "$pair" ] && continue
+    if [ "${pair%%=*}" = "$key" ]; then
+      printf '%s' "${pair#*=}"
+      return 0
+    fi
+  done
+  printf '%s' "$default"
+}
+
+# sed_replacement_escape VALUE — print VALUE escaped for the replacement side of
+# a '#'-delimited s### command. Unescaped, '#' ends the expression (sed errors,
+# set -e aborts provisioning), '&' re-inserts the match and '\' starts an escape
+# (both rewrite the value silently); a newline must be written as '\'+newline.
+# Every value substituted below goes through this, so an operator value such as
+# a URL with a query string or a '#' in a research question cannot break or
+# corrupt the resolution.
+sed_replacement_escape() {
+  local v="$1"
+  v="${v//\\/\\\\}"
+  v="${v//&/\\&}"
+  v="${v//#/\\#}"
+  v="${v//$'\n'/\\$'\n'}"
+  printf '%s' "$v"
+}
+
+# resolve_placeholders [-q] PATH... — resolve the tokens in files in place:
+#   Step 1: operator-supplied values from PLACEHOLDERS (they win);
+#   Step 2: environment-derived values (AGENT_NAME, OPERATOR_NAME, ...);
+#   Step 3: whatever {{KEY|default}} is left takes its default.
+# Directories are walked for *.md, *.sh and *.py; a file named explicitly is
+# always processed. '#' is the sed delimiter so '|' inside defaults survives.
+# -q suppresses the per-key "Placeholder resolved" lines (second callers).
+resolve_placeholders() {
+  local quiet=0 p f
+  if [ "${1:-}" = "-q" ]; then quiet=1; shift; fi
+  local files=()
+  for p in "$@"; do
+    if [ -d "$p" ]; then
+      while IFS= read -r -d '' f; do files+=("$f"); done \
+        < <(find "$p" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -print0)
+    elif [ -f "$p" ]; then
+      files+=("$p")
+    fi
+  done
+  [ "${#files[@]}" -gt 0 ] || return 0
+
+  # --- Step 1: Resolve user-supplied placeholders (from the config file) ---
+  # These run first so they take priority over built-in defaults. Split on the
+  # LITERAL '|||' delimiter (see placeholder_value).
+  if [ -n "${PLACEHOLDERS:-}" ]; then
+    local rest="${PLACEHOLDERS}|||" pair key value
+    while [ -n "$rest" ]; do
+      pair="${rest%%|||*}"
+      rest="${rest#*|||}"
+      [ -z "$pair" ] && continue
+      key="${pair%%=*}"
+      value="${pair#*=}"
+      # The key is the pattern side of the sed: only a placeholder_value-shaped
+      # identifier can ever match a token, so anything else is a malformed
+      # config line — say so and skip it rather than feed it to sed.
+      if [[ ! "$key" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+        echo "⚠ Placeholder key '${key}' is not an identifier ([A-Z_][A-Z0-9_]*) — skipped"
+        continue
+      fi
+      # Replace both {{KEY}} and {{KEY|default}} forms
+      sed -i \
+        -e "s#{{${key}}}#$(sed_replacement_escape "$value")#g" \
+        -e "s#{{${key}|[^}]*}}#$(sed_replacement_escape "$value")#g" \
+        "${files[@]}"
+      [ "$quiet" = 1 ] || echo "✔ Placeholder resolved: ${key}=${value}"
+    done
+  fi
+
+  # --- Step 2: Resolve environment-derived placeholders ---
+  sed -i \
+    -e "s#{{AGENT_NAME}}#$(sed_replacement_escape "$AGENT_NAME")#g" \
+    -e "s#{{OPERATOR_NAME}}#$(sed_replacement_escape "$OPERATOR_NAME")#g" \
+    -e "s#{{OPERATOR_SHORT}}#$(sed_replacement_escape "$OPERATOR_NAME")#g" \
+    -e "s#{{WORKSPACE_PATH}}#$(sed_replacement_escape "$OPENCLAW_WORKSPACE")#g" \
+    -e "s#{{TELEMETRY_PATH}}#$(sed_replacement_escape "$TELEMETRY_PATH")#g" \
+    -e "s#{{HOST_DESCRIPTION|[^}]*}}#Ubuntu 24.04 LTS EC2, amd64#g" \
+    -e "s#{{COST_TRACKER_URL}}#$(sed_replacement_escape "${COST_TRACKER_URL:-}")#g" \
+    -e "s#{{API_KEY_SUFFIX}}#$(sed_replacement_escape "${API_KEY_SUFFIX:-}")#g" \
+    "${files[@]}"
+
+  # --- Step 3: Auto-populate remaining {{KEY|default}} with their defaults ---
+  # Any placeholder with a pipe-delimited default that wasn't resolved above
+  # gets replaced with its default value (the part after the |).
+  sed -i -E 's#\{\{[A-Z_]+\|([^}]+)\}\}#\1#g' "${files[@]}"
+}
+
 # ====== VALIDATE REQUIRED SECRETS / CONFIG (before touching anything) ======
 if [ -z "${DEFAULT_LLM_MODEL:-}" ]; then
   echo "Error: DEFAULT_LLM_MODEL is required (e.g. anthropic/claude-opus-4-8 or openai/gpt-4o)" >&2
@@ -159,6 +281,65 @@ echo "✔ Subagents maxConcurrent: 5"
 echo "✔ Exec security: tools.exec.security=full, agents.list[main].tools.exec.security=full"
 echo "✔ Codex app-server: approvalPolicy=never, sandbox=danger-full-access"
 
+# ====== TELEMETRY CONFIG ======
+# install.sh (bake) pins, builds and links the telemetry-hal plugin and patches
+# its manifest for activation, but writes NO run config. `openclaw plugins
+# install --link .` writes only plugins.load.paths and
+# plugins.entries.telemetry-hal.enabled. That flag makes the gateway LOAD the
+# plugin (hooks fire); the plugin's service reads
+# plugins.entries.telemetry-hal.config.enabled and returns without starting when
+# it is absent — two different switches. With only the first set, the service
+# never starts: no rotation, no integrity, no llm.usage from the diagnostic bus,
+# and hook events go only to the stamped+redacted fallback file. One run went a
+# week with the service off. agent_end / llm_input / llm_output are
+# "conversation" hooks: the gateway refuses them for non-bundled plugins unless
+# hooks.allowConversationAccess=true sits at the ENTRY level (next to config, not
+# inside it — inside config it fails schema validation and disables the whole
+# plugin). The block is built inline below — it only needs the two host-side
+# switches (enabled + hooks.allowConversationAccess), config.enabled, and the
+# box-specific file path and rotation. redact.patterns / redact.enabled are the
+# plugin's own defaults (redaction is on by default once the service starts), so
+# they are not restated here. plugins.load.paths is left exactly as the install
+# wrote it.
+TELEMETRY_LOG_DIR="$REAL_HOME/.openclaw/logs"
+TELEMETRY_FILE="$TELEMETRY_PATH"   # $REAL_HOME/.openclaw/logs/telemetry.jsonl (PLACEHOLDER RESOLUTION)
+TELEMETRY_ROTATE_MAX_BYTES=$(placeholder_value '{{TELEMETRY_ROTATE_MAX_BYTES|104857600}}')
+TELEMETRY_ROTATE_MAX_FILES=$(placeholder_value '{{TELEMETRY_ROTATE_MAX_FILES|50}}')
+case "$TELEMETRY_ROTATE_MAX_BYTES" in
+  ''|*[!0-9]*|0) echo "⚠ TELEMETRY_ROTATE_MAX_BYTES='$TELEMETRY_ROTATE_MAX_BYTES' is not a positive integer — using 104857600"; TELEMETRY_ROTATE_MAX_BYTES=104857600 ;;
+esac
+case "$TELEMETRY_ROTATE_MAX_FILES" in
+  ''|*[!0-9]*|0) echo "⚠ TELEMETRY_ROTATE_MAX_FILES='$TELEMETRY_ROTATE_MAX_FILES' is not a positive integer — using 50"; TELEMETRY_ROTATE_MAX_FILES=50 ;;
+esac
+sudo -u "$REAL_USER" mkdir -p "$TELEMETRY_LOG_DIR"
+TMP_CONFIG=$(mktemp)
+jq --arg path "$TELEMETRY_FILE" \
+   --argjson maxbytes "$TELEMETRY_ROTATE_MAX_BYTES" \
+   --argjson maxfiles "$TELEMETRY_ROTATE_MAX_FILES" '
+  ({
+    enabled: true,
+    config: {
+      enabled: true,
+      filePath: $path,
+      rotate: { enabled: true, maxSizeBytes: $maxbytes, maxFiles: $maxfiles, compress: true },
+      integrity: { enabled: false },
+      rateLimit: { enabled: false }
+    },
+    hooks: { allowConversationAccess: true }
+  }) as $block |
+  .plugins.entries["telemetry-hal"] =
+    ((.plugins.entries["telemetry-hal"] // {}) * $block)
+' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
+  && mv "$TMP_CONFIG" "$OPENCLAW_CONFIG"
+chown "$REAL_USER:$REAL_USER" "$OPENCLAW_CONFIG"
+TELEMETRY_CONFIG_OK=$(jq -r '.plugins.entries["telemetry-hal"] | (.enabled == true and .config.enabled == true and .hooks.allowConversationAccess == true)' "$OPENCLAW_CONFIG")
+if [ "$TELEMETRY_CONFIG_OK" != "true" ]; then
+  echo "✘ telemetry-hal: openclaw.json does not carry enabled + config.enabled + hooks.allowConversationAccess after the merge — inspect $OPENCLAW_CONFIG" >&2
+  exit 1
+fi
+echo "✔ Telemetry plugin configured: config.enabled=true, redaction on, rotation ${TELEMETRY_ROTATE_MAX_BYTES} B × ${TELEMETRY_ROTATE_MAX_FILES} files, hooks.allowConversationAccess=true → $TELEMETRY_FILE"
+echo "→ VERIFY after the gateway starts (linux/status.sh runs these): journalctl --user -u openclaw-gateway | grep -E 'telemetry:|blocked' must show 'telemetry: $TELEMETRY_FILE', 'telemetry: rotation enabled', 'telemetry: redaction enabled', 'llm.usage from the internal diagnostic bus' and NO 'typed hook \"agent_end\" blocked'; after the first heartbeat, head -1 $TELEMETRY_FILE | jq '.seq,.ts' must be non-null and no line may carry fallback:true. Rotated files are ${TELEMETRY_FILE}.N.gz — collect telemetry.jsonl*, not just the live file."
+
 # Append the LLM API key to ~/.openclaw/.env for daemon/gateway use.
 # Write whichever of ANTHROPIC_API_KEY / OPENAI_API_KEY is set; both if both.
 OPENCLAW_ENV="$REAL_HOME/.openclaw/.env"
@@ -274,11 +455,22 @@ else
   echo "⚠ GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN not provided — gh/git will be unauthenticated."
 fi
 
+# ====== git (local commits, no remote) ======
+# The agent keeps its work under local git version control (small, frequent
+# commits) as the run's own history. No remote is configured and no host
+# credentials are provisioned — nothing is pushed anywhere. Plain `git` is
+# installed by install.sh; identity for commits is set here so the agent's
+# commits are attributable in the local log (status.sh checks for it).
+sudo -u "$REAL_USER" git config --global user.name "crux-agent"
+sudo -u "$REAL_USER" git config --global user.email "crux-agent@localhost"
+sudo -u "$REAL_USER" git config --global init.defaultBranch main
+echo "✔ git configured for local commits (no remote, no credentials)"
+
 # ====== HARNESS WORKSPACE ======
 # Copy the run-harness workspace into the agent's OpenClaw workspace
 # and resolve placeholders that are known at provisioning time.
 HARNESS_SRC="$REAL_HOME/crux-in-a-box-harness/workspace"
-OPENCLAW_WORKSPACE="$REAL_HOME/.openclaw/workspace"
+# OPENCLAW_WORKSPACE is set in PLACEHOLDER RESOLUTION (top of file).
 
 if [ -d "$HARNESS_SRC" ]; then
   sudo -u "$REAL_USER" mkdir -p "$OPENCLAW_WORKSPACE"
@@ -288,44 +480,11 @@ if [ -d "$HARNESS_SRC" ]; then
   # Make scripts executable
   chmod +x "$OPENCLAW_WORKSPACE/scripts/"*.sh 2>/dev/null || true
 
-  # --- Step 1: Resolve user-supplied placeholders (from the config file) ---
-  # These run first so they take priority over built-in defaults.
-  if [ -n "${PLACEHOLDERS:-}" ]; then
-    IFS='|||' read -ra PAIRS <<< "$PLACEHOLDERS"
-    for PAIR in "${PAIRS[@]}"; do
-      [ -z "$PAIR" ] && continue
-      KEY="${PAIR%%=*}"
-      VALUE="${PAIR#*=}"
-      # Replace both {{KEY}} and {{KEY|default}} forms
-      find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec sed -i \
-        -e "s#{{${KEY}}}#${VALUE}#g" \
-        -e "s#{{${KEY}|[^}]*}}#${VALUE}#g" \
-        {} +
-      echo "✔ Placeholder resolved: ${KEY}=${VALUE}"
-    done
-  fi
-
-  # --- Step 2: Resolve environment-derived placeholders ---
-  # Use '#' as sed delimiter to avoid clashes with '|' in placeholder defaults.
-  AGENT_NAME="crux"
-  OPERATOR_NAME="operator"
-  find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec sed -i \
-    -e "s#{{AGENT_NAME}}#${AGENT_NAME}#g" \
-    -e "s#{{OPERATOR_NAME}}#${OPERATOR_NAME}#g" \
-    -e "s#{{OPERATOR_SHORT}}#${OPERATOR_NAME}#g" \
-    -e "s#{{WORKSPACE_PATH}}#${OPENCLAW_WORKSPACE}#g" \
-    -e "s#{{TELEMETRY_PATH}}#${REAL_HOME}/.openclaw/telemetry/telemetry.jsonl#g" \
-    -e "s#{{HOST_DESCRIPTION|[^}]*}}#Ubuntu 24.04 LTS EC2, amd64#g" \
-    -e "s#{{COST_TRACKER_URL}}#${COST_TRACKER_URL:-}#g" \
-    -e "s#{{API_KEY_SUFFIX}}#${API_KEY_SUFFIX:-}#g" \
-    {} +
+  # Resolve {{KEY}} / {{KEY|default}} tokens in every *.md, *.sh, *.py of the
+  # workspace — Step 1 operator values, Step 2 environment-derived values,
+  # Step 3 defaults (resolve_placeholders, PLACEHOLDER RESOLUTION above).
+  resolve_placeholders "$OPENCLAW_WORKSPACE"
   echo "✔ Environment placeholders resolved (AGENT_NAME=$AGENT_NAME, OPERATOR_NAME=$OPERATOR_NAME)"
-
-  # --- Step 3: Auto-populate remaining {{KEY|default}} with their defaults ---
-  # Any placeholder with a pipe-delimited default that wasn't resolved above
-  # gets replaced with its default value (the part after the |).
-  find "$OPENCLAW_WORKSPACE" -type f \( -name '*.md' -o -name '*.sh' -o -name '*.py' \) -exec \
-    sed -i -E 's#\{\{[A-Z_]+\|([^}]+)\}\}#\1#g' {} +
   echo "✔ Remaining defaults auto-populated"
 
   echo "✔ Harness workspace copied to $OPENCLAW_WORKSPACE"
@@ -341,23 +500,105 @@ else
   echo "⚠ Harness workspace not found at $HARNESS_SRC — skipping workspace setup"
 fi
 
-# ====== FIXME(merge v3): MISSING WATCHDOGS + FINAL-PASS INJECTOR ======
-# The v3 merge kept our box-side mechanisms (linux/src/crux-auth-watchdog.sh,
-# crux-session-snapshot.sh, final-pass-injector.sh) but the provisioning entrypoint
-# is now main's create-new-crux-box.sh -> install.sh + configure.sh, which do NOT
-# install them:
-#   - install.sh installs ONLY crux-thinking-watchdog.sh (cron */5).
-#   - configure.sh (this file) installs NONE of the three.
-#   - our linux/src/start.sh installs all three + their crons, but nothing calls
-#     start.sh anymore, so it is orphaned.
-# Until this is wired up, a provisioned box has NO auth watchdog (won't halt+page
-# on a dead provider key), NO session snapshots, and NO final-pass injector (the
-# COMPLETION_REPORT.md -> final-pass trigger described in AGENTS.md/OPERATOR_GUIDE.md
-# will not fire). To fix: port the install blocks from linux/src/start.sh
-# (search "crux-auth-watchdog", "crux-session-snapshot", "final-pass-injector")
-# into this section, honoring the AUTH_WATCHDOG_THRESHOLD / SESSION_SNAPSHOT_MINUTES
-# placeholders, and add the scripts to install.sh's SCRIPT_DIR copy at bake time.
-# Verify on a live box that the crontab lists all four jobs before trusting a run.
+# ====== WATCHDOGS ======
+# Box-side cron jobs under ~/.openclaw/watchdog/ — mechanical halves the agent
+# never sees (linux/src/crux-*.sh; each header explains its failure class):
+#
+#   crux-thinking-watchdog.sh  (*/5)   Auto-recovers the main session when it
+#     wedges on cascading "Invalid `signature` in `thinking` block" provider
+#     errors — a known OpenClaw bug (openclaw/openclaw#44370, #45010) with no
+#     upstream fix as of 2026.6.11. Detection is strict (errorMessage records
+#     only, newest stopReason must be an error) with a 30-min cooldown and a
+#     daily reset cap.
+#
+#   crux-auth-watchdog.sh      (*/5)   Halt-and-notify when the provider rejects
+#     EVERY call for a non-transient reason (revoked/rotated key, model
+#     permission, exhausted credit): {{AUTH_WATCHDOG_THRESHOLD|4}} consecutive
+#     auth-class failed turns → stop the gateway, write
+#     ~/.openclaw/watchdog/auth-halt, page the operator over Telegram. Retrying
+#     cannot fix that class; one run burned six days of dead heartbeats before
+#     anyone noticed. Dormant while the marker exists. Recovery: put the new
+#     key in ~/.openclaw/.env, then either re-run `openclaw gateway install`
+#     (regenerates ~/.openclaw/gateway.systemd.env from the managed keys —
+#     the unit's EnvironmentFile, which is what the running gateway carries)
+#     or edit ~/.openclaw/gateway.systemd.env to match; `systemctl --user
+#     start openclaw-gateway`; then `rm ~/.openclaw/watchdog/auth-halt`.
+#     Revoke keys AFTER stopping the gateway, not before.
+#
+#   crux-session-snapshot.sh   (*/{{SESSION_SNAPSHOT_MINUTES|10}})   Copies the
+#     session store into ~/.openclaw/session-snapshots/ so cron transcripts
+#     (deleted by the gateway when the job next runs) and orphaned main
+#     generations survive for utils/export-run.sh. The store, not the telemetry
+#     plugin, is the run's record (per-call usage and cost, thinking, tool args).
+#
+# These are installed HERE (run phase), not at bake, because their cadences and
+# thresholds are per-run placeholders and the auth watchdog pages over the
+# per-run Telegram credentials in openclaw.json.
+WATCHDOG_DIR="$REAL_HOME/.openclaw/watchdog"
+sudo -u "$REAL_USER" mkdir -p "$WATCHDOG_DIR"
+for wd in crux-thinking-watchdog crux-auth-watchdog crux-session-snapshot; do
+  cp "$SCRIPT_DIR/$wd.sh" "$WATCHDOG_DIR/$wd.sh"
+  chown "$REAL_USER:$REAL_USER" "$WATCHDOG_DIR/$wd.sh"
+  chmod +x "$WATCHDOG_DIR/$wd.sh"
+done
+
+# The watchdog dir is outside the workspace, so the workspace pass never touches
+# it; resolve the installed copies with the same three passes (operator value →
+# environment → default). A literal {{...}} in an installed script would fall
+# back to a hard-coded default at best and break at worst.
+resolve_placeholders -q "$WATCHDOG_DIR"
+REMAINING_WD=$(grep -ln '{{' "$WATCHDOG_DIR"/*.sh 2>/dev/null || true)
+if [ -n "$REMAINING_WD" ]; then
+  echo "⚠ Unresolved placeholders in installed watchdog scripts (a token without a default?): $REMAINING_WD"
+fi
+AUTH_WATCHDOG_THRESHOLD=$(placeholder_value '{{AUTH_WATCHDOG_THRESHOLD|4}}')
+SESSION_SNAPSHOT_MINUTES=$(placeholder_value '{{SESSION_SNAPSHOT_MINUTES|10}}')
+case "$SESSION_SNAPSHOT_MINUTES" in
+  ''|*[!0-9]*|0) echo "⚠ SESSION_SNAPSHOT_MINUTES='$SESSION_SNAPSHOT_MINUTES' is not a positive integer — using 10"; SESSION_SNAPSHOT_MINUTES=10 ;;
+esac
+if [ "$SESSION_SNAPSHOT_MINUTES" -gt 59 ]; then
+  echo "⚠ SESSION_SNAPSHOT_MINUTES=$SESSION_SNAPSHOT_MINUTES exceeds a cron */N minute field (max 59) — using 10"
+  SESSION_SNAPSHOT_MINUTES=10
+fi
+# Snapshot target exists from minute zero so status.sh and export-run.sh find it
+# before the first cron tick.
+sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw/session-snapshots"
+chmod 700 "$REAL_HOME/.openclaw/session-snapshots"
+
+# Crontab entries (idempotent: drop any previous line for the job, re-add).
+sudo -u "$REAL_USER" bash -c \
+  '(crontab -l 2>/dev/null | grep -v crux-thinking-watchdog; echo "*/5 * * * * $HOME/.openclaw/watchdog/crux-thinking-watchdog.sh") | crontab -'
+sudo -u "$REAL_USER" bash -c \
+  '(crontab -l 2>/dev/null | grep -v crux-auth-watchdog; echo "*/5 * * * * $HOME/.openclaw/watchdog/crux-auth-watchdog.sh") | crontab -'
+sudo -u "$REAL_USER" bash -c \
+  "(crontab -l 2>/dev/null | grep -v crux-session-snapshot; echo \"*/${SESSION_SNAPSHOT_MINUTES} * * * * \$HOME/.openclaw/watchdog/crux-session-snapshot.sh\") | crontab -"
+
+# ====== FINAL-PASS INJECTOR ======
+# Auto-dispatches the standing final-pass instruction when the agent writes
+# COMPLETION_REPORT.md at the workspace root (AGENTS.md requirement 9). The
+# message body is staged here from FINAL_PASS.md (single source of truth);
+# manual operator send remains the fallback (OPERATOR_GUIDE.md).
+FINAL_PASS_DIR="$REAL_HOME/.openclaw/final_pass"
+sudo -u "$REAL_USER" mkdir -p "$FINAL_PASS_DIR"
+FINAL_PASS_SRC="$REAL_HOME/crux-in-a-box-harness/FINAL_PASS.md"
+if [ -f "$FINAL_PASS_SRC" ]; then
+  # Stage the message body: everything below the first '---' rule (the part
+  # above it is operator-facing documentation, not part of the message).
+  awk 'flag{print} /^---$/{flag=1}' "$FINAL_PASS_SRC" > "$FINAL_PASS_DIR/message.md"
+  chown "$REAL_USER:$REAL_USER" "$FINAL_PASS_DIR/message.md"
+  echo "✔ Final-pass message staged from FINAL_PASS.md"
+else
+  echo "⚠ FINAL_PASS.md not found at $FINAL_PASS_SRC — the injector will log an error and the operator must send the final pass manually"
+fi
+cp "$SCRIPT_DIR/final-pass-injector.sh" "$FINAL_PASS_DIR/final-pass-injector.sh"
+chown "$REAL_USER:$REAL_USER" "$FINAL_PASS_DIR/final-pass-injector.sh"
+chmod +x "$FINAL_PASS_DIR/final-pass-injector.sh"
+sudo -u "$REAL_USER" bash -c \
+  '(crontab -l 2>/dev/null | grep -v final-pass-injector; echo "*/5 * * * * $HOME/.openclaw/final_pass/final-pass-injector.sh") | crontab -'
+echo "✔ Thinking-signature watchdog installed (cron */5 min)"
+echo "✔ Auth watchdog installed (cron */5 min; ${AUTH_WATCHDOG_THRESHOLD} consecutive auth-class failed turns → gateway stopped + Telegram page; recovery: put the new key in ~/.openclaw/.env, then either re-run 'openclaw gateway install' (regenerates ~/.openclaw/gateway.systemd.env from the managed keys) or edit ~/.openclaw/gateway.systemd.env to match; systemctl --user start openclaw-gateway; then rm ~/.openclaw/watchdog/auth-halt)"
+echo "✔ Session-store snapshot installed (cron */${SESSION_SNAPSHOT_MINUTES} min → ~/.openclaw/session-snapshots/; utils/export-run.sh merges the copies at end of run)"
+echo "✔ Final-pass injector installed (cron */5 — triggers on workspace COMPLETION_REPORT.md)"
 
 # ====== GATEWAY ======
 # The gateway is installed HERE, not at bake time. Installing it before config
