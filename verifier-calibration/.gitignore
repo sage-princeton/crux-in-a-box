@@ -1,0 +1,18 @@
+# Only source is tracked here: the scripts, reviewer.txt, and README.md.
+# Everything below is regenerable by the scripts (see README "Test it") or
+# specific to the machine / API org that ran it, so it stays out of git.
+
+# dataset + raw per-paper results (rebuild: build_dataset.py, run_verifier.py)
+*.jsonl
+# analysis report (rebuild: analyze.py)
+report*.md
+# run transcripts
+run_*.log
+# Files API ids (both vendors) — tied to the uploader's org, useless elsewhere
+pdf_file_ids*.json
+openai_file_ids*.json
+# banner-normalized PDFs (rebuild: fetch_pdfs.py + redact_banners.py)
+pdfs_redacted/
+
+# local venv for the anthropic SDK
+.venv/

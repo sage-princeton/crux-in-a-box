@@ -182,7 +182,11 @@ chmod 600 "$OPENCLAW_ENV"
 # tool calls — RunPod GPU pods and the refine.ink review API — so they must
 # reach the tool environment (the gateway loads ~/.openclaw/.env into its
 # process env, which tool subprocesses inherit).
-for kv in "RUNPOD_API_KEY=${RUNPOD_API_KEY:-}" "REFINE_INK_API_KEY=${REFINE_INK_API_KEY:-}"; do
+# FIXME(merge v3): OPENROUTER_API_KEY was added to the tool-key loop below during
+# the v3 merge. create-new-crux-box.sh forwards it and AGENTS.md requires it for
+# the experiments' LLM budget (the second, never-crossed budget). It was absent
+# from main's configure.sh; verify on a live box that it lands in ~/.openclaw/.env.
+for kv in "RUNPOD_API_KEY=${RUNPOD_API_KEY:-}" "REFINE_INK_API_KEY=${REFINE_INK_API_KEY:-}" "OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}"; do
   name="${kv%%=*}"; val="${kv#*=}"
   if [ -z "$val" ]; then
     echo "⚠ ${name} not provided — skipping (agent tools needing it will fail until it's added to ~/.openclaw/.env)"
@@ -232,6 +236,11 @@ chmod 600 "$OPENCLAW_ENV"
 echo "✔ gog auth configured (GOG_HOME=$GOG_HOME_DIR, account=${GOG_ACCOUNT:-unset})"
 
 # ====== GitHub auth (gh CLI + git over HTTPS) ======
+# FIXME(merge v3): our stack is local-git-only (no GitHub remote). create-new-crux-box.sh
+# no longer forwards GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN, so this whole block is
+# inert (it just prints the "not provided" warning) and status.sh checks local git
+# identity, not gh auth. Left in place so GitHub support can be revived by re-adding
+# the PAT to create-new-crux-box.sh's build_remote_env; nothing else here needs to change.
 # Authenticate gh non-interactively with the classic PAT passed by
 # create-new-crux-box.sh. Run as the real user (gh stores creds under
 # ~/.config/gh), wire up git's credential helper, and also export the token in
@@ -328,6 +337,24 @@ if [ -d "$HARNESS_SRC" ]; then
 else
   echo "⚠ Harness workspace not found at $HARNESS_SRC — skipping workspace setup"
 fi
+
+# ====== FIXME(merge v3): MISSING WATCHDOGS + FINAL-PASS INJECTOR ======
+# The v3 merge kept our box-side mechanisms (linux/src/crux-auth-watchdog.sh,
+# crux-session-snapshot.sh, final-pass-injector.sh) but the provisioning entrypoint
+# is now main's create-new-crux-box.sh -> install.sh + configure.sh, which do NOT
+# install them:
+#   - install.sh installs ONLY crux-thinking-watchdog.sh (cron */5).
+#   - configure.sh (this file) installs NONE of the three.
+#   - our linux/src/start.sh installs all three + their crons, but nothing calls
+#     start.sh anymore, so it is orphaned.
+# Until this is wired up, a provisioned box has NO auth watchdog (won't halt+page
+# on a dead provider key), NO session snapshots, and NO final-pass injector (the
+# COMPLETION_REPORT.md -> final-pass trigger described in AGENTS.md/OPERATOR_GUIDE.md
+# will not fire). To fix: port the install blocks from linux/src/start.sh
+# (search "crux-auth-watchdog", "crux-session-snapshot", "final-pass-injector")
+# into this section, honoring the AUTH_WATCHDOG_THRESHOLD / SESSION_SNAPSHOT_MINUTES
+# placeholders, and add the scripts to install.sh's SCRIPT_DIR copy at bake time.
+# Verify on a live box that the crontab lists all four jobs before trusting a run.
 
 # ====== GATEWAY ======
 # The gateway is installed HERE, not at bake time. Installing it before config

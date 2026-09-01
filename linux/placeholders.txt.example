@@ -26,23 +26,19 @@ ANTHROPIC_API_KEY=sk-ant-...
 COST_TRACKER_URL=https://xxxx.execute-api.us-east-1.amazonaws.com/cost
 RUNPOD_API_KEY=rp-...                    # secret — written to ~/.openclaw/.env
 REFINE_INK_API_KEY=...                   # secret — written to ~/.openclaw/.env
-# GitHub classic PAT — secret. Authenticates the gh CLI + git-over-HTTPS on the
-# box (gh auth login --with-token) and is written to ~/.openclaw/.env as
-# GITHUB_TOKEN/GH_TOKEN. Create at https://github.com/settings/tokens (classic);
-# needs at least 'repo' scope (add 'workflow' if the agent edits CI).
-GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN=ghp_...
+OPENROUTER_API_KEY=sk-or-v1-...          # secret — written to ~/.openclaw/.env (the experiments' LLM calls; create a dedicated key with its credit limit = OPENROUTER_BUDGET)
 
 # ── Required: workspace placeholders (no defaults — substituted into files) ──
 
-GITHUB_USER=your-github-username
 CLOUD_SPEND_LIMIT=$500
+OPENROUTER_BUDGET=$500
 API_BUDGET=$2000
-DEADLINE=10 days from launch
+DEADLINE=10 days from launch            # (falls back to "two weeks from launch" if omitted)
 
-# The task itself — the run-specific brief. These are substituted into BRIEF.md
-# (which is a generic template; the actual research goal lives here, in config).
-# Each is a single line (the config format is one KEY=VALUE per line). Avoid '#'
-# (treated as a comment) and '&' in the values.
+# The task itself — the run-specific brief. These are substituted into
+# AGENTS.md (a generic template; the actual research goal lives here, in
+# config). Each is a single line (the config format is one KEY=VALUE per
+# line). Avoid '#' (treated as a comment) and '&' in the values.
 RESEARCH_QUESTION=<the one-sentence research question the agent must answer>
 RESEARCH_CONTEXT=<the background the agent needs, plus exactly what to produce — e.g. "Prior methods do A but not B, and existing approaches are brittle. The agent should produce (a) a method for B, (b) evidence about whether the result is robust/composable, and (c) at least one downstream test it did not directly optimize for.">
 
@@ -59,11 +55,21 @@ GOG_HOME_TARBALL=./gog-home.tar.gz
 # ── Optional: workspace placeholders with defaults (uncomment to override) ──
 
 # PAGE_BUDGET=9
-# ABSTRACT_WORD_CAP=200      # presentation gate: max abstract words (gate_artifact.sh)
+# BACKMATTER_ALLOWANCE=15    # extra pages allowed for references/appendices (gate_artifact.sh)
+# ABSTRACT_WORD_CAP=200      # final-pass gate: max abstract words (gate_artifact.sh)
+# PYTHON_SETUP=uv + a pinned 3.11+ venv under code/; system python is old
+# HOST_DESCRIPTION=Ubuntu 22.04 EC2, amd64
 # SNAPSHOT_TIMES=10:00 and 19:00
+# LEDGER_BEAT_HOURS=6          # cadence of the agent's scheduled ledger/reflection beat (AGENTS.md § Your budget)
 # VENUE=NeurIPS
-# PREFLIGHT_COST=50
-# PREFLIGHT_HOURS=6
-# DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + venue template — installed and building from day 1, see PLAN.md milestone 1
-# EXTERNAL_REVIEWER_ACCESS=platform → how to submit → quota, one line each
-# EXTERNAL_REVIEWERS=e.g. Stanford agentic reviewer; CMU paper reviewer; refine.ink
+# DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + the venue template at templates/paper_template.zip — unzip into paper/ and build the skeleton on day 1
+
+# ── Optional: provisioning knobs with defaults (uncomment to override) ──
+# Same {{KEY|default}} grammar, but consumed by start.sh itself (openclaw.json,
+# the installed watchdog scripts, crontab) rather than substituted into the
+# workspace files. Positive integers only.
+
+# TELEMETRY_ROTATE_MAX_BYTES=104857600   # telemetry.jsonl rotates at this size (100 MiB); rotated files are telemetry.jsonl.N.gz — collect telemetry.jsonl*
+# TELEMETRY_ROTATE_MAX_FILES=50          # rotated telemetry files kept before the oldest is dropped (50 × 100 MiB ≈ 5 GB uncompressed ceiling)
+# AUTH_WATCHDOG_THRESHOLD=4              # consecutive auth-class failed turns (revoked key / permission / credit) before crux-auth-watchdog stops the gateway and pages you; at the 15m heartbeat cadence 4 ≈ 1 h of dead turns
+# SESSION_SNAPSHOT_MINUTES=10            # cadence (1–59) of the session-store snapshot cron that keeps cron transcripts + orphaned main generations under ~/.openclaw/session-snapshots/

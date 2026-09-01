@@ -19,5 +19,15 @@ tabpfn_telemetry.jsonl
 .mypy_cache/
 .claude/settings.local.json
 
+# local env files hold live API keys — never commit (rotate the key if one leaks)
+.env
+.env.*
+
+# papers fed to verifier-calibration are review inputs, not repo source
+/*.pdf
+
+# scrubbed run records pulled by utils/export-run.sh — local diagnostics, never commit
+runs-export/
+
 clean-room-old
 logs-for-release
