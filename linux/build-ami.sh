@@ -28,7 +28,7 @@ set -euo pipefail
 #
 # Optional:
 #   --ami-name <NAME>   Name for the baked AMI
-#                         (default: crux-in-a-box-base-YYYYMMDD).
+#                         (default: crux-in-a-box-base-YYYYMMDD-HHMMSS, UTC).
 # ==========================================================================
 
 # ====== FIXED CONFIGURATION ======
@@ -99,13 +99,15 @@ Bakes the CRUX-in-a-box base AMI (software only, no secrets). Pass the
 resulting AMI ID to create-new-crux-box.sh with --ami.
 
 Optional:
-  --ami-name <NAME>   Name for the AMI (default: crux-in-a-box-base-YYYYMMDD)
+  --ami-name <NAME>   Name for the AMI (default: crux-in-a-box-base-YYYYMMDD-HHMMSS, UTC)
 USAGE
   exit 1
 }
 
 # ====== PARSE ARGS ======
-AMI_NAME="crux-in-a-box-base-$(date -u +%Y%m%d)"
+# Date AND time (UTC): a date-only default collides with InvalidAMIName.Duplicate
+# on the second bake of the same day (AMI names must be unique per account+region).
+AMI_NAME="crux-in-a-box-base-$(date -u +%Y%m%d-%H%M%S)"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
