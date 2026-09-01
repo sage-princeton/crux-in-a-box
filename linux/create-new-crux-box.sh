@@ -209,9 +209,6 @@ COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
 OPENROUTER_API_KEY="${CFG[OPENROUTER_API_KEY]}"
-# FIXME(merge v3): our stack is local-git-only (no GitHub remote), so we drop
-# main's GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN / gh-auth path. If GitHub push is
-# ever reintroduced, re-add the PAT here AND the configure.sh gh-auth step.
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
 
 # gog (Google Workspace CLI) — required; auto-configured on the box.
@@ -232,9 +229,12 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # configure.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps CLOUD_SPEND_LIMIT, OPENROUTER_BUDGET, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
+
 # FIXME(merge v3): operational keys are excluded from placeholder substitution.
 # We keep main's dual-provider keys (DEFAULT_LLM_MODEL, OPENAI_API_KEY) AND our
-# OPENROUTER_API_KEY; GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN is dropped (local-git-only).
+# OPENROUTER_API_KEY
+# FIXME: we should update to use DEFAULT_LLM_MODEL (req'd) and either OPENAI_API_KEY or ANTHROPIC_API_KEY (one of these two is required)
+
 NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY OPENROUTER_API_KEY INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do

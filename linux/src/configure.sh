@@ -182,10 +182,13 @@ chmod 600 "$OPENCLAW_ENV"
 # tool calls — RunPod GPU pods and the refine.ink review API — so they must
 # reach the tool environment (the gateway loads ~/.openclaw/.env into its
 # process env, which tool subprocesses inherit).
+
 # FIXME(merge v3): OPENROUTER_API_KEY was added to the tool-key loop below during
 # the v3 merge. create-new-crux-box.sh forwards it and AGENTS.md requires it for
 # the experiments' LLM budget (the second, never-crossed budget). It was absent
 # from main's configure.sh; verify on a live box that it lands in ~/.openclaw/.env.
+# FIXME: investigate more here - confirm we treat OPENROUTER_API_KEY as a tool that we give the agent and NOT a way to power the agent
+
 for kv in "RUNPOD_API_KEY=${RUNPOD_API_KEY:-}" "REFINE_INK_API_KEY=${REFINE_INK_API_KEY:-}" "OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}"; do
   name="${kv%%=*}"; val="${kv#*=}"
   if [ -z "$val" ]; then

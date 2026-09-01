@@ -168,7 +168,11 @@ sudo -u "$REAL_USER" bash -c "
   cd $REAL_HOME/openclaw-telemetry-hal
   pnpm install
   pnpm run build
-  $REAL_HOME/.npm-global/bin/openclaw plugins install --link .
+  # --force: OpenClaw trust-gates local-path plugin installs ('--link .' is
+  # outside ClawHub trust metadata) and otherwise cancels non-interactively with
+  # 'Install cancelled; rerun with --force after reviewing the source.' — this is
+  # our own vetted telemetry plugin, so bypass the gate deliberately.
+  $REAL_HOME/.npm-global/bin/openclaw plugins install --force --link .
 "
 
 # Patch the telemetry plugin manifest to ensure activation on startup
