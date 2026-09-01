@@ -135,14 +135,31 @@ XFCEWALL
 
 
 # ====== OPENCLAW ======
-# install openclaw (no onboarding)
+# Install OpenClaw at a pinned version, skipping onboarding. The official
+# installer accepts OPENCLAW_VERSION (latest, next, or an exact version);
+# without it you get whatever shipped most recently.
+#
+# We pin because new releases change the config schema and CLI behavior, and
+# an unpinned bake inherits those changes blind. When 2026.8.2 landed it
+# removed heartbeat.skipWhenBusy (making our config invalid and blocking the
+# gateway install), turned agents.list into the keyed agents.entries map, and
+# added consent prompts to 'plugins install' that abort non-interactive runs.
+#
+# configure.sh writes config keys that match THIS version. If you bump the
+# pin, review configure.sh's schema in the same change.
+OPENCLAW_PINNED_VERSION="2026.8.2"
 sudo -u "$REAL_USER" bash -c \
-  'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'
-# The install is unpinned — record the version, because every config key
-# configure.sh writes further on is ignored silently if its name drifted in a
-# newer release.
+  "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_VERSION=$OPENCLAW_PINNED_VERSION bash -s -- --no-onboard"
+# Hard-verify the pin took: a mismatched version means the version-sensitive
+# config keys configure.sh writes later may be silently ignored or rejected.
 OPENCLAW_INSTALLED_VERSION=$(sudo -u "$REAL_USER" bash -lc 'openclaw --version' 2>/dev/null | head -1 || echo unknown)
-echo "✔ OpenClaw installed: ${OPENCLAW_INSTALLED_VERSION:-unknown} (unpinned — record this; the config keys configure.sh writes are version-sensitive)"
+case "$OPENCLAW_INSTALLED_VERSION" in
+  *"$OPENCLAW_PINNED_VERSION"*)
+    echo "✔ OpenClaw installed and pinned: $OPENCLAW_INSTALLED_VERSION" ;;
+  *)
+    echo "✘ OpenClaw version mismatch: pinned $OPENCLAW_PINNED_VERSION but installed '$OPENCLAW_INSTALLED_VERSION' — the installer ignored the pin or the release was pulled; do not bake, config keys are version-sensitive" >&2
+    exit 1 ;;
+esac
 
 # Copy exec-approvals config (unrestricted access for the agent)
 sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"

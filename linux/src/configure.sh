@@ -256,16 +256,10 @@ jq --arg model "$DEFAULT_LLM_MODEL" --arg reasoning "$THINKING_LEVEL" \
   .models.providers[$provider].timeoutSeconds = $ptimeout |
   .tools.profile = "full" |
    .agents.defaults.heartbeat.every = "30m" |
-   .agents.defaults.heartbeat.skipWhenBusy = true |
    .agents.defaults.heartbeat.target = "none" |
     .agents.defaults.subagents.maxConcurrent = 5 |
     .tools.exec.security = "full" |
-    (.agents.list //= []) |
-    if any(.agents.list[]; .id == "main") then
-      .agents.list = [.agents.list[] | if .id == "main" then .tools.exec.security = "full" else . end]
-    else
-      .agents.list += [{"id": "main", "tools": {"exec": {"security": "full"}}}]
-    end |
+    .agents.entries.main.tools.exec.security = "full" |
     .plugins.entries.codex.config.appServer.approvalPolicy = "never" |
     .plugins.entries.codex.config.appServer.sandbox = "danger-full-access"
 ' "$OPENCLAW_CONFIG" > "$TMP_CONFIG" \
@@ -276,9 +270,9 @@ echo "✔ Extended thinking configured: thinkingDefault=$THINKING_LEVEL (verify 
 echo "✔ Prompt cache retention: $CACHE_RETENTION (1h TTL — survives the 30m heartbeat gaps)"
 echo "✔ Provider request timeout: ${PROVIDER_REQUEST_TIMEOUT_SECONDS}s for '$PROVIDER_ID' (raises the 120s idle watchdog for heavy reasoning)"
 echo "✔ Tools profile set to full"
-echo "✔ Heartbeat configured: 30m, skipWhenBusy, target=none"
+echo "✔ Heartbeat configured: 30m, target=none (busy-skip is built-in; skipWhenBusy key removed in OpenClaw 2026.8.x)"
 echo "✔ Subagents maxConcurrent: 5"
-echo "✔ Exec security: tools.exec.security=full, agents.list[main].tools.exec.security=full"
+echo "✔ Exec security: tools.exec.security=full, agents.entries.main.tools.exec.security=full"
 echo "✔ Codex app-server: approvalPolicy=never, sandbox=danger-full-access"
 
 # ====== TELEMETRY CONFIG ======
@@ -583,6 +577,18 @@ uctl() {
     DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/${REAL_UID}/bus" \
     "$@"
 }
+
+# Tighten permissions before installing the gateway unit. OpenClaw refuses to
+# write its systemd service if ~/.config/systemd/user — or whichever parent of
+# it already exists — can be written by group or other (the error is
+# SERVICE_DEFINITION_UNKNOWN: [unsafe-permissions]). That's exactly what
+# happens on a stock Ubuntu box: the default umask creates ~/.config as 775.
+# So: strip group/other write from ~/.config, then create the systemd dirs
+# as private (700) so the install has a safe path all the way down.
+chmod go-w "$REAL_HOME/.config" 2>/dev/null || true
+sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.config/systemd/user"
+chmod 700 "$REAL_HOME/.config/systemd" "$REAL_HOME/.config/systemd/user"
+chown -R "$REAL_USER:$REAL_USER" "$REAL_HOME/.config/systemd"
 
 # Generate the unit. --force is defensive: if this box was launched from an older
 # AMI that DID bake a (masked/placeholder) unit, --force overwrites it cleanly;
