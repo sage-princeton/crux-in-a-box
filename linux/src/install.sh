@@ -4,15 +4,17 @@ set -euo pipefail
 # ==========================================================================
 # install.sh  –  runs ON the Linux (Ubuntu 24.04 LTS) EC2 instance
 # ==========================================================================
-# BAKE PHASE: installs all software — desktop environment, VNC, openclaw,
-# telemetry, service CLIs (gh, aws, gog), and the thinking-signature watchdog.
-# The openclaw gateway service is intentionally NOT installed here (that must
-# happen after config exists — see the GATEWAY section); configure.sh installs +
-# starts it per run. Consumes NO secrets and NO per-run configuration, so the
-# result can be baked into an AMI (see linux/build-ami.sh).
+# BAKE PHASE: installs software that needs no openclaw binary — desktop
+# environment, VNC, the telemetry plugin clone + build, and service CLIs
+# (gh, aws, gog). OpenClaw itself (pinned install, exec-approvals, plugin
+# link, gateway unit) is intentionally NOT installed here — the pinned
+# installer proved finnicky at bake time and everything it touches is per-run
+# state; configure.sh installs it per run (see the OPENCLAW section there).
+# Consumes NO secrets and NO per-run configuration, so the result can be
+# baked into an AMI (see linux/build-ami.sh).
 #
-# Per-run configuration (Telegram, model, API keys, gog auth, GitHub auth,
-# harness workspace, gateway start) lives in configure.sh.
+# Per-run configuration (openclaw install, Telegram, model, API keys, gog
+# auth, harness workspace, watchdogs, gateway start) lives in configure.sh.
 #
 # Expected to be run as root (or via sudo) by create-new-crux-box.sh (the
 # fresh-Ubuntu fallback path) or build-ami.sh (the AMI bake path).
@@ -135,14 +137,13 @@ XFCEWALL
 
 
 # ====== OPENCLAW ======
-# install openclaw (no onboarding)
-sudo -u "$REAL_USER" bash -c \
-  'curl -fsSL https://openclaw.ai/install.sh | bash -s -- --no-onboard'
-
-# Copy exec-approvals config (unrestricted access for the agent)
-sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
-cp "$SCRIPT_DIR/exec-approvals.json" "$REAL_HOME/.openclaw/exec-approvals.json"
-chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
+# NOT installed at bake. OpenClaw (pinned install, exec-approvals, plugin link)
+# moved entirely to configure.sh: the pinned installer proved finnicky at bake
+# time, and everything the openclaw CLI touches (~/.openclaw config, plugin
+# registration, the gateway unit) is per-run state anyway. The bake phase only
+# prepares software that does not need the openclaw binary — including the
+# telemetry plugin clone + build below, which configure.sh links into openclaw
+# at run time.
 
 
 # # ====== MONITORING ======
@@ -159,22 +160,97 @@ chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
 
 
 # ====== TELEMETRY ======
+# The telemetry plugin is prepared by git checkout: the box clones the
+# upstream repo, detaches at the PINNED commit below, and builds it. Nothing
+# about the plugin is vendored in this harness. The link into openclaw
+# (`openclaw plugins install --link`) happens in configure.sh, after it has
+# installed the openclaw CLI; the openclaw.json plugins block
+# is built inline by configure.sh's TELEMETRY CONFIG step (it only needs the two
+# host-side switches plus the box-specific path and rotation — everything else
+# is the plugin's own default). The fixes the harness depends on (a real
+# not-started fallback, redaction on by default, agent context deltas instead of
+# the full history every turn, llm.usage from the internal diagnostic bus) live
+# in the pinned commit. The pin is applied BEFORE the build and a commit that is
+# not in the upstream clone aborts provisioning instead of shipping HEAD. No
+# secrets and no per-run config here — safe to bake into the AMI.
+TELEMETRY_REPO_URL="https://github.com/schwartzadev/openclaw-telemetry-hal"
+TELEMETRY_REPO_DIR="$REAL_HOME/openclaw-telemetry-hal"
+# Merge of schwartzadev/openclaw-telemetry-hal#1 on main.
+TELEMETRY_UPSTREAM_COMMIT="dc51714fa4cd1e8ec5b34e08d2a044a36941e200"
+case "$TELEMETRY_UPSTREAM_COMMIT" in
+  *[!0-9a-f]*|'') echo "✘ telemetry-hal: TELEMETRY_UPSTREAM_COMMIT must hold one git sha, got '$TELEMETRY_UPSTREAM_COMMIT'" >&2; exit 1 ;;
+esac
+
+# Clone (or reuse) the upstream repo and detach at the pin. Runs as the real user
+# (the repo is theirs). --force on the checkout discards any local drift so
+# re-running install.sh lands cleanly on the pinned commit.
+if ! sudo -u "$REAL_USER" env \
+       TELEMETRY_REPO_URL="$TELEMETRY_REPO_URL" \
+       TELEMETRY_REPO_DIR="$TELEMETRY_REPO_DIR" \
+       TELEMETRY_UPSTREAM_COMMIT="$TELEMETRY_UPSTREAM_COMMIT" \
+       bash -s <<'TELEMETRY_PIN'
+set -eu
+# A pre-existing directory that is not a git checkout (a box restored from a
+# tarball, a hand-copied plugin) cannot be pinned and would make the clone fail
+# with "destination path already exists" — move it aside, keep it, clone fresh.
+if [ -e "$TELEMETRY_REPO_DIR" ] && [ ! -d "$TELEMETRY_REPO_DIR/.git" ]; then
+  moved="$TELEMETRY_REPO_DIR.pre-pin.$(date -u +%Y%m%dT%H%M%SZ)"
+  mv "$TELEMETRY_REPO_DIR" "$moved"
+  echo "⚠ telemetry-hal: $TELEMETRY_REPO_DIR existed without a .git (hand-copied or restored, not a pinnable checkout) — moved aside to $moved; cloning fresh"
+fi
+if [ ! -d "$TELEMETRY_REPO_DIR/.git" ]; then
+  git clone --quiet "$TELEMETRY_REPO_URL" "$TELEMETRY_REPO_DIR"
+fi
+cd "$TELEMETRY_REPO_DIR"
+git fetch --quiet origin || echo "⚠ telemetry-hal: git fetch failed — using the commits already cloned"
+if ! git checkout --quiet --force "$TELEMETRY_UPSTREAM_COMMIT"; then
+  echo "✘ telemetry-hal: commit $TELEMETRY_UPSTREAM_COMMIT is not in the upstream clone — TELEMETRY_UPSTREAM_COMMIT in install.sh is stale or the fork moved; re-pin deliberately, do not fall back to HEAD" >&2
+  exit 1
+fi
+echo "✔ telemetry-hal pinned at $TELEMETRY_UPSTREAM_COMMIT"
+TELEMETRY_PIN
+then
+  echo "✘ telemetry-hal: pin step failed — provisioning aborted (see the ✘ line above)" >&2
+  exit 1
+fi
+
+# Node.js is installed EXPLICITLY here (pnpm env) because the build needs it:
+# the native-module postinstall scripts (protobufjs, koffi, sharp,
+# tree-sitter-bash) and tsc all exec `node`. It used to arrive as a hidden
+# side effect of the OpenClaw installer running first at bake; now that
+# OpenClaw installs per run (configure.sh), the bake must provide its own
+# toolchain — the standalone pnpm binary alone cannot run node scripts.
+#
+# NOTE: the bash -c script below is a DOUBLE-QUOTED string — comments or text
+# with embedded double quotes inside it truncate the script mid-line and the
+# remainder executes in THIS root shell - AVOID comments in this.
 sudo -u "$REAL_USER" bash -c "
   cd $REAL_HOME
-  git clone https://github.com/schwartzadev/openclaw-telemetry-hal 2>/dev/null || (cd openclaw-telemetry-hal && git pull)
   curl -fsSL https://get.pnpm.io/install.sh | sh -
   export PNPM_HOME=\"$REAL_HOME/.local/share/pnpm\"
   export PATH=\"\$PNPM_HOME:\$PNPM_HOME/bin:\$PATH\"
-  cd $REAL_HOME/openclaw-telemetry-hal
+  pnpm env use --global lts
+  node --version
+  cd $TELEMETRY_REPO_DIR
   pnpm install
   pnpm run build
-  $REAL_HOME/.npm-global/bin/openclaw plugins install --link .
 "
+# The build must postdate the sources (tsc emits dist/index.js and dist/src/*.js
+# from index.ts and src/*.ts): a stale or missing dist would load an older build
+# with no error anywhere.
+for src in index.ts src/service.ts; do
+  built="$TELEMETRY_REPO_DIR/dist/${src%.ts}.js"
+  if [ ! -f "$built" ] || [ ! "$built" -nt "$TELEMETRY_REPO_DIR/$src" ]; then
+    echo "✘ telemetry-hal: $built is missing or older than $src — the build did not run on the pinned sources" >&2
+    exit 1
+  fi
+done
+echo "✔ telemetry-hal built from the pinned sources (configure.sh links it into openclaw at run time)"
 
 # Patch the telemetry plugin manifest to ensure activation on startup
 # (upstream repo may be missing the activation block, which leaves the
 # plugin registered but dormant — OpenClaw's lazy loader never fires it)
-TELEMETRY_MANIFEST="$REAL_HOME/openclaw-telemetry-hal/openclaw.plugin.json"
+TELEMETRY_MANIFEST="$TELEMETRY_REPO_DIR/openclaw.plugin.json"
 if [ -f "$TELEMETRY_MANIFEST" ] && command -v jq &>/dev/null; then
   HAS_ACTIVATION=$(jq 'has("activation")' "$TELEMETRY_MANIFEST" 2>/dev/null)
   if [ "$HAS_ACTIVATION" != "true" ]; then
@@ -243,7 +319,8 @@ fi
 # fights configure.sh at every launch. That masked-unit bug is what caused the
 # repeated "Unit openclaw-gateway.service is masked" failures.
 #
-# The gateway install is deferred entirely to configure.sh, which runs it AFTER
+# The gateway install is deferred entirely to configure.sh (which also installs
+# the openclaw CLI itself — see its OPENCLAW section), and runs AFTER
 # gateway.mode=local + secrets are written, so it generates a correct unit from a
 # clean slate. The only bake-time prep is lingering (harmless, no secrets) so the
 # per-run --user service can survive without an active login session.
@@ -251,20 +328,15 @@ REAL_USER_UID=$(id -u "$REAL_USER")
 loginctl enable-linger "$REAL_USER" || true
 echo "✔ gateway NOT installed at bake (avoids masked-placeholder unit); configure.sh installs + starts it per run (linger enabled for uid $REAL_USER_UID)"
 
-# ====== THINKING-SIGNATURE WATCHDOG ======
-# Auto-recovers the main session when it wedges on cascading
-# "Invalid `signature` in `thinking` block" provider errors — a known OpenClaw
-# bug (openclaw/openclaw#44370, #45010) with no upstream fix as of 2026.6.11.
-# Detection is strict (errorMessage records only, newest stopReason must be an
-# error) with a 30-min cooldown and a daily reset cap.
-WATCHDOG_DIR="$REAL_HOME/.openclaw/watchdog"
-sudo -u "$REAL_USER" mkdir -p "$WATCHDOG_DIR"
-cp "$SCRIPT_DIR/crux-thinking-watchdog.sh" "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
-chown "$REAL_USER:$REAL_USER" "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
-chmod +x "$WATCHDOG_DIR/crux-thinking-watchdog.sh"
-sudo -u "$REAL_USER" bash -c \
-  '(crontab -l 2>/dev/null | grep -v crux-thinking-watchdog; echo "*/5 * * * * $HOME/.openclaw/watchdog/crux-thinking-watchdog.sh") | crontab -'
-echo "✔ Thinking-signature watchdog installed (cron */5 min)"
+# ====== WATCHDOGS + FINAL-PASS INJECTOR ======
+# NOT installed at bake. The four box-side cron jobs (crux-thinking-watchdog,
+# crux-auth-watchdog, crux-session-snapshot, final-pass-injector) are installed
+# by configure.sh at run time: their cadences and thresholds come from per-run
+# {{AUTH_WATCHDOG_THRESHOLD}} / {{SESSION_SNAPSHOT_MINUTES}} placeholders, the
+# auth watchdog pages over the per-run Telegram credentials, and the final-pass
+# injector stages its message from the per-run harness workspace. The scripts
+# themselves ship in linux/src/ (copied to the box by create-new-crux-box.sh) —
+# baking them here would only lay down copies with unresolved {{...}} tokens.
 
 echo ""
 echo "✔ CRUX-in-a-box software install complete (bake phase — no secrets on disk)."

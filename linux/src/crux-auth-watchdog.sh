@@ -82,7 +82,7 @@ CONFIG="$HOME/.openclaw/openclaw.json"
 GATEWAY_UNIT="openclaw-gateway.service"
 
 # Consecutive failed assistant turns required before firing. The default is the
-# {{AUTH_WATCHDOG_THRESHOLD|4}} placeholder, resolved by start.sh at install
+# {{AUTH_WATCHDOG_THRESHOLD|4}} placeholder, resolved by configure.sh at install
 # time. It is kept on its own line because bash does not nest braces inside
 # ${var:-...}: "${X:-{{K|4}}}" expands to "7}}" when X=7 (bash 3.2, observed),
 # so the one-line form corrupts an operator override whenever the placeholder

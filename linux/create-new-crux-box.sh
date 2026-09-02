@@ -20,8 +20,9 @@ set -euo pipefail
 #   3. Waits for the instance to be reachable via SSH.
 #   4. Copies the linux/ directory to the instance.
 #   5. Runs the remote bootstrap:
-#        --ami path   : configure.sh only (per-run secrets + workspace)
-#        fallback path : install.sh (full software install) then configure.sh
+#        --ami path   : configure.sh only (per-run secrets + workspace +
+#                        the pinned openclaw install — not baked in the AMI)
+#        fallback path : install.sh (base software install) then configure.sh
 #   6. Prints connection details (SSH + VNC).
 #
 # Bake the AMI once with ./build-ami.sh and pass its ID here with --ami.
@@ -80,7 +81,6 @@ Optional keys:
 Optional (override via env vars):
   AWS_REGION                     AWS region (default: us-east-1)
   CRUX_INSTANCE_TYPE             EC2 instance type (default: t3.xlarge)
-  CRUX_AMI_ID                    AMI ID (default: latest Ubuntu 22.04)
   CRUX_KEY_NAME                  EC2 key pair name (default: crux-in-a-box)
   CRUX_SG_NAME                   Security group name (default: crux-in-a-box-sg)
   CRUX_INSTANCE_NAME             Instance Name tag (default: crux-in-a-box)
@@ -209,9 +209,6 @@ COST_TRACKER_URL="${CFG[COST_TRACKER_URL]}"
 RUNPOD_API_KEY="${CFG[RUNPOD_API_KEY]}"
 REFINE_INK_API_KEY="${CFG[REFINE_INK_API_KEY]}"
 OPENROUTER_API_KEY="${CFG[OPENROUTER_API_KEY]}"
-# FIXME(merge v3): our stack is local-git-only (no GitHub remote), so we drop
-# main's GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN / gh-auth path. If GitHub push is
-# ever reintroduced, re-add the PAT here AND the configure.sh gh-auth step.
 # INSTANCE_SUFFIX comes from the --instance-suffix flag, not the config file.
 
 # gog (Google Workspace CLI) — required; auto-configured on the box.
@@ -232,9 +229,12 @@ GOG_HOME_TARBALL="${CFG[GOG_HOME_TARBALL]}"
 # configure.sh as a workspace placeholder (KEY=VALUE pairs joined by '|||'). This
 # keeps CLOUD_SPEND_LIMIT, OPENROUTER_BUDGET, API_BUDGET and any optional placeholder
 # (PAGE_BUDGET, VENUE, …) flowing into the harness files.
+
 # FIXME(merge v3): operational keys are excluded from placeholder substitution.
 # We keep main's dual-provider keys (DEFAULT_LLM_MODEL, OPENAI_API_KEY) AND our
-# OPENROUTER_API_KEY; GITHUB_CLASSIC_PERSONAL_ACCESS_TOKEN is dropped (local-git-only).
+# OPENROUTER_API_KEY
+# FIXME: we should update to use DEFAULT_LLM_MODEL (req'd) and either OPENAI_API_KEY or ANTHROPIC_API_KEY (one of these two is required)
+
 NON_PLACEHOLDER_KEYS=" TELEGRAM_BOT_NAME TELEGRAM_OWNER_ID DEFAULT_LLM_MODEL ANTHROPIC_API_KEY OPENAI_API_KEY REASONING_EFFORT COST_TRACKER_URL RUNPOD_API_KEY REFINE_INK_API_KEY OPENROUTER_API_KEY INSTANCE_SUFFIX GOG_ACCOUNT GOG_KEYRING_PASSWORD GOG_HOME_TARBALL "
 PLACEHOLDERS=""
 for key in "${!CFG[@]}"; do
@@ -415,7 +415,7 @@ else
     --output text)
   [ "$AMI_ID" = "None" ] || [ -z "$AMI_ID" ] \
     && die "Could not resolve an Ubuntu 24.04 AMI in $REGION"
-  ok "AMI: $AMI_ID (raw Ubuntu — install.sh will run the full software install)"
+  ok "AMI: $AMI_ID (raw Ubuntu — install.sh will run the base software install)"
 fi
 
 # ====== 3b. DUPLICATE API KEY CHECK ======
@@ -579,10 +579,11 @@ fi
 
 # ====== 8. RUN REMOTE BOOTSTRAP ======
 # Two paths:
-#   --ami given   : the software is already baked in — run configure.sh only
-#                   (per-run secrets + workspace + gateway start).
-#   no --ami      : raw Ubuntu — run install.sh first (full software install,
-#                   no secrets), then configure.sh.
+#   --ami given   : the base software is already baked in — run configure.sh
+#                   only (pinned openclaw install + per-run secrets + workspace
+#                   + gateway start).
+#   no --ami      : raw Ubuntu — run install.sh first (base software install,
+#                   no secrets, no openclaw), then configure.sh.
 
 # Build the remote command safely. Values like PLACEHOLDERS can contain
 # apostrophes, parentheses, spaces and newlines (e.g. RESEARCH_CONTEXT prose),
