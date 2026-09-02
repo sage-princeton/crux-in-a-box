@@ -5,18 +5,24 @@ set -euo pipefail
 # configure.sh  –  runs ON the Linux (Ubuntu 24.04 LTS) EC2 instance
 # ==========================================================================
 # PER-RUN PHASE: applies all run-specific configuration on top of a box that
-# already has the software installed (either baked into an AMI by install.sh
-# via build-ami.sh, or freshly installed by install.sh on raw Ubuntu).
+# already has the base software installed (either baked into an AMI by
+# install.sh via build-ami.sh, or freshly installed by install.sh on raw
+# Ubuntu). This phase ALSO installs OpenClaw itself at a pinned version (see
+# the OPENCLAW section) — the pinned installer proved finnicky at bake time,
+# and everything the openclaw CLI touches (~/.openclaw config, the plugin
+# registration, the gateway unit) is per-run state anyway; install.sh
+# deliberately never runs it.
 #
 # Consumes secrets and run config via env vars passed by
 # create-new-crux-box.sh (build_remote_env): Telegram bot token/owner, LLM
 # model + API keys, gog auth bundle, GitHub PAT, RunPod/refine.ink keys,
 # workspace placeholders, cost-tracker URL. Starts the openclaw gateway last,
-# once all config is written (the gateway's systemd unit is already installed by
-# install.sh at bake time; this phase only writes secrets and starts it).
+# once all config is written (the gateway's systemd unit is generated here
+# too — see the GATEWAY section).
 #
 # Expected to be run as root (or via sudo) by create-new-crux-box.sh.
-# Does NOT re-run any apt/software install steps.
+# Does NOT re-run any apt/software install steps (the OpenClaw install above
+# is the one deliberate exception — see the OPENCLAW section).
 # ==========================================================================
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
@@ -161,6 +167,92 @@ if [ -z "${GOG_KEYRING_PASSWORD:-}" ]; then
   exit 1
 fi
 
+# ====== OPENCLAW ======
+# Install OpenClaw at a pinned version, skipping onboarding. This runs HERE
+# (per-run), not at bake: the pinned installer proved finnicky at bake time,
+# and everything the openclaw CLI touches — ~/.openclaw config, the plugin
+# registration, the gateway unit — is per-run state anyway. install.sh bakes
+# only openclaw-independent software (incl. the telemetry plugin clone+build,
+# which we link into openclaw below).
+#
+# The official installer accepts OPENCLAW_VERSION (latest, next, or an exact
+# version); without it you get whatever shipped most recently.
+#
+# We pin because new releases change the config schema and CLI behavior, and
+# an unpinned install inherits those changes blind. When 2026.8.2 landed it
+# removed heartbeat.skipWhenBusy (making our config invalid and blocking the
+# gateway install), turned agents.list into the keyed agents.entries map, and
+# added consent prompts to 'plugins install' that abort non-interactive runs.
+#
+# The config keys written below match THIS version. If you bump the pin,
+# review this file's schema in the same change.
+OPENCLAW_PINNED_VERSION="2026.8.2"
+sudo -u "$REAL_USER" bash -c \
+  "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_VERSION=$OPENCLAW_PINNED_VERSION bash -s -- --no-onboard"
+# Hard-verify the pin took: a mismatched version means the version-sensitive
+# config keys written later in this file may be silently ignored or rejected.
+OPENCLAW_INSTALLED_VERSION=$(sudo -u "$REAL_USER" bash -lc 'openclaw --version' 2>/dev/null | head -1 || echo unknown)
+case "$OPENCLAW_INSTALLED_VERSION" in
+  *"$OPENCLAW_PINNED_VERSION"*)
+    echo "✔ OpenClaw installed and pinned: $OPENCLAW_INSTALLED_VERSION" ;;
+  *)
+    echo "✘ OpenClaw version mismatch: pinned $OPENCLAW_PINNED_VERSION but installed '$OPENCLAW_INSTALLED_VERSION' — the installer ignored the pin or the release was pulled; aborting, config keys are version-sensitive" >&2
+    exit 1 ;;
+esac
+
+# Copy exec-approvals config (unrestricted access for the agent), then migrate
+# it: linux/src/exec-approvals.json is in the LEGACY JSON format, and OpenClaw
+# 2026.8.x refuses to start the Telegram channel while an unmigrated legacy
+# file exists ("Legacy exec approvals exist ... Run openclaw doctor --fix";
+# the channel crash-loops inside an otherwise-active gateway, so nothing
+# obvious fails at provision time). `doctor --fix` imports the file into the
+# shared SQLite state and deletes the JSON. It must run HERE: before the
+# gateway exists (doctor needs maintenance access it cannot take from a
+# running service) and before the workspace copy (doctor also migrates
+# workspace files like HEARTBEAT.md if it sees them — we don't want that).
+sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
+cp "$SCRIPT_DIR/exec-approvals.json" "$REAL_HOME/.openclaw/exec-approvals.json"
+chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
+sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" doctor --fix --non-interactive || true
+# Mechanical check: a successful migration REMOVES the legacy JSON. If it is
+# still there, the Telegram channel will crash-loop later — fail loudly now.
+if [ -f "$REAL_HOME/.openclaw/exec-approvals.json" ]; then
+  echo "✘ openclaw: legacy exec-approvals.json was not migrated (doctor --fix did not import+remove it) — the Telegram channel will refuse to start; inspect 'openclaw doctor' output" >&2
+  exit 1
+fi
+echo "✔ exec approvals migrated into shared SQLite state (legacy JSON imported and removed)"
+
+# Link the telemetry plugin (cloned, pinned and BUILT by install.sh at bake)
+# into the freshly installed openclaw. `plugins install --link` writes
+# plugins.load.paths and plugins.entries.telemetry-hal.enabled into
+# openclaw.json; the TELEMETRY CONFIG section below merges the run config on
+# top and leaves plugins.load.paths exactly as this wrote it. A missing or
+# unbuilt repo is a hard error — the bake phase did not complete.
+TELEMETRY_REPO_DIR="$REAL_HOME/openclaw-telemetry-hal"
+if [ ! -f "$TELEMETRY_REPO_DIR/dist/index.js" ]; then
+  echo "✘ telemetry-hal: $TELEMETRY_REPO_DIR/dist/index.js is missing — install.sh (bake) did not clone/build the plugin; re-run install.sh before configure.sh" >&2
+  exit 1
+fi
+sudo -u "$REAL_USER" bash -c \
+  "cd '$TELEMETRY_REPO_DIR' && '$REAL_HOME/.npm-global/bin/openclaw' plugins install . --link --force --accept-capabilities"
+echo "✔ telemetry-hal linked into openclaw (built at bake, linked per run)"
+
+# Install the ClawHub plugins the run config depends on, with capability
+# consent. The gateway refuses to start ("Plugin X requires capability
+# consent") if config references a plugin that is not installed+consented:
+# codex is referenced by the .plugins.entries.codex block written below, and
+# perplexity is demanded by the full tools profile. On the old flow these two
+# existed only as hidden manual state baked into the AMI — the per-run
+# OpenClaw install exposed that. If you add a config block for a new plugin,
+# add its install here in the same change.
+for hub_plugin in "clawhub:@openclaw/codex" "clawhub:@openclaw/perplexity-plugin"; do
+  if ! sudo -u "$REAL_USER" "$REAL_HOME/.npm-global/bin/openclaw" plugins install "$hub_plugin" --accept-capabilities; then
+    echo "✘ openclaw: failed to install $hub_plugin — the gateway will refuse to start without it" >&2
+    exit 1
+  fi
+done
+echo "✔ ClawHub plugins installed with capability consent: codex, perplexity"
+
 # ====== TELEGRAM ======
 # If a Telegram bot token was provided, configure it in openclaw.json
 if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
@@ -276,8 +368,9 @@ echo "✔ Exec security: tools.exec.security=full, agents.entries.main.tools.exe
 echo "✔ Codex app-server: approvalPolicy=never, sandbox=danger-full-access"
 
 # ====== TELEMETRY CONFIG ======
-# install.sh (bake) pins, builds and links the telemetry-hal plugin and patches
-# its manifest for activation, but writes NO run config. `openclaw plugins
+# install.sh (bake) pins and builds the telemetry-hal plugin and patches its
+# manifest for activation; the OPENCLAW section above linked it into the
+# per-run openclaw install. `openclaw plugins
 # install --link .` writes only plugins.load.paths and
 # plugins.entries.telemetry-hal.enabled. That flag makes the gateway LOAD the
 # plugin (hooks fire); the plugin's service reads

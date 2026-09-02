@@ -4,15 +4,17 @@ set -euo pipefail
 # ==========================================================================
 # install.sh  –  runs ON the Linux (Ubuntu 24.04 LTS) EC2 instance
 # ==========================================================================
-# BAKE PHASE: installs all software — desktop environment, VNC, openclaw,
-# telemetry, service CLIs (gh, aws, gog), and the thinking-signature watchdog.
-# The openclaw gateway service is intentionally NOT installed here (that must
-# happen after config exists — see the GATEWAY section); configure.sh installs +
-# starts it per run. Consumes NO secrets and NO per-run configuration, so the
-# result can be baked into an AMI (see linux/build-ami.sh).
+# BAKE PHASE: installs software that needs no openclaw binary — desktop
+# environment, VNC, the telemetry plugin clone + build, and service CLIs
+# (gh, aws, gog). OpenClaw itself (pinned install, exec-approvals, plugin
+# link, gateway unit) is intentionally NOT installed here — the pinned
+# installer proved finnicky at bake time and everything it touches is per-run
+# state; configure.sh installs it per run (see the OPENCLAW section there).
+# Consumes NO secrets and NO per-run configuration, so the result can be
+# baked into an AMI (see linux/build-ami.sh).
 #
-# Per-run configuration (Telegram, model, API keys, gog auth, GitHub auth,
-# harness workspace, gateway start) lives in configure.sh.
+# Per-run configuration (openclaw install, Telegram, model, API keys, gog
+# auth, harness workspace, watchdogs, gateway start) lives in configure.sh.
 #
 # Expected to be run as root (or via sudo) by create-new-crux-box.sh (the
 # fresh-Ubuntu fallback path) or build-ami.sh (the AMI bake path).
@@ -135,36 +137,13 @@ XFCEWALL
 
 
 # ====== OPENCLAW ======
-# Install OpenClaw at a pinned version, skipping onboarding. The official
-# installer accepts OPENCLAW_VERSION (latest, next, or an exact version);
-# without it you get whatever shipped most recently.
-#
-# We pin because new releases change the config schema and CLI behavior, and
-# an unpinned bake inherits those changes blind. When 2026.8.2 landed it
-# removed heartbeat.skipWhenBusy (making our config invalid and blocking the
-# gateway install), turned agents.list into the keyed agents.entries map, and
-# added consent prompts to 'plugins install' that abort non-interactive runs.
-#
-# configure.sh writes config keys that match THIS version. If you bump the
-# pin, review configure.sh's schema in the same change.
-OPENCLAW_PINNED_VERSION="2026.8.2"
-sudo -u "$REAL_USER" bash -c \
-  "curl -fsSL https://openclaw.ai/install.sh | OPENCLAW_VERSION=$OPENCLAW_PINNED_VERSION bash -s -- --no-onboard"
-# Hard-verify the pin took: a mismatched version means the version-sensitive
-# config keys configure.sh writes later may be silently ignored or rejected.
-OPENCLAW_INSTALLED_VERSION=$(sudo -u "$REAL_USER" bash -lc 'openclaw --version' 2>/dev/null | head -1 || echo unknown)
-case "$OPENCLAW_INSTALLED_VERSION" in
-  *"$OPENCLAW_PINNED_VERSION"*)
-    echo "✔ OpenClaw installed and pinned: $OPENCLAW_INSTALLED_VERSION" ;;
-  *)
-    echo "✘ OpenClaw version mismatch: pinned $OPENCLAW_PINNED_VERSION but installed '$OPENCLAW_INSTALLED_VERSION' — the installer ignored the pin or the release was pulled; do not bake, config keys are version-sensitive" >&2
-    exit 1 ;;
-esac
-
-# Copy exec-approvals config (unrestricted access for the agent)
-sudo -u "$REAL_USER" mkdir -p "$REAL_HOME/.openclaw"
-cp "$SCRIPT_DIR/exec-approvals.json" "$REAL_HOME/.openclaw/exec-approvals.json"
-chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
+# NOT installed at bake. OpenClaw (pinned install, exec-approvals, plugin link)
+# moved entirely to configure.sh: the pinned installer proved finnicky at bake
+# time, and everything the openclaw CLI touches (~/.openclaw config, plugin
+# registration, the gateway unit) is per-run state anyway. The bake phase only
+# prepares software that does not need the openclaw binary — including the
+# telemetry plugin clone + build below, which configure.sh links into openclaw
+# at run time.
 
 
 # # ====== MONITORING ======
@@ -181,9 +160,11 @@ chown "$REAL_USER:$REAL_USER" "$REAL_HOME/.openclaw/exec-approvals.json"
 
 
 # ====== TELEMETRY ======
-# The whole telemetry plugin is installed by git checkout: the box clones the
+# The telemetry plugin is prepared by git checkout: the box clones the
 # upstream repo, detaches at the PINNED commit below, and builds it. Nothing
-# about the plugin is vendored in this harness; the openclaw.json plugins block
+# about the plugin is vendored in this harness. The link into openclaw
+# (`openclaw plugins install --link`) happens in configure.sh, after it has
+# installed the openclaw CLI; the openclaw.json plugins block
 # is built inline by configure.sh's TELEMETRY CONFIG step (it only needs the two
 # host-side switches plus the box-specific path and rotation — everything else
 # is the plugin's own default). The fixes the harness depends on (a real
@@ -233,6 +214,13 @@ then
   exit 1
 fi
 
+# Node.js is installed EXPLICITLY here (pnpm env) because the build needs it:
+# the native-module postinstall scripts (protobufjs, koffi, sharp,
+# tree-sitter-bash) and tsc all exec `node`. It used to arrive as a hidden
+# side effect of the OpenClaw installer running first at bake; now that
+# OpenClaw installs per run (configure.sh), the bake must provide its own
+# toolchain — the standalone pnpm binary alone cannot run node scripts.
+#
 # NOTE: the bash -c script below is a DOUBLE-QUOTED string — comments or text
 # with embedded double quotes inside it truncate the script mid-line and the
 # remainder executes in THIS root shell - AVOID comments in this.
@@ -241,10 +229,11 @@ sudo -u "$REAL_USER" bash -c "
   curl -fsSL https://get.pnpm.io/install.sh | sh -
   export PNPM_HOME=\"$REAL_HOME/.local/share/pnpm\"
   export PATH=\"\$PNPM_HOME:\$PNPM_HOME/bin:\$PATH\"
+  pnpm env use --global lts
+  node --version
   cd $TELEMETRY_REPO_DIR
   pnpm install
   pnpm run build
-  $REAL_HOME/.npm-global/bin/openclaw plugins install . --link --force --accept-capabilities
 "
 # The build must postdate the sources (tsc emits dist/index.js and dist/src/*.js
 # from index.ts and src/*.ts): a stale or missing dist would load an older build
@@ -256,7 +245,7 @@ for src in index.ts src/service.ts; do
     exit 1
   fi
 done
-echo "✔ telemetry-hal built from the pinned sources and linked into openclaw"
+echo "✔ telemetry-hal built from the pinned sources (configure.sh links it into openclaw at run time)"
 
 # Patch the telemetry plugin manifest to ensure activation on startup
 # (upstream repo may be missing the activation block, which leaves the
@@ -330,7 +319,8 @@ fi
 # fights configure.sh at every launch. That masked-unit bug is what caused the
 # repeated "Unit openclaw-gateway.service is masked" failures.
 #
-# The gateway install is deferred entirely to configure.sh, which runs it AFTER
+# The gateway install is deferred entirely to configure.sh (which also installs
+# the openclaw CLI itself — see its OPENCLAW section), and runs AFTER
 # gateway.mode=local + secrets are written, so it generates a correct unit from a
 # clean slate. The only bake-time prep is lingering (harmless, no secrets) so the
 # per-run --user service can survive without an active login session.

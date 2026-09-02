@@ -17,7 +17,7 @@ cd linux/
 ./build-ami.sh          # launches a temp builder, runs install.sh, bakes the AMI, terminates the builder
 ```
 
-Record the printed AMI ID and pass it to every launch with `--ami`. No secrets ever enter the AMI — `install.sh` (the bake phase) consumes no env vars; all secrets arrive per-run via `configure.sh`. Re-bake when the software stack changes (a new pinned CLI version, an `install.sh` edit).
+Record the printed AMI ID and pass it to every launch with `--ami`. No secrets ever enter the AMI — `install.sh` (the bake phase) consumes no env vars; all secrets arrive per-run via `configure.sh`. Re-bake when the baked software stack changes (an `install.sh` edit — e.g. the telemetry or gogcli pin). OpenClaw itself is NOT in the AMI: `configure.sh` installs it at its pinned version per run, so bumping the OpenClaw pin needs no re-bake.
 
 ### Step 1: Run `create-new-crux-box.sh`
 
@@ -80,7 +80,7 @@ Placeholders with `|defaults` may be left as-is; the agent's hour-0 environment 
 - **The box-side crons are installed.** `crontab -l` shows the thinking watchdog, the auth watchdog, the session snapshot, and the final-pass injector; after their first ticks `~/.openclaw/watchdog/{watchdog,auth-watchdog,session-snapshot}.log` exist and `~/.openclaw/session-snapshots/` holds a copy of `sessions.json`. § 2 says what each does.
 - The heartbeat is set in the framework config (`agents.defaults.heartbeat.every`, written by `configure.sh`). The heartbeat prompt content is `workspace/HEARTBEAT.md` — **version caveat:** newer framework versions migrate heartbeat content out of the file (`openclaw doctor` reports this); verify on your pinned version that the file is being read, and if not, move its contents to wherever your version sources the heartbeat prompt.
 - Set the provider console's own spend limit slightly above `API_BUDGET` as a hard backstop — the framework has no native spend ceiling.
-- **After launch, verify the fail-soft config keys took effect** on the installed framework version (`install.sh` prints it — record it): the agent's first responses show extended thinking, and the gateway log shows heartbeats at the configured interval. Once the run settles, spot-check one quiet heartbeat in the session store: it should short-circuit to `HEARTBEAT_OK` after a few cheap checks, not re-derive the plan. Unknown config keys are ignored silently, and a silently-off thinking level changes what the run measures.
+- **After launch, verify the fail-soft config keys took effect** on the installed framework version (`configure.sh` prints it — record it): the agent's first responses show extended thinking, and the gateway log shows heartbeats at the configured interval. Once the run settles, spot-check one quiet heartbeat in the session store: it should short-circuit to `HEARTBEAT_OK` after a few cheap checks, not re-derive the plan. Unknown config keys are ignored silently, and a silently-off thinking level changes what the run measures.
 
 ### Step 5: Launch
 
@@ -149,7 +149,7 @@ And three tendencies of the infrastructure rather than the agent, each learned f
 
 | Tendency of the box | Mechanism here |
 |---|---|
-| The telemetry plugin degrades silently — loaded but its service never started, conversation hooks blocked, nothing noticing | **Provisioned plugin config + status check** — `install.sh` pins, builds and links the plugin and applies the manifest patch, and `configure.sh` writes the `plugins.entries.telemetry-hal` block; `status.sh` and the Step-4 smoke test assert `seq`/`ts`, `agent.end`, and `llm.usage` |
+| The telemetry plugin degrades silently — loaded but its service never started, conversation hooks blocked, nothing noticing | **Provisioned plugin config + status check** — `install.sh` pins and builds the plugin and applies the manifest patch, and `configure.sh` links it into the per-run openclaw install and writes the `plugins.entries.telemetry-hal` block; `status.sh` and the Step-4 smoke test assert `seq`/`ts`, `agent.end`, and `llm.usage` |
 | The provider key dies mid-run and nobody notices — six days of failed heartbeats and 490 MB of dead telemetry in one run | **Auth watchdog** — halts the gateway and pages the operator directly when N consecutive turns fail for a non-transient reason (auth, permission, quota); dormant until the key is fixed and the marker removed |
 | The run record evaporates — cron transcripts deleted when the job next runs, a re-keyed main session orphaning a generation the CLI cannot see | **Session-snapshot cron + extractor** — a copy of every changed store file every 10 minutes; `utils/extract_run_log.py` merges live + snapshots into one deduplicated run log; `utils/export-run.sh` scrubs on the box and pulls only the scrubbed outputs |
 
