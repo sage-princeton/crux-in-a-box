@@ -1,0 +1,41 @@
+# .dockerignore -- what never leaves the host.
+#
+# The build context is harness/ (see container/Dockerfile), which is also where
+# the operator's filled-in .env lives. The Dockerfile copies only
+# container/requirements.lock and workspace/, so no secret could reach the
+# image -- but the whole context is still uploaded to the docker daemon, and a
+# secret that never leaves the host is a better secret than one that merely
+# fails to be copied.
+#
+# run/ is excluded for the same reason from the other direction: it holds the
+# resolved workspaces, and a resolved workspace carries the research question.
+# The image is built from the unresolved workspace/ and must stay question-free
+# -- the loop overwrites the seed with the resolved copy at run start.
+#
+# The rest of this list is noise reduction: a smaller context is a faster build
+# and, more usefully, a build whose layer cache is not invalidated by an
+# unrelated log file.
+
+# Secrets. .env.example is documentation and is not copied anywhere either way.
+.env
+.env.*
+
+# Resolved runs, staged data, and everything a run or a collection left behind.
+run/
+data/
+logs/
+cache/
+crux-collect-*/
+*.eval
+*.timeline.jsonl
+*.tar.gz
+
+# Version control and editor droppings.
+.git
+.gitignore
+.DS_Store
+
+# Python bytecode and the host-side venv from running the loop in place.
+**/__pycache__/
+**/*.pyc
+.venv/

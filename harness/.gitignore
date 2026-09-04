@@ -1,0 +1,15 @@
+# harness/.gitignore — nothing under here that holds keys, run state, or a build product is tracked.
+.env
+.venv/
+__pycache__/
+cache/
+logs/
+run/
+*.eval
+*.timeline.jsonl
+crux-collect-*/
+*.tar.gz
+# the staged /data volume is a run input, not repository content (data/.gitignore keeps its README)
+# operator config holds the research brief and budgets; the example is the only tracked one
+placeholders*.txt
+!placeholders.txt.example

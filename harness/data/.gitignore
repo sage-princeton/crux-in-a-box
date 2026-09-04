@@ -1,0 +1,5 @@
+# Staged data, its inventory, and its provenance are run inputs, not repo content.
+# Only the staging contract (README.md) is tracked.
+*
+!.gitignore
+!README.md

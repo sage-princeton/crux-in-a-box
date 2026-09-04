@@ -50,6 +50,7 @@ Installed by default:
 
 - `linux/` — provisioning, watchdog, monitoring
 - `run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
+- `harness/` — the same scaffold on Claude Code or Codex, driven by Inspect in a Docker sandbox with host-side metering; see `harness/OPERATOR_GUIDE.md`
 - `harness-overview.html` — human-facing overview
 - `utils/` — gog bootstrap; the post-run export pipeline (`export-run.sh` drives it: `make-blacklist.sh` and `extract_run_log.py --scrub` run on the box, `scan-secrets.py` checks the result with class-shape patterns, counts only)
 - `runs-export/` — scrubbed run records pulled by `utils/export-run.sh` (gitignored). The session store is the record; plugin telemetry is a supplement. Raw `sessions/` and raw `telemetry.jsonl*` never leave the box; `run_events.jsonl` / `run_summary.json` are what you share, after a human look

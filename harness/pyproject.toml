@@ -1,0 +1,77 @@
+# =============================================================================
+# pyproject.toml -- the HOST-side environment.
+#
+# This is the process that holds the provider key, runs the heartbeat loop,
+# proxies every model call through the sandbox bridge, and meters the spend.
+# Nothing here is ever installed into a container: the container's stack is
+# container/requirements.lock, and the two are deliberately different sets of
+# packages.
+#
+# Install:
+#     uv venv --python 3.12 .venv && uv pip install --python .venv/bin/python -r pyproject.toml
+#     # or, without uv:  python -m venv .venv && .venv/bin/pip install -r pyproject.toml
+#
+# Then check that the environment is the one this harness was verified against:
+#     .venv/bin/python -c "import inspect_ai, inspect_swe; print(inspect_ai.__version__, inspect_swe.__version__)"
+#
+# Versions are pinned exactly, not floored. Both agent factories, the bridge's
+# resume paths, the limit API and the cost-config schema were read out of these
+# exact installed packages rather than from documentation, and a minor release
+# that renames one keyword argument would break the run in hour zero -- or,
+# worse, accept the argument and change what is measured.
+# =============================================================================
+
+[project]
+name = "crux-harness"
+version = "0.1.0"
+description = "Host-side loop for a CRUX research run: Inspect drives a Claude Code or Codex CLI in a Docker sandbox, meters every model call, and enforces the run's time and cost limits."
+readme = "README.md"
+
+# 3.11 is what every API in this harness was verified against. inspect_ai
+# itself declares >=3.10; go older than 3.11 and you are on your own.
+requires-python = ">=3.11"
+
+dependencies = [
+    # The evaluation framework: Task, the sandbox provider, the agent bridge,
+    # sample_limits(), the cost meter and the hooks API.
+    "inspect_ai==0.3.260",
+
+    # claude_code() and codex_cli() -- the only place the two arms differ.
+    # Requires inspect-ai>=0.3.255, which the pin above satisfies.
+    "inspect_swe==0.2.70",
+
+    # Provider SDKs. inspect_ai does NOT depend on these at run time (they are
+    # dev extras there), but its anthropic and openai providers import them, so
+    # without the arm's SDK the run fails at model resolution -- before a
+    # container starts, which is the good version of this failure. The floors
+    # inspect_ai 0.3.260 tests against are anthropic>=1.0.0 and openai>=3.1.0;
+    # these pins are at or above them.
+    "anthropic==1.0.0",
+    "openai==3.3.1",
+
+    # loop/task.py drives its sleeps and subprocesses through anyio directly
+    # rather than relying on it transitively through inspect_ai.
+    "anyio==4.14.2",
+]
+
+# No HTTP client, PDF or HTML library here: the host serves no research tools.
+# The agent fetches for itself, from inside the container, with the container's
+# own stack.
+
+# No [project.scripts]. The ops scripts drive `inspect eval` directly, and
+# `inspect` is already on PATH from inspect_ai's own console script; a wrapper
+# entry point would only add a second place where the eval invocation is
+# written down.
+#
+# No [project.entry-points.inspect_ai] either. Hook classes register when their
+# module is imported (the @hooks decorator instantiates and registers eagerly),
+# so `import hooks` from loop/task.py is sufficient and does not depend on this
+# project being installed. The host code lives in loop/ -- it used to live in a
+# directory named inspect/, which shadowed the standard library's `inspect`
+# module the moment anything tried to import it as a package.
+
+[tool.uv]
+# This project is an environment, not a library: there is nothing to build and
+# nothing to import as `crux_harness`. `package = false` tells uv to install the
+# dependencies without trying to build the project itself.
+package = false

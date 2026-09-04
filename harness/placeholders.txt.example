@@ -1,0 +1,108 @@
+# placeholders.txt — the one config file for ops/configure.sh
+#
+# Usage: ops/configure.sh placeholders.txt [--name NAME]
+#   Writes run/<name>/ — the resolved workspace, PROMPT.md, FINAL_PASS.md and
+#   run.env — and launches nothing. ops/provision-box.sh builds the box and the
+#   image; ops/run.sh, on the box, starts the clock.
+#
+# Lines are KEY=VALUE. Comments (#) and blank lines are ignored; everything
+# after a '#' on a line is a comment, so a value cannot contain one. '&', '|',
+# '/' and quotes are fine. Each value is one line. configure.sh validates that
+# every Required key is present and non-blank before writing anything, and
+# lists every problem at once.
+#
+# Keys this scaffold does not know are ignored (a linux/placeholders.txt can be
+# reused unchanged), but provider and agent keys belong in harness/.env, not
+# here — a key in this file is only ever ignored. Keep this file out of git
+# either way.
+#
+# Every Optional default below is the same value the workspace files carry in
+# their {{KEY|default}} tokens and loop/config.py carries in RunConfig; if the
+# three ever disagree, this file is the one that is wrong.
+
+# ── Required ────────────────────────────────────────────────────────────────
+
+ARM=claude                          # claude | codex — which CLI runs the research
+
+# The task itself — the run-specific brief, substituted into AGENTS.md (a
+# generic template; the actual research goal lives here, in config).
+RESEARCH_QUESTION=<the one-sentence research question the agent must answer>
+RESEARCH_CONTEXT=<the background the agent needs, plus exactly what to produce — e.g. "Prior methods do A but not B, and existing approaches are brittle. The agent should produce (a) a method for B, (b) evidence about whether the result is robust/composable, and (c) at least one downstream test it did not directly optimize for.">
+
+# The agent's own token spend, in USD ($2000-style accepted). It is Inspect's
+# hard cost limit AND what the agent is told; the loop refuses to run against an
+# unmetered budget, which is why there is no default.
+API_BUDGET=$200
+
+# ── Optional: the run's shape (uncomment to override) ───────────────────────
+
+# RUN_NAME=crux                     # names run/<name>/ and logs/<name>/ (--name overrides)
+# RUN_HOURS=10                      # Inspect's hard time limit; the agent's clock
+# DEADLINE=10 hours from launch     # the deadline as prose in AGENTS.md/PLAN.md (default derived from RUN_HOURS)
+# COST_STOP_FRACTION=0.95           # the loop injects the final pass at this fraction of API_BUDGET if no completion report exists
+# FINAL_WINDOW_MINUTES=60           # ...or with this much clock left and no completion report
+# FINAL_GATE_RETRIES=2              # how many times a failing FINAL=1 gate is handed back before the loop stops
+
+# ── Optional: models ────────────────────────────────────────────────────────
+# Provider-qualified Inspect model strings. The arm picks one of the two as
+# MODEL; every model named here needs an entry in pricing.yaml.
+
+# CLAUDE_MODEL=anthropic/claude-opus-5
+# CODEX_MODEL=openai/gpt-5.6-sol
+# REASONING_EFFORT=high             # none|minimal|low|medium|high|xhigh|max — set eval-side, since the bridge drops the CLI's own generation settings
+# SUBAGENT_MODEL=                   # blank = subagents run on the main model; else an Inspect model string the eval can serve (add it to pricing.yaml)
+# PROMPT_CACHE_TTL=1h               # 5m|1h — heartbeats re-send the context; a long TTL keeps that cheap
+
+# ── Optional: heartbeat cadence ─────────────────────────────────────────────
+
+# HEARTBEAT_MINUTES=15              # a quiet CLI is nudged with HEARTBEAT.md at most this often
+# LEDGER_BEAT_HOURS=2               # the 'refresh every budget number and step back' beat rides on the next heartbeat
+# SNAPSHOT_HOURS=4                  # operator-snapshot cadence the agent keeps in SNAPSHOTS.md
+# AUDIT_SNAPSHOT_MINUTES=30         # host-side git bundle of /workspace, agent-invisible
+
+# ── Optional: cost visibility ───────────────────────────────────────────────
+
+# BUDGET_REFRESH_SECONDS=30         # BUDGET.json rewrite throttle; the status line refreshes on the same clock
+# STATUS_LINE=on                    # on|off — append the live spend/clock line to every bridged model call
+
+# ── Optional: delegation ────────────────────────────────────────────────────
+
+# SUBAGENTS=on                      # on|off — the CLI's native subagent tool
+# MAX_CONCURRENT_SUBAGENTS=8        # concurrency cap the agent is told and the CLI enforces
+# SUBAGENT_DEPTH=1                  # 1 = subagents cannot spawn subagents
+
+# ── Optional: keys passed into the container ────────────────────────────────
+# Comma-separated names of variables in harness/.env that the agent may use
+# (compute, experiment-LLM and external-review services). Only these cross
+# into the container; a provider key never does — configure.sh refuses one.
+
+# AGENT_ENV_KEYS=OPENROUTER_API_KEY,RUNPOD_API_KEY,REFINE_INK_API_KEY
+# CLOUD_SPEND_LIMIT=$500            # compute cap the agent is told (n/a when no compute key is provisioned)
+# OPENROUTER_BUDGET=$500            # experiment-LLM cap the agent is told (n/a when no OpenRouter key is provisioned)
+
+# ── Optional: the deliverable and its gate (scripts/gate_artifact.sh) ───────
+
+# VENUE=NeurIPS
+# PAGE_BUDGET=9
+# BACKMATTER_ALLOWANCE=15           # extra pages allowed for references/appendices
+# ABSTRACT_WORD_CAP=200             # final-pass gate: max abstract words
+# REQUIRE_FLOAT_CAPTIONS=1          # final gate: every figure/table captioned (0 to skip)
+# REQUIRE_REPLICATION_PACKAGE=1     # final gate: replication package, README and master script present (0 to skip)
+# REQUIRE_EXTERNAL_REVIEWS=0        # final gate: external reviews saved under reviews/external/ (1 only when a review service is provisioned)
+# DELIVERABLE_TOOLCHAIN=LaTeX via tectonic + the venue template at templates/paper_template.zip — unzip into paper/ and build the skeleton at hour 0
+
+# ── Optional: how the environment is described to the agent ────────────────
+
+# PYTHON_SETUP=a 3.12 venv at /opt/venv (writable; pip/uv install what you need)
+# HOST_DESCRIPTION=Docker container on an EC2 host, amd64, 3.5 CPU / 12 GiB
+# WORKSPACE_PATH=/workspace
+# AGENT_NAME=CRUX
+# OPERATOR_NAME=operator
+
+# ── Optional: image build arguments (ops/provision-box.sh) ──────────────────
+# The CLI versions baked into the image — the ones verified against
+# inspect_swe 0.2.70. Change deliberately: the bridge's resume paths and
+# permission flags were read out of these exact releases.
+
+# CLAUDE_CODE_VERSION=2.1.240
+# CODEX_VERSION=0.149.0

@@ -1,0 +1,70 @@
+# requirements.in -- the container's declared Python stack.
+#
+# This file is the declaration: the general-purpose scientific stack the agent
+# is told it has (AGENTS.md § Environment). `requirements.lock` beside it is the
+# resolution -- every transitive dependency pinned, with hashes -- and it is what
+# the image installs. Never edit the lock by hand; regenerate it:
+#
+#   uv pip compile --python-platform x86_64-unknown-linux-gnu \
+#       --python-version 3.12 --generate-hashes \
+#       requirements.in -o requirements.lock
+#
+# The lock is platform-specific by construction (`--python-platform`), which is
+# right here: the image is linux/amd64 only, and a single-platform resolution
+# avoids marker-gated alternates that would never be installed.
+#
+# Against an existing lock, uv keeps the versions already pinned there wherever
+# they still satisfy this file and resolves only what changed -- so editing one
+# line here moves one package, not the whole stack. Add `--upgrade` to move
+# everything to current, or delete the lock first for a clean resolution.
+#
+# What is deliberately NOT here: any package that operationalises one field's
+# methods. The venv is writable and egress is open, so the agent installs what
+# its question needs and logs the install (AGENTS.md); the harness supplies the
+# substrate, not the method. Adding a package here is a promise to the agent --
+# keep this list and AGENTS.md's description of the environment in agreement.
+#
+# Versions float to whatever the lock resolves on the day it is regenerated,
+# with one exception below. The lock is the pin; this file is the intent.
+
+# --- Core scientific stack ------------------------------------------------------
+# pandas is held at 2.3.x deliberately: pandas 3 makes copy-on-write the default
+# and changes string dtypes, so the idioms these models have memorised start
+# warning or erroring mid-run. numpy and scipy float to whatever pandas and the
+# rest agree on; the lock records the exact versions.
+numpy
+pandas==2.3.*
+scipy
+statsmodels
+scikit-learn
+
+# --- Plotting ---------------------------------------------------------------------
+# MPLBACKEND=Agg is set in the image, so matplotlib never looks for a display.
+matplotlib
+seaborn
+
+# --- Columnar and file IO -----------------------------------------------------------
+# openpyxl because pandas cannot open an .xlsx without it, and a run that finds
+# that out at the first spreadsheet loses an hour to a one-line install.
+pyarrow
+polars
+duckdb
+openpyxl
+
+# --- Web access and browser automation --------------------------------------------
+# Egress is open, so the agent fetches its own data and literature. `playwright`
+# drives headless Chromium for web UIs and portals a scripted fetch cannot reach;
+# the browser binary itself is installed in the Dockerfile, not here. `httpx` and
+# `tenacity` are the fetch-and-retry pair; beautifulsoup4/lxml parse what comes
+# back; pypdf reads PDFs the agent downloads.
+requests
+httpx
+tenacity
+beautifulsoup4
+lxml
+playwright
+pypdf
+
+# --- Working tools --------------------------------------------------------------------
+tqdm
+pytest

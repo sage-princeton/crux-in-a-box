@@ -1,0 +1,219 @@
+# =============================================================================
+# container/compose.yaml -- the sandbox definition Inspect drives.
+#
+# Inspect's docker sandbox provider runs `docker compose up` on this file with a
+# per-sample project name, then reaches into the running container with
+# `docker compose exec`. The service must therefore be named `default` (Inspect
+# raises "No 'default' service found in Docker compose file" otherwise) and must
+# stay alive on its own, which is what the `tail -f /dev/null` command is for.
+#
+# The task points at it with:
+#     sandbox=("docker", "container/compose.yaml")
+#
+# One service, one container, one run. Which CLI runs inside it is decided by
+# the loop (`CRUX_ARM`), not by this file -- nothing here may be conditional on
+# the arm.
+#
+# -----------------------------------------------------------------------------
+# Why the model bridge never touches the network
+# -----------------------------------------------------------------------------
+# Worth stating because it decides where the provider keys live. The agent talks
+# to a frontier model, but not over the network: `sandbox_agent_bridge` runs a
+# proxy process *inside* the container and speaks to the host over the
+# sandbox-tools JSON-RPC channel, which rides on `docker exec` stdio -- a file
+# descriptor, not a socket. The CLI's HTTP client connects to localhost.
+#
+# The consequence that matters: the bridge would work with egress open or shut,
+# so opening egress costs nothing in bridge terms, and the real provider keys
+# still never enter the container. `inspect_swe` injects a dummy credential per
+# CLI -- `OPENAI_API_KEY=api-key` for Codex, a placeholder `ANTHROPIC_AUTH_TOKEN`
+# plus an apiKeyHelper in settings.json for Claude Code -- and points each CLI's
+# base URL at the in-container proxy. The host holds the real keys and meters
+# every call. That is why the cost meter survives an open network, and why
+# there is no `environment:` block below: if you ever find yourself adding an
+# API key to this file, something upstream is wrong -- stop.
+#
+# The bridge port is 3001, not the 13131 the library documents as its default:
+# both CLIs compute `store().get(MODEL_PORT, 3000) + 1` before opening the
+# bridge, so 13131 never appears. Worth knowing before you go looking for a
+# listener on it.
+#
+# -----------------------------------------------------------------------------
+# Secrets and this file
+# -----------------------------------------------------------------------------
+# `docker compose` interpolates ${VARS} from the shell that launches Inspect and
+# from a `.env` file sitting next to THIS file. Keep the operator's `.env` at
+# harness/.env (where .env.example lives) and never at harness/container/.env,
+# or provider keys would be interpolated into a service definition that runs
+# untrusted code for the length of the run.
+# =============================================================================
+
+services:
+  default:
+    # The image built from container/Dockerfile. x-local tells Inspect the tag
+    # is a locally built image and must not be pulled -- without it, a locally
+    # built tag makes Inspect fail with a registry pull error.
+    image: ${CRUX_IMAGE:?set CRUX_IMAGE to the built image tag, e.g. crux-harness:2026-09-01}
+    x-local: true
+
+    # Stated, not inferred -- see the Dockerfile header. If the host is arm64
+    # and this line is missing, docker will happily run an emulated or, worse, a
+    # differently built image.
+    platform: linux/amd64
+
+    # Keep the container alive for the whole sample: Inspect execs into a
+    # running container, and a container whose main process has exited fails
+    # every subsequent call with an opaque error. Same command as the image's
+    # CMD, restated so this file reads honestly on its own.
+    command: ["tail", "-f", "/dev/null"]
+
+    # PID 1 reaps zombies. The agent runs detached background jobs across many
+    # turns; without an init they accumulate as zombies against pids_limit
+    # until nothing can fork.
+    init: true
+
+    # Egress is OPEN: the agent fetches its own data and literature, drives web
+    # UIs and portals, and reaches any compute it is provisioned. The budget
+    # meter is safe regardless, because the container holds only the dummy
+    # credentials `inspect_swe` injects and the real keys never leave the host.
+    #
+    # There is deliberately no `network_mode:` line here. The blocks that DO
+    # apply are enforced on the HOST's DOCKER-USER chain by `ops/provision-box.sh`,
+    # where the agent cannot remove them: the cloud metadata endpoint and the two
+    # model-provider API domains (so the meter cannot be bypassed even in
+    # principle -- model traffic goes through the bridge or not at all). There is
+    # no Docker socket mount, so the container cannot reach the host's daemon
+    # either. `workspace/AGENTS.md` § Environment tells the agent the same story;
+    # if one of the two files changes, change the other.
+
+    # NO `user:` HERE. inspect_swe is built around the sandbox-tools service
+    # running as ROOT and dropping to an unprivileged user itself -- that is what
+    # its `user=` parameter is for. Pinning the container to 1000:1000 leaves the
+    # service unable to manage users: it cannot setuid, and once SETUID is
+    # granted the model proxy still runs as neither node nor root and cannot
+    # write its own request files.
+    #
+    # The agent still ends up as uid 1000 (`node`) -- `user=` on the agent
+    # factory does the drop -- which is mandatory rather than hygienic:
+    # `claude --dangerously-skip-permissions` hard-refuses to run as root, and
+    # Codex runs as the same user so the two arms differ in nothing but the CLI.
+    working_dir: /workspace
+
+    # The agent runs untrusted code it wrote itself for the length of the run.
+    # no-new-privileges is written in the value form docker documents; the bare
+    # flag name is accepted in some versions and silently ignored in others.
+    #
+    # THE THREE CAPABILITIES, AND WHY EACH ONE IS LOAD-BEARING.
+    #
+    # SETUID/SETGID -- inspect_swe's sandbox-tools server starts as root and
+    # drops to uid 1000 to execute the agent. Under a bare `cap_drop: ALL` the
+    # drop fails with
+    #     sandbox-tools: permission denied switching to user 'node'
+    #       (server may lack CAP_SETUID/CAP_SETGID)
+    # and every turn dies in seconds, which the loop correctly reads as broken
+    # configuration and backs off from. The same capability is what makes
+    # `exec(user=...)` work, which is how the final gate runs as the agent
+    # rather than as root -- so dropping it does not harden the run, it breaks
+    # two things and pushes the gate back to root.
+    #
+    # DAC_OVERRIDE -- this one is not obvious and cost most of a day, so the
+    # diagnosis is written down rather than summarised.
+    #
+    # CAP_DAC_OVERRIDE is the entire source of root's power to bypass file
+    # permission bits. Strip it and uid 0 is subject to the mode bits like any
+    # other user. Inspect's `SandboxEnvironment.write_file()` execs
+    #     sh -e -c 'tee -- "$1" > /dev/null'
+    # with NO `--user`, so it runs as the container's default user -- root here,
+    # since there is deliberately no USER directive (see the block above). It
+    # therefore meets `/workspace`, which is 0775 node:node, as neither owner nor
+    # group member, falls through to `other` = r-x, and fails with
+    #     tee: /workspace/BUDGET.json: Permission denied
+    # The same mechanism fails the `mkdir -p` for /workspace/.codex/config.toml.
+    #
+    # What made it hard to see: every individual check looked right. The image
+    # id matched, /workspace really was node-owned and group-writable, and
+    # `docker exec -u node ... > /workspace/x` really did succeed. Root failing
+    # where node succeeds reads as impossible until you look at CapEff:
+    #     CapEff: 00000000000000c0   -> bits 6,7 = SETGID, SETUID. Nothing else.
+    # Verified with three controls: root writes to a root-owned dir (owner, OK),
+    # root writes to /tmp (0777 -> other, OK), root writes to /workspace
+    # (0775 node:node -> denied). That is DAC_OVERRIDE absence and nothing else.
+    #
+    # Granting it back costs little: root in this container is already the
+    # sandbox supervisor. Containment here comes from the mount table (/data
+    # read-only, one bind total, no Docker socket), the host-side egress rules
+    # and the cgroup caps -- not from crippling uid 0 against a filesystem it
+    # owns.
+    #
+    # DO NOT re-derive this list from "what would a hardened container drop".
+    # It is three capabilities because three things need them, and the first
+    # turn fails loudly if any of them goes missing.
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    security_opt:
+      - "no-new-privileges:true"
+
+    # The cgroup limits. These are the numbers AGENTS.md quotes to the agent
+    # (`HOST_DESCRIPTION`), so changing one here means changing it there. Sized
+    # for one container plus the Inspect host process on one m7i.2xlarge
+    # (8 vCPU / 32 GiB), leaving ample room for the host process and the bridge
+    # -- if the box OOMs it must kill the agent, not sshd.
+    pids_limit: 512
+    mem_limit: 12g
+    cpus: 3.5
+    # Note for whoever reads a slow turn: `cpus` is a CFS quota, not a CPU
+    # count, so `nproc` inside the container still reports the host's core count
+    # and any library that sizes a worker pool from it will oversubscribe the
+    # quota. A thing to recognise rather than to debug.
+
+    # Nothing in the container needs a graceful shutdown; the artifacts are on
+    # disk and in the Inspect log.
+    stop_grace_period: 1s
+
+    # No `environment:` block, deliberately. The run-time constants
+    # (PYTHONHASHSEED, SOURCE_DATE_EPOCH, TECTONIC_CACHE_DIR, MPLBACKEND) are
+    # baked into the image, and everything per-run -- CRUX_ARM, CRUX_RUN_NAME,
+    # the CLI's effort and subagent settings, any AGENT_ENV_KEYS pass-through --
+    # is set by the loop on the agent process (`loop/agents.py`), where it is
+    # recorded in the run's timeline. A variable here would be a third place to
+    # set the same thing and the only one the record does not see.
+
+    volumes:
+      # Staged inputs, read-only, optional. `CRUX_DATA_DIR` names a host
+      # directory assembled by `ops/stage_data.sh` (hash manifest + INDEX.md);
+      # when it is unset the repo's own harness/data/ mounts instead, which holds
+      # only the staging README -- so /data always exists and is always
+      # read-only, and an empty one tells the agent nothing was staged. The path
+      # is relative to this file, which is how docker compose resolves it.
+      - "${CRUX_DATA_DIR:-../data}:/data:ro"
+
+# -----------------------------------------------------------------------------
+# Tightening the filesystem, once, with evidence
+# -----------------------------------------------------------------------------
+# This service is not `read_only: true`, and it should not be turned on blind.
+# The true write set is not obvious -- /workspace, /home/node/.claude,
+# $CODEX_HOME, /tmp, matplotlib's cache, tectonic's scratch space and whatever
+# the agent's own code writes are all in it, and a read-only root filesystem
+# that misses one of them fails deep inside a turn with a permission error the
+# agent will misread as its own bug.
+#
+# Enumerate it instead of guessing. After a first full-length rehearsal run:
+#
+#     docker diff <container-id> | sort
+#
+# then add `read_only: true` plus a tmpfs mount for each path that legitimately
+# needs to be written and is not already a volume. Re-run the rehearsal before
+# trusting it. Until that evidence exists, the container's own root filesystem
+# stays writable -- it is destroyed at the end of the run either way, and
+# `cap_drop: ALL`, `no-new-privileges`, the pid/memory caps and the host-side
+# DOCKER-USER egress blocks are what actually contain it.
+#
+# Related: `ops/run.sh` passes `--no-sandbox-cleanup` so the container survives
+# sample completion and the CLI session stores (~/.claude/projects/**,
+# /workspace/.codex/sessions/**) can be scrubbed and collected by
+# `ops/collect.sh` as the secondary audit trail. Containers are destroyed on
+# cleanup; collect first.

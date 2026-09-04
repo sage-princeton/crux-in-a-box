@@ -1,0 +1,123 @@
+# =============================================================================
+# pricing.yaml -- per-model rates for Inspect's cost meter.
+#
+#     inspect eval ... --model-cost-config pricing.yaml
+#
+# ops/run.sh passes this file on every launch, and the loop sets Inspect's
+# cost_limit from API_BUDGET in run.env. Every number the agent is told about
+# its own spend -- the status line on each turn, BUDGET.json, the
+# COST_STOP_FRACTION final-pass trigger, the hard cost limit -- is computed
+# from these rates. A plausible-looking wrong rate produces a plausible-looking
+# wrong ledger, and the whole budget mechanism rests on this file being right.
+#
+# FILLED 2026-08-23 from the published list prices (Anthropic model-pricing
+# table; OpenAI Standard tier, short-context column). Re-check before launch.
+#
+# Two assumptions are baked in, and both are checkable:
+#
+#   1. STANDARD tier, not Batch / Flex / Fast. The harness makes ordinary
+#      synchronous calls, so Standard is right. A fast tier would be 2x on the
+#      OpenAI side and $10/$50 on Opus 5 -- if anything ever sets
+#      `service_tier: "fast"` or `speed: "fast"`, these numbers are wrong low.
+#   2. SHORT-context column for gpt-5.6-sol. Long-context rates (2x input,
+#      1.5x output) apply above the short-context threshold. The Opus 5 id
+#      carries no `[1m]` suffix and gpt-5.6-sol's default context_window is
+#      272k, so requests should stay short-context. If the timeline shows
+#      sustained input near that threshold, these rates understate the bill
+#      and the ledger drifts low.
+#
+# gpt-5.6-sol is on PROMOTIONAL pricing at least through 2026-11-21. A ledger
+# built on promotional rates is only valid while they hold.
+#
+# -----------------------------------------------------------------------------
+# Units and semantics
+# -----------------------------------------------------------------------------
+# * Rates are US dollars per MILLION tokens. A rate of 15 means $15 per 1M
+#   tokens, i.e. $0.000015 per token.
+# * Reasoning tokens are billed as OUTPUT tokens. There is no separate field for
+#   them and none is needed; put the output rate in `output` and reasoning is
+#   priced correctly.
+# * `input_cache_write` takes the provider's DEFAULT-TTL rate -- for Anthropic,
+#   the 5-minute write rate. Inspect adjusts for longer TTLs at cost-computation
+#   time from the configured cache TTL (PROMPT_CACHE_TTL), so pre-baking a
+#   1-hour rate here would double-apply the multiplier. (Verified in
+#   inspect_ai's ModelCost docstring and compute_model_cost().)
+# * All four fields are required for every model. They are non-optional in the
+#   ModelCost schema, so a missing one raises a pydantic ValidationError naming
+#   the field, before the first sample starts.
+#
+# -----------------------------------------------------------------------------
+# Which models need an entry
+# -----------------------------------------------------------------------------
+# With a cost limit set, Inspect requires cost data for the task model AND for
+# every other model the eval serves. That is MODEL in run.env (the arm's
+# CLAUDE_MODEL or CODEX_MODEL) and, if SUBAGENT_MODEL names a different model,
+# that one too. Missing any of them aborts the run at startup with:
+#
+#     cost_limit requires cost data for all models. Missing cost data for: ...
+#     Use set_model_cost() or --model-cost-config to configure pricing.
+#
+# Keys are the full provider-qualified model string exactly as passed to
+# `--model` (ops/run.sh checks that the arm's model has an entry before it
+# launches). Heartbeats and every subagent call draw on the same meter and the
+# same limit as the main session, which is honest accounting and is why the
+# status line tells the agent that its spend "includes heartbeats and subagents".
+#
+# -----------------------------------------------------------------------------
+# What happens if these are left unfilled -- kept because the reasoning still
+# governs anyone tempted to put zeros here as a placeholder
+# -----------------------------------------------------------------------------
+# The run stops immediately with a pydantic ValidationError:
+#
+#     4 validation errors for ModelCost
+#     input
+#       Input should be a valid number, unable to parse string as a number
+#       [type=float_parsing, input_value='FILL_IN_USD_PER_MTOK', input_type=str]
+#     ...
+#
+# That is deliberate. Zeros here would be far worse than an error: the meter
+# would report $0.00 for the whole run, the cost limit would never fire, the
+# COST_STOP_FRACTION final-pass trigger would never happen, and the agent
+# would be told all day that it had spent nothing. A hard failure at second
+# zero is cheap; a silent zero is the run.
+# =============================================================================
+
+# --- Claude Code (ARM=claude, CLAUDE_MODEL default) ---------------------------
+# No `[1m]` suffix on the id: the 1M-token context variant is priced
+# differently above 200k input and would make these short-context rates wrong.
+anthropic/claude-opus-5:
+  input: 5.00
+  output: 25.00
+  input_cache_write: 6.25   # 5-minute TTL write = 1.25x base input. NOT the 1h rate
+  input_cache_read: 0.50    # cache hit = 0.1x base input
+
+# --- Codex CLI (ARM=codex, CODEX_MODEL default) ------------------------------
+openai/gpt-5.6-sol:
+  input: 4.00
+  output: 20.00
+  input_cache_write: 5.00
+  input_cache_read: 0.40
+
+# --- A separate subagent model -------------------------------------------------
+# Only if SUBAGENT_MODEL in placeholders.txt names a model that is not one of
+# the two above. Put the exact Inspect model string in the key and fill in all
+# four rates -- otherwise the run aborts at startup with the "cost data for all
+# models" error quoted above. Comment lines are excluded from ops/run.sh's
+# FILL_IN check, so this template can stay here.
+#
+# provider/subagent-model-id:
+#   input: FILL_IN_USD_PER_MTOK
+#   output: FILL_IN_USD_PER_MTOK
+#   input_cache_write: FILL_IN_USD_PER_MTOK
+#   input_cache_read: FILL_IN_USD_PER_MTOK
+
+# -----------------------------------------------------------------------------
+# One more thing, for whoever reads the numbers afterwards
+# -----------------------------------------------------------------------------
+# Within one run, dollars are exact: the container holds only a dummy provider
+# key and the provider domains are blocked at the host firewall, so bridge
+# traffic -- the main session, every heartbeat, every subagent -- is 100% of
+# spend even with egress open. Across runs on different models the rate cards
+# and prompt-cache behaviour differ, so report tokens (input / output /
+# cache-read / cache-write / reasoning, all in the timeline) alongside dollars
+# before comparing two runs' cost.
