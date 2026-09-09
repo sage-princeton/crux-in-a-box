@@ -1,5 +1,20 @@
 ## TODOs
 
+### Do now
+
+- [ ] ensure secrets/config is working - three levels: (a) system-wide in SSM, e.g., langfuse creds (b) per-box config, not secret, e.g., model type (c) per-box config, secret, e.g., OpenAI API Key
+- [ ] stabilize AWS setup - add add'l workspaces and tear them down with no issues
+- [ ] tag langfuse traces somehow with an id / slug / etc.
+
+### Backlog
+
+- [ ] ensure we can set model types and thinking levels when making new boxes!
+- [ ] configure https access for AgentRQ
+- [ ] spike on slack setup: https://agentrq.com/docs/integrations/slack-self-hosted
+- [ ] update langfuse to v4 [?]
+
+### Done
+
 - [x] set up langfuse on codex
       Working. Ingest latency is ~17s; the apparent delay is that the plugin
       only exports at end of turn.
@@ -7,12 +22,7 @@
       Uses the docs' standalone hook, **not** the plugin. The plugin skips user
       rows with `isMeta: true` and every AgentRQ channel prompt is one, so it
       emits nothing here. The standalone script has no such check.
-- [ ] work on cloud/AWS setup for codex, then for claude
-- [ ] spike on slack setup: https://agentrq.com/docs/integrations/slack-self-hosted
-- [ ] configure https access for AgentRQ
-- [ ] update langfuse to v4 [?]
-- [ ] tag langfuse traces somehow with an id / slug / etc.
-- [ ] ensure we can set model types and thinking levels when making new boxes!
+- [x] work on cloud/AWS setup for codex, then for claude
 
 ## Setup
 

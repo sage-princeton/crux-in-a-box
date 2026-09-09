@@ -3,20 +3,29 @@ set -euo pipefail
 
 # ==========================================================================
 # configure-run.sh — runs ON the run box, as root. PER-RUN CONFIG AND
-# SECRETS. Idempotent: safe to re-run after a config change.
+# SECRETS. Idempotent: safe to re-run after a config change — but a re-run
+# needs the per-run secrets file scp'd again, because this script deletes it
+# once the values are written where they live.
 #
 # Deliberately separate from install-run.sh, which is the bakeable half.
 #
-# Expects in the environment: AWS_REGION, SSM_ENV_PARAM, RUN_SLUG,
-# CONTROL_PRIVATE_DNS, AGENTRQ_PORT.
+# Secrets arrive two ways:
+#   - per-run (OpenAI key, workspace id/token): a JSON file at
+#     RUN_SECRETS_PATH, scp'd by make-run-box.sh, deleted here after use
+#   - system-wide (Langfuse): SSM SYSTEM_SSM_PARAM, read via the shared
+#     crux-system-role
+#
+# Expects in the environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
+# RUN_SLUG, CONTROL_PRIVATE_DNS, AGENTRQ_PORT, TRACING_PLUGIN_VERSION,
+# TRACING_HOOK_TRUSTED_HASH.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-: "${AWS_REGION:?}" "${SSM_ENV_PARAM:?}" "${RUN_SLUG:?}" \
-  "${CONTROL_PRIVATE_DNS:?}" "${AGENTRQ_PORT:?}" \
+: "${AWS_REGION:?}" "${RUN_SECRETS_PATH:?}" "${SYSTEM_SSM_PARAM:?}" \
+  "${RUN_SLUG:?}" "${CONTROL_PRIVATE_DNS:?}" "${AGENTRQ_PORT:?}" \
   "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
 
 RUN_USER=ubuntu
@@ -24,24 +33,38 @@ RUN_HOME="/home/$RUN_USER"
 WORK_DIR=/srv/crux-run          # acp-gateway's cwd; holds .mcp.json
 CODEX_DIR="$RUN_HOME/.codex"
 
-# ====== SECRETS FROM PARAMETER STORE ======
-# Read at boot by the instance role rather than scp'd, so nothing sensitive
-# lands in the repo, in an AMI, or in this script's arguments.
-info "Fetching run config from SSM $SSM_ENV_PARAM"
-SECRETS="$(aws ssm get-parameter --region "$AWS_REGION" --name "$SSM_ENV_PARAM" \
-  --with-decryption --query 'Parameter.Value' --output text)" \
-  || die "Could not read $SSM_ENV_PARAM. Upload it first: make-run-box.sh --put-secrets <file>"
+# ====== PER-RUN SECRETS FROM THE SCP'D FILE ======
+# Delivered over the same SSH channel that delivered this script; deleted as
+# soon as the values are held in shell variables. They persist only in the
+# mode-600 files written below.
+info "Reading per-run secrets from $RUN_SECRETS_PATH"
+[ -f "$RUN_SECRETS_PATH" ] \
+  || die "$RUN_SECRETS_PATH not found. make-run-box.sh scps it before running this script; a manual re-run needs it scp'd again."
+SECRETS="$(cat "$RUN_SECRETS_PATH")"
 
 get() { printf '%s' "$SECRETS" | jq -re --arg k "$1" '.[$k] // empty'; }
 
-OPENAI_API_KEY="$(get OPENAI_API_KEY)"      || die "OPENAI_API_KEY missing from $SSM_ENV_PARAM"
-WORKSPACE_ID="$(get AGENTRQ_WORKSPACE_ID)"  || die "AGENTRQ_WORKSPACE_ID missing from $SSM_ENV_PARAM"
-WORKSPACE_TOKEN="$(get AGENTRQ_WORKSPACE_TOKEN)" || die "AGENTRQ_WORKSPACE_TOKEN missing from $SSM_ENV_PARAM"
-LANGFUSE_PUBLIC_KEY="$(get LANGFUSE_PUBLIC_KEY)" || die "LANGFUSE_PUBLIC_KEY missing from $SSM_ENV_PARAM"
-LANGFUSE_SECRET_KEY="$(get LANGFUSE_SECRET_KEY)" || die "LANGFUSE_SECRET_KEY missing from $SSM_ENV_PARAM"
-LANGFUSE_BASE_URL="$(get LANGFUSE_BASE_URL)"
+OPENAI_API_KEY="$(get OPENAI_API_KEY)"      || die "OPENAI_API_KEY missing from $RUN_SECRETS_PATH"
+WORKSPACE_ID="$(get AGENTRQ_WORKSPACE_ID)"  || die "AGENTRQ_WORKSPACE_ID missing from $RUN_SECRETS_PATH"
+WORKSPACE_TOKEN="$(get AGENTRQ_WORKSPACE_TOKEN)" || die "AGENTRQ_WORKSPACE_TOKEN missing from $RUN_SECRETS_PATH"
+rm -f "$RUN_SECRETS_PATH"
+ok "Read 3 per-run values (not echoed); deleted $RUN_SECRETS_PATH"
+
+# ====== SYSTEM-WIDE SECRETS FROM PARAMETER STORE ======
+# Shared by every run box; read via the instance's crux-system-role, whose
+# only privilege is GetParameter on this one path.
+info "Fetching system config from SSM $SYSTEM_SSM_PARAM"
+SYS="$(aws ssm get-parameter --region "$AWS_REGION" --name "$SYSTEM_SSM_PARAM" \
+  --with-decryption --query 'Parameter.Value' --output text)" \
+  || die "Could not read $SYSTEM_SSM_PARAM. Upload it once: make-run-box.sh --put-system-secrets <file>"
+
+sys() { printf '%s' "$SYS" | jq -re --arg k "$1" '.[$k] // empty'; }
+
+LANGFUSE_PUBLIC_KEY="$(sys LANGFUSE_PUBLIC_KEY)" || die "LANGFUSE_PUBLIC_KEY missing from $SYSTEM_SSM_PARAM"
+LANGFUSE_SECRET_KEY="$(sys LANGFUSE_SECRET_KEY)" || die "LANGFUSE_SECRET_KEY missing from $SYSTEM_SSM_PARAM"
+LANGFUSE_BASE_URL="$(sys LANGFUSE_BASE_URL)"
 LANGFUSE_BASE_URL="${LANGFUSE_BASE_URL:-https://us.cloud.langfuse.com}"
-ok "Read 5 values (not echoed)"
+ok "Read 3 system values (not echoed)"
 
 # ====== WORK DIR AND .mcp.json ======
 # acp-gateway finds its workspace by searching for .mcp.json in the cwd and up

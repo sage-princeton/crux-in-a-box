@@ -55,6 +55,23 @@ ssh crux-control 'sudo grep ^AGENTRQ_AUTH_ROOT_ACCESS_TOKEN= /srv/agentrq/agentr
 
 Example: a second box called `codex-2`. Four commands.
 
+### 0 — system secrets (once, not per box)
+
+The Langfuse keys are fleet-wide, so they live in a single SSM parameter
+(`/crux/system/env`) that every run box reads at configure time through the
+shared `crux-system-role`. Upload them once, before the first box:
+
+```bash
+cd src/ec2-acp
+cp run-system-secrets.json.example run-system-secrets.json
+chmod 600 run-system-secrets.json
+# fill in the two Langfuse keys, then:
+./make-run-box.sh --put-system-secrets run-system-secrets.json
+```
+
+This also creates `crux-system-role`/`crux-system-profile` if they don't
+exist. Re-run it any time to rotate the keys. Every later box reuses it.
+
 ### 1 — config
 
 ```bash
@@ -96,22 +113,18 @@ cp run-secrets.json.example run-secrets-codex-2.json
 chmod 600 run-secrets-codex-2.json
 ```
 
-Fill in `OPENAI_API_KEY`, the two Langfuse keys, and the workspace `id`/`token`
-from step 2. Then:
-
-```bash
-./make-run-box.sh --put-secrets run-secrets-codex-2.json placeholders-codex-2.txt
-```
-
-This uploads to SSM Parameter Store at `/crux/run/codex-2/env` (SecureString).
-The instance reads it at boot via an IAM policy scoped to that one path, so one
-run box cannot read another's keys. `*secrets*.json` is gitignored.
+Fill in `OPENAI_API_KEY` and the workspace `id`/`token` from step 2 (the
+Langfuse keys are system-wide — step 0). No upload step: the file is scp'd to
+the box during launch and **deleted there** once `configure-run.sh` has
+written the values into their mode-600 homes (`/etc/crux-run.env`,
+`.mcp.json`). Per-run secrets never touch SSM, and no per-box IAM role
+exists. `*secrets*.json` is gitignored.
 
 ### 4 — launch
 
 ```bash
 ./make-run-box.sh --dry-run placeholders-codex-2.txt   # shows the plan, creates nothing
-./make-run-box.sh placeholders-codex-2.txt
+./make-run-box.sh --secrets run-secrets-codex-2.json placeholders-codex-2.txt
 ```
 
 ~5 minutes. It provisions the instance and Elastic IP, writes the `~/.ssh/config`
@@ -139,9 +152,13 @@ Then send it a task from the dashboard.
 ```
 
 Terminates the instance, **releases the Elastic IP** (an allocated but
-unassociated EIP bills by the hour), deletes the SSM parameter and removes the
-ssh alias. It keeps the shared pieces — `crux-run-sg`, the key pair, the IAM
-role — because other boxes need them.
+unassociated EIP bills by the hour) and removes the ssh alias. It keeps the
+shared pieces — `crux-run-sg`, the key pair, `crux-system-role`/`crux-system-profile`,
+`/crux/system/env` — because other boxes need them. Nothing per-box lives in
+SSM or IAM: the scp'd secrets file was already deleted on the box at configure
+time, so the secrets die with the instance. (Boxes provisioned before the
+scp-secrets change left a legacy `/crux/run/<slug>/env` parameter; teardown
+deletes it if present.)
 
 ---
 

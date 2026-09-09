@@ -5,4 +5,5 @@ hooks = true
 enabled = true
 
 [hooks.state."tracing@codex-observability-plugin:hooks/hooks.json:stop:0:0"]
+trusted_hash = "sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74"
 enabled = true

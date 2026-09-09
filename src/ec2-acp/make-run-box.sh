@@ -11,14 +11,25 @@ set -euo pipefail
 # The run box dials the control box. It needs no inbound to do its job; the
 # SSH rule is break-glass only.
 #
+# Secrets travel two ways, deliberately different:
+#   - PER-RUN secrets (OpenAI key, workspace id/token) are scp'd to the box
+#     at provision time and deleted there once configure-run.sh has written
+#     them where they live. No SSM, no per-box IAM role.
+#   - SYSTEM-WIDE secrets (the Langfuse keys, shared by every box) live in
+#     one SSM parameter, /crux/system/env, read at boot via the shared
+#     crux-system-role. Upload once with --put-system-secrets.
+#
 # Usage:
-#   ./make-run-box.sh [CONFIG_FILE]                     # provision
-#   ./make-run-box.sh --put-secrets <json> [CONFIG]     # upload run secrets
+#   ./make-run-box.sh --secrets <json> [CONFIG_FILE]    # provision
+#   ./make-run-box.sh --put-system-secrets <json> [CONFIG]
+#                                                       # upload the shared
+#                                                       # Langfuse config, once
 #   ./make-run-box.sh --dry-run [CONFIG_FILE]           # print plan, touch nothing
 #   ./make-run-box.sh --handshake [CONFIG_FILE]         # ACP handshake only
 #
-# The secrets file is JSON with these keys (see --put-secrets output):
-#   OPENAI_API_KEY, AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN,
+# The per-run secrets file is JSON (see run-secrets.json.example):
+#   OPENAI_API_KEY, AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN
+# The system secrets file is JSON (see run-system-secrets.json.example):
 #   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL
 # ==========================================================================
 
@@ -30,15 +41,17 @@ die()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ====== PARSE ARGS ======
-CONFIG_FILE=""; PUT_SECRETS=""; DRY_RUN=0; HANDSHAKE=0
+CONFIG_FILE=""; RUN_SECRETS_FILE=""; PUT_SYSTEM_SECRETS=""; DRY_RUN=0; HANDSHAKE=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --put-secrets) PUT_SECRETS="${2:-}"; [ -n "$PUT_SECRETS" ] || die "--put-secrets needs a file"; shift 2 ;;
-    --dry-run)     DRY_RUN=1; shift ;;
-    --handshake)   HANDSHAKE=1; shift ;;
-    -h|--help)     sed -n '3,30p' "$0"; exit 0 ;;
-    -*)            die "Unknown flag: $1" ;;
-    *)             [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
+    --secrets)            RUN_SECRETS_FILE="${2:-}"; [ -n "$RUN_SECRETS_FILE" ] || die "--secrets needs a file"; shift 2 ;;
+    --put-system-secrets) PUT_SYSTEM_SECRETS="${2:-}"; [ -n "$PUT_SYSTEM_SECRETS" ] || die "--put-system-secrets needs a file"; shift 2 ;;
+    --put-secrets)        die "--put-secrets is gone: per-run secrets are scp'd now. Use --secrets <json> on the provision run." ;;
+    --dry-run)            DRY_RUN=1; shift ;;
+    --handshake)          HANDSHAKE=1; shift ;;
+    -h|--help)            sed -n '3,40p' "$0"; exit 0 ;;
+    -*)                   die "Unknown flag: $1" ;;
+    *)                    [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
 done
 
@@ -90,9 +103,10 @@ case "$CONTROL_DNS" in
 esac
 
 RUN_SG="crux-run-sg"
-IAM_ROLE="crux-run-role"
-IAM_PROFILE="crux-run-profile"
-SSM_ENV_PARAM="/crux/run/${SLUG}/env"
+SYSTEM_IAM_ROLE="crux-system-role"
+SYSTEM_IAM_PROFILE="crux-system-profile"
+SYSTEM_SSM_PARAM="/crux/system/env"
+BOX_SECRETS_PATH="/tmp/crux-run-secrets.json"
 KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
 SSH_USER="ubuntu"
 AGENTRQ_PORT=2026
@@ -115,22 +129,55 @@ aws_ sts get-caller-identity >/dev/null 2>&1 \
 ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text)"
 ok "Authenticated to account $ACCOUNT_ID in $REGION using $CRED_DESC"
 
-# ====== --put-secrets ======
-if [ -n "$PUT_SECRETS" ]; then
-  [ -f "$PUT_SECRETS" ] || die "No such file: $PUT_SECRETS"
-  jq -e . "$PUT_SECRETS" >/dev/null 2>&1 || die "$PUT_SECRETS is not valid JSON"
-  for k in OPENAI_API_KEY AGENTRQ_WORKSPACE_ID AGENTRQ_WORKSPACE_TOKEN \
-           LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
-    v="$(jq -re --arg k "$k" '.[$k] // empty' "$PUT_SECRETS")" \
-      || die "$PUT_SECRETS is missing required key: $k"
-    # A placeholder that reaches the box fails at gateway start, far from here.
+# ====== --put-system-secrets: shared Langfuse config, uploaded once ======
+# One SSM parameter for the whole fleet, plus the one shared IAM role/profile
+# every run instance boots with. Per-run secrets never touch SSM — they are
+# scp'd during provisioning and deleted from the box after configure.
+if [ -n "$PUT_SYSTEM_SECRETS" ]; then
+  [ -f "$PUT_SYSTEM_SECRETS" ] || die "No such file: $PUT_SYSTEM_SECRETS"
+  jq -e . "$PUT_SYSTEM_SECRETS" >/dev/null 2>&1 || die "$PUT_SYSTEM_SECRETS is not valid JSON"
+  for k in LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
+    v="$(jq -re --arg k "$k" '.[$k] // empty' "$PUT_SYSTEM_SECRETS")" \
+      || die "$PUT_SYSTEM_SECRETS is missing required key: $k"
+    # A placeholder that reaches SSM fails on every future box, far from here.
     case "$v" in *CHANGE*|*REPLACE*|*xxx*|"") die "$k still looks like a placeholder" ;; esac
   done
-  info "Uploading $PUT_SECRETS to SSM at $SSM_ENV_PARAM (SecureString)"
-  if [ "$DRY_RUN" = 1 ]; then ok "[dry-run] would put-parameter $SSM_ENV_PARAM"; exit 0; fi
-  aws_ ssm put-parameter --name "$SSM_ENV_PARAM" --type SecureString --overwrite \
-    --value "$(cat "$PUT_SECRETS")" --description "CRUX run box $SLUG config" >/dev/null
-  ok "Stored. The instance role reads this at boot."
+  if [ "$DRY_RUN" = 1 ]; then
+    ok "[dry-run] would ensure $SYSTEM_IAM_ROLE/$SYSTEM_IAM_PROFILE and put-parameter $SYSTEM_SSM_PARAM"
+    exit 0
+  fi
+
+  info "IAM role '$SYSTEM_IAM_ROLE' (shared by all run boxes)"
+  if aws_iam_ get-role --role-name "$SYSTEM_IAM_ROLE" >/dev/null 2>&1; then
+    ok "Role exists"
+  else
+    aws_iam_ create-role --role-name "$SYSTEM_IAM_ROLE" \
+      --description "CRUX run boxes - read the shared system SSM parameter" \
+      --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
+    ok "Created role"
+  fi
+  # Deliberately narrow: the fleet's only AWS privilege is reading this one
+  # shared parameter. Per-run secrets arrive over scp, not IAM.
+  aws_iam_ put-role-policy --role-name "$SYSTEM_IAM_ROLE" --policy-name "read-system-env" \
+    --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"ssm:GetParameter\"],\"Resource\":\"arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter${SYSTEM_SSM_PARAM}\"}]}" >/dev/null
+  ok "Inline policy: ssm:GetParameter on $SYSTEM_SSM_PARAM only"
+
+  if aws_iam_ get-instance-profile --instance-profile-name "$SYSTEM_IAM_PROFILE" >/dev/null 2>&1; then
+    ok "Instance profile exists"
+  else
+    aws_iam_ create-instance-profile --instance-profile-name "$SYSTEM_IAM_PROFILE" >/dev/null
+    aws_iam_ add-role-to-instance-profile \
+      --instance-profile-name "$SYSTEM_IAM_PROFILE" --role-name "$SYSTEM_IAM_ROLE"
+    info "Waiting 10s for IAM to propagate"
+    sleep 10
+    ok "Created instance profile"
+  fi
+
+  info "Uploading $PUT_SYSTEM_SECRETS to SSM at $SYSTEM_SSM_PARAM (SecureString)"
+  aws_ ssm put-parameter --name "$SYSTEM_SSM_PARAM" --type SecureString --overwrite \
+    --value "$(cat "$PUT_SYSTEM_SECRETS")" \
+    --description "CRUX system-wide config (Langfuse), shared by all run boxes" >/dev/null
+  ok "Stored. Every run box reads this at configure time via $SYSTEM_IAM_ROLE."
   exit 0
 fi
 
@@ -147,10 +194,13 @@ if [ "$DRY_RUN" = 1 ]; then
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
-  iam role/profile  $IAM_ROLE / $IAM_PROFILE   read-only on $SSM_ENV_PARAM
+  instance profile  $SYSTEM_IAM_PROFILE      shared; read-only on $SYSTEM_SSM_PARAM
+                                             (must exist: --put-system-secrets creates it)
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB root
   ssh config entry  Host $SLUG
   elastic ip        associated to $SLUG      (stable address across stop/start)
+  secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
+                                             deleted there after configure
   dials             $CONTROL_DNS:$AGENTRQ_PORT
   pins              codex-acp@$CODEX_ACP_VERSION, acp-gateway@$ACP_GATEWAY_VERSION
 teardown.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
@@ -159,6 +209,30 @@ Nothing billable was created.
 PLAN
   exit 0
 fi
+
+# ====== PER-RUN SECRETS FILE (required for a real provision) ======
+# Validated here, before anything billable happens: a placeholder that reaches
+# the box would fail at gateway start, far from its cause.
+[ -n "$RUN_SECRETS_FILE" ] \
+  || die "A provision run needs --secrets <json> (copy run-secrets.json.example). It is scp'd to the box and deleted there after configure."
+[ -f "$RUN_SECRETS_FILE" ] || die "No such file: $RUN_SECRETS_FILE"
+jq -e . "$RUN_SECRETS_FILE" >/dev/null 2>&1 || die "$RUN_SECRETS_FILE is not valid JSON"
+for k in OPENAI_API_KEY AGENTRQ_WORKSPACE_ID AGENTRQ_WORKSPACE_TOKEN; do
+  v="$(jq -re --arg k "$k" '.[$k] // empty' "$RUN_SECRETS_FILE")" \
+    || die "$RUN_SECRETS_FILE is missing required key: $k"
+  case "$v" in *CHANGE*|*REPLACE*|*xxx*|"") die "$k still looks like a placeholder" ;; esac
+done
+ok "Per-run secrets file $RUN_SECRETS_FILE looks complete (3 keys, not echoed)"
+
+# ====== SYSTEM PARAMETER MUST ALREADY EXIST ======
+# Checked before launching anything: configure-run.sh needs it, and failing
+# here costs nothing while failing there leaves a half-configured instance.
+info "System secrets at $SYSTEM_SSM_PARAM"
+aws_ ssm get-parameter --name "$SYSTEM_SSM_PARAM" >/dev/null 2>&1 \
+  || die "$SYSTEM_SSM_PARAM does not exist. Upload it once first: ./make-run-box.sh --put-system-secrets run-system-secrets.json"
+aws_iam_ get-instance-profile --instance-profile-name "$SYSTEM_IAM_PROFILE" >/dev/null 2>&1 \
+  || die "Instance profile $SYSTEM_IAM_PROFILE does not exist. --put-system-secrets creates it."
+ok "Parameter and $SYSTEM_IAM_PROFILE present"
 
 # ====== KEY PAIR ======
 info "Key pair '$KEY_NAME'"
@@ -190,31 +264,9 @@ RUN_SG_ID="$(aws_ ec2 describe-security-groups \
   || die "$RUN_SG does not exist. Run src/ec2-control/make-control-box.sh first: it creates both SGs, and crux-control-sg's :2026 rule references this one."
 ok "$RUN_SG_ID"
 
-# ====== IAM ROLE ======
-info "IAM role '$IAM_ROLE'"
-if aws_iam_ get-role --role-name "$IAM_ROLE" >/dev/null 2>&1; then
-  ok "Role exists"
-else
-  aws_iam_ create-role --role-name "$IAM_ROLE" \
-    --description "CRUX ACP run box - read its own SSM config parameter" \
-    --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
-  ok "Created role"
-fi
-# Scoped to this box's own parameter: one run box cannot read another's keys.
-aws_iam_ put-role-policy --role-name "$IAM_ROLE" --policy-name "read-run-env" \
-  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"ssm:GetParameter\"],\"Resource\":\"arn:aws:ssm:${REGION}:${ACCOUNT_ID}:parameter${SSM_ENV_PARAM}\"}]}" >/dev/null
-ok "Inline policy: ssm:GetParameter on $SSM_ENV_PARAM only"
-
-if aws_iam_ get-instance-profile --instance-profile-name "$IAM_PROFILE" >/dev/null 2>&1; then
-  ok "Instance profile exists"
-else
-  aws_iam_ create-instance-profile --instance-profile-name "$IAM_PROFILE" >/dev/null
-  aws_iam_ add-role-to-instance-profile \
-    --instance-profile-name "$IAM_PROFILE" --role-name "$IAM_ROLE"
-  info "Waiting 10s for IAM to propagate"
-  sleep 10
-  ok "Created instance profile"
-fi
+# No per-box IAM: the instance boots with the shared crux-system-profile
+# (verified in preflight), whose only privilege is reading /crux/system/env.
+# Per-run secrets never touch AWS — they are scp'd below and deleted on-box.
 
 # ====== AMI ======
 info "Ubuntu 24.04 AMI"
@@ -240,7 +292,7 @@ else
   INSTANCE_ID="$(aws_ ec2 run-instances \
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
     --security-group-ids "$RUN_SG_ID" --subnet-id "$SUBNET_ID" \
-    --iam-instance-profile "Name=$IAM_PROFILE" \
+    --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
     --metadata-options "HttpTokens=required" \
     --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
@@ -333,11 +385,21 @@ else
   die "Run box cannot reach $CONTROL_DNS:$AGENTRQ_PORT. Check that crux-control-sg allows $AGENTRQ_PORT from $RUN_SG ($RUN_SG_ID), that the control box's container is bound to its PRIVATE ip (not just 127.0.0.1), and that CONTROL_PRIVATE_DNS is right."
 fi
 
+# ====== PER-RUN SECRETS (scp, deleted on-box after configure) ======
+# The file rides the same SSH channel as the scripts. configure-run.sh reads
+# it, writes the values where they live (mode-600 files), then deletes it —
+# so it exists on the box only for the duration of the configure step.
+info "Copying per-run secrets to $SLUG:$BOX_SECRETS_PATH"
+scp -q "$RUN_SECRETS_FILE" "$SLUG:$BOX_SECRETS_PATH"
+ssh "$SLUG" "chmod 600 '$BOX_SECRETS_PATH'"
+ok "Copied (mode 600; configure-run.sh deletes it)"
+
 # ====== CONFIGURE (secrets, per-run) ======
 info "configure-run.sh — config and gateway"
 scp -q "$SCRIPT_DIR/configure-run.sh" "$SLUG:/tmp/configure-run.sh"
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
-  SSM_ENV_PARAM='$SSM_ENV_PARAM' RUN_SLUG='$SLUG' \
+  RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
+  RUN_SLUG='$SLUG' \
   CONTROL_PRIVATE_DNS='$CONTROL_DNS' AGENTRQ_PORT='$AGENTRQ_PORT' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
