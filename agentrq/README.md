@@ -12,6 +12,7 @@
 - [ ] configure https access for AgentRQ
 - [ ] update langfuse to v4 [?]
 - [ ] tag langfuse traces somehow with an id / slug / etc.
+- [ ] ensure we can set model types and thinking levels when making new boxes!
 
 ## Setup
 
