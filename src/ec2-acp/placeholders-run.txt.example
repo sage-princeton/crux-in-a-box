@@ -1,0 +1,52 @@
+# Config for make-run-box.sh — copy to placeholders-run.txt and fill in.
+# placeholders-run.txt is gitignored. No secrets belong in THIS file: the
+# OpenAI key, the Langfuse keys and the workspace MCP token all go to SSM
+# Parameter Store via `make-run-box.sh --put-secrets <file>`.
+
+# AWS region. Leave AWS_PROFILE empty to use ambient environment credentials
+# (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN).
+AWS_PROFILE=
+AWS_REGION=us-east-1
+
+# Slug for this run box. Used verbatim as the EC2 Name tag, the ~/.ssh/config
+# alias, AND the Langfuse `environment` — one id across AWS and OTel, so a
+# trace can be traced back to the box that made it.
+RUN_SLUG=crux-codex-1
+
+# The control box to dial. Must be the PRIVATE DNS name: run boxes reach
+# AgentRQ over the VPC, and a public address would not match the security
+# group rule. make-control-box.sh prints this.
+CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal
+
+# Your public IP as a /32, for break-glass SSH. A run box needs no inbound to
+# do its job; this is only so you can get in and read logs.
+# Find it with: curl -s https://checkip.amazonaws.com
+OPERATOR_CIDR=203.0.113.10/32
+
+# EC2 shape. Headless: no desktop, no VNC.
+INSTANCE_TYPE=t3.large
+ROOT_DISK_GB=30
+
+# EC2 key pair. Shared with the control box by default.
+KEY_NAME=crux-acp
+
+# Pinned agent versions. Unpinned `@latest` on a fresh box means a run box
+# built today and one built next week are not the same machine.
+CODEX_ACP_VERSION=1.10.0
+ACP_GATEWAY_VERSION=0.2.17
+
+# Langfuse tracing plugin for codex, and the trust hash for its Stop hook.
+#
+# Codex will not execute a hook whose trusted_hash is absent from config.toml
+# — and it does so SILENTLY: codex runs perfectly and emits no traces. The
+# hash below is what codex records when a human accepts the hook
+# interactively; it is pinned here so an unattended box gets tracing without
+# anyone clicking through a prompt.
+#
+# It is tied to TRACING_PLUGIN_VERSION. If you bump the version, this hash
+# almost certainly changes: install the plugin interactively once, accept the
+# hook, and copy the new trusted_hash out of ~/.codex/config.toml.
+# configure-run.sh proves the hook actually fires before declaring success, so
+# a stale hash fails the build rather than quietly disabling tracing.
+TRACING_PLUGIN_VERSION=0.3.0
+TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74

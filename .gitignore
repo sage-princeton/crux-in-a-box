@@ -2,6 +2,15 @@ telegram_bots.json
 linux/placeholders*.txt
 !linux/placeholders.txt.example
 
+# src/ec2-* provisioning config: real values stay local, .example is tracked
+src/**/placeholders*.txt
+!src/**/placeholders*.txt.example
+
+# run-box secrets bundle (OpenAI key, workspace MCP token, Langfuse keys).
+# Uploaded to SSM by make-run-box.sh --put-secrets; never committed.
+src/**/*secrets*.json
+!src/**/*secrets*.json.example
+
 **.pyc
 INVENTORY.md
 .DS_Store

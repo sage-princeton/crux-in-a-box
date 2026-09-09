@@ -1,0 +1,29 @@
+# Config for make-control-box.sh — copy to placeholders-control.txt and fill in.
+# placeholders-control.txt is gitignored. No secrets belong in THIS file: the
+# AgentRQ .env (JWT secret, workspace token key, root token) goes to SSM
+# Parameter Store via `make-control-box.sh --put-secrets <envfile>`.
+
+# AWS profile and region. The profile must be authenticated
+# (aws sso login --sso-session <session>) before running.
+AWS_PROFILE=crux
+AWS_REGION=us-east-1
+
+# Slug for the control box. Used verbatim as the EC2 Name tag and the
+# ~/.ssh/config alias.
+CONTROL_SLUG=crux-control
+
+# Your public IP as a /32. SSH ingress is restricted to this and nothing else,
+# so a changed IP locks you out until you re-run the authorize call.
+# Find it with: curl -s https://checkip.amazonaws.com
+OPERATOR_CIDR=203.0.113.10/32
+
+# EC2 shape. AgentRQ is a Go binary plus SQLite; the agents run elsewhere.
+INSTANCE_TYPE=t3.small
+ROOT_DISK_GB=20
+
+# Separate EBS volume for AgentRQ state, mounted at /srv/agentrq so the
+# control plane survives instance replacement.
+DATA_DISK_GB=20
+
+# EC2 key pair. Created if absent; the private key lands in ~/.ssh/<name>.pem.
+KEY_NAME=crux-acp

@@ -8,6 +8,10 @@
       rows with `isMeta: true` and every AgentRQ channel prompt is one, so it
       emits nothing here. The standalone script has no such check.
 - [ ] work on cloud/AWS setup for codex, then for claude
+- [ ] spike on slack setup: https://agentrq.com/docs/integrations/slack-self-hosted
+- [ ] configure https access for AgentRQ
+- [ ] update langfuse to v4 [?]
+- [ ] tag langfuse traces somehow with an id / slug / etc.
 
 ## Setup
 
@@ -57,11 +61,11 @@ An empty log after a session means the hook never ran or exited early.
 
 Re-vendor the script:
 
-```
+````
 curl -sL https://langfuse.com/integrations/developer-tools/claude-code.md \
   | sed -n '/^#!\/usr\/bin\/env python3$/,/^```$/p' | sed '$d' \
   > claude/.claude/hooks/langfuse_hook.py
-```
+````
 
 ### Codex
 
