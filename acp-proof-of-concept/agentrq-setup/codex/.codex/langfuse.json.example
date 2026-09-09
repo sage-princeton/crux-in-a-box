@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "public_key": "pk-lf-abc",
+  "secret_key": "sk-lf-xyz",
+  "base_url": "https://us.cloud.langfuse.com"
+}

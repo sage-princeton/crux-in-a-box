@@ -1,0 +1,8 @@
+[features]
+hooks = true
+
+[plugins."tracing@codex-observability-plugin"]
+enabled = true
+
+[hooks.state."tracing@codex-observability-plugin:hooks/hooks.json:stop:0:0"]
+enabled = true

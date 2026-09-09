@@ -1,0 +1,25 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__agentrq-abc__createTask",
+      "mcp__agentrq-abc__updateTaskStatus",
+      "mcp__agentrq-abc__reply",
+      "mcp__agentrq-abc__downloadAttachment",
+      "mcp__agentrq-abc__getWorkspace",
+      "mcp__agentrq-abc__getTask",
+      "mcp__agentrq-abc__publishEvent",
+      "mcp__agentrq-abc__loadMemory",
+      "mcp__agentrq-abc__saveMemory",
+      "mcp__agentrq-abc__deleteMemory",
+      "mcp__agentrq-abc__elicit"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": ["agentrq-abc"],
+  "env": {
+    "TRACE_TO_LANGFUSE": "true",
+    "LANGFUSE_PUBLIC_KEY": "pk-lf-abc",
+    "LANGFUSE_SECRET_KEY": "sk-lf-xyz",
+    "LANGFUSE_BASE_URL": "https://us.cloud.langfuse.com"
+  }
+}
