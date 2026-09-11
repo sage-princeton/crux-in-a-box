@@ -32,8 +32,23 @@ ROOT_DISK_GB=30
 # EC2 key pair. Shared with the control box by default.
 KEY_NAME=crux-acp
 
-# Pinned agent versions. Unpinned `@latest` on a fresh box means a run box
-# built today and one built next week are not the same machine.
+# What the agent runs as. Per-box config, and the reason two boxes can differ
+# without a code change: configure-run.sh writes these straight into
+# ~/.codex/config.toml.
+#
+# CODEX_REASONING_EFFORT is one of minimal | low | medium | high. Codex
+# rejects an unknown value at startup, and because the gateway is a systemd
+# unit with Restart=always that presents as a crash-loop rather than an error
+# message — so make-run-box.sh validates it before launching anything.
+CODEX_MODEL=gpt-5.5
+CODEX_REASONING_EFFORT=high
+
+# Pinned versions. Unpinned `@latest` on a fresh box means a run box built
+# today and one built next week are not the same machine — the codex CLI was
+# briefly unpinned here, and the fleet promptly ended up running two versions.
+# install-run.sh compares each installed version against its pin and
+# reinstalls on a mismatch, so a reused box is corrected rather than kept.
+CODEX_VERSION=0.154.0
 CODEX_ACP_VERSION=1.10.0
 ACP_GATEWAY_VERSION=0.2.17
 

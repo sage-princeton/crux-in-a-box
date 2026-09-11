@@ -16,8 +16,8 @@ set -euo pipefail
 #     crux-system-role
 #
 # Expects in the environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
-# RUN_SLUG, CONTROL_PRIVATE_DNS, AGENTRQ_PORT, TRACING_PLUGIN_VERSION,
-# TRACING_HOOK_TRUSTED_HASH.
+# RUN_SLUG, CODEX_MODEL, CODEX_REASONING_EFFORT, CONTROL_PRIVATE_DNS,
+# AGENTRQ_PORT, TRACING_PLUGIN_VERSION, TRACING_HOOK_TRUSTED_HASH.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
@@ -25,7 +25,8 @@ ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 : "${AWS_REGION:?}" "${RUN_SECRETS_PATH:?}" "${SYSTEM_SSM_PARAM:?}" \
-  "${RUN_SLUG:?}" "${CONTROL_PRIVATE_DNS:?}" "${AGENTRQ_PORT:?}" \
+  "${RUN_SLUG:?}" "${CODEX_MODEL:?}" "${CODEX_REASONING_EFFORT:?}" \
+  "${CONTROL_PRIVATE_DNS:?}" "${AGENTRQ_PORT:?}" \
   "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
 
 RUN_USER=ubuntu
@@ -98,8 +99,8 @@ chmod 600 "$CODEX_DIR/langfuse.json"
 # both were empty/"default" on every trace in the local setup.
 cat > "$CODEX_DIR/config.toml" <<TOML
 personality = "pragmatic"
-model = "gpt-5.5"
-model_reasoning_effort = "high"
+model = "$CODEX_MODEL"
+model_reasoning_effort = "$CODEX_REASONING_EFFORT"
 
 [features]
 hooks = true
@@ -121,7 +122,7 @@ trust_level = "trusted"
 TOML
 
 chown -R "$RUN_USER:$RUN_USER" "$CODEX_DIR"
-ok "Wrote langfuse.json (environment=$RUN_SLUG) and config.toml"
+ok "Wrote langfuse.json (environment=$RUN_SLUG) and config.toml (model=$CODEX_MODEL, effort=$CODEX_REASONING_EFFORT)"
 
 # ====== OBSERVABILITY PLUGIN ======
 # config.toml above only ENABLES the plugin. Enabling one that was never
@@ -159,6 +160,27 @@ else
   ok "already installed ($PLUGIN_ENTRY present)"
 fi
 
+# ====== CODEX LOGIN ======
+# codex does NOT pick the key up from OPENAI_API_KEY in the environment. It
+# reads ~/.codex/auth.json, and with no auth.json it sends no Authorization
+# header at all — which surfaces as
+#     401 Unauthorized: Missing bearer or basic authentication in header
+# i.e. a message that reads like a revoked key rather than a missing login.
+# The first box in this fleet worked only because a human had run the login by
+# hand; doing it here is what makes a box self-sufficient.
+info "codex login (writes ~/.codex/auth.json)"
+AUTH_JSON="$CODEX_DIR/auth.json"
+if ! printf '%s' "$OPENAI_API_KEY" \
+     | su "$RUN_USER" -c "cd '$RUN_HOME' && codex login --with-api-key" >/dev/null 2>&1; then
+  die "codex login --with-api-key failed. Check the OPENAI_API_KEY in the per-run secrets file."
+fi
+[ -f "$AUTH_JSON" ] || die "codex login reported success but $AUTH_JSON does not exist."
+chown "$RUN_USER:$RUN_USER" "$AUTH_JSON"
+chmod 600 "$AUTH_JSON"
+# 2>&1, not 2>/dev/null: codex reports login status on stderr, so discarding it
+# prints a blank line that reads like a failed login.
+ok "$(su "$RUN_USER" -c 'codex login status' 2>&1 | tail -1)"
+
 # ====== PROVE THE HOOK ACTUALLY FIRES ======
 # Every failure in this area has been silent: plugin "installed" but not
 # unpacked, hook present but untrusted. Neither shows up as an error — you
@@ -173,6 +195,17 @@ HOOK_OUT="$(su - "$RUN_USER" -c \
 
 if printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
   ok "Stop hook fired — traces will reach Langfuse as environment=$RUN_SLUG"
+elif printf '%s' "$HOOK_OUT" | grep -qE '401 Unauthorized|Missing bearer|invalid_api_key'; then
+  # Separated from the tracing diagnosis below because the symptom is the same
+  # — no 'hook: Stop' — while the cause is not tracing at all. Reporting a
+  # credential failure as a trusted_hash problem sends you to the wrong file.
+  printf '\n%s\n' "$HOOK_OUT" | tail -5
+  die "The probe turn never reached the model: OpenAI rejected the request (401).
+The hook cannot fire because no turn completed, so this is NOT a tracing fault.
+Check, in order:
+  - OPENAI_API_KEY in the per-run secrets file is current and not revoked
+  - $AUTH_JSON exists and holds that key (codex ignores the env var)
+    Re-run:  printenv OPENAI_API_KEY | codex login --with-api-key"
 else
   printf '\n%s\n' "$HOOK_OUT" | tail -20
   die "codex ran but never fired the Stop hook, so NOTHING will be traced.

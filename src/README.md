@@ -51,6 +51,25 @@ ssh crux-control 'sudo grep ^AGENTRQ_AUTH_ROOT_ACCESS_TOKEN= /srv/agentrq/agentr
 
 ---
 
+## Secrets and config — three tiers
+
+Everything a box needs falls into one of three buckets, and each has exactly
+one home. When adding a new value, decide which tier it is first; that answers
+where it goes.
+
+| Tier | Example | Lives in | Delivered by |
+| --- | --- | --- | --- |
+| **System, secret** | Langfuse keys | SSM `/crux/system/env`, one parameter for the whole fleet | read at configure time via `crux-system-role` (`ssm:GetParameter` on that one ARN, nothing else) |
+| **Per-box, not secret** | `CODEX_MODEL`, `CODEX_REASONING_EFFORT`, instance type, pinned versions | `placeholders-<slug>.txt`, gitignored | passed to `configure-run.sh` as environment |
+| **Per-box, secret** | `OPENAI_API_KEY`, workspace id + token | `run-secrets-<slug>.json`, gitignored, mode 600 | scp'd at launch, **deleted on the box** once written to `/etc/crux-run.env` and `.mcp.json` |
+
+Two consequences worth stating. Fleet-wide secrets are stored **once** — rotate
+Langfuse by re-running `--put-system-secrets` and the next box picks it up, with
+no per-box edits. And per-box secrets **never reach AWS**: there is no per-box
+SSM parameter and no per-box IAM role, so tearing a box down leaves nothing
+behind to clean up or forget. `--put-secrets` is gone; it errors with a pointer
+to `--secrets`.
+
 ## 2. Make a new run box
 
 Example: a second box called `codex-2`. Four commands.
@@ -85,7 +104,15 @@ Edit it:
 RUN_SLUG=codex-2                                       # EC2 Name tag + ssh alias + Langfuse environment
 CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal       # PRIVATE dns; a public one will not match the SG
 OPERATOR_CIDR=<your ip>/32                             # curl -s https://checkip.amazonaws.com
+CODEX_MODEL=gpt-5.5                                    # what the agent runs as
+CODEX_REASONING_EFFORT=high                            # minimal | low | medium | high
 ```
+
+`CODEX_MODEL`/`CODEX_REASONING_EFFORT` are what let two boxes differ without a
+code change — `configure-run.sh` writes them into `~/.codex/config.toml`. The
+effort is validated locally before launch, because codex rejects an unknown
+value at startup and `Restart=always` turns that into a gateway crash-loop
+rather than a legible error.
 
 Leave the pinned versions alone unless you mean to move them. `placeholders-*.txt`
 is gitignored.

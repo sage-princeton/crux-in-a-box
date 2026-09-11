@@ -9,14 +9,15 @@ set -euo pipefail
 # per-run value. If you find yourself wanting an API key here, it belongs in
 # configure-run.sh instead.
 #
-# Expects in the environment: CODEX_ACP_VERSION, ACP_GATEWAY_VERSION.
+# Expects in the environment: CODEX_VERSION, CODEX_ACP_VERSION,
+# ACP_GATEWAY_VERSION.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-: "${CODEX_ACP_VERSION:?}" "${ACP_GATEWAY_VERSION:?}"
+: "${CODEX_VERSION:?}" "${CODEX_ACP_VERSION:?}" "${ACP_GATEWAY_VERSION:?}"
 
 RUN_USER=ubuntu
 RUN_HOME="/home/$RUN_USER"
@@ -67,12 +68,27 @@ else
 fi
 
 # ====== CODEX CLI ======
-info "codex CLI"
-if command -v codex >/dev/null 2>&1; then
-  ok "already present ($(codex --version 2>&1 | head -1))"
+# Pinned like the agent packages below. It was previously installed unpinned,
+# which is how two boxes in this fleet ended up on 0.153.4 and 0.154.0.
+#
+# The check compares the INSTALLED VERSION against the pin, not merely whether
+# a `codex` exists on PATH. A presence check makes the pin decorative: any box
+# that already has some codex — a reused instance, a baked AMI — keeps the
+# version it happens to have, and re-running this script never corrects it.
+# That matters beyond tidiness, because TRACING_HOOK_TRUSTED_HASH is validated
+# against one codex/plugin pairing.
+info "codex CLI @$CODEX_VERSION"
+CODEX_HAVE="$(codex --version 2>/dev/null | awk '{print $2}' || true)"
+if [ "$CODEX_HAVE" = "$CODEX_VERSION" ]; then
+  ok "already at $CODEX_VERSION"
 else
-  npm install -g @openai/codex >/dev/null 2>&1 || die "npm install @openai/codex failed"
-  ok "codex $(codex --version 2>&1 | head -1)"
+  [ -n "$CODEX_HAVE" ] && info "found $CODEX_HAVE, replacing with the pinned $CODEX_VERSION"
+  npm install -g "@openai/codex@${CODEX_VERSION}" >/dev/null 2>&1 \
+    || die "npm install @openai/codex@${CODEX_VERSION} failed. Does that version exist? npm view @openai/codex versions"
+  CODEX_NOW="$(codex --version 2>/dev/null | awk '{print $2}' || true)"
+  [ "$CODEX_NOW" = "$CODEX_VERSION" ] \
+    || die "Installed @openai/codex@${CODEX_VERSION} but codex reports '${CODEX_NOW:-nothing}'."
+  ok "codex $CODEX_NOW"
 fi
 
 # ====== PINNED AGENT PACKAGES ======

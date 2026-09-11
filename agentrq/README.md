@@ -2,14 +2,26 @@
 
 ### Do now
 
-- [ ] ensure secrets/config is working - three levels: (a) system-wide in SSM, e.g., langfuse creds (b) per-box config, not secret, e.g., model type (c) per-box config, secret, e.g., OpenAI API Key
-- [ ] stabilize AWS setup - add add'l workspaces and tear them down with no issues
-- [ ] tag langfuse traces somehow with an id / slug / etc.
+- [ ] stabilize AWS setup - add add'l workspaces and tear them down with no issues (manually - no coding agent use)
+- [ ] configure https access for AgentRQ
 
 ### Backlog
 
+- [ ] tag langfuse traces somehow with an id / slug / etc.
 - [ ] ensure we can set model types and thinking levels when making new boxes!
-- [ ] configure https access for AgentRQ
+- [ ] reconsider workspace lifecycle: workspaces outlive their boxes
+      `teardown.sh` removes the instance, the Elastic IP and the ssh alias, but
+      deliberately never touches the control plane — so a torn-down box leaves
+      its AgentRQ workspace behind with `agentConnected: false` and a **live
+      365-day MCP token**. After the Sept 11 teardown, `crux-codex-1`
+      (`0iTbHcPsc6L`) and `codex-2` (`0iTmD5Wz8sL`) are both still there.
+      Correct behavior as written, not a bug: teardown staying out of the
+      control plane is what makes it safe to run. But repeated
+      provision/teardown cycles accumulate orphaned workspaces and valid
+      tokens, and `bootstrap-workspace.sh` has `--list` but no delete.
+      Add a `--delete` there (and decide whether teardown should call it, or
+      whether unpicking the control plane stays a separate deliberate act)
+      once the cycle is routine rather than occasional.
 - [ ] spike on slack setup: https://agentrq.com/docs/integrations/slack-self-hosted
 - [ ] update langfuse to v4 [?]
 
@@ -23,6 +35,26 @@
       rows with `isMeta: true` and every AgentRQ channel prompt is one, so it
       emits nothing here. The standalone script has no such check.
 - [x] work on cloud/AWS setup for codex, then for claude
+- [x] ensure secrets/config is working - three levels: (a) system-wide in SSM,
+      e.g., langfuse creds (b) per-box config, not secret, e.g., model type
+      (c) per-box config, secret, e.g., OpenAI API Key
+      All three verified on a real second box (`crux-codex-2`, Sept 11).
+      (a) `/crux/system/env`, one SecureString for the whole fleet, read via
+      `crux-system-role` whose only privilege is `GetParameter` on that ARN —
+      so rotating Langfuse is one upload, not a per-box edit.
+      (b) `CODEX_MODEL` / `CODEX_REASONING_EFFORT` in `placeholders-<slug>.txt`;
+      proven by running box 2 at `medium` while box 1 was at `high`.
+      (c) `run-secrets-<slug>.json` scp'd at launch and **deleted on the box**
+      after configure. Per-box secrets never reach AWS: no per-box SSM
+      parameter, no per-box IAM role, so teardown leaves nothing to forget.
+      The legacy `/crux/run/<slug>/env` params are gone.
+      Non-obvious thing this shook out: **codex ignores `OPENAI_API_KEY` in the
+      environment.** It reads `~/.codex/auth.json`, and without it sends no
+      auth header at all — `401 ... Missing bearer`, which reads like a revoked
+      key. Box 1 only worked because someone had run the login by hand, so
+      every scripted box would have been dead on arrival. `configure-run.sh`
+      now runs `codex login --with-api-key` itself. See `src/README.md`
+      ("Secrets and config — three tiers") for the table.
 
 ## Setup
 

@@ -74,7 +74,8 @@ done < "$CONFIG_FILE"
 
 MISSING=()
 for k in AWS_REGION RUN_SLUG CONTROL_PRIVATE_DNS OPERATOR_CIDR INSTANCE_TYPE \
-         ROOT_DISK_GB KEY_NAME CODEX_ACP_VERSION ACP_GATEWAY_VERSION \
+         ROOT_DISK_GB KEY_NAME CODEX_MODEL CODEX_REASONING_EFFORT \
+         CODEX_VERSION CODEX_ACP_VERSION ACP_GATEWAY_VERSION \
          TRACING_PLUGIN_VERSION TRACING_HOOK_TRUSTED_HASH; do
   [ -n "${CFG[$k]:-}" ] || MISSING+=("$k")
 done
@@ -88,6 +89,9 @@ OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
 KEY_NAME="${CFG[KEY_NAME]}"
+CODEX_MODEL="${CFG[CODEX_MODEL]}"
+CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]}"
+CODEX_VERSION="${CFG[CODEX_VERSION]}"
 CODEX_ACP_VERSION="${CFG[CODEX_ACP_VERSION]}"
 ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]}"
 TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]}"
@@ -100,6 +104,13 @@ esac
 case "$CONTROL_DNS" in
   localhost|127.*|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
     die "CONTROL_PRIVATE_DNS looks public or local ('$CONTROL_DNS'). It must be the control box's PRIVATE DNS name (ip-x-x-x-x.ec2.internal) — the security group only permits the VPC path." ;;
+esac
+# Caught here rather than on the box: codex rejects an unknown effort at
+# startup, and under Restart=always that surfaces as a gateway crash-loop
+# instead of a legible error.
+case "$CODEX_REASONING_EFFORT" in
+  minimal|low|medium|high) ;;
+  *) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$CODEX_REASONING_EFFORT')." ;;
 esac
 
 RUN_SG="crux-run-sg"
@@ -202,7 +213,8 @@ if [ "$DRY_RUN" = 1 ]; then
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
                                              deleted there after configure
   dials             $CONTROL_DNS:$AGENTRQ_PORT
-  pins              codex-acp@$CODEX_ACP_VERSION, acp-gateway@$ACP_GATEWAY_VERSION
+  agent             $CODEX_MODEL, reasoning effort $CODEX_REASONING_EFFORT
+  pins              codex@$CODEX_VERSION, codex-acp@$CODEX_ACP_VERSION, acp-gateway@$ACP_GATEWAY_VERSION
 teardown.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
 the hour, so leaking one is the easy way to pay for a box you deleted.
 Nothing billable was created.
@@ -371,6 +383,7 @@ done
 info "install-run.sh — software"
 scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
 ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
+  CODEX_VERSION='$CODEX_VERSION' \
   CODEX_ACP_VERSION='$CODEX_ACP_VERSION' ACP_GATEWAY_VERSION='$ACP_GATEWAY_VERSION' \
   /tmp/install-run.sh"
 
@@ -400,6 +413,7 @@ scp -q "$SCRIPT_DIR/configure-run.sh" "$SLUG:/tmp/configure-run.sh"
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
   RUN_SLUG='$SLUG' \
+  CODEX_MODEL='$CODEX_MODEL' CODEX_REASONING_EFFORT='$CODEX_REASONING_EFFORT' \
   CONTROL_PRIVATE_DNS='$CONTROL_DNS' AGENTRQ_PORT='$AGENTRQ_PORT' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
@@ -411,6 +425,7 @@ $(ok "Run box ready")
 
   instance   $INSTANCE_ID ($INSTANCE_TYPE) at $PUBLIC_IP
   ssh        ssh $SLUG
+  agent      $CODEX_MODEL, reasoning effort $CODEX_REASONING_EFFORT
   dials      $CONTROL_DNS:$AGENTRQ_PORT
   logs       ssh $SLUG 'journalctl -u crux-acp-gateway -f'
   langfuse   environment=$SLUG
