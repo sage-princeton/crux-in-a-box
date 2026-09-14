@@ -6,7 +6,13 @@ set -euo pipefail
 # make-control-box.sh. Idempotent: safe to re-run after a config change.
 #
 # Expects in the environment: AWS_REGION, SSM_ENV_PARAM, AGENTRQ_PORT,
-# PRIVATE_DNS.
+# PRIVATE_DNS, PRIVATE_IP. Optional: TLS_ENABLED, TLS_HOSTNAME, TLS_EMAIL.
+#
+# With TLS_ENABLED=1 this fronts AgentRQ with Caddy, which obtains a real
+# Let's Encrypt certificate for TLS_HOSTNAME and reverse-proxies to AgentRQ on
+# 127.0.0.1. AgentRQ's own AGENTRQ_SSL_* (ACME via Cloudflare DNS-01) is left
+# off deliberately: it needs a Cloudflare-managed zone, and the whole point of
+# the sslip.io default is not needing a DNS account at all.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
@@ -15,6 +21,11 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 : "${AWS_REGION:?}" "${SSM_ENV_PARAM:?}" "${AGENTRQ_PORT:?}" "${PRIVATE_DNS:?}" \
   "${PRIVATE_IP:?}"
+TLS_ENABLED="${TLS_ENABLED:-0}"
+TLS_HOSTNAME="${TLS_HOSTNAME:-}"
+TLS_EMAIL="${TLS_EMAIL:-}"
+[ "$TLS_ENABLED" != 1 ] || [ -n "$TLS_HOSTNAME" ] \
+  || die "TLS_ENABLED=1 needs TLS_HOSTNAME"
 
 DATA_DIR=/srv/agentrq
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
@@ -79,9 +90,22 @@ ok "Wrote $ENV_FILE (mode 600, root only)"
 
 # A run box that is handed a localhost URL will dial itself. AgentRQ derives
 # workspace MCP URLs from these two, so they must name the control box.
-info "Rewriting AGENTRQ_BASE_URL / AGENTRQ_DOMAIN to $PRIVATE_DNS"
-sed -i -E "s#^AGENTRQ_BASE_URL=.*#AGENTRQ_BASE_URL=http://${PRIVATE_DNS}:${AGENTRQ_PORT}#" "$ENV_FILE"
-sed -i -E "s#^AGENTRQ_DOMAIN=.*#AGENTRQ_DOMAIN=${PRIVATE_DNS}#" "$ENV_FILE"
+#
+# With TLS on, they must name the hostname THE BROWSER USES: the session cookie
+# is issued for AGENTRQ_DOMAIN, so a mismatch logs you in with a 200 and then
+# 401s every subsequent call. Run boxes are unaffected — configure-run.sh
+# builds its own MCP URL from CONTROL_PRIVATE_DNS rather than trusting the
+# mcpUrl the API advertises.
+if [ "$TLS_ENABLED" = 1 ]; then
+  PUBLIC_BASE="https://${TLS_HOSTNAME}"
+  ENV_DOMAIN="$TLS_HOSTNAME"
+else
+  PUBLIC_BASE="http://${PRIVATE_DNS}:${AGENTRQ_PORT}"
+  ENV_DOMAIN="$PRIVATE_DNS"
+fi
+info "Rewriting AGENTRQ_BASE_URL / AGENTRQ_DOMAIN to $ENV_DOMAIN"
+sed -i -E "s#^AGENTRQ_BASE_URL=.*#AGENTRQ_BASE_URL=${PUBLIC_BASE}#" "$ENV_FILE"
+sed -i -E "s#^AGENTRQ_DOMAIN=.*#AGENTRQ_DOMAIN=${ENV_DOMAIN}#" "$ENV_FILE"
 sed -i -E "s#^AGENTRQ_SQLITE_DSN=.*#AGENTRQ_SQLITE_DSN=/_storage/agentrq.db#" "$ENV_FILE"
 ok "$(grep -E '^(AGENTRQ_BASE_URL|AGENTRQ_DOMAIN|AGENTRQ_SQLITE_DSN)=' "$ENV_FILE" | tr '\n' ' ')"
 
@@ -126,15 +150,86 @@ ok "Service enabled and started"
 
 # ====== HEALTH CHECK ======
 info "Waiting for AgentRQ to answer on 127.0.0.1:${AGENTRQ_PORT}"
+HEALTHY=0
 for i in $(seq 1 30); do
   if curl -fsS -o /dev/null --max-time 3 "http://127.0.0.1:${AGENTRQ_PORT}/" 2>/dev/null; then
-    ok "Healthy after ~$((i*2))s"; exit 0
+    ok "Healthy after ~$((i*2))s"; HEALTHY=1; break
   fi
   sleep 2
 done
-
-printf '\n'
-die "AgentRQ did not answer in 60s. Diagnose with:
+if [ "$HEALTHY" != 1 ]; then
+  printf '\n'
+  die "AgentRQ did not answer in 60s. Diagnose with:
     sudo systemctl status agentrq
     sudo journalctl -u agentrq -n 50 --no-pager
     sudo docker logs agentrq"
+fi
+
+# ====== TLS (CADDY) ======
+if [ "$TLS_ENABLED" != 1 ]; then
+  ok "TLS disabled — no web port exposed; reach the UI with connect.sh"
+  exit 0
+fi
+
+info "Installing Caddy"
+if command -v caddy >/dev/null 2>&1; then
+  ok "already present ($(caddy version | head -1))"
+else
+  # Caddy's own apt repo rather than the Ubuntu archive: 24.04 ships an older
+  # Caddy, and automatic ACME is the entire reason we want it.
+  apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
+    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
+    > /etc/apt/sources.list.d/caddy-stable.list
+  apt-get update -qq
+  apt-get install -y -qq caddy >/dev/null || die "apt-get install caddy failed"
+  ok "$(caddy version | head -1)"
+fi
+
+# reverse_proxy passes the original Host through, which is what keeps
+# AGENTRQ_DOMAIN matching and the session cookie usable. Websocket upgrades
+# are handled by default, so the dashboard's live updates work unchanged.
+info "Writing /etc/caddy/Caddyfile for $TLS_HOSTNAME"
+{
+  [ -n "$TLS_EMAIL" ] && printf '{\n\temail %s\n}\n\n' "$TLS_EMAIL"
+  printf '%s {\n\treverse_proxy 127.0.0.1:%s\n}\n' "$TLS_HOSTNAME" "$AGENTRQ_PORT"
+} > /etc/caddy/Caddyfile
+[ -n "$TLS_EMAIL" ] || info "TLS_EMAIL is empty — no expiry warnings from Let's Encrypt"
+caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
+  || die "Caddy rejected the generated Caddyfile. Inspect /etc/caddy/Caddyfile."
+
+systemctl enable caddy >/dev/null
+systemctl restart caddy
+ok "Caddy started"
+
+# ====== CERTIFICATE ======
+# Issuance is not instant and not guaranteed: it needs :80 reachable from
+# Let's Encrypt. Waiting here means a failure surfaces now, with logs, rather
+# than as a browser warning later.
+info "Waiting for the certificate (ACME HTTP-01 over :80)"
+# --resolve pins the connection to 127.0.0.1 while still sending SNI for
+# TLS_HOSTNAME and validating the chain against it. Dialling the public address
+# from the box itself would be blocked by the very :443 rule we just set (it
+# permits the operator's /32, which is not this box) — a restriction that
+# otherwise looks exactly like a failed certificate.
+CERT_OK=0
+for i in $(seq 1 45); do
+  if curl -fsS -o /dev/null --max-time 5 \
+       --resolve "${TLS_HOSTNAME}:443:127.0.0.1" "https://${TLS_HOSTNAME}/" 2>/dev/null; then
+    ok "HTTPS answering with a trusted certificate after ~$((i*2))s"; CERT_OK=1; break
+  fi
+  sleep 2
+done
+if [ "$CERT_OK" != 1 ]; then
+  printf '\n'
+  journalctl -u caddy -n 30 --no-pager || true
+  die "No trusted certificate after 90s. Almost always one of:
+  - :80 is not reachable from the internet (the ACME HTTP-01 challenge needs
+    it open to 0.0.0.0/0, not just your own address)
+  - $TLS_HOSTNAME does not resolve to this box's public IP
+  - Let's Encrypt rate-limited this name after earlier failures
+Logs above; Caddy retries on its own, so a late success is possible."
+fi
+
+ok "Dashboard: https://${TLS_HOSTNAME}"

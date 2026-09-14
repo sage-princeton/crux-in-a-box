@@ -81,11 +81,29 @@ INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
 DATA_DISK_GB="${CFG[DATA_DISK_GB]}"
 KEY_NAME="${CFG[KEY_NAME]}"
+# TLS is opt-in and defaults off, so an existing config file without these keys
+# provisions exactly the SSH-only box it used to.
+TLS_ENABLED="${CFG[TLS_ENABLED]:-0}"
+TLS_HOSTNAME="${CFG[TLS_HOSTNAME]:-}"
+TLS_EMAIL="${CFG[TLS_EMAIL]:-}"
+TLS_INGRESS_CIDR="${CFG[TLS_INGRESS_CIDR]:-$OPERATOR_CIDR}"
 
 case "$OPERATOR_CIDR" in
   */32) ;;
   *) die "OPERATOR_CIDR must be a /32 (got '$OPERATOR_CIDR'). Widening it opens SSH to more than you." ;;
 esac
+if [ "$TLS_ENABLED" = 1 ]; then
+  case "$TLS_INGRESS_CIDR" in
+    */*) ;;
+    *) die "TLS_INGRESS_CIDR must be a CIDR (got '$TLS_INGRESS_CIDR'). Use a /32 for just yourself, or 0.0.0.0/0 to publish." ;;
+  esac
+  # A hostname that does not resolve to this box fails the ACME check, and
+  # Let's Encrypt rate-limits failures. Checked again after the EIP is known.
+  case "$TLS_HOSTNAME" in
+    localhost|*.ec2.internal|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
+      die "TLS_HOSTNAME '$TLS_HOSTNAME' is not publicly resolvable, so Let's Encrypt cannot validate it. Leave it empty for the sslip.io default." ;;
+  esac
+fi
 
 CONTROL_SG="crux-control-sg"
 RUN_SG="crux-run-sg"
@@ -146,7 +164,12 @@ if [ "$DRY_RUN" = 1 ]; then
   ebs volume        ${DATA_DISK_GB}GB gp3   mounted /srv/agentrq
   elastic ip        associated to $SLUG
   ssh config entry  Host $SLUG
-Nothing billable was created.
+$(if [ "$TLS_ENABLED" = 1 ]; then
+printf '  https             caddy + lets encrypt for %s\n' "${TLS_HOSTNAME:-<dashed-eip>.sslip.io (derived)}"
+printf '                    443 from %s, 80 from 0.0.0.0/0 (ACME validation)\n' "$TLS_INGRESS_CIDR"
+else
+printf '  https             disabled (TLS_ENABLED=0) - SSH tunnel only\n'
+fi)Nothing billable was created.
 PLAN
   exit 0
 fi
@@ -220,7 +243,17 @@ allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 22 --cidr "$OPERATOR_CID
 # An SG reference rather than a CIDR keeps this correct as boxes come and go.
 allow --group-id "$CONTROL_SG_ID" --protocol tcp --port "$AGENTRQ_PORT" \
       --source-group "$RUN_SG_ID"
-ok "Ingress set: 22 from $OPERATOR_CIDR on both; $AGENTRQ_PORT on control from $RUN_SG only"
+# HTTPS, when enabled. :443 is narrow (yours by default), but :80 MUST be open
+# to the world: Let's Encrypt validates the HTTP-01 challenge from its own
+# servers, so a restricted :80 means no certificate now and no renewal in 90
+# days. Caddy answers only the ACME challenge and a redirect there.
+if [ "$TLS_ENABLED" = 1 ]; then
+  allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --cidr "$TLS_INGRESS_CIDR"
+  allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
+  ok "Ingress set: 22 from $OPERATOR_CIDR on both; $AGENTRQ_PORT on control from $RUN_SG only; 443 from $TLS_INGRESS_CIDR; 80 from 0.0.0.0/0 (ACME)"
+else
+  ok "Ingress set: 22 from $OPERATOR_CIDR on both; $AGENTRQ_PORT on control from $RUN_SG only"
+fi
 
 # ====== IAM ROLE (read the .env parameter, nothing else) ======
 info "IAM role '$IAM_ROLE'"
@@ -350,6 +383,29 @@ PRIVATE_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)"
 ok "Public $PUBLIC_IP / private $PRIVATE_IP ($PRIVATE_DNS)"
 
+# sslip.io resolves <dashed-ip>.sslip.io to the IP in the name, which is what
+# buys a trusted certificate with no domain and no DNS account. Derived here
+# rather than in the config file because it must track the Elastic IP.
+if [ "$TLS_ENABLED" = 1 ] && [ -z "$TLS_HOSTNAME" ]; then
+  TLS_HOSTNAME="${PUBLIC_IP//./-}.sslip.io"
+  ok "TLS hostname derived from the Elastic IP: $TLS_HOSTNAME"
+fi
+if [ "$TLS_ENABLED" = 1 ]; then
+  # Resolve it before asking Caddy to: a name pointing elsewhere burns a
+  # Let's Encrypt failure, and those are rate-limited.
+  # python3, not getent: getent does not exist on macOS, and this script runs
+  # on the operator's laptop. python3 is already required below for the
+  # ~/.ssh/config rewrite.
+  RESOLVED="$(python3 -c 'import socket,sys
+try: print(socket.gethostbyname(sys.argv[1]))
+except OSError: pass' "$TLS_HOSTNAME" 2>/dev/null || true)"
+  [ -n "$RESOLVED" ] \
+    || die "$TLS_HOSTNAME does not resolve. For a custom domain, add an A record to $PUBLIC_IP first."
+  [ "$RESOLVED" = "$PUBLIC_IP" ] \
+    || die "$TLS_HOSTNAME resolves to $RESOLVED, not this box ($PUBLIC_IP). Let's Encrypt would fail the challenge."
+  ok "$TLS_HOSTNAME resolves to $PUBLIC_IP"
+fi
+
 # ====== SSH CONFIG ENTRY ======
 # The old create-new-crux-box.sh only printed an IP, so aliases were added by
 # hand. connect.sh and the run-box scripts both expect this alias to exist.
@@ -397,7 +453,9 @@ info "Copying and running configure-control.sh"
 scp -q "$SCRIPT_DIR/configure-control.sh" "$SLUG:/tmp/configure-control.sh"
 ssh "$SLUG" "chmod +x /tmp/configure-control.sh && sudo AWS_REGION='$REGION' \
   SSM_ENV_PARAM='$SSM_ENV_PARAM' AGENTRQ_PORT='$AGENTRQ_PORT' \
-  PRIVATE_DNS='$PRIVATE_DNS' PRIVATE_IP='$PRIVATE_IP' /tmp/configure-control.sh"
+  PRIVATE_DNS='$PRIVATE_DNS' PRIVATE_IP='$PRIVATE_IP' \
+  TLS_ENABLED='$TLS_ENABLED' TLS_HOSTNAME='$TLS_HOSTNAME' TLS_EMAIL='$TLS_EMAIL' \
+  /tmp/configure-control.sh"
 
 cat <<DONE
 
@@ -406,9 +464,15 @@ $(ok "Control box ready")
   instance     $INSTANCE_ID ($INSTANCE_TYPE) in $AZ
   ssh          ssh $SLUG
   private      $PRIVATE_DNS:$AGENTRQ_PORT   (reachable from $RUN_SG only)
-  web UI       ./connect.sh   then open http://localhost:$AGENTRQ_PORT
   state        $VOL_ID mounted at /srv/agentrq
+$(if [ "$TLS_ENABLED" = 1 ]; then
+printf '  web UI       https://%s   (443 from %s)\n' "$TLS_HOSTNAME" "$TLS_INGRESS_CIDR"
+printf '  also        ./connect.sh for the SSH tunnel, if your IP changes'
+else
+printf '  web UI       ./connect.sh   then open http://localhost:%s\n' "$AGENTRQ_PORT"
+printf '  no web port is open to the internet'
+fi)
 
-No web port is open to the internet. Next: the auth hygiene in
-agentrq/AWS-POC-PLAN.md §2 (root login off, JWT secret rotated), then step 3.
+Next: the auth hygiene in agentrq/AWS-POC-PLAN.md §2 (root login off, JWT
+secret rotated), then step 3.
 DONE

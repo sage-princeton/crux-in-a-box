@@ -27,3 +27,33 @@ DATA_DISK_GB=20
 
 # EC2 key pair. Created if absent; the private key lands in ~/.ssh/<name>.pem.
 KEY_NAME=crux-acp
+
+# ---- HTTPS -----------------------------------------------------------------
+# TLS_ENABLED=1 puts Caddy in front of AgentRQ with a real Let's Encrypt cert,
+# so the dashboard is reachable at https://<TLS_HOSTNAME> with no SSH tunnel.
+# 0 leaves the box SSH-only (connect.sh).
+TLS_ENABLED=1
+
+# The hostname on the certificate. Leave EMPTY to derive it from the Elastic IP
+# as <dashed-ip>.sslip.io — sslip.io resolves any such name to the IP embedded
+# in it, which is what makes a trusted cert possible with no domain to buy and
+# no DNS account. The name is therefore TIED TO THE IP: replace the Elastic IP
+# and the hostname (and the cert) change with it.
+#
+# Set it explicitly if you own a domain; point an A record at the Elastic IP
+# first, or issuance fails the ACME check.
+TLS_HOSTNAME=
+
+# Let's Encrypt contact address. Optional, but without it you get no
+# expiry warnings — and Caddy's renewals are the only thing standing between
+# you and a dead dashboard in 90 days.
+TLS_EMAIL=
+
+# Who may reach :443. A /32 keeps the dashboard off the public internet while
+# still giving you real HTTPS in a browser.
+#
+# NOTE: :80 is opened to 0.0.0.0/0 regardless, and cannot be narrowed. Let's
+# Encrypt validates from its own servers, so a restricted :80 means the
+# certificate can never issue OR renew. Caddy serves only the ACME challenge
+# and a redirect to HTTPS there.
+TLS_INGRESS_CIDR=203.0.113.10/32
