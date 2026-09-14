@@ -2,10 +2,13 @@
 
 ### Do now
 
+- [ ] Use Google Cloud for spend for agents, optional
 - [ ] !! stabilize AWS setup - add add'l workspaces and tear them down with no issues (manually - no coding agent use)
+- [ ] transfer langfuse access
 
 ### Backlog
 
+- [ ] set up some basic monitoring / incident reporting to escalate suspicious activity to the team (with a high bar for suspicious)
 - [ ] whitelist other peoples' IPs
 - [ ] tag langfuse traces somehow with an id / slug / etc.
 - [ ] ensure we can set model types and thinking levels when making new boxes!
