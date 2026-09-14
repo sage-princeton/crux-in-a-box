@@ -73,7 +73,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$CONFIG_FILE"
 
 MISSING=()
-for k in AWS_REGION RUN_SLUG CONTROL_PRIVATE_DNS OPERATOR_CIDR INSTANCE_TYPE \
+for k in AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE \
          ROOT_DISK_GB KEY_NAME CODEX_MODEL CODEX_REASONING_EFFORT \
          CODEX_VERSION CODEX_ACP_VERSION ACP_GATEWAY_VERSION \
          TRACING_PLUGIN_VERSION TRACING_HOOK_TRUSTED_HASH; do
@@ -84,7 +84,11 @@ done
 PROFILE="${CFG[AWS_PROFILE]:-}"
 REGION="${CFG[AWS_REGION]}"
 SLUG="${CFG[RUN_SLUG]}"
-CONTROL_DNS="${CFG[CONTROL_PRIVATE_DNS]}"
+# Optional now: authoritative value comes from the running control box below.
+# Kept so an existing config file still parses, and so a stale entry can be
+# reported rather than silently believed.
+CONTROL_DNS="${CFG[CONTROL_PRIVATE_DNS]:-}"
+CONTROL_NAME="${CFG[CONTROL_SSH_ALIAS]:-crux-control}"
 # Where the box dials its workspace. REQUIRED, with no default: the control
 # box always serves HTTPS now, and AgentRQ routes by Host, so the old private
 # http://<dns>:2026 default would 404 every time. A default that cannot work
@@ -126,10 +130,12 @@ for _entry in $OPERATOR_CIDR; do
   esac
 done
 IFS="$_ifs_save"
-case "$CONTROL_DNS" in
-  localhost|127.*|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
-    die "CONTROL_PRIVATE_DNS looks public or local ('$CONTROL_DNS'). It must be the control box's PRIVATE DNS name (ip-x-x-x-x.ec2.internal) — the security group only permits the VPC path." ;;
-esac
+if [ -n "$CONTROL_DNS" ]; then
+  case "$CONTROL_DNS" in
+    localhost|127.*|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
+      die "CONTROL_PRIVATE_DNS looks public or local ('$CONTROL_DNS'). It must be the control box's PRIVATE DNS name (ip-x-x-x-x.ec2.internal) — the security group only permits the VPC path." ;;
+  esac
+fi
 case "$CONTROL_MCP_BASE" in
   http://*|https://*) ;;
   *) die "CONTROL_MCP_BASE must start with http:// or https:// (got '$CONTROL_MCP_BASE')." ;;
@@ -171,6 +177,35 @@ aws_ sts get-caller-identity >/dev/null 2>&1 \
   || die "Not authenticated with $CRED_DESC. $AUTH_HINT"
 ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text)"
 ok "Authenticated to account $ACCOUNT_ID in $REGION using $CRED_DESC"
+
+# ====== WHERE IS THE CONTROL BOX? ======
+# Asked of AWS rather than taken from the config file, because the control
+# box's PRIVATE ip changes every time that box is replaced while its Elastic IP
+# does not — so a hand-maintained CONTROL_PRIVATE_DNS goes stale on exactly the
+# occasions you are least likely to suspect it.
+#
+# The trap this closes: ec2.internal names are PATTERN-BASED. AWS resolves
+# ip-172-31-13-27.ec2.internal to 172.31.13.27 whether or not any instance
+# holds that address, so a stale name resolves happily, the /etc/hosts pin
+# "succeeds", and the run box quietly dials a dead address — surfacing much
+# later as an unreachable-control-box error listing three wrong causes.
+if [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY_RUN" != 1 ]; then
+  info "Locating the control box (tag Name=$CONTROL_NAME)"
+  CONTROL_INFO="$(aws_ ec2 describe-instances \
+    --filters "Name=tag:Name,Values=$CONTROL_NAME" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[0].Instances[0].[PrivateDnsName,PrivateIpAddress]' --output text 2>/dev/null || true)"
+  CONTROL_LIVE_DNS="$(printf '%s' "$CONTROL_INFO" | awk '{print $1}')"
+  CONTROL_PRIVATE_IP="$(printf '%s' "$CONTROL_INFO" | awk '{print $2}')"
+  [ -n "$CONTROL_PRIVATE_IP" ] && [ "$CONTROL_PRIVATE_IP" != "None" ] \
+    || die "No running instance tagged Name=$CONTROL_NAME. Provision the control box first: ../ec2-control/make-control-box.sh"
+  if [ -n "$CONTROL_DNS" ] && [ "$CONTROL_DNS" != "$CONTROL_LIVE_DNS" ]; then
+    warn "CONTROL_PRIVATE_DNS in $(basename "$CONFIG_FILE") says $CONTROL_DNS,"
+    warn "but the live control box is $CONTROL_LIVE_DNS — using the live one."
+    warn "Update the config file; the stale name still resolves, so it fails silently later."
+  fi
+  CONTROL_DNS="$CONTROL_LIVE_DNS"
+  ok "Control box at $CONTROL_DNS ($CONTROL_PRIVATE_IP)"
+fi
 
 # ====== --put-system-secrets: shared Langfuse config, uploaded once ======
 # One SSM parameter for the whole fleet, plus the one shared IAM role/profile
@@ -454,12 +489,12 @@ ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
 MCP_HOST="$(printf '%s' "$CONTROL_MCP_BASE" | sed -E 's#^https?://##; s#[:/].*$##')"
 if [ "$MCP_HOST" != "$CONTROL_DNS" ]; then
   info "Pinning $MCP_HOST to the control box's private address on $SLUG"
+  # The address comes from the AWS lookup, not from resolving a name on the
+  # box: ec2.internal names resolve by pattern, so a wrong one looks right.
   ssh "$SLUG" "set -e
-    ip=\$(getent hosts '$CONTROL_DNS' | awk '{print \$1}' | head -1)
-    [ -n \"\$ip\" ] || { echo 'could not resolve $CONTROL_DNS from the box' >&2; exit 1; }
     sudo sed -i '/[[:space:]]$MCP_HOST\$/d' /etc/hosts
-    echo \"\$ip $MCP_HOST\" | sudo tee -a /etc/hosts >/dev/null
-    echo \"  pinned $MCP_HOST -> \$ip\"" \
+    echo '$CONTROL_PRIVATE_IP $MCP_HOST' | sudo tee -a /etc/hosts >/dev/null
+    echo '  pinned $MCP_HOST -> $CONTROL_PRIVATE_IP'" \
     || die "Could not pin $MCP_HOST on $SLUG"
   ok "$MCP_HOST resolves to the private address on $SLUG"
 fi
