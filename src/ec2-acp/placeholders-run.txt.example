@@ -37,9 +37,11 @@ CONTROL_MCP_BASE=
 # Find it with: curl -s https://checkip.amazonaws.com
 OPERATOR_CIDR=203.0.113.10/32
 
-# EC2 shape. Headless: no desktop, no VNC.
-INSTANCE_TYPE=t3.large
-ROOT_DISK_GB=30
+# EC2 shape. Matched to the OpenClaw boxes (linux/create-new-crux-box.sh) so a
+# run behaves the same on either stack. Headless: no desktop, no VNC.
+# ROOT_IOPS / ROOT_THROUGHPUT default to 6000 / 250 if unset — also matching.
+INSTANCE_TYPE=t3.2xlarge
+ROOT_DISK_GB=80
 
 # EC2 key pair. Shared with the control box by default.
 KEY_NAME=crux-acp

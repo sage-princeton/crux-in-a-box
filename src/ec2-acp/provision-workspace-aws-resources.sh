@@ -96,6 +96,13 @@ CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-}"
 OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
+# Matched to the OpenClaw boxes in linux/create-new-crux-box.sh, whose comment
+# explains why: gp3 defaults are 3000 IOPS / 125 MB/s, and raising them gives
+# the volume headroom while EBS lazily hydrates first-touched blocks from S3
+# (the cold-boot I/O tax). Cheap — the first 3000 IOPS and 125 MB/s are free,
+# only the delta bills.
+ROOT_IOPS="${CFG[ROOT_IOPS]:-6000}"
+ROOT_THROUGHPUT="${CFG[ROOT_THROUGHPUT]:-250}"
 KEY_NAME="${CFG[KEY_NAME]}"
 CODEX_MODEL="${CFG[CODEX_MODEL]}"
 CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]}"
@@ -222,7 +229,8 @@ if [ "$DRY_RUN" = 1 ]; then
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
   instance profile  $SYSTEM_IAM_PROFILE      shared; read-only on $SYSTEM_SSM_PARAM
                                              (must exist: --put-system-secrets creates it)
-  instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB root
+  instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
+                                             ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
   elastic ip        associated to $SLUG      (stable address across stop/start)
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
@@ -321,7 +329,7 @@ else
     --security-group-ids "$RUN_SG_ID" --subnet-id "$SUBNET_ID" \
     --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
     --metadata-options "HttpTokens=required" \
-    --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"DeleteOnTermination\":true}}]" \
+    --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT},\"DeleteOnTermination\":true}}]" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
     --query 'Instances[0].InstanceId' --output text)"
   ok "Launched $INSTANCE_ID"
