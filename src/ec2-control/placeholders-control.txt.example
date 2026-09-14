@@ -12,10 +12,16 @@ AWS_REGION=us-east-1
 # ~/.ssh/config alias.
 CONTROL_SLUG=crux-control
 
-# Your public IP as a /32. SSH ingress is restricted to this and nothing else,
-# so a changed IP locks you out until you re-run the authorize call.
-# Find it with: curl -s https://checkip.amazonaws.com
-OPERATOR_CIDR=203.0.113.10/32
+# Who may SSH in. A COMMA-SEPARATED LIST, each entry optionally labelled as
+# CIDR=LABEL — the label becomes the rule's Description in AWS, which is the
+# only way `describe-security-groups` can tell you whose address a rule is.
+# Every entry must be a /32: SSH is the break-glass path, so widening a single
+# entry to a range is refused. Add more entries instead.
+#
+#   OPERATOR_CIDR=203.0.113.10/32=andrew, 198.51.100.7/32=alice
+#
+# Find yours with: curl -s https://checkip.amazonaws.com
+OPERATOR_CIDR=203.0.113.10/32=me
 
 # EC2 shape. AgentRQ is a Go binary plus SQLite; the agents run elsewhere.
 INSTANCE_TYPE=t3.small
@@ -47,8 +53,13 @@ TLS_HOSTNAME=
 # you and a dead dashboard in 90 days.
 TLS_EMAIL=
 
-# Who may reach :443. A /32 keeps the dashboard off the public internet while
-# still giving you real HTTPS in a browser.
+# Who may reach :443. Also a comma-separated, optionally labelled list — and
+# unlike OPERATOR_CIDR these may be ranges, so an office block works:
+#
+#   TLS_INGRESS_CIDR=203.0.113.10/32=andrew, 198.51.100.0/24=office
+#
+# Keeping it off 0.0.0.0/0 keeps the dashboard off the public internet while
+# still giving real HTTPS in a browser.
 #
 # NOTE: :80 is opened to 0.0.0.0/0 regardless, and cannot be narrowed. Let's
 # Encrypt validates from its own servers, so a restricted :80 means the

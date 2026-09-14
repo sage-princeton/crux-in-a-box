@@ -112,10 +112,20 @@ ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]}"
 TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]}"
 TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]}"
 
-case "$OPERATOR_CIDR" in
-  */32) ;;
-  *) die "OPERATOR_CIDR must be a /32 (got '$OPERATOR_CIDR')." ;;
-esac
+# A comma-separated list, each entry optionally CIDR=LABEL. This script does
+# not create SSH rules — make-control-box.sh owns crux-run-sg's ingress — so it
+# only sanity-checks the shape, and every entry must still be a single /32.
+_ifs_save="$IFS"; IFS=','
+for _entry in $OPERATOR_CIDR; do
+  _cidr="${_entry%%=*}"
+  _cidr="$(printf '%s' "$_cidr" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  [ -n "$_cidr" ] || continue
+  case "$_cidr" in
+    */32) ;;
+    *) die "'$_cidr' in OPERATOR_CIDR must be a /32. Use several comma-separated /32 entries for several people." ;;
+  esac
+done
+IFS="$_ifs_save"
 case "$CONTROL_DNS" in
   localhost|127.*|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
     die "CONTROL_PRIVATE_DNS looks public or local ('$CONTROL_DNS'). It must be the control box's PRIVATE DNS name (ip-x-x-x-x.ec2.internal) — the security group only permits the VPC path." ;;

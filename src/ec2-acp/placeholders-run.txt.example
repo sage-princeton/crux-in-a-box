@@ -32,9 +32,11 @@ CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal
 # string, from crossing the VPC in plaintext.
 CONTROL_MCP_BASE=
 
-# Your public IP as a /32, for break-glass SSH. A run box needs no inbound to
-# do its job; this is only so you can get in and read logs.
-# Find it with: curl -s https://checkip.amazonaws.com
+# Break-glass SSH. Same comma-separated, optionally labelled form as the
+# control box (CIDR=LABEL, every entry a /32) — though the rules themselves are
+# created by make-control-box.sh, which owns crux-run-sg's ingress. This script
+# only checks the shape. A run box needs no inbound to do its job.
+# Find yours with: curl -s https://checkip.amazonaws.com
 OPERATOR_CIDR=203.0.113.10/32
 
 # EC2 shape. Matched to the OpenClaw boxes (linux/create-new-crux-box.sh) so a

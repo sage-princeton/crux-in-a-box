@@ -89,14 +89,48 @@ TLS_HOSTNAME="${CFG[TLS_HOSTNAME]:-}"
 TLS_EMAIL="${CFG[TLS_EMAIL]:-}"
 TLS_INGRESS_CIDR="${CFG[TLS_INGRESS_CIDR]:-$OPERATOR_CIDR}"
 
-case "$OPERATOR_CIDR" in
-  */32) ;;
-  *) die "OPERATOR_CIDR must be a /32 (got '$OPERATOR_CIDR'). Widening it opens SSH to more than you." ;;
-esac
-case "$TLS_INGRESS_CIDR" in
-  */*) ;;
-  *) die "TLS_INGRESS_CIDR must be a CIDR (got '$TLS_INGRESS_CIDR'). Use a /32 for just yourself, or 0.0.0.0/0 to publish." ;;
-esac
+# OPERATOR_CIDR and TLS_INGRESS_CIDR are comma-separated lists, each entry
+# optionally labelled as CIDR=LABEL. The label becomes the rule's Description
+# in AWS, which is the only way `describe-security-groups` can tell you whose
+# address a rule belongs to — without it, a team's rules are anonymous.
+#
+#   OPERATOR_CIDR=203.0.113.10/32=andrew, 198.51.100.7/32=alice
+#
+# Parsed into parallel arrays: CIDR_x[i] with LABEL_x[i].
+parse_cidr_list() {   # $1 list, $2 array prefix, $3 require /32, $4 key name for errors
+  local list="$1" prefix="$2" require32="$3" keyname="$4" entry cidr label i=0
+  # shellcheck disable=SC2034
+  eval "${prefix}_CIDRS=(); ${prefix}_LABELS=()"
+  local IFS=','
+  for entry in $list; do
+    entry="$(printf '%s' "$entry" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      *=*) cidr="${entry%%=*}"; label="${entry#*=}" ;;
+      *)   cidr="$entry";       label="" ;;
+    esac
+    cidr="$(printf '%s' "$cidr" | sed -e 's/[[:space:]]*$//')"
+    label="$(printf '%s' "$label" | sed -e 's/^[[:space:]]*//')"
+    case "$cidr" in
+      */*) ;;
+      *) die "'$cidr' in $keyname is not a CIDR. Entries look like 203.0.113.10/32 or 203.0.113.10/32=alice, separated by commas." ;;
+    esac
+    if [ "$require32" = 1 ]; then
+      case "$cidr" in
+        */32) ;;
+        *) die "'$cidr' in OPERATOR_CIDR must be a /32 — SSH is the break-glass path and widening it opens more than you. Add several /32 entries instead." ;;
+      esac
+    fi
+    eval "${prefix}_CIDRS+=(\"\$cidr\"); ${prefix}_LABELS+=(\"\$label\")"
+    i=$((i+1))
+  done
+  [ "$i" -gt 0 ] || die "$keyname is empty in $CONFIG_FILE"
+}
+parse_cidr_list "$OPERATOR_CIDR" OP 1 OPERATOR_CIDR
+parse_cidr_list "$TLS_INGRESS_CIDR" TLS 0 TLS_INGRESS_CIDR
+# Comma-joined, so the summaries read as lists rather than a trailing space.
+OP_SUMMARY="$(IFS=,; printf '%s' "${OP_CIDRS[*]}")"
+TLS_SUMMARY="$(IFS=,; printf '%s' "${TLS_CIDRS[*]}")"
 # A hostname that does not resolve to this box fails the ACME check, and
 # Let's Encrypt rate-limits failures. Checked again after the EIP is known.
 case "$TLS_HOSTNAME" in
@@ -156,15 +190,15 @@ if [ "$DRY_RUN" = 1 ]; then
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   key pair          $KEY_NAME               (private key -> $KEY_FILE)
-  security group    $CONTROL_SG             22 from $OPERATOR_CIDR; $AGENTRQ_PORT from $RUN_SG
-  security group    $RUN_SG                 22 from $OPERATOR_CIDR
+  security group    $CONTROL_SG             22 from [$OP_SUMMARY]; $AGENTRQ_PORT from $RUN_SG
+  security group    $RUN_SG                 22 from [$OP_SUMMARY]
   iam role/profile  $IAM_ROLE / $IAM_PROFILE  read-only on $SSM_ENV_PARAM
   instance          $SLUG                   $INSTANCE_TYPE, ${ROOT_DISK_GB}GB root
   ebs volume        ${DATA_DISK_GB}GB gp3   mounted /srv/agentrq
   elastic ip        associated to $SLUG
   ssh config entry  Host $SLUG
   https             caddy + lets encrypt for ${TLS_HOSTNAME:-<dashed-eip>.sslip.io (derived)}
-                    443 from $TLS_INGRESS_CIDR, 80 from 0.0.0.0/0 (ACME validation)Nothing billable was created.
+                    443 from [$TLS_SUMMARY], 80 from 0.0.0.0/0 (ACME validation)Nothing billable was created.
 PLAN
   exit 0
 fi
@@ -228,12 +262,23 @@ allow() {
   esac
 }
 
+# --cidr cannot carry a Description, so labelled entries go through
+# --ip-permissions instead. Same duplicate-swallowing via allow().
+allow_labelled() {            # $1 sg, $2 port, $3 cidr, $4 label
+  local sg="$1" port="$2" cidr="$3" label="$4" desc
+  desc="${label:-crux}"
+  allow --group-id "$sg" --ip-permissions \
+    "IpProtocol=tcp,FromPort=$port,ToPort=$port,IpRanges=[{CidrIp=$cidr,Description=\"$desc\"}]"
+}
+
 info "Security groups"
 RUN_SG_ID="$(ensure_sg "$RUN_SG" "CRUX ACP run boxes - egress only, SSH break-glass")"
 CONTROL_SG_ID="$(ensure_sg "$CONTROL_SG" "CRUX AgentRQ control plane - SSH only, no public web port")"
 
-allow --group-id "$RUN_SG_ID" --protocol tcp --port 22 --cidr "$OPERATOR_CIDR"
-allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 22 --cidr "$OPERATOR_CIDR"
+for i in "${!OP_CIDRS[@]}"; do
+  allow_labelled "$RUN_SG_ID"     22 "${OP_CIDRS[$i]}" "${OP_LABELS[$i]}"
+  allow_labelled "$CONTROL_SG_ID" 22 "${OP_CIDRS[$i]}" "${OP_LABELS[$i]}"
+done
 # The whole point: AgentRQ's port is reachable from run boxes and nowhere else.
 # An SG reference rather than a CIDR keeps this correct as boxes come and go.
 allow --group-id "$CONTROL_SG_ID" --protocol tcp --port "$AGENTRQ_PORT" \
@@ -242,7 +287,9 @@ allow --group-id "$CONTROL_SG_ID" --protocol tcp --port "$AGENTRQ_PORT" \
 # to the world: Let's Encrypt validates the HTTP-01 challenge from its own
 # servers, so a restricted :80 means no certificate now and no renewal in 90
 # days. Caddy answers only the ACME challenge and a redirect there.
-allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --cidr "$TLS_INGRESS_CIDR"
+for i in "${!TLS_CIDRS[@]}"; do
+  allow_labelled "$CONTROL_SG_ID" 443 "${TLS_CIDRS[$i]}" "${TLS_LABELS[$i]}"
+done
 allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
 # Run boxes reach the workspace over :443, not the private :2026. AgentRQ
 # ROUTES BY HOST: any request whose Host is not AGENTRQ_DOMAIN gets a 404, so
@@ -250,7 +297,7 @@ allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
 # Dialling the public name is what keeps Host matching — and it means the
 # workspace token, which rides in the URL query string, is not sent in plaintext.
 allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --source-group "$RUN_SG_ID"
-ok "Ingress set: 22 from $OPERATOR_CIDR on both; 443 from $TLS_INGRESS_CIDR and from $RUN_SG; 80 from 0.0.0.0/0 (ACME); $AGENTRQ_PORT on control from $RUN_SG"
+ok "Ingress set: 22 from ${#OP_CIDRS[@]} operator address(es) [$OP_SUMMARY] on both; 443 from ${#TLS_CIDRS[@]} [$TLS_SUMMARY] and from $RUN_SG; 80 from 0.0.0.0/0 (ACME); $AGENTRQ_PORT on control from $RUN_SG"
 
 # ====== IAM ROLE (read the .env parameter, nothing else) ======
 info "IAM role '$IAM_ROLE'"
@@ -454,7 +501,7 @@ for i in $(seq 1 40); do
   sleep 5
 done
 [ "${SSH_UP:-0}" = 1 ] || die "SSH never came up after ~200s. In order of likelihood:
-  - your address changed: OPERATOR_CIDR is $OPERATOR_CIDR, you are $(curl -s --max-time 5 https://checkip.amazonaws.com 2>/dev/null || echo '<could not check>')
+  - your address changed: OPERATOR_CIDR is [$OP_SUMMARY], you are $(curl -s --max-time 5 https://checkip.amazonaws.com 2>/dev/null || echo '<could not check>')
   - the instance is still booting (rare past 200s)
   - a host key mismatch is being refused — this script clears known_hosts for
     $PUBLIC_IP first, so this should not happen; verify by hand with
@@ -476,7 +523,7 @@ $(ok "Control box ready")
   instance     $INSTANCE_ID ($INSTANCE_TYPE) in $AZ
   ssh          ssh $SLUG
   state        $VOL_ID mounted at /srv/agentrq
-  web UI       https://$TLS_HOSTNAME   (443 from $TLS_INGRESS_CIDR)
+  web UI       https://$TLS_HOSTNAME   (443 from $TLS_SUMMARY)
   run boxes    set CONTROL_MCP_BASE=https://$TLS_HOSTNAME in placeholders-base.txt
 
 If your address changes, both :22 and :443 are gated by it — reopen them with
