@@ -2,7 +2,6 @@
 
 ### Do now
 
-- [ ] !! stabilize AWS setup - add add'l workspaces and tear them down with no issues (manually - no coding agent use)
 - [ ] transfer langfuse access to org account (blocked by PK)
 
 ### Do next
