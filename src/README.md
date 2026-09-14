@@ -7,9 +7,11 @@ Two EC2 roles:
 | **control** | `crux-control`    | AgentRQ. Persistent. Holds the dashboard, the workspaces and the task queue. |
 | **run**     | `crux-codex-1`, … | codex + ACP gateway. Ephemeral. Dials the control box and answers tasks.     |
 
-Run boxes reach AgentRQ over the VPC on `:2026`, permitted by a security-group
-reference (`crux-run-sg` → `crux-control-sg`) rather than any CIDR. **Nothing
-listens on a public web port**, so the dashboard is reached over SSH.
+Run boxes reach AgentRQ over the VPC, permitted by a security-group reference
+(`crux-run-sg` → `crux-control-sg`) rather than any CIDR. The dashboard is
+served over **HTTPS on `:443`, restricted to `TLS_INGRESS_CIDR`** — a real
+Let's Encrypt certificate, no tunnel needed. `connect.sh` remains the fallback
+for when your IP is outside that rule.
 
 Scripts live in `src/ec2-control/` and `src/ec2-acp/`. All of them are
 idempotent — re-running reuses whatever already exists.
@@ -18,7 +20,31 @@ idempotent — re-running reuses whatever already exists.
 
 ## 1. Access the dashboard
 
-Two ways in, both measured. Pick whichever suits the machine.
+**`https://<dashed-elastic-ip>.sslip.io`** — that is the whole procedure from an
+address inside `TLS_INGRESS_CIDR`. `make-control-box.sh` prints the URL.
+
+### How that works, and what it costs
+
+`TLS_ENABLED=1` puts Caddy in front of AgentRQ. The hostname defaults to
+`<dashed-eip>.sslip.io`; sslip.io resolves any such name to the IP embedded in
+it, so a trusted certificate needs no domain purchase and no DNS account.
+AgentRQ's own `AGENTRQ_SSL_*` is deliberately left off — it does ACME over
+Cloudflare DNS-01, which would require a Cloudflare-managed zone.
+
+Three consequences worth knowing before you change any of it:
+
+- **`:80` is open to `0.0.0.0/0` and cannot be narrowed.** Let's Encrypt
+  validates from its own servers, so a restricted `:80` means no certificate
+  and no renewal in 90 days. Caddy serves only the ACME challenge and a
+  redirect there. `:443` stays restricted.
+- **The hostname is tied to the Elastic IP.** Replace the EIP and the name,
+  the certificate and the run boxes' `CONTROL_MCP_BASE` all change with it.
+- **`AGENTRQ_DOMAIN` must be the hostname the browser uses**, because the
+  session cookie is issued for it. It follows that AgentRQ then **routes by
+  Host** and returns a flat 404 to anything arriving under another name —
+  which is why run boxes need the pinning described in §2.
+
+### Fallback: the tunnel
 
 ```bash
 cd src/ec2-control
@@ -27,8 +53,10 @@ cd src/ec2-control
 ./connect.sh --socks      # SOCKS proxy — no sudo, one browser setting
 ```
 
-Either way you open **`http://ip-172-31-13-27.ec2.internal:<port>`**, never
-`localhost`.
+Either way you open **`http://<the AGENTRQ_DOMAIN the script prints>:<port>`**,
+never `localhost` — the session cookie is issued for that domain, and a browser
+will not store it under another name. `connect.sh` asks the box for the value
+rather than keeping its own copy, so it stays right when the domain changes.
 
 If you run AgentRQ locally in docker it already holds `:2026`. You don't have
 to stop it — **cookies ignore the port**, so `--port 2027` keeps the domain
@@ -37,9 +65,17 @@ match and both instances coexist. Verified on 2027: login `200`, `/auth/user`
 
 ### Worth doing when this grows
 
-**A real domain + HTTPS** is the mature end state. AgentRQ has ACME with
-Cloudflare DNS-01 built in (`AGENTRQ_SSL_*`), so it needs a Cloudflare-managed
-domain and the auth hardening below before opening 443.
+**A domain you own** is the remaining step. sslip.io gives a real certificate
+but pins the name to the Elastic IP; a proper domain survives IP changes and
+lets `TLS_HOSTNAME` be stable. Either point an A record at the EIP and set
+`TLS_HOSTNAME` (Caddy handles the rest), or move to AgentRQ's built-in
+`AGENTRQ_SSL_*` if the zone is on Cloudflare.
+
+**The auth hardening is still outstanding**, and it matters more now that
+`:443` is reachable at all: root login is still enabled and the JWT secret is
+still its `CHAN…` placeholder. Do that before widening `TLS_INGRESS_CIDR`
+beyond a `/32`. Note `AGENTRQ_AUTH_WORKSPACE_TOKEN_KEY` must NOT be rotated —
+every existing MCP token becomes unreadable.
 
 ### Logging in
 
@@ -102,7 +138,8 @@ Edit it:
 
 ```ini
 RUN_SLUG=codex-2                                       # EC2 Name tag + ssh alias + Langfuse environment
-CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal       # PRIVATE dns; a public one will not match the SG
+CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal       # PRIVATE dns, for the /etc/hosts pin below
+CONTROL_MCP_BASE=https://32-195-122-118.sslip.io       # REQUIRED when the control box has TLS
 OPERATOR_CIDR=<your ip>/32                             # curl -s https://checkip.amazonaws.com
 CODEX_MODEL=gpt-5.5                                    # what the agent runs as
 CODEX_REASONING_EFFORT=high                            # minimal | low | medium | high
@@ -113,6 +150,21 @@ code change — `configure-run.sh` writes them into `~/.codex/config.toml`. The
 effort is validated locally before launch, because codex rejects an unknown
 value at startup and `Restart=always` turns that into a gateway crash-loop
 rather than a legible error.
+
+`CONTROL_MCP_BASE` is where the box dials its workspace. Leave it empty for the
+old private `http://<dns>:2026` path; set it to the control box's **https** base
+whenever that box has TLS on, because AgentRQ routes by Host and 404s the
+private name.
+
+`make-run-box.sh` then pins that hostname to the control box's **private** IP in
+the run box's `/etc/hosts`. All three of these have to hold at once, and only
+that combination satisfies them:
+
+| Requirement | Why |
+| --- | --- |
+| `Host` = `AGENTRQ_DOMAIN` | otherwise AgentRQ returns a flat 404 |
+| TLS spoken to the public name | the certificate is issued for it |
+| packets arrive on a **private** address | `443 from crux-run-sg` is an SG *reference*, and those match only private traffic — dialling the Elastic IP from inside the VPC arrives with the run box's public source address and times out (`000`) |
 
 Leave the pinned versions alone unless you mean to move them. `placeholders-*.txt`
 is gitignored.
@@ -131,7 +183,7 @@ Prints `{"id", "token", "mcp_url", "token_expires_utc"}`. Tokens last 365 days;
 > Use the `id` and `token` from this output. Do **not** copy the MCP URL out of
 > the dashboard — the `mcpUrl` AgentRQ displays is a subdomain
 > (`http://<rand>.mcp.<domain>`) that is **NXDOMAIN inside a VPC**. The scripts
-> build the working path form, `http://<host>:2026/mcp/<id>?token=<token>`.
+> build the working path form, `<CONTROL_MCP_BASE>/mcp/<id>?token=<token>`.
 
 ### 3 — secrets
 
@@ -221,7 +273,7 @@ perfectly and emits nothing:
 
 **Root login is still enabled** on the control box, against the usual advice,
 because `bootstrap-workspace.sh` depends on it for unattended workspace
-creation. Reasonable while access is SSH-only behind a single `/32`; revisit if
+creation. Reasonable while access is behind a single `/32`; revisit if
 that changes.
 
 **Credentials.** Scripts use ambient AWS env credentials when `AWS_PROFILE` is

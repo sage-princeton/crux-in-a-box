@@ -1,6 +1,10 @@
 # PoC plan — AgentRQ control plane on EC2, one codex run box, ACP box-to-box
 
-Status: **draft for review, nothing executed.** Supersedes the laptop-as-control-layer draft.
+Status: **superseded by what was actually built — read `src/README.md` for the
+operator guide.** This file is kept as the design record: the reasoning below
+is still why things are shaped as they are, but several decisions have since
+changed in practice (§2 in particular: HTTPS is live via Caddy + Let's Encrypt
+on an sslip.io name, so the dashboard is no longer SSH-only).
 
 Goal: stand up the diagram for real. A persistent EC2 runs AgentRQ (ACP client
 + web interface); run boxes are separate EC2s that dial it over ACP inside the
@@ -71,7 +75,7 @@ config change and it means the box is never sitting on placeholder secrets:
 
 | SG | Ingress | Notes |
 |---|---|---|
-| `crux-control-sg` | 22 from operator `/32`; **2026 from `crux-run-sg` only** | no web port from the internet. HTTPS later would add 443 |
+| `crux-control-sg` | 22 from operator `/32`; **2026 from `crux-run-sg` only**; 443 from operator `/32` **and** from `crux-run-sg`; 80 from `0.0.0.0/0` | HTTPS landed: 443 is the dashboard, 80 is ACME validation only (Let's Encrypt validates from its own servers, so it cannot be narrowed) |
 | `crux-run-sg` | 22 from operator `/32` (break-glass) | run boxes need **no** inbound to work — they dial out |
 
 Both egress all: the boxes need OpenAI/Anthropic, Langfuse, npm and apt. The

@@ -4,7 +4,10 @@ set -euo pipefail
 # ==========================================================================
 # connect.sh — open the AgentRQ dashboard through an SSH port-forward.
 #
-# AgentRQ has no public web port, so this tunnel is the only way in.
+# WITH TLS_ENABLED=1 YOU PROBABLY DO NOT NEED THIS: browse https://<hostname>
+# directly (the script prints the URL). The tunnel remains the fallback for
+# when your IP is outside TLS_INGRESS_CIDR — a changed home IP, a different
+# network — because SSH and HTTPS are gated by separate rules.
 #
 # WHY THIS IS NOT JUST `ssh -L` + http://localhost:2026
 # -----------------------------------------------------
@@ -71,6 +74,15 @@ DOMAIN="$(ssh -o ConnectTimeout=10 "$SLUG" \
 [ -n "$DOMAIN" ] \
   || die "Could not read AGENTRQ_DOMAIN from $SLUG. Is the control box up? Try: ssh $SLUG"
 ok "AGENTRQ_DOMAIN=$DOMAIN"
+
+# If the box is serving HTTPS for this name, say so: the tunnel is then a
+# fallback rather than the way in, and typing the URL beats two more steps.
+if ssh -o ConnectTimeout=10 "$SLUG" 'systemctl is-active --quiet caddy' 2>/dev/null; then
+  printf '\n'
+  ok "This box serves HTTPS directly:  https://${DOMAIN}"
+  printf '  No tunnel needed from an address inside TLS_INGRESS_CIDR.\n'
+  printf '  Continuing with the tunnel anyway (useful if your IP has changed).\n\n'
+fi
 
 # ====== SOCKS MODE ======
 # The browser hands the hostname to the proxy and the CONTROL BOX resolves it,

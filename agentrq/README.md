@@ -2,11 +2,11 @@
 
 ### Do now
 
-- [ ] stabilize AWS setup - add add'l workspaces and tear them down with no issues (manually - no coding agent use)
-- [ ] configure https access for AgentRQ
+- [ ] !! stabilize AWS setup - add add'l workspaces and tear them down with no issues (manually - no coding agent use)
 
 ### Backlog
 
+- [ ] whitelist other peoples' IPs
 - [ ] tag langfuse traces somehow with an id / slug / etc.
 - [ ] ensure we can set model types and thinking levels when making new boxes!
 - [ ] reconsider workspace lifecycle: workspaces outlive their boxes
@@ -35,6 +35,23 @@
       rows with `isMeta: true` and every AgentRQ channel prompt is one, so it
       emits nothing here. The standalone script has no such check.
 - [x] work on cloud/AWS setup for codex, then for claude
+- [x] configure https access for AgentRQ
+      Live at `https://32-195-122-118.sslip.io` with a real Let's Encrypt
+      certificate — Caddy in front of AgentRQ, `TLS_ENABLED=1` in
+      `placeholders-control.txt`. sslip.io resolves the dashed-IP name to the
+      Elastic IP, so no domain purchase and no DNS account. AgentRQ's own
+      `AGENTRQ_SSL_*` stays off: it does ACME over Cloudflare DNS-01 and would
+      need a Cloudflare zone. Verified end to end on Sept 14 — trusted chain,
+      HTTP/2, 308 redirect from http, and a task asked through the HTTPS API
+      answered by `crux-codex-3` (`391 CONFIRMED`).
+      Three things that cost time, all recorded in `src/README.md`:
+      `:80` must stay open to `0.0.0.0/0` or the cert can never renew;
+      `AGENTRQ_DOMAIN` must be the browser's hostname (cookie) and AgentRQ then
+      **routes by Host**, 404ing anything else; and a security-group reference
+      only matches private traffic, so run boxes pin the public hostname to the
+      control box's private IP in `/etc/hosts`.
+      Still outstanding: root login is enabled and the JWT secret is its
+      `CHAN…` placeholder. Harden both before widening `TLS_INGRESS_CIDR`.
 - [x] ensure secrets/config is working - three levels: (a) system-wide in SSM,
       e.g., langfuse creds (b) per-box config, not secret, e.g., model type
       (c) per-box config, secret, e.g., OpenAI API Key

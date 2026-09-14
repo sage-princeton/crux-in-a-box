@@ -190,6 +190,17 @@ fi
 # reverse_proxy passes the original Host through, which is what keeps
 # AGENTRQ_DOMAIN matching and the session cookie usable. Websocket upgrades
 # are handled by default, so the dashboard's live updates work unchanged.
+# The box must resolve its own public hostname to itself. Left alone, it
+# resolves to the Elastic IP, which the box cannot reach: crux-control-sg
+# permits :443 from the operator and :2026 from run boxes, and the box is
+# neither — every such attempt times out (000). Two things depend on this:
+# connect.sh --socks, where the BOX does the DNS for the browser, and any
+# local curl of the public URL.
+info "Pinning $TLS_HOSTNAME to 127.0.0.1 in /etc/hosts"
+sed -i "/[[:space:]]${TLS_HOSTNAME}\$/d" /etc/hosts
+echo "127.0.0.1 ${TLS_HOSTNAME}" >> /etc/hosts
+ok "Pinned"
+
 info "Writing /etc/caddy/Caddyfile for $TLS_HOSTNAME"
 {
   [ -n "$TLS_EMAIL" ] && printf '{\n\temail %s\n}\n\n' "$TLS_EMAIL"
