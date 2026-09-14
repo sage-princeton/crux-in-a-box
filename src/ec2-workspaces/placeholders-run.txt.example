@@ -1,0 +1,85 @@
+# Config for provision-workspace-aws-resources.sh — copy to placeholders-run.txt and fill in.
+# placeholders-run.txt is gitignored. No secrets belong in THIS file: the
+# OpenAI key and workspace token go in run-secrets-<slug>.json (scp'd to the
+# box by `provision-workspace-aws-resources.sh --secrets <file>`, deleted there after configure);
+# the fleet-wide Langfuse keys go to SSM /crux/system/env once, via
+# `provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json`.
+
+# AWS region. Leave AWS_PROFILE empty to use ambient environment credentials
+# (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN).
+AWS_PROFILE=
+AWS_REGION=us-east-1
+
+# Slug for this run box. Used verbatim as the EC2 Name tag, the ~/.ssh/config
+# alias, AND the Langfuse `environment` — one id across AWS and OTel, so a
+# trace can be traced back to the box that made it.
+RUN_SLUG=crux-codex-1
+
+# The control box to dial. Must be the PRIVATE DNS name: run boxes reach
+# AgentRQ over the VPC, and a public address would not match the security
+# group rule. make-control-box.sh prints this.
+CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal
+
+# Where the box dials its workspace. Leave EMPTY for the private
+# http://<CONTROL_PRIVATE_DNS>:2026 path, which is right for a plain-HTTP
+# control box.
+#
+# If the control box has HTTPS on (TLS_ENABLED=1), this MUST be its public
+# https base — e.g. https://32-195-122-118.sslip.io. AgentRQ ROUTES BY HOST:
+# once AGENTRQ_DOMAIN is the public hostname, a request arriving on the
+# private name gets a flat 404 with nothing in the logs to explain it. Dialling
+# the public name also stops the workspace token, which rides in the URL query
+# string, from crossing the VPC in plaintext.
+CONTROL_MCP_BASE=
+
+# Break-glass SSH. Same comma-separated, optionally labelled form as the
+# control box (CIDR=LABEL, every entry a /32) — though the rules themselves are
+# created by make-control-box.sh, which owns crux-run-sg's ingress. This script
+# only checks the shape. A run box needs no inbound to do its job.
+# Find yours with: curl -s https://checkip.amazonaws.com
+OPERATOR_CIDR=203.0.113.10/32
+
+# EC2 shape. Matched to the OpenClaw boxes (linux/create-new-crux-box.sh) so a
+# run behaves the same on either stack. Headless: no desktop, no VNC.
+# ROOT_IOPS / ROOT_THROUGHPUT default to 6000 / 250 if unset — also matching.
+INSTANCE_TYPE=t3.2xlarge
+ROOT_DISK_GB=80
+
+# EC2 key pair. Shared with the control box by default.
+KEY_NAME=crux-acp
+
+# What the agent runs as. Per-box config, and the reason two boxes can differ
+# without a code change: configure-run.sh writes these straight into
+# ~/.codex/config.toml.
+#
+# CODEX_REASONING_EFFORT is one of minimal | low | medium | high. Codex
+# rejects an unknown value at startup, and because the gateway is a systemd
+# unit with Restart=always that presents as a crash-loop rather than an error
+# message — so provision-workspace-aws-resources.sh validates it before launching anything.
+CODEX_MODEL=gpt-5.5
+CODEX_REASONING_EFFORT=high
+
+# Pinned versions. Unpinned `@latest` on a fresh box means a run box built
+# today and one built next week are not the same machine — the codex CLI was
+# briefly unpinned here, and the fleet promptly ended up running two versions.
+# install-run.sh compares each installed version against its pin and
+# reinstalls on a mismatch, so a reused box is corrected rather than kept.
+CODEX_VERSION=0.154.0
+CODEX_ACP_VERSION=1.10.0
+ACP_GATEWAY_VERSION=0.2.17
+
+# Langfuse tracing plugin for codex, and the trust hash for its Stop hook.
+#
+# Codex will not execute a hook whose trusted_hash is absent from config.toml
+# — and it does so SILENTLY: codex runs perfectly and emits no traces. The
+# hash below is what codex records when a human accepts the hook
+# interactively; it is pinned here so an unattended box gets tracing without
+# anyone clicking through a prompt.
+#
+# It is tied to TRACING_PLUGIN_VERSION. If you bump the version, this hash
+# almost certainly changes: install the plugin interactively once, accept the
+# hook, and copy the new trusted_hash out of ~/.codex/config.toml.
+# configure-run.sh proves the hook actually fires before declaring success, so
+# a stale hash fails the build rather than quietly disabling tracing.
+TRACING_PLUGIN_VERSION=0.3.0
+TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74

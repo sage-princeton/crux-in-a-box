@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agentrq-abc": {
+      "type": "http",
+      "url": "http://localhost:2026/mcp/abc?token=xyz"
+    }
+  }
+}

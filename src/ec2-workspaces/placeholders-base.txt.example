@@ -1,0 +1,75 @@
+# Shared base config for make-new-workspace.sh — copy to placeholders-base.txt
+# and fill in. It holds only what every box has in common; make-new-workspace.sh
+# appends the per-box keys (RUN_SLUG, model/effort, OPERATOR_CIDR) when it
+# generates placeholders-<slug>.txt.
+#
+# DO NOT set RUN_SLUG here: the script refuses a base file that does, because
+# it would outrank the per-box value and point the box at the wrong workspace.
+#
+# No secrets belong in this file. The OpenAI key goes in run-secrets-base.json;
+# the fleet-wide Langfuse keys go to SSM /crux/system/env once, via
+# `provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json`.
+
+# AWS region. Leave AWS_PROFILE empty to use ambient environment credentials
+# (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN).
+AWS_PROFILE=
+AWS_REGION=us-east-1
+
+# Slug for this run box. Used verbatim as the EC2 Name tag, the ~/.ssh/config
+# alias, AND the Langfuse `environment` — one id across AWS and OTel, so a
+# trace can be traced back to the box that made it.
+
+# The control box to dial. Must be the PRIVATE DNS name: run boxes reach
+# AgentRQ over the VPC, and a public address would not match the security
+# group rule. make-control-box.sh prints this.
+CONTROL_PRIVATE_DNS=ip-x-x-x-x.ec2.internal
+
+# Your public IP as a /32, for break-glass SSH. A run box needs no inbound to
+# do its job; this is only so you can get in and read logs.
+# Find it with: curl -s https://checkip.amazonaws.com
+CONTROL_MCP_BASE=https://<dashed-eip>.sslip.io
+
+
+# EC2 shape. Matched to the OpenClaw boxes (linux/create-new-crux-box.sh) so a
+# run behaves the same on either stack. Headless: no desktop, no VNC.
+# ROOT_IOPS / ROOT_THROUGHPUT default to 6000 / 250 if unset — also matching.
+INSTANCE_TYPE=t3.2xlarge
+ROOT_DISK_GB=80
+
+# EC2 key pair. Shared with the control box by default.
+KEY_NAME=crux-acp
+
+# What the agent runs as (per-box, not secret).
+# Effort is minimal|low|medium|high.
+
+# Pinned agent versions. Unpinned `@latest` on a fresh box means a run box
+# built today and one built next week are not the same machine.
+# Pinned codex CLI. Previously unpinned, which is how this fleet ended up
+# running two different codex versions. install-run.sh compares the
+# installed version against this and reinstalls on a mismatch.
+CODEX_VERSION=0.154.0
+CODEX_ACP_VERSION=1.10.0
+ACP_GATEWAY_VERSION=0.2.17
+
+# Langfuse tracing plugin for codex, and the trust hash for its Stop hook.
+#
+# Codex will not execute a hook whose trusted_hash is absent from config.toml
+# — and it does so SILENTLY: codex runs perfectly and emits no traces. The
+# hash below is what codex records when a human accepts the hook
+# interactively; it is pinned here so an unattended box gets tracing without
+# anyone clicking through a prompt.
+#
+# It is tied to TRACING_PLUGIN_VERSION. If you bump the version, this hash
+# almost certainly changes: install the plugin interactively once, accept the
+# hook, and copy the new trusted_hash out of ~/.codex/config.toml.
+# configure-run.sh proves the hook actually fires before declaring success, so
+# a stale hash fails the build rather than quietly disabling tracing.
+TRACING_PLUGIN_VERSION=0.3.0
+TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74
+
+# Defaults for every new box; make-new-workspace.sh --model/--effort override per box.
+CODEX_MODEL=gpt-5.5
+CODEX_REASONING_EFFORT=medium
+
+# The control box's ssh alias, used to mint workspaces.
+CONTROL_SSH_ALIAS=crux-control

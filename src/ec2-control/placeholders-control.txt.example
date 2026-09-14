@@ -1,0 +1,68 @@
+# Config for make-control-box.sh — copy to placeholders-control.txt and fill in.
+# placeholders-control.txt is gitignored. No secrets belong in THIS file: the
+# AgentRQ .env (JWT secret, workspace token key, root token) goes to SSM
+# Parameter Store via `make-control-box.sh --put-secrets <envfile>`.
+
+# AWS profile and region. The profile must be authenticated
+# (aws sso login --sso-session <session>) before running.
+AWS_PROFILE=crux
+AWS_REGION=us-east-1
+
+# Slug for the control box. Used verbatim as the EC2 Name tag and the
+# ~/.ssh/config alias.
+CONTROL_SLUG=crux-control
+
+# Who may SSH in. A COMMA-SEPARATED LIST, each entry optionally labelled as
+# CIDR=LABEL — the label becomes the rule's Description in AWS, which is the
+# only way `describe-security-groups` can tell you whose address a rule is.
+# Every entry must be a /32: SSH is the break-glass path, so widening a single
+# entry to a range is refused. Add more entries instead.
+#
+#   OPERATOR_CIDR=203.0.113.10/32=andrew, 198.51.100.7/32=alice
+#
+# Find yours with: curl -s https://checkip.amazonaws.com
+OPERATOR_CIDR=203.0.113.10/32=me
+
+# EC2 shape. AgentRQ is a Go binary plus SQLite; the agents run elsewhere.
+INSTANCE_TYPE=t3.small
+ROOT_DISK_GB=20
+
+# Separate EBS volume for AgentRQ state, mounted at /srv/agentrq so the
+# control plane survives instance replacement.
+DATA_DISK_GB=20
+
+# EC2 key pair. Created if absent; the private key lands in ~/.ssh/<name>.pem.
+KEY_NAME=crux-acp
+
+# ---- HTTPS -----------------------------------------------------------------
+# TLS is mandatory and not configurable: Caddy fronts AgentRQ with a real
+# Let's Encrypt certificate and HTTPS is the only way in. There is no tunnel.
+
+# The hostname on the certificate. Leave EMPTY to derive it from the Elastic IP
+# as <dashed-ip>.sslip.io — sslip.io resolves any such name to the IP embedded
+# in it, which is what makes a trusted cert possible with no domain to buy and
+# no DNS account. The name is therefore TIED TO THE IP: replace the Elastic IP
+# and the hostname (and the cert) change with it.
+#
+# Set it explicitly if you own a domain; point an A record at the Elastic IP
+# first, or issuance fails the ACME check.
+TLS_HOSTNAME=
+
+# Let's Encrypt contact address. Optional, but without it you get no
+# expiry warnings — and Caddy's renewals are the only thing standing between
+# you and a dead dashboard in 90 days.
+TLS_EMAIL=
+
+# Who may reach :443. Also a comma-separated, optionally labelled list — and
+# unlike OPERATOR_CIDR these may be ranges, so an office block works:
+#
+#   TLS_INGRESS_CIDR=203.0.113.10/32=andrew, 198.51.100.0/24=office
+#
+# Keeping it off 0.0.0.0/0 keeps the dashboard off the public internet while
+# still giving real HTTPS in a browser.
+#
+# NOTE: :80 is opened to 0.0.0.0/0 regardless, and cannot be narrowed. Let's
+# Encrypt validates from its own servers, so a restricted :80 means the
+# certificate can never issue OR renew. Caddy serves only the ACME challenge
+# and a redirect to HTTPS there.
+TLS_INGRESS_CIDR=203.0.113.10/32

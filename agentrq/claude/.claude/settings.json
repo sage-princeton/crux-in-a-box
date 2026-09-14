@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "H=\"${CLAUDE_PROJECT_DIR}/.claude/hooks/langfuse_hook.py\"; export CC_LANGFUSE_STATE_DIR=\"${CLAUDE_PROJECT_DIR}/.claude/state\"; if command -v uv >/dev/null 2>&1; then exec uv run --quiet --script \"$H\"; else exec python3 \"$H\"; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
