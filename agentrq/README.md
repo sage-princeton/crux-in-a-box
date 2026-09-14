@@ -8,6 +8,7 @@
 ### Do next
 
 - [ ] Use Google Cloud for spend for agents, optional
+- [ ] copy the run-harness directory to new boxes / configure similar setup
 
 ### Backlog
 
