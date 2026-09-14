@@ -434,6 +434,18 @@ ENTRY
 fi
 
 # ====== WAIT FOR SSH ======
+# ====== STALE HOST KEY ======
+# A replaced instance keeps the same Elastic IP, so ~/.ssh/known_hosts still
+# holds the OLD box's host key for this address. `StrictHostKeyChecking
+# accept-new` does NOT cover that: it auto-accepts UNKNOWN hosts, but a
+# CHANGED key is always refused. The result is that every rebuild fails in the
+# SSH wait below, under BatchMode, so the only symptom is a timeout — which
+# reads as a firewall or a wrong /32 rather than a host key.
+info "Clearing any stale host key for $PUBLIC_IP"
+ssh-keygen -R "$PUBLIC_IP" >/dev/null 2>&1 || true
+ssh-keygen -R "$SLUG" >/dev/null 2>&1 || true
+ok "known_hosts is clean for this address"
+
 info "Waiting for SSH on $SLUG"
 for i in $(seq 1 40); do
   if ssh -o ConnectTimeout=5 -o BatchMode=yes "$SLUG" true 2>/dev/null; then
@@ -441,7 +453,12 @@ for i in $(seq 1 40); do
   fi
   sleep 5
 done
-[ "${SSH_UP:-0}" = 1 ] || die "SSH never came up. Check that $OPERATOR_CIDR is still your address: curl -s https://checkip.amazonaws.com"
+[ "${SSH_UP:-0}" = 1 ] || die "SSH never came up after ~200s. In order of likelihood:
+  - your address changed: OPERATOR_CIDR is $OPERATOR_CIDR, you are $(curl -s --max-time 5 https://checkip.amazonaws.com 2>/dev/null || echo '<could not check>')
+  - the instance is still booting (rare past 200s)
+  - a host key mismatch is being refused — this script clears known_hosts for
+    $PUBLIC_IP first, so this should not happen; verify by hand with
+    ssh -v $SLUG"
 
 # ====== BOX-SIDE CONFIGURE ======
 info "Copying and running configure-control.sh"
