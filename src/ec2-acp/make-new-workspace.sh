@@ -32,7 +32,7 @@ set -euo pipefail
 #   ./make-new-workspace.sh <slug> [--model M] [--effort E] [--description TEXT]
 #                       [--dry-run]
 #
-# Teardown is unchanged: ./teardown.sh placeholders-<slug>.txt
+# Teardown is unchanged: ./teardown-workspace-aws-resources.sh placeholders-<slug>.txt
 # Note it leaves the workspace behind by design — see the workspace-lifecycle
 # TODO in agentrq/README.md.
 # ==========================================================================
@@ -228,5 +228,5 @@ $(ok "'$SLUG' is up and attached to its own workspace")
   workspace  $WS_ID   (named '$SLUG' in the dashboard)
   config     $(basename "$CONFIG")
   secrets    $(basename "$SECRETS")
-  teardown   ./teardown.sh $(basename "$CONFIG")
+  teardown   ./teardown-workspace-aws-resources.sh $(basename "$CONFIG")
 DONE

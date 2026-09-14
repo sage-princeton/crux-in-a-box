@@ -32,7 +32,7 @@ flowchart LR
   classDef ext fill:#f6eefb,stroke:#8e44ad,stroke-width:1.5px;
   classDef store fill:#fdf0f0,stroke:#c0574f,stroke-width:1.5px;
 
-  operator["Operator laptop<br/><i>OPERATOR_CIDR (/32)</i><br/>make-*-box.sh · connect.sh · teardown.sh"]:::ext
+  operator["Operator laptop<br/><i>OPERATOR_CIDR (/32)</i><br/>make-*-box.sh · connect.sh · teardown-workspace-aws-resources.sh"]:::ext
 
   subgraph region["AWS region"]
     subgraph vpc["Default VPC"]
@@ -84,11 +84,11 @@ flowchart LR
 <table>
 <tr><th>Resource</th><th>Name</th><th>Created by</th><th>Lifecycle</th></tr>
 <tr><td>EC2 instance</td><td><code>crux-control</code> (tag CruxRole=control)</td><td>make-control-box.sh</td><td>Persistent</td></tr>
-<tr><td>EC2 instance</td><td><code>crux-codex-N</code> (tag CruxRole=run)</td><td>provision-workspace-aws-resources.sh</td><td>Ephemeral — teardown.sh terminates</td></tr>
+<tr><td>EC2 instance</td><td><code>crux-codex-N</code> (tag CruxRole=run)</td><td>provision-workspace-aws-resources.sh</td><td>Ephemeral — teardown-workspace-aws-resources.sh terminates</td></tr>
 <tr><td>EBS gp3 volume</td><td><code>crux-control-data</code> → /srv/agentrq</td><td>make-control-box.sh</td><td>Outlives the instance (control state)</td></tr>
 <tr><td>Security group</td><td><code>crux-control-sg</code> — 22 from /32; 2026 from crux-run-sg</td><td>make-control-box.sh</td><td>Shared, kept on teardown</td></tr>
 <tr><td>Security group</td><td><code>crux-run-sg</code> — 22 from /32 only</td><td>make-control-box.sh (referenced by run boxes)</td><td>Shared, kept on teardown</td></tr>
-<tr><td>Elastic IP</td><td>one per box (stable addr across stop/start)</td><td>both make scripts</td><td>Run-box EIP released by teardown.sh</td></tr>
+<tr><td>Elastic IP</td><td>one per box (stable addr across stop/start)</td><td>both make scripts</td><td>Run-box EIP released by teardown-workspace-aws-resources.sh</td></tr>
 <tr><td>IAM role/profile</td><td><code>crux-control-role</code> / <code>crux-system-role</code> (all run boxes)</td><td>make-control-box.sh / <code>--put-system-secrets</code></td><td>Shared; scoped to one SSM path each; kept on teardown</td></tr>
 <tr><td>SSM parameter</td><td><code>/crux/control/env</code>, <code>/crux/system/env</code> (Langfuse, fleet-wide)</td><td><code>--put-secrets</code> (control) / <code>--put-system-secrets</code> (system)</td><td>Shared, kept on teardown</td></tr>
 <tr><td>Per-run secrets</td><td><code>run-secrets-&lt;slug&gt;.json</code> — OpenAI key, workspace id/token</td><td>operator; scp'd by <code>provision-workspace-aws-resources.sh --secrets</code></td><td>Deleted on-box after configure; persists only in mode-600 files on the instance</td></tr>

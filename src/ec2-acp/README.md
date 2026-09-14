@@ -24,7 +24,7 @@ pair. Operator guide: [`../README.md`](../README.md).
   `.mcp.json`, `codex login`, model/effort, Langfuse keys from SSM, and the
   gateway systemd unit. Deletes the scp'd secrets file, and refuses to finish
   until a real codex turn has fired the Langfuse `Stop` hook.
-- **`teardown.sh`** — laptop. Terminates one box, releases its Elastic IP,
+- **`teardown-workspace-aws-resources.sh`** — laptop. Terminates one box, releases its Elastic IP,
   removes the ssh alias. Deliberately keeps the shared SG / key pair / IAM —
   and the AgentRQ workspace, which outlives its box.
 - **`placeholders-base.txt.example`** / **`run-secrets-base.json.example`** —

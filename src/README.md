@@ -120,7 +120,7 @@ cd src/ec2-acp
 `make-new-workspace.sh` mints the workspace, writes `placeholders-<slug>.txt` and
 `run-secrets-<slug>.json`, and hands off to `provision-workspace-aws-resources.sh`. It composes the
 scripts below rather than reimplementing them, so each piece of logic still has
-one home. Teardown is unchanged: `./teardown.sh placeholders-<slug>.txt`.
+one home. Teardown is unchanged: `./teardown-workspace-aws-resources.sh placeholders-<slug>.txt`.
 
 Two files you set up **once** (both gitignored, both have a `.example`):
 
@@ -265,7 +265,7 @@ Then send it a task from the dashboard.
 ### Tear down
 
 ```bash
-./teardown.sh placeholders-codex-2.txt
+./teardown-workspace-aws-resources.sh placeholders-codex-2.txt
 ```
 
 Terminates the instance, **releases the Elastic IP** (an allocated but

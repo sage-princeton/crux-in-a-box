@@ -2,18 +2,23 @@
 
 ### Do now
 
-- [ ] Use Google Cloud for spend for agents, optional
 - [ ] !! stabilize AWS setup - add add'l workspaces and tear them down with no issues (manually - no coding agent use)
-- [ ] transfer langfuse access
+- [ ] transfer langfuse access to org account (blocked by PK)
+
+### Do next
+
+- [ ] Use Google Cloud for spend for agents, optional
 
 ### Backlog
 
+- [ ] Add Claude support
 - [ ] set up some basic monitoring / incident reporting to escalate suspicious activity to the team (with a high bar for suspicious)
-- [ ] whitelist other peoples' IPs
+- [ ] archive older openclaw architecture (`/linux` directory, parts of `/utils`, etc.)
+- [ ] whitelist other collaorators' IPs
 - [ ] tag langfuse traces somehow with an id / slug / etc.
 - [ ] ensure we can set model types and thinking levels when making new boxes!
 - [ ] reconsider workspace lifecycle: workspaces outlive their boxes
-      `teardown.sh` removes the instance, the Elastic IP and the ssh alias, but
+      `teardown-workspace-aws-resources.sh` removes the instance, the Elastic IP and the ssh alias, but
       deliberately never touches the control plane — so a torn-down box leaves
       its AgentRQ workspace behind with `agentConnected: false` and a **live
       365-day MCP token**. After the Sept 11 teardown, `crux-codex-1`

@@ -227,7 +227,7 @@ if [ "$DRY_RUN" = 1 ]; then
   dials             $CONTROL_MCP_BASE
   agent             $CODEX_MODEL, reasoning effort $CODEX_REASONING_EFFORT
   pins              codex@$CODEX_VERSION, codex-acp@$CODEX_ACP_VERSION, acp-gateway@$ACP_GATEWAY_VERSION
-teardown.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
+teardown-workspace-aws-resources.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
 the hour, so leaking one is the easy way to pay for a box you deleted.
 Nothing billable was created.
 PLAN
@@ -475,5 +475,5 @@ $(ok "Run box ready")
   langfuse   environment=$SLUG
 
 Send the workspace a task from the AgentRQ web UI (via src/ec2-control/connect.sh)
-and it should be answered by this box. Teardown: ./teardown.sh
+and it should be answered by this box. Teardown: ./teardown-workspace-aws-resources.sh
 DONE

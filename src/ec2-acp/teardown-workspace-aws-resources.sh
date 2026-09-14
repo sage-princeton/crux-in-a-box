@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==========================================================================
-# teardown.sh — terminate a run box and remove what it left behind.
+# teardown-workspace-aws-resources.sh — terminate a run box and remove what it left behind.
 #
 # Only touches things tagged for this slug. It deliberately does NOT remove
 # crux-run-sg, the key pair, crux-system-role/profile or /crux/system/env:
@@ -11,7 +11,7 @@ set -euo pipefail
 # per-run secrets were scp'd at provision time and deleted on the box after
 # configure, so they die with the instance.
 #
-# Usage: ./teardown.sh [CONFIG_FILE] [--yes]
+# Usage: ./teardown-workspace-aws-resources.sh [CONFIG_FILE] [--yes]
 # ==========================================================================
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
