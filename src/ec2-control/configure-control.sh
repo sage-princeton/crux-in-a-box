@@ -6,13 +6,13 @@ set -euo pipefail
 # make-control-box.sh. Idempotent: safe to re-run after a config change.
 #
 # Expects in the environment: AWS_REGION, SSM_ENV_PARAM, AGENTRQ_PORT,
-# PRIVATE_DNS, PRIVATE_IP. Optional: TLS_ENABLED, TLS_HOSTNAME, TLS_EMAIL.
+# PRIVATE_DNS, PRIVATE_IP, TLS_HOSTNAME. Optional: TLS_EMAIL.
 #
-# With TLS_ENABLED=1 this fronts AgentRQ with Caddy, which obtains a real
-# Let's Encrypt certificate for TLS_HOSTNAME and reverse-proxies to AgentRQ on
-# 127.0.0.1. AgentRQ's own AGENTRQ_SSL_* (ACME via Cloudflare DNS-01) is left
-# off deliberately: it needs a Cloudflare-managed zone, and the whole point of
-# the sslip.io default is not needing a DNS account at all.
+# TLS is not optional: Caddy fronts AgentRQ with a real Let's Encrypt
+# certificate for TLS_HOSTNAME and reverse-proxies to 127.0.0.1, and that is
+# the only way in. AgentRQ's own AGENTRQ_SSL_* (ACME via Cloudflare DNS-01) is
+# left off deliberately: it needs a Cloudflare-managed zone, and the whole
+# point of the sslip.io default is not needing a DNS account at all.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
@@ -21,11 +21,8 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 : "${AWS_REGION:?}" "${SSM_ENV_PARAM:?}" "${AGENTRQ_PORT:?}" "${PRIVATE_DNS:?}" \
   "${PRIVATE_IP:?}"
-TLS_ENABLED="${TLS_ENABLED:-0}"
-TLS_HOSTNAME="${TLS_HOSTNAME:-}"
+: "${TLS_HOSTNAME:?TLS_HOSTNAME is required — TLS is mandatory and there is no other access path}"
 TLS_EMAIL="${TLS_EMAIL:-}"
-[ "$TLS_ENABLED" != 1 ] || [ -n "$TLS_HOSTNAME" ] \
-  || die "TLS_ENABLED=1 needs TLS_HOSTNAME"
 
 DATA_DIR=/srv/agentrq
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
@@ -88,21 +85,16 @@ chmod 600 "$ENV_FILE"
 grep -q . "$ENV_FILE" || die "$SSM_ENV_PARAM was empty"
 ok "Wrote $ENV_FILE (mode 600, root only)"
 
-# A run box that is handed a localhost URL will dial itself. AgentRQ derives
-# workspace MCP URLs from these two, so they must name the control box.
+# These must name the hostname THE BROWSER USES: the session cookie is issued
+# for AGENTRQ_DOMAIN, so a mismatch logs you in with a 200 and then 401s every
+# subsequent call.
 #
-# With TLS on, they must name the hostname THE BROWSER USES: the session cookie
-# is issued for AGENTRQ_DOMAIN, so a mismatch logs you in with a 200 and then
-# 401s every subsequent call. Run boxes are unaffected — configure-run.sh
-# builds its own MCP URL from CONTROL_PRIVATE_DNS rather than trusting the
-# mcpUrl the API advertises.
-if [ "$TLS_ENABLED" = 1 ]; then
-  PUBLIC_BASE="https://${TLS_HOSTNAME}"
-  ENV_DOMAIN="$TLS_HOSTNAME"
-else
-  PUBLIC_BASE="http://${PRIVATE_DNS}:${AGENTRQ_PORT}"
-  ENV_DOMAIN="$PRIVATE_DNS"
-fi
+# It also decides how run boxes reach the workspace, because AgentRQ ROUTES BY
+# HOST — anything arriving under another name gets a flat 404. So run boxes
+# must dial this same hostname on :443 (CONTROL_MCP_BASE), with it pinned to
+# this box's private IP so the security-group reference still applies.
+PUBLIC_BASE="https://${TLS_HOSTNAME}"
+ENV_DOMAIN="$TLS_HOSTNAME"
 info "Rewriting AGENTRQ_BASE_URL / AGENTRQ_DOMAIN to $ENV_DOMAIN"
 sed -i -E "s#^AGENTRQ_BASE_URL=.*#AGENTRQ_BASE_URL=${PUBLIC_BASE}#" "$ENV_FILE"
 sed -i -E "s#^AGENTRQ_DOMAIN=.*#AGENTRQ_DOMAIN=${ENV_DOMAIN}#" "$ENV_FILE"
@@ -111,10 +103,13 @@ ok "$(grep -E '^(AGENTRQ_BASE_URL|AGENTRQ_DOMAIN|AGENTRQ_SQLITE_DSN)=' "$ENV_FIL
 
 # ====== SYSTEMD UNIT ======
 # Two publish rules, deliberately not 0.0.0.0:
-#   127.0.0.1  — what `connect.sh` (ssh -L) forwards to.
-#   PRIVATE_IP — what run boxes dial. crux-control-sg allows :PORT from
-#                crux-run-sg only, and that SG rule is the real perimeter here
-#                (EC2 1:1-NATs the Elastic IP onto this same private address).
+#   127.0.0.1  — what Caddy reverse-proxies to. This is the live path.
+#   PRIVATE_IP — vestigial. Run boxes used to dial :2026 here, but since
+#                AGENTRQ_DOMAIN became the public hostname AgentRQ 404s
+#                anything arriving under the private name, so they go via
+#                Caddy on :443 instead. Kept because it costs nothing and is
+#                the listener to aim at if AGENTRQ_DOMAIN is ever changed
+#                back; removable along with the :2026 SG rule.
 # Binding the list explicitly means a new interface never silently gains a
 # listener; it does not by itself substitute for the security group.
 info "Installing agentrq.service"
@@ -166,11 +161,6 @@ if [ "$HEALTHY" != 1 ]; then
 fi
 
 # ====== TLS (CADDY) ======
-if [ "$TLS_ENABLED" != 1 ]; then
-  ok "TLS disabled — no web port exposed; reach the UI with connect.sh"
-  exit 0
-fi
-
 info "Installing Caddy"
 if command -v caddy >/dev/null 2>&1; then
   ok "already present ($(caddy version | head -1))"
@@ -193,9 +183,8 @@ fi
 # The box must resolve its own public hostname to itself. Left alone, it
 # resolves to the Elastic IP, which the box cannot reach: crux-control-sg
 # permits :443 from the operator and :2026 from run boxes, and the box is
-# neither — every such attempt times out (000). Two things depend on this:
-# connect.sh --socks, where the BOX does the DNS for the browser, and any
-# local curl of the public URL.
+# neither — every such attempt times out (000). This is what makes possible
+# any local curl or health check of the public URL from the box itself.
 info "Pinning $TLS_HOSTNAME to 127.0.0.1 in /etc/hosts"
 sed -i "/[[:space:]]${TLS_HOSTNAME}\$/d" /etc/hosts
 echo "127.0.0.1 ${TLS_HOSTNAME}" >> /etc/hosts

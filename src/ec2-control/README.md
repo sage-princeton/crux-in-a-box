@@ -13,12 +13,10 @@ Operator guide: [`../README.md`](../README.md).
   `configure-control.sh`. Idempotent; `--dry-run` prints the plan.
 - **`configure-control.sh`** — runs **on the box** as root. Mounts the data
   volume at `/srv/agentrq`, writes the `.env` from SSM, runs AgentRQ under
-  systemd + docker, and with `TLS_ENABLED=1` puts Caddy in front of it with a
-  real Let's Encrypt certificate.
-- **`connect.sh`** — laptop. SSH port-forward (or `--socks`) to the dashboard,
-  for when your IP is outside `TLS_INGRESS_CIDR`. Asks the box which domain it
-  issues cookies for, because browsing under any other name silently fails to
-  log in.
+  systemd + docker, and puts Caddy in front of it with a real Let's Encrypt
+  certificate. TLS is mandatory — HTTPS is the only way in, so there is no
+  tunnel script; `:22` and `:443` share one `/32`, and a changed address is
+  fixed by reopening the security group.
 - **`bootstrap-workspace.sh`** — laptop. Create a workspace, `--list` them, or
   `--token` reissue an MCP token — over ssh, no browser. Prints `{id, token}`.
 - **`placeholders-control.txt.example`** — copy to `placeholders-control.txt`

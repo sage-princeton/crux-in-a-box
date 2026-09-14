@@ -85,11 +85,14 @@ PROFILE="${CFG[AWS_PROFILE]:-}"
 REGION="${CFG[AWS_REGION]}"
 SLUG="${CFG[RUN_SLUG]}"
 CONTROL_DNS="${CFG[CONTROL_PRIVATE_DNS]}"
-# Where the box dials its workspace. Defaults to the private :2026 path, which
-# is correct for a plain-HTTP control box. With HTTPS enabled on the control
-# box this MUST be the public https base: AgentRQ routes by Host and 404s
-# anything that is not AGENTRQ_DOMAIN.
-CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-http://${CONTROL_DNS}:2026}"
+# Where the box dials its workspace. REQUIRED, with no default: the control
+# box always serves HTTPS now, and AgentRQ routes by Host, so the old private
+# http://<dns>:2026 default would 404 every time. A default that cannot work
+# is worse than a missing one — it fails late, on the box, looking like a
+# network fault.
+CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-}"
+[ -n "$CONTROL_MCP_BASE" ] \
+  || die "CONTROL_MCP_BASE is not set in $CONFIG_FILE. It must be the control box's public https base, e.g. https://<dashed-eip>.sslip.io — make-control-box.sh prints it."
 OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
@@ -474,6 +477,6 @@ $(ok "Run box ready")
   logs       ssh $SLUG 'journalctl -u crux-acp-gateway -f'
   langfuse   environment=$SLUG
 
-Send the workspace a task from the AgentRQ web UI (via src/ec2-control/connect.sh)
-and it should be answered by this box. Teardown: ./teardown-workspace-aws-resources.sh
+Send the workspace a task from the AgentRQ dashboard and it should be answered
+by this box. Teardown: ./teardown-workspace-aws-resources.sh
 DONE

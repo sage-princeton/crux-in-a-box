@@ -6,15 +6,12 @@ set -euo pipefail
 # ==========================================================================
 #   ./make-new-workspace.sh crux-codex-4
 #
-# Does the whole sequence that src/README.md §2 spells out by hand:
 #   1. mints an AgentRQ workspace named after the slug (bootstrap-workspace.sh)
 #   2. writes placeholders-<slug>.txt from placeholders-base.txt
 #   3. writes run-secrets-<slug>.json from run-secrets-base.json + the minted
 #      workspace id/token
 #   4. hands off to provision-workspace-aws-resources.sh, which provisions and verifies
 #
-# It is a composition, not a reimplementation: every step is the script you
-# would have run yourself, so there is one place for each piece of logic.
 #
 # TWO FILES YOU SET UP ONCE (both gitignored, see the .example of each):
 #   placeholders-base.txt     the shared knobs — control box, key pair, pinned
@@ -24,6 +21,8 @@ set -euo pipefail
 #                             The workspace id/token are minted per box, so
 #                             the key is the only per-box secret you supply.
 #
+# FIXME: pass in the placeholders and secrets as arguments here
+# FIXME: require the model and effort to be set; maybe set them in placeholders; not as CLI args
 # The OpenAI key stays a per-box secret in the three-tier sense — still scp'd
 # at launch and deleted on the box — it is just sourced from one local file
 # instead of being retyped into a new one every time.
@@ -32,9 +31,6 @@ set -euo pipefail
 #   ./make-new-workspace.sh <slug> [--model M] [--effort E] [--description TEXT]
 #                       [--dry-run]
 #
-# Teardown is unchanged: ./teardown-workspace-aws-resources.sh placeholders-<slug>.txt
-# Note it leaves the workspace behind by design — see the workspace-lifecycle
-# TODO in agentrq/README.md.
 # ==========================================================================
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }

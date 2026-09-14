@@ -21,7 +21,9 @@ Two EC2 roles in the default VPC: a persistent <b>control box</b> (AgentRQ dashb
 task queue) and N ephemeral <b>run boxes</b> (codex + ACP gateway) that dial it on
 <code>:443</code>. <b>Caddy</b> fronts AgentRQ with a real Let's Encrypt certificate for
 <code>&lt;dashed-eip&gt;.sslip.io</code>, so the dashboard is plain HTTPS from the operator's
-<code>/32</code>; <code>connect.sh</code> is the fallback when that address changes.
+<code>/32</code>, and is the only access path — <code>:22</code> and <code>:443</code>
+share that gate, so a changed address is fixed by reopening the security group,
+not by falling back to SSH.
 Control-plane access is granted by an SG-to-SG reference, not a CIDR.
 </p>
 <p class="sub">
@@ -42,14 +44,14 @@ flowchart LR
   classDef ext fill:#f6eefb,stroke:#8e44ad,stroke-width:1.5px;
   classDef store fill:#fdf0f0,stroke:#c0574f,stroke-width:1.5px;
 
-  operator["Operator laptop<br/><i>OPERATOR_CIDR + TLS_INGRESS_CIDR (/32)</i><br/>make-new-workspace.sh · make-control-box.sh<br/>provision-/teardown-workspace-aws-resources.sh · connect.sh"]:::ext
+  operator["Operator laptop<br/><i>OPERATOR_CIDR + TLS_INGRESS_CIDR (/32)</i><br/>make-new-workspace.sh · make-control-box.sh<br/>provision-/teardown-workspace-aws-resources.sh"]:::ext
 
   subgraph region["AWS region"]
     subgraph vpc["Default VPC"]
       subgraph controlsg["SG crux-control-sg — :22 + :443 from operator /32 · :443 from crux-run-sg · :80 from 0.0.0.0/0 (ACME only) · :2026 from crux-run-sg"]
         subgraph control["EC2 crux-control (persistent, Ubuntu 24.04)"]
           caddy["systemd: caddy<br/>:443 TLS termination · :80 ACME + redirect<br/>reverse_proxy → 127.0.0.1:2026<br/><i>passes Host through, so AGENTRQ_DOMAIN matches</i>"]:::svc
-          agentrq["docker: agentrq/agentrq<br/>dashboard · workspaces · task queue · MCP<br/>listens 127.0.0.1:2026 + private-ip:2026<br/><i>routes by Host — 404s any other name</i>"]:::svc
+          agentrq["docker: agentrq/agentrq<br/>dashboard · workspaces · task queue · MCP<br/>listens 127.0.0.1:2026 (Caddy) + private-ip:2026 (vestigial)<br/><i>routes by Host — 404s any other name</i>"]:::svc
         end
       end
       ebs[("EBS gp3 data volume<br/>crux-control-data → /srv/agentrq<br/>outlives the instance")]:::store
@@ -75,7 +77,6 @@ flowchart LR
   operator -- "SSH :22" --> control
   operator -- "SSH :22 (break-glass)<br/>scp per-run secrets at provision,<br/>deleted on-box after configure" --> run1
   operator -- "HTTPS :443<br/>https://&lt;dashed-eip&gt;.sslip.io<br/>trusted Let's Encrypt cert" --> caddy
-  operator -- "fallback: connect.sh ssh -L / SOCKS<br/>→ http://&lt;AGENTRQ_DOMAIN&gt;:2026" --> agentrq
   caddy -- "127.0.0.1:2026" --> agentrq
   letsencrypt["Let's Encrypt<br/>ACME HTTP-01 — validates from its own<br/>servers, so :80 cannot be narrowed"]:::ext
   letsencrypt -- ":80 challenge" --> caddy

@@ -8,9 +8,10 @@ set -euo pipefail
 # security groups, the instance role, an Elastic IP and a data volume, then
 # launches the control box and hands off to configure-control.sh on the box.
 #
-# Access is SSH-only by design: AgentRQ binds to the box, and you reach the
-# web UI through `connect.sh` (an ssh -L port-forward). No web port is open
-# to the internet. See agentrq/AWS-POC-PLAN.md §2.
+# Access is HTTPS: Caddy fronts AgentRQ with a real Let's Encrypt certificate
+# and :443 is restricted to TLS_INGRESS_CIDR. There is no tunnel and no second
+# access path — :22 and :443 are gated by the same address, so a changed IP is
+# fixed by reopening the security group, not by falling back to SSH.
 #
 # Usage:
 #   ./make-control-box.sh [CONFIG_FILE]                 # provision
@@ -81,9 +82,9 @@ INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
 DATA_DISK_GB="${CFG[DATA_DISK_GB]}"
 KEY_NAME="${CFG[KEY_NAME]}"
-# TLS is opt-in and defaults off, so an existing config file without these keys
-# provisions exactly the SSH-only box it used to.
-TLS_ENABLED="${CFG[TLS_ENABLED]:-0}"
+# TLS is mandatory: the dashboard is reached over HTTPS and there is no other
+# path in. A config file predating this still works — TLS_ENABLED is simply
+# ignored now, and the remaining TLS_* keys have workable defaults.
 TLS_HOSTNAME="${CFG[TLS_HOSTNAME]:-}"
 TLS_EMAIL="${CFG[TLS_EMAIL]:-}"
 TLS_INGRESS_CIDR="${CFG[TLS_INGRESS_CIDR]:-$OPERATOR_CIDR}"
@@ -92,18 +93,16 @@ case "$OPERATOR_CIDR" in
   */32) ;;
   *) die "OPERATOR_CIDR must be a /32 (got '$OPERATOR_CIDR'). Widening it opens SSH to more than you." ;;
 esac
-if [ "$TLS_ENABLED" = 1 ]; then
-  case "$TLS_INGRESS_CIDR" in
-    */*) ;;
-    *) die "TLS_INGRESS_CIDR must be a CIDR (got '$TLS_INGRESS_CIDR'). Use a /32 for just yourself, or 0.0.0.0/0 to publish." ;;
-  esac
-  # A hostname that does not resolve to this box fails the ACME check, and
-  # Let's Encrypt rate-limits failures. Checked again after the EIP is known.
-  case "$TLS_HOSTNAME" in
-    localhost|*.ec2.internal|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
-      die "TLS_HOSTNAME '$TLS_HOSTNAME' is not publicly resolvable, so Let's Encrypt cannot validate it. Leave it empty for the sslip.io default." ;;
-  esac
-fi
+case "$TLS_INGRESS_CIDR" in
+  */*) ;;
+  *) die "TLS_INGRESS_CIDR must be a CIDR (got '$TLS_INGRESS_CIDR'). Use a /32 for just yourself, or 0.0.0.0/0 to publish." ;;
+esac
+# A hostname that does not resolve to this box fails the ACME check, and
+# Let's Encrypt rate-limits failures. Checked again after the EIP is known.
+case "$TLS_HOSTNAME" in
+  localhost|*.ec2.internal|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
+    die "TLS_HOSTNAME '$TLS_HOSTNAME' is not publicly resolvable, so Let's Encrypt cannot validate it. Leave it empty for the sslip.io default." ;;
+esac
 
 CONTROL_SG="crux-control-sg"
 RUN_SG="crux-run-sg"
@@ -164,12 +163,8 @@ if [ "$DRY_RUN" = 1 ]; then
   ebs volume        ${DATA_DISK_GB}GB gp3   mounted /srv/agentrq
   elastic ip        associated to $SLUG
   ssh config entry  Host $SLUG
-$(if [ "$TLS_ENABLED" = 1 ]; then
-printf '  https             caddy + lets encrypt for %s\n' "${TLS_HOSTNAME:-<dashed-eip>.sslip.io (derived)}"
-printf '                    443 from %s, 80 from 0.0.0.0/0 (ACME validation)\n' "$TLS_INGRESS_CIDR"
-else
-printf '  https             disabled (TLS_ENABLED=0) - SSH tunnel only\n'
-fi)Nothing billable was created.
+  https             caddy + lets encrypt for ${TLS_HOSTNAME:-<dashed-eip>.sslip.io (derived)}
+                    443 from $TLS_INGRESS_CIDR, 80 from 0.0.0.0/0 (ACME validation)Nothing billable was created.
 PLAN
   exit 0
 fi
@@ -247,20 +242,15 @@ allow --group-id "$CONTROL_SG_ID" --protocol tcp --port "$AGENTRQ_PORT" \
 # to the world: Let's Encrypt validates the HTTP-01 challenge from its own
 # servers, so a restricted :80 means no certificate now and no renewal in 90
 # days. Caddy answers only the ACME challenge and a redirect there.
-if [ "$TLS_ENABLED" = 1 ]; then
-  allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --cidr "$TLS_INGRESS_CIDR"
-  allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
-  # Run boxes reach the workspace over :443 as well, not the private :2026.
-  # AgentRQ ROUTES BY HOST: any request whose Host is not AGENTRQ_DOMAIN gets a
-  # 404, so once AGENTRQ_DOMAIN is the public hostname the private-DNS path
-  # stops working. Dialling the public name is what keeps Host matching — and
-  # it means the workspace token, which rides in the URL query string, is no
-  # longer sent in plaintext.
-  allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --source-group "$RUN_SG_ID"
-  ok "Ingress set: 22 from $OPERATOR_CIDR on both; $AGENTRQ_PORT on control from $RUN_SG only; 443 from $TLS_INGRESS_CIDR; 80 from 0.0.0.0/0 (ACME)"
-else
-  ok "Ingress set: 22 from $OPERATOR_CIDR on both; $AGENTRQ_PORT on control from $RUN_SG only"
-fi
+allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --cidr "$TLS_INGRESS_CIDR"
+allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
+# Run boxes reach the workspace over :443, not the private :2026. AgentRQ
+# ROUTES BY HOST: any request whose Host is not AGENTRQ_DOMAIN gets a 404, so
+# the private-DNS path cannot work once AGENTRQ_DOMAIN is the public hostname.
+# Dialling the public name is what keeps Host matching — and it means the
+# workspace token, which rides in the URL query string, is not sent in plaintext.
+allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --source-group "$RUN_SG_ID"
+ok "Ingress set: 22 from $OPERATOR_CIDR on both; 443 from $TLS_INGRESS_CIDR and from $RUN_SG; 80 from 0.0.0.0/0 (ACME); $AGENTRQ_PORT on control from $RUN_SG"
 
 # ====== IAM ROLE (read the .env parameter, nothing else) ======
 info "IAM role '$IAM_ROLE'"
@@ -393,29 +383,27 @@ ok "Public $PUBLIC_IP / private $PRIVATE_IP ($PRIVATE_DNS)"
 # sslip.io resolves <dashed-ip>.sslip.io to the IP in the name, which is what
 # buys a trusted certificate with no domain and no DNS account. Derived here
 # rather than in the config file because it must track the Elastic IP.
-if [ "$TLS_ENABLED" = 1 ] && [ -z "$TLS_HOSTNAME" ]; then
+if [ -z "$TLS_HOSTNAME" ]; then
   TLS_HOSTNAME="${PUBLIC_IP//./-}.sslip.io"
   ok "TLS hostname derived from the Elastic IP: $TLS_HOSTNAME"
 fi
-if [ "$TLS_ENABLED" = 1 ]; then
-  # Resolve it before asking Caddy to: a name pointing elsewhere burns a
-  # Let's Encrypt failure, and those are rate-limited.
-  # python3, not getent: getent does not exist on macOS, and this script runs
-  # on the operator's laptop. python3 is already required below for the
-  # ~/.ssh/config rewrite.
-  RESOLVED="$(python3 -c 'import socket,sys
+# Resolve it before asking Caddy to: a name pointing elsewhere burns a
+# Let's Encrypt failure, and those are rate-limited.
+# python3, not getent: getent does not exist on macOS, and this script runs on
+# the operator's laptop. python3 is already required below for the
+# ~/.ssh/config rewrite.
+RESOLVED="$(python3 -c 'import socket,sys
 try: print(socket.gethostbyname(sys.argv[1]))
 except OSError: pass' "$TLS_HOSTNAME" 2>/dev/null || true)"
-  [ -n "$RESOLVED" ] \
-    || die "$TLS_HOSTNAME does not resolve. For a custom domain, add an A record to $PUBLIC_IP first."
-  [ "$RESOLVED" = "$PUBLIC_IP" ] \
-    || die "$TLS_HOSTNAME resolves to $RESOLVED, not this box ($PUBLIC_IP). Let's Encrypt would fail the challenge."
-  ok "$TLS_HOSTNAME resolves to $PUBLIC_IP"
-fi
+[ -n "$RESOLVED" ] \
+  || die "$TLS_HOSTNAME does not resolve. For a custom domain, add an A record to $PUBLIC_IP first."
+[ "$RESOLVED" = "$PUBLIC_IP" ] \
+  || die "$TLS_HOSTNAME resolves to $RESOLVED, not this box ($PUBLIC_IP). Let's Encrypt would fail the challenge."
+ok "$TLS_HOSTNAME resolves to $PUBLIC_IP"
 
 # ====== SSH CONFIG ENTRY ======
 # The old create-new-crux-box.sh only printed an IP, so aliases were added by
-# hand. connect.sh and the run-box scripts both expect this alias to exist.
+# hand. bootstrap-workspace.sh and the run-box scripts both expect this alias.
 info "~/.ssh/config entry for '$SLUG'"
 SSH_CONFIG="$HOME/.ssh/config"
 touch "$SSH_CONFIG"; chmod 600 "$SSH_CONFIG"
@@ -461,7 +449,7 @@ scp -q "$SCRIPT_DIR/configure-control.sh" "$SLUG:/tmp/configure-control.sh"
 ssh "$SLUG" "chmod +x /tmp/configure-control.sh && sudo AWS_REGION='$REGION' \
   SSM_ENV_PARAM='$SSM_ENV_PARAM' AGENTRQ_PORT='$AGENTRQ_PORT' \
   PRIVATE_DNS='$PRIVATE_DNS' PRIVATE_IP='$PRIVATE_IP' \
-  TLS_ENABLED='$TLS_ENABLED' TLS_HOSTNAME='$TLS_HOSTNAME' TLS_EMAIL='$TLS_EMAIL' \
+  TLS_HOSTNAME='$TLS_HOSTNAME' TLS_EMAIL='$TLS_EMAIL' \
   /tmp/configure-control.sh"
 
 cat <<DONE
@@ -470,16 +458,13 @@ $(ok "Control box ready")
 
   instance     $INSTANCE_ID ($INSTANCE_TYPE) in $AZ
   ssh          ssh $SLUG
-  private      $PRIVATE_DNS:$AGENTRQ_PORT   (reachable from $RUN_SG only)
   state        $VOL_ID mounted at /srv/agentrq
-$(if [ "$TLS_ENABLED" = 1 ]; then
-printf '  web UI       https://%s   (443 from %s)\n' "$TLS_HOSTNAME" "$TLS_INGRESS_CIDR"
-printf '  also        ./connect.sh for the SSH tunnel, if your IP changes'
-else
-printf '  web UI       ./connect.sh   then open http://localhost:%s\n' "$AGENTRQ_PORT"
-printf '  no web port is open to the internet'
-fi)
+  web UI       https://$TLS_HOSTNAME   (443 from $TLS_INGRESS_CIDR)
+  run boxes    set CONTROL_MCP_BASE=https://$TLS_HOSTNAME in placeholders-base.txt
 
-Next: the auth hygiene in agentrq/AWS-POC-PLAN.md §2 (root login off, JWT
-secret rotated), then step 3.
+If your address changes, both :22 and :443 are gated by it — reopen them with
+  aws ec2 authorize-security-group-ingress --group-id $CONTROL_SG_ID \
+    --protocol tcp --port 443 --cidr "\$(curl -s https://checkip.amazonaws.com)/32"
+
+Next: the auth hygiene — root login off, JWT secret rotated — see src/ec2-control/README.md.
 DONE

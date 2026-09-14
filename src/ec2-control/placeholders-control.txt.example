@@ -29,10 +29,8 @@ DATA_DISK_GB=20
 KEY_NAME=crux-acp
 
 # ---- HTTPS -----------------------------------------------------------------
-# TLS_ENABLED=1 puts Caddy in front of AgentRQ with a real Let's Encrypt cert,
-# so the dashboard is reachable at https://<TLS_HOSTNAME> with no SSH tunnel.
-# 0 leaves the box SSH-only (connect.sh).
-TLS_ENABLED=1
+# TLS is mandatory and not configurable: Caddy fronts AgentRQ with a real
+# Let's Encrypt certificate and HTTPS is the only way in. There is no tunnel.
 
 # The hostname on the certificate. Leave EMPTY to derive it from the Elastic IP
 # as <dashed-ip>.sslip.io — sslip.io resolves any such name to the IP embedded
