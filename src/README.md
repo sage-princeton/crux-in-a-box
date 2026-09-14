@@ -108,7 +108,45 @@ to `--secrets`.
 
 ## 2. Make a new run box
 
-Example: a second box called `codex-2`. Four commands.
+### One command
+
+```bash
+cd src/ec2-acp
+./new-box.sh crux-codex-4                          # workspace + box, ~2 minutes
+./new-box.sh crux-codex-4 --effort low --model gpt-5.5
+./new-box.sh crux-codex-4 --dry-run                # plan only; mints nothing
+```
+
+`new-box.sh` mints the workspace, writes `placeholders-<slug>.txt` and
+`run-secrets-<slug>.json`, and hands off to `make-run-box.sh`. It composes the
+scripts below rather than reimplementing them, so each piece of logic still has
+one home. Teardown is unchanged: `./teardown.sh placeholders-<slug>.txt`.
+
+Two files you set up **once** (both gitignored, both have a `.example`):
+
+| File | Holds |
+| --- | --- |
+| `placeholders-base.txt` | the shared knobs — control box, key pair, pinned versions, default model. **No `RUN_SLUG`**; the script refuses a base file that sets one, since it would quietly outrank the per-box value |
+| `run-secrets-base.json` | `{"OPENAI_API_KEY": "sk-..."}` and nothing else — the workspace id and token are minted per box |
+
+The OpenAI key is still a per-box secret in the three-tier sense: scp'd at
+launch and deleted on the box. It is just sourced from one local file instead
+of being retyped per box.
+
+Two behaviours worth knowing:
+
+- **Everything checkable is checked before the workspace is minted** — AWS
+  credentials, the key pair and its local `.pem`, `/crux/system/env`,
+  `crux-system-profile`, `crux-run-sg`, the slug not already being in use, and
+  ssh to the control box. Minting is the first irreversible step, and a failure
+  after it leaves an orphaned workspace holding a live 365-day token that
+  nothing cleans up. Expired SSO therefore costs you nothing.
+- **`OPERATOR_CIDR` is refreshed from your current IP on every box.** A stale
+  `/32` is the usual reason a provision run hangs at "waiting for SSH".
+
+### Or by hand, four commands
+
+Example: a second box called `codex-2`.
 
 ### 0 — system secrets (once, not per box)
 
