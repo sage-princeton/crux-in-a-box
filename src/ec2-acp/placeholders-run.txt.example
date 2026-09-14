@@ -20,6 +20,18 @@ RUN_SLUG=crux-codex-1
 # group rule. make-control-box.sh prints this.
 CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal
 
+# Where the box dials its workspace. Leave EMPTY for the private
+# http://<CONTROL_PRIVATE_DNS>:2026 path, which is right for a plain-HTTP
+# control box.
+#
+# If the control box has HTTPS on (TLS_ENABLED=1), this MUST be its public
+# https base — e.g. https://32-195-122-118.sslip.io. AgentRQ ROUTES BY HOST:
+# once AGENTRQ_DOMAIN is the public hostname, a request arriving on the
+# private name gets a flat 404 with nothing in the logs to explain it. Dialling
+# the public name also stops the workspace token, which rides in the URL query
+# string, from crossing the VPC in plaintext.
+CONTROL_MCP_BASE=
+
 # Your public IP as a /32, for break-glass SSH. A run box needs no inbound to
 # do its job; this is only so you can get in and read logs.
 # Find it with: curl -s https://checkip.amazonaws.com

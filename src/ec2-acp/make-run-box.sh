@@ -85,6 +85,11 @@ PROFILE="${CFG[AWS_PROFILE]:-}"
 REGION="${CFG[AWS_REGION]}"
 SLUG="${CFG[RUN_SLUG]}"
 CONTROL_DNS="${CFG[CONTROL_PRIVATE_DNS]}"
+# Where the box dials its workspace. Defaults to the private :2026 path, which
+# is correct for a plain-HTTP control box. With HTTPS enabled on the control
+# box this MUST be the public https base: AgentRQ routes by Host and 404s
+# anything that is not AGENTRQ_DOMAIN.
+CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-http://${CONTROL_DNS}:2026}"
 OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
@@ -104,6 +109,13 @@ esac
 case "$CONTROL_DNS" in
   localhost|127.*|*.compute-1.amazonaws.com|*.compute.amazonaws.com)
     die "CONTROL_PRIVATE_DNS looks public or local ('$CONTROL_DNS'). It must be the control box's PRIVATE DNS name (ip-x-x-x-x.ec2.internal) — the security group only permits the VPC path." ;;
+esac
+case "$CONTROL_MCP_BASE" in
+  http://*|https://*) ;;
+  *) die "CONTROL_MCP_BASE must start with http:// or https:// (got '$CONTROL_MCP_BASE')." ;;
+esac
+case "$CONTROL_MCP_BASE" in
+  */) die "CONTROL_MCP_BASE must not end in a slash (got '$CONTROL_MCP_BASE') — the MCP path is appended to it." ;;
 esac
 # Caught here rather than on the box: codex rejects an unknown effort at
 # startup, and under Restart=always that surfaces as a gateway crash-loop
@@ -212,7 +224,7 @@ if [ "$DRY_RUN" = 1 ]; then
   elastic ip        associated to $SLUG      (stable address across stop/start)
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
                                              deleted there after configure
-  dials             $CONTROL_DNS:$AGENTRQ_PORT
+  dials             $CONTROL_MCP_BASE
   agent             $CODEX_MODEL, reasoning effort $CODEX_REASONING_EFFORT
   pins              codex@$CODEX_VERSION, codex-acp@$CODEX_ACP_VERSION, acp-gateway@$ACP_GATEWAY_VERSION
 teardown.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
@@ -387,15 +399,47 @@ ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
   CODEX_ACP_VERSION='$CODEX_ACP_VERSION' ACP_GATEWAY_VERSION='$ACP_GATEWAY_VERSION' \
   /tmp/install-run.sh"
 
+# ====== PRIVATE PATH FOR THE PUBLIC HOSTNAME ======
+# When CONTROL_MCP_BASE is the control box's public https name, the run box
+# must still reach it over the VPC, so the name is pinned to the control box's
+# PRIVATE ip in /etc/hosts.
+#
+# Why this is necessary rather than tidy: a security-group reference only
+# matches traffic arriving on a private address. Dialling the Elastic IP from
+# inside the VPC leaves through the internet gateway and arrives with the run
+# box's PUBLIC source address, which `443 from crux-run-sg` does not match —
+# observed as a flat connection timeout. Pinning keeps the packets internal
+# (so the SG rule applies) while the TLS handshake and the Host header still
+# use the public name, which is what makes the certificate valid and stops
+# AgentRQ's host routing 404ing us. All three constraints are satisfied only
+# by this combination.
+MCP_HOST="$(printf '%s' "$CONTROL_MCP_BASE" | sed -E 's#^https?://##; s#[:/].*$##')"
+if [ "$MCP_HOST" != "$CONTROL_DNS" ]; then
+  info "Pinning $MCP_HOST to the control box's private address on $SLUG"
+  ssh "$SLUG" "set -e
+    ip=\$(getent hosts '$CONTROL_DNS' | awk '{print \$1}' | head -1)
+    [ -n \"\$ip\" ] || { echo 'could not resolve $CONTROL_DNS from the box' >&2; exit 1; }
+    sudo sed -i '/[[:space:]]$MCP_HOST\$/d' /etc/hosts
+    echo \"\$ip $MCP_HOST\" | sudo tee -a /etc/hosts >/dev/null
+    echo \"  pinned $MCP_HOST -> \$ip\"" \
+    || die "Could not pin $MCP_HOST on $SLUG"
+  ok "$MCP_HOST resolves to the private address on $SLUG"
+fi
+
 # ====== REACHABILITY GATE ======
 # Checked before configuring the gateway: if the VPC path is shut, the gateway
 # would come up and fail to reach its workspace, which is a much harder
 # failure to read than this one line.
-info "Can the run box reach the control box over the VPC?"
-if ssh "$SLUG" "curl -fsS -o /dev/null --max-time 8 http://${CONTROL_DNS}:${AGENTRQ_PORT}/" 2>/dev/null; then
-  ok "$CONTROL_DNS:$AGENTRQ_PORT answers"
+info "Can the run box reach the control box at $CONTROL_MCP_BASE?"
+if ssh "$SLUG" "curl -fsS -o /dev/null --max-time 8 '${CONTROL_MCP_BASE}/'" 2>/dev/null; then
+  ok "$CONTROL_MCP_BASE answers"
 else
-  die "Run box cannot reach $CONTROL_DNS:$AGENTRQ_PORT. Check that crux-control-sg allows $AGENTRQ_PORT from $RUN_SG ($RUN_SG_ID), that the control box's container is bound to its PRIVATE ip (not just 127.0.0.1), and that CONTROL_PRIVATE_DNS is right."
+  die "Run box cannot reach $CONTROL_MCP_BASE. Check, in order:
+  - crux-control-sg permits the port from $RUN_SG ($RUN_SG_ID) — :443 for an
+    https base, :$AGENTRQ_PORT for the private http one
+  - a 404 here means AgentRQ is up but ROUTING BY HOST: AGENTRQ_DOMAIN on the
+    control box does not match the hostname in CONTROL_MCP_BASE
+  - the control box's container is bound to the address you are dialling"
 fi
 
 # ====== PER-RUN SECRETS (scp, deleted on-box after configure) ======
@@ -414,7 +458,7 @@ ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
   RUN_SLUG='$SLUG' \
   CODEX_MODEL='$CODEX_MODEL' CODEX_REASONING_EFFORT='$CODEX_REASONING_EFFORT' \
-  CONTROL_PRIVATE_DNS='$CONTROL_DNS' AGENTRQ_PORT='$AGENTRQ_PORT' \
+  CONTROL_MCP_BASE='$CONTROL_MCP_BASE' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
   /tmp/configure-run.sh"
@@ -426,7 +470,7 @@ $(ok "Run box ready")
   instance   $INSTANCE_ID ($INSTANCE_TYPE) at $PUBLIC_IP
   ssh        ssh $SLUG
   agent      $CODEX_MODEL, reasoning effort $CODEX_REASONING_EFFORT
-  dials      $CONTROL_DNS:$AGENTRQ_PORT
+  dials      $CONTROL_MCP_BASE
   logs       ssh $SLUG 'journalctl -u crux-acp-gateway -f'
   langfuse   environment=$SLUG
 

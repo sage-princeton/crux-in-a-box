@@ -250,6 +250,13 @@ allow --group-id "$CONTROL_SG_ID" --protocol tcp --port "$AGENTRQ_PORT" \
 if [ "$TLS_ENABLED" = 1 ]; then
   allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --cidr "$TLS_INGRESS_CIDR"
   allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
+  # Run boxes reach the workspace over :443 as well, not the private :2026.
+  # AgentRQ ROUTES BY HOST: any request whose Host is not AGENTRQ_DOMAIN gets a
+  # 404, so once AGENTRQ_DOMAIN is the public hostname the private-DNS path
+  # stops working. Dialling the public name is what keeps Host matching — and
+  # it means the workspace token, which rides in the URL query string, is no
+  # longer sent in plaintext.
+  allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --source-group "$RUN_SG_ID"
   ok "Ingress set: 22 from $OPERATOR_CIDR on both; $AGENTRQ_PORT on control from $RUN_SG only; 443 from $TLS_INGRESS_CIDR; 80 from 0.0.0.0/0 (ACME)"
 else
   ok "Ingress set: 22 from $OPERATOR_CIDR on both; $AGENTRQ_PORT on control from $RUN_SG only"

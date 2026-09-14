@@ -16,8 +16,8 @@ set -euo pipefail
 #     crux-system-role
 #
 # Expects in the environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
-# RUN_SLUG, CODEX_MODEL, CODEX_REASONING_EFFORT, CONTROL_PRIVATE_DNS,
-# AGENTRQ_PORT, TRACING_PLUGIN_VERSION, TRACING_HOOK_TRUSTED_HASH.
+# RUN_SLUG, CODEX_MODEL, CODEX_REASONING_EFFORT, CONTROL_MCP_BASE,
+# TRACING_PLUGIN_VERSION, TRACING_HOOK_TRUSTED_HASH.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
@@ -26,7 +26,7 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 : "${AWS_REGION:?}" "${RUN_SECRETS_PATH:?}" "${SYSTEM_SSM_PARAM:?}" \
   "${RUN_SLUG:?}" "${CODEX_MODEL:?}" "${CODEX_REASONING_EFFORT:?}" \
-  "${CONTROL_PRIVATE_DNS:?}" "${AGENTRQ_PORT:?}" \
+  "${CONTROL_MCP_BASE:?}" \
   "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
 
 RUN_USER=ubuntu
@@ -72,13 +72,13 @@ ok "Read 3 system values (not echoed)"
 # to three directories above, so the gateway's WorkingDirectory must be here.
 info "Work dir $WORK_DIR"
 mkdir -p "$WORK_DIR"
-MCP_URL="http://${CONTROL_PRIVATE_DNS}:${AGENTRQ_PORT}/mcp/${WORKSPACE_ID}?token=${WORKSPACE_TOKEN}"
+MCP_URL="${CONTROL_MCP_BASE}/mcp/${WORKSPACE_ID}?token=${WORKSPACE_TOKEN}"
 jq -n --arg id "$WORKSPACE_ID" --arg url "$MCP_URL" \
   '{mcpServers: {($id): {type: "http", url: $url}}}' > "$WORK_DIR/.mcp.json"
 chown -R "$RUN_USER:$RUN_USER" "$WORK_DIR"
 # The URL embeds the workspace token, so this is a credential file.
 chmod 600 "$WORK_DIR/.mcp.json"
-ok "Wrote .mcp.json -> http://${CONTROL_PRIVATE_DNS}:${AGENTRQ_PORT}/mcp/${WORKSPACE_ID}?token=<redacted> (mode 600)"
+ok "Wrote .mcp.json -> ${CONTROL_MCP_BASE}/mcp/${WORKSPACE_ID}?token=<redacted> (mode 600)"
 
 # ====== CODEX CONFIG ======
 info "codex config"
