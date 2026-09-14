@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==========================================================================
-# make-run-box.sh — provision an ephemeral codex ACP run box
+# provision-workspace-aws-resources.sh — provision an ephemeral codex ACP run box
 # ==========================================================================
 # Run on your LOCAL machine. Launches the box into crux-run-sg (which is what
 # grants it access to the control box's :2026), installs the software, writes
@@ -20,12 +20,12 @@ set -euo pipefail
 #     crux-system-role. Upload once with --put-system-secrets.
 #
 # Usage:
-#   ./make-run-box.sh --secrets <json> [CONFIG_FILE]    # provision
-#   ./make-run-box.sh --put-system-secrets <json> [CONFIG]
+#   ./provision-workspace-aws-resources.sh --secrets <json> [CONFIG_FILE]    # provision
+#   ./provision-workspace-aws-resources.sh --put-system-secrets <json> [CONFIG]
 #                                                       # upload the shared
 #                                                       # Langfuse config, once
-#   ./make-run-box.sh --dry-run [CONFIG_FILE]           # print plan, touch nothing
-#   ./make-run-box.sh --handshake [CONFIG_FILE]         # ACP handshake only
+#   ./provision-workspace-aws-resources.sh --dry-run [CONFIG_FILE]           # print plan, touch nothing
+#   ./provision-workspace-aws-resources.sh --handshake [CONFIG_FILE]         # ACP handshake only
 #
 # The per-run secrets file is JSON (see run-secrets.json.example):
 #   OPENAI_API_KEY, AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN
@@ -253,7 +253,7 @@ ok "Per-run secrets file $RUN_SECRETS_FILE looks complete (3 keys, not echoed)"
 # here costs nothing while failing there leaves a half-configured instance.
 info "System secrets at $SYSTEM_SSM_PARAM"
 aws_ ssm get-parameter --name "$SYSTEM_SSM_PARAM" >/dev/null 2>&1 \
-  || die "$SYSTEM_SSM_PARAM does not exist. Upload it once first: ./make-run-box.sh --put-system-secrets run-system-secrets.json"
+  || die "$SYSTEM_SSM_PARAM does not exist. Upload it once first: ./provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json"
 aws_iam_ get-instance-profile --instance-profile-name "$SYSTEM_IAM_PROFILE" >/dev/null 2>&1 \
   || die "Instance profile $SYSTEM_IAM_PROFILE does not exist. --put-system-secrets creates it."
 ok "Parameter and $SYSTEM_IAM_PROFILE present"

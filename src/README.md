@@ -112,13 +112,13 @@ to `--secrets`.
 
 ```bash
 cd src/ec2-acp
-./new-box.sh crux-codex-4                          # workspace + box, ~2 minutes
-./new-box.sh crux-codex-4 --effort low --model gpt-5.5
-./new-box.sh crux-codex-4 --dry-run                # plan only; mints nothing
+./make-new-workspace.sh crux-codex-4                          # workspace + box, ~2 minutes
+./make-new-workspace.sh crux-codex-4 --effort low --model gpt-5.5
+./make-new-workspace.sh crux-codex-4 --dry-run                # plan only; mints nothing
 ```
 
-`new-box.sh` mints the workspace, writes `placeholders-<slug>.txt` and
-`run-secrets-<slug>.json`, and hands off to `make-run-box.sh`. It composes the
+`make-new-workspace.sh` mints the workspace, writes `placeholders-<slug>.txt` and
+`run-secrets-<slug>.json`, and hands off to `provision-workspace-aws-resources.sh`. It composes the
 scripts below rather than reimplementing them, so each piece of logic still has
 one home. Teardown is unchanged: `./teardown.sh placeholders-<slug>.txt`.
 
@@ -159,7 +159,7 @@ cd src/ec2-acp
 cp run-system-secrets.json.example run-system-secrets.json
 chmod 600 run-system-secrets.json
 # fill in the two Langfuse keys, then:
-./make-run-box.sh --put-system-secrets run-system-secrets.json
+./provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json
 ```
 
 This also creates `crux-system-role`/`crux-system-profile` if they don't
@@ -194,7 +194,7 @@ old private `http://<dns>:2026` path; set it to the control box's **https** base
 whenever that box has TLS on, because AgentRQ routes by Host and 404s the
 private name.
 
-`make-run-box.sh` then pins that hostname to the control box's **private** IP in
+`provision-workspace-aws-resources.sh` then pins that hostname to the control box's **private** IP in
 the run box's `/etc/hosts`. All three of these have to hold at once, and only
 that combination satisfies them:
 
@@ -240,8 +240,8 @@ exists. `*secrets*.json` is gitignored.
 ### 4 — launch
 
 ```bash
-./make-run-box.sh --dry-run placeholders-codex-2.txt   # shows the plan, creates nothing
-./make-run-box.sh --secrets run-secrets-codex-2.json placeholders-codex-2.txt
+./provision-workspace-aws-resources.sh --dry-run placeholders-codex-2.txt   # shows the plan, creates nothing
+./provision-workspace-aws-resources.sh --secrets run-secrets-codex-2.json placeholders-codex-2.txt
 ```
 
 ~5 minutes. It provisions the instance and Elastic IP, writes the `~/.ssh/config`

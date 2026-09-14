@@ -11,7 +11,7 @@ set -euo pipefail
 #
 # Secrets arrive two ways:
 #   - per-run (OpenAI key, workspace id/token): a JSON file at
-#     RUN_SECRETS_PATH, scp'd by make-run-box.sh, deleted here after use
+#     RUN_SECRETS_PATH, scp'd by provision-workspace-aws-resources.sh, deleted here after use
 #   - system-wide (Langfuse): SSM SYSTEM_SSM_PARAM, read via the shared
 #     crux-system-role
 #
@@ -40,7 +40,7 @@ CODEX_DIR="$RUN_HOME/.codex"
 # mode-600 files written below.
 info "Reading per-run secrets from $RUN_SECRETS_PATH"
 [ -f "$RUN_SECRETS_PATH" ] \
-  || die "$RUN_SECRETS_PATH not found. make-run-box.sh scps it before running this script; a manual re-run needs it scp'd again."
+  || die "$RUN_SECRETS_PATH not found. provision-workspace-aws-resources.sh scps it before running this script; a manual re-run needs it scp'd again."
 SECRETS="$(cat "$RUN_SECRETS_PATH")"
 
 get() { printf '%s' "$SECRETS" | jq -re --arg k "$1" '.[$k] // empty'; }
@@ -57,7 +57,7 @@ ok "Read 3 per-run values (not echoed); deleted $RUN_SECRETS_PATH"
 info "Fetching system config from SSM $SYSTEM_SSM_PARAM"
 SYS="$(aws ssm get-parameter --region "$AWS_REGION" --name "$SYSTEM_SSM_PARAM" \
   --with-decryption --query 'Parameter.Value' --output text)" \
-  || die "Could not read $SYSTEM_SSM_PARAM. Upload it once: make-run-box.sh --put-system-secrets <file>"
+  || die "Could not read $SYSTEM_SSM_PARAM. Upload it once: provision-workspace-aws-resources.sh --put-system-secrets <file>"
 
 sys() { printf '%s' "$SYS" | jq -re --arg k "$1" '.[$k] // empty'; }
 

@@ -8,11 +8,11 @@ AWS.
 Provision `ec2-control/` first; these scripts need its security groups and key
 pair. Operator guide: [`../README.md`](../README.md).
 
-- **`new-box.sh`** — laptop, and the one you normally want:
-  `./new-box.sh <slug>` mints the workspace, writes the per-box config and
-  secrets, and calls `make-run-box.sh`. ~2 minutes. All AWS checks run *before*
+- **`make-new-workspace.sh`** — laptop, and the one you normally want:
+  `./make-new-workspace.sh <slug>` mints the workspace, writes the per-box config and
+  secrets, and calls `provision-workspace-aws-resources.sh`. ~2 minutes. All AWS checks run *before*
   the workspace is minted, so bad credentials cost nothing.
-- **`make-run-box.sh`** — laptop. Provisions one box (instance, Elastic IP,
+- **`provision-workspace-aws-resources.sh`** — laptop. Provisions one box (instance, Elastic IP,
   ssh alias), pins the control box's hostname to its private address, proves
   the VPC path answers, then runs install + configure. Also carries
   `--put-system-secrets` (the fleet-wide Langfuse parameter, uploaded once),
@@ -28,10 +28,10 @@ pair. Operator guide: [`../README.md`](../README.md).
   removes the ssh alias. Deliberately keeps the shared SG / key pair / IAM —
   and the AgentRQ workspace, which outlives its box.
 - **`placeholders-base.txt.example`** / **`run-secrets-base.json.example`** —
-  the two files `new-box.sh` reads: shared knobs (no `RUN_SLUG`) and the
+  the two files `make-new-workspace.sh` reads: shared knobs (no `RUN_SLUG`) and the
   OpenAI key alone.
 - **`placeholders-run.txt.example`** / **`run-secrets.json.example`** — the
-  per-box equivalents, for driving `make-run-box.sh` by hand.
+  per-box equivalents, for driving `provision-workspace-aws-resources.sh` by hand.
 - **`run-system-secrets.json.example`** — the fleet-wide Langfuse keys, for
   `--put-system-secrets`.
 

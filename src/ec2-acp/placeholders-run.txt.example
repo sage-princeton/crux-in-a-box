@@ -1,9 +1,9 @@
-# Config for make-run-box.sh — copy to placeholders-run.txt and fill in.
+# Config for provision-workspace-aws-resources.sh — copy to placeholders-run.txt and fill in.
 # placeholders-run.txt is gitignored. No secrets belong in THIS file: the
 # OpenAI key and workspace token go in run-secrets-<slug>.json (scp'd to the
-# box by `make-run-box.sh --secrets <file>`, deleted there after configure);
+# box by `provision-workspace-aws-resources.sh --secrets <file>`, deleted there after configure);
 # the fleet-wide Langfuse keys go to SSM /crux/system/env once, via
-# `make-run-box.sh --put-system-secrets run-system-secrets.json`.
+# `provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json`.
 
 # AWS region. Leave AWS_PROFILE empty to use ambient environment credentials
 # (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN).
@@ -51,7 +51,7 @@ KEY_NAME=crux-acp
 # CODEX_REASONING_EFFORT is one of minimal | low | medium | high. Codex
 # rejects an unknown value at startup, and because the gateway is a systemd
 # unit with Restart=always that presents as a crash-loop rather than an error
-# message — so make-run-box.sh validates it before launching anything.
+# message — so provision-workspace-aws-resources.sh validates it before launching anything.
 CODEX_MODEL=gpt-5.5
 CODEX_REASONING_EFFORT=high
 

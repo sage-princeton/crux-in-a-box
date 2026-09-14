@@ -2,16 +2,16 @@
 set -euo pipefail
 
 # ==========================================================================
-# new-box.sh — one command: new workspace + new run box, ready to answer
+# make-new-workspace.sh — one command: new workspace + new run box, ready to answer
 # ==========================================================================
-#   ./new-box.sh crux-codex-4
+#   ./make-new-workspace.sh crux-codex-4
 #
 # Does the whole sequence that src/README.md §2 spells out by hand:
 #   1. mints an AgentRQ workspace named after the slug (bootstrap-workspace.sh)
 #   2. writes placeholders-<slug>.txt from placeholders-base.txt
 #   3. writes run-secrets-<slug>.json from run-secrets-base.json + the minted
 #      workspace id/token
-#   4. hands off to make-run-box.sh, which provisions and verifies
+#   4. hands off to provision-workspace-aws-resources.sh, which provisions and verifies
 #
 # It is a composition, not a reimplementation: every step is the script you
 # would have run yourself, so there is one place for each piece of logic.
@@ -29,7 +29,7 @@ set -euo pipefail
 # instead of being retyped into a new one every time.
 #
 # Usage:
-#   ./new-box.sh <slug> [--model M] [--effort E] [--description TEXT]
+#   ./make-new-workspace.sh <slug> [--model M] [--effort E] [--description TEXT]
 #                       [--dry-run]
 #
 # Teardown is unchanged: ./teardown.sh placeholders-<slug>.txt
@@ -61,7 +61,7 @@ while [ $# -gt 0 ]; do
     *)             [ -z "$SLUG" ] || die "Only one slug"; SLUG="$1"; shift ;;
   esac
 done
-[ -n "$SLUG" ] || die "Usage: ./new-box.sh <slug> [--model M] [--effort E]"
+[ -n "$SLUG" ] || die "Usage: ./make-new-workspace.sh <slug> [--model M] [--effort E]"
 
 # The slug becomes an EC2 tag, an ssh alias, a filename and a Langfuse
 # environment, so keep it to what all four accept.
@@ -76,7 +76,7 @@ SECRETS="$SCRIPT_DIR/run-secrets-${SLUG}.json"
 # Everything checkable is checked BEFORE the workspace is minted, because
 # minting is this script's first irreversible act: fail after it and you are
 # left with an orphaned workspace holding a live 365-day token, which nothing
-# here cleans up. Some of these duplicate make-run-box.sh's own checks on
+# here cleans up. Some of these duplicate provision-workspace-aws-resources.sh's own checks on
 # purpose — its preflight runs too late to protect the workspace.
 info "Preflight"
 for b in jq ssh python3 aws curl; do command -v "$b" >/dev/null || die "$b not found"; done
@@ -92,7 +92,7 @@ case "$OPENAI_KEY" in *CHANGE*|*REPLACE*|*xxx*|"") die "OPENAI_API_KEY in $BASE_
 # A base config carrying RUN_SLUG would silently win over the one written here
 # on some edits, and the resulting box would answer to the wrong workspace.
 if grep -qE '^[[:space:]]*RUN_SLUG[[:space:]]*=[[:space:]]*[^[:space:]#]' "$BASE_CONFIG"; then
-  die "$BASE_CONFIG sets RUN_SLUG. Remove it — new-box.sh sets it per box."
+  die "$BASE_CONFIG sets RUN_SLUG. Remove it — make-new-workspace.sh sets it per box."
 fi
 
 cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1/p" "$BASE_CONFIG" | head -1; }
@@ -124,7 +124,7 @@ ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text 2>/dev/
   || die "Not authenticated to AWS with $CRED_DESC. $AUTH_HINT"
 ok "AWS account $ACCOUNT_ID in $REGION via $CRED_DESC"
 
-# The shared prerequisites make-run-box.sh needs. Each one is a hard stop for
+# The shared prerequisites provision-workspace-aws-resources.sh needs. Each one is a hard stop for
 # it, so checking them here is the difference between a clean refusal and a
 # half-made box plus a stray workspace.
 KEY_NAME_CFG="$(cfg KEY_NAME)"
@@ -134,7 +134,7 @@ aws_ ec2 describe-key-pairs --key-names "$KEY_NAME_CFG" >/dev/null 2>&1 \
 [ -f "$HOME/.ssh/${KEY_NAME_CFG}.pem" ] \
   || die "$HOME/.ssh/${KEY_NAME_CFG}.pem is missing locally, and a private key cannot be re-downloaded."
 aws_ ssm get-parameter --name /crux/system/env >/dev/null 2>&1 \
-  || die "/crux/system/env does not exist. Upload it once: ./make-run-box.sh --put-system-secrets run-system-secrets.json"
+  || die "/crux/system/env does not exist. Upload it once: ./provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json"
 aws_ iam get-instance-profile --instance-profile-name crux-system-profile >/dev/null 2>&1 \
   || die "Instance profile crux-system-profile does not exist. --put-system-secrets creates it."
 RUN_SG_ID="$(aws_ ec2 describe-security-groups --filters "Name=group-name,Values=crux-run-sg" \
@@ -163,7 +163,7 @@ if [ "$DRY_RUN" = 1 ]; then
   2. write $CONFIG           from $(basename "$BASE_CONFIG")
      ${MODEL:+model $MODEL, }${EFFORT:+effort $EFFORT, }dialling ${MCP_BASE:-<private default>}
   3. write $SECRETS   OpenAI key from $(basename "$BASE_SECRETS") + the minted id/token
-  4. run make-run-box.sh, which provisions and verifies the box
+  4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
 
 Nothing was created — not the workspace either.
 PLAN
@@ -195,16 +195,16 @@ info "Writing $(basename "$CONFIG")"
 # run hangs at "waiting for SSH", and it is free to get right.
 MY_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)"
 {
-  printf '# Generated by new-box.sh for %s. Edit freely; it is yours now.\n' "$SLUG"
+  printf '# Generated by make-new-workspace.sh for %s. Edit freely; it is yours now.\n' "$SLUG"
   printf '# Source: %s\n\n' "$(basename "$BASE_CONFIG")"
   cat "$BASE_CONFIG"
-  printf '\n# ---- set per box by new-box.sh ----\n'
+  printf '\n# ---- set per box by make-new-workspace.sh ----\n'
   printf 'RUN_SLUG=%s\n' "$SLUG"
   if [ -n "$MODEL" ];  then printf 'CODEX_MODEL=%s\n' "$MODEL"; fi
   if [ -n "$EFFORT" ]; then printf 'CODEX_REASONING_EFFORT=%s\n' "$EFFORT"; fi
   if [ -n "$MY_IP" ];  then printf 'OPERATOR_CIDR=%s/32\n' "$MY_IP"; fi
 } > "$CONFIG"
-# Later keys win in make-run-box.sh's parser, so the appended block overrides
+# Later keys win in provision-workspace-aws-resources.sh's parser, so the appended block overrides
 # whatever the base file said.
 ok "Wrote $(basename "$CONFIG")${MY_IP:+ (operator $MY_IP/32)}"
 
@@ -216,9 +216,9 @@ chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
 # ====== 4. PROVISION ======
-info "Handing off to make-run-box.sh"
+info "Handing off to provision-workspace-aws-resources.sh"
 printf '\n'
-"$SCRIPT_DIR/make-run-box.sh" --secrets "$SECRETS" "$CONFIG"
+"$SCRIPT_DIR/provision-workspace-aws-resources.sh" --secrets "$SECRETS" "$CONFIG"
 
 trap - ERR
 cat <<DONE
