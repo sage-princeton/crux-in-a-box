@@ -19,9 +19,19 @@
 <p class="sub">
 Two EC2 roles in the default VPC: a persistent <b>control box</b> (AgentRQ dashboard, workspaces,
 task queue) and N ephemeral <b>run boxes</b> (codex + ACP gateway) that dial it on
-<code>:2026</code>. No public web port anywhere — the dashboard is reached over SSH
-(<code>connect.sh</code> port-forward or SOCKS). Control-plane access is granted by an
-SG-to-SG reference, not a CIDR.
+<code>:443</code>. <b>Caddy</b> fronts AgentRQ with a real Let's Encrypt certificate for
+<code>&lt;dashed-eip&gt;.sslip.io</code>, so the dashboard is plain HTTPS from the operator's
+<code>/32</code>; <code>connect.sh</code> is the fallback when that address changes.
+Control-plane access is granted by an SG-to-SG reference, not a CIDR.
+</p>
+<p class="sub">
+<b>Three constraints force the run-box path shown below</b>, and only that combination satisfies
+them: <code>Host</code> must equal <code>AGENTRQ_DOMAIN</code> or AgentRQ returns a flat 404;
+the certificate is issued for the public name, so TLS must be spoken to it; and an SG
+<i>reference</i> matches only traffic arriving on a private address — dialling the Elastic IP
+from inside the VPC arrives with the run box's public source address and times out. Hence
+<code>:443</code> to the public hostname, pinned to the control box's <b>private</b> IP in
+<code>/etc/hosts</code>.
 </p>
 
 <pre class="mermaid">
@@ -32,17 +42,18 @@ flowchart LR
   classDef ext fill:#f6eefb,stroke:#8e44ad,stroke-width:1.5px;
   classDef store fill:#fdf0f0,stroke:#c0574f,stroke-width:1.5px;
 
-  operator["Operator laptop<br/><i>OPERATOR_CIDR (/32)</i><br/>make-*-box.sh · connect.sh · teardown-workspace-aws-resources.sh"]:::ext
+  operator["Operator laptop<br/><i>OPERATOR_CIDR + TLS_INGRESS_CIDR (/32)</i><br/>make-new-workspace.sh · make-control-box.sh<br/>provision-/teardown-workspace-aws-resources.sh · connect.sh"]:::ext
 
   subgraph region["AWS region"]
     subgraph vpc["Default VPC"]
-      subgraph controlsg["SG crux-control-sg — :22 from operator /32 · :2026 from crux-run-sg ONLY"]
+      subgraph controlsg["SG crux-control-sg — :22 + :443 from operator /32 · :443 from crux-run-sg · :80 from 0.0.0.0/0 (ACME only) · :2026 from crux-run-sg"]
         subgraph control["EC2 crux-control (persistent, Ubuntu 24.04)"]
-          agentrq["docker: agentrq/agentrq<br/>dashboard · workspaces · task queue · MCP<br/>listens :2026 (private only)"]:::svc
+          caddy["systemd: caddy<br/>:443 TLS termination · :80 ACME + redirect<br/>reverse_proxy → 127.0.0.1:2026<br/><i>passes Host through, so AGENTRQ_DOMAIN matches</i>"]:::svc
+          agentrq["docker: agentrq/agentrq<br/>dashboard · workspaces · task queue · MCP<br/>listens 127.0.0.1:2026 + private-ip:2026<br/><i>routes by Host — 404s any other name</i>"]:::svc
         end
       end
       ebs[("EBS gp3 data volume<br/>crux-control-data → /srv/agentrq<br/>outlives the instance")]:::store
-      subgraph runsg["SG crux-run-sg — :22 from operator /32 (break-glass); egress only"]
+      subgraph runsg["SG crux-run-sg — :22 from operator /32 (break-glass); no other inbound"]
         subgraph run1["EC2 crux-codex-1 … N (ephemeral)"]
           gateway["systemd: crux-acp-gateway<br/>acp-gateway → codex-acp"]:::svc
           codex["codex + tracing plugin<br/>(Langfuse Stop hook, trusted hash)"]:::svc
@@ -63,9 +74,13 @@ flowchart LR
 
   operator -- "SSH :22" --> control
   operator -- "SSH :22 (break-glass)<br/>scp per-run secrets at provision,<br/>deleted on-box after configure" --> run1
-  operator -- "connect.sh: ssh -L / SOCKS → http://ip-…ec2.internal:2026" --> agentrq
+  operator -- "HTTPS :443<br/>https://&lt;dashed-eip&gt;.sslip.io<br/>trusted Let's Encrypt cert" --> caddy
+  operator -- "fallback: connect.sh ssh -L / SOCKS<br/>→ http://&lt;AGENTRQ_DOMAIN&gt;:2026" --> agentrq
+  caddy -- "127.0.0.1:2026" --> agentrq
+  letsencrypt["Let's Encrypt<br/>ACME HTTP-01 — validates from its own<br/>servers, so :80 cannot be narrowed"]:::ext
+  letsencrypt -- ":80 challenge" --> caddy
 
-  gateway -- "VPC-only :2026<br/>poll tasks / MCP<br/>(SG reference, no CIDR)" --> agentrq
+  gateway -- ":443 to the public hostname,<br/>pinned to the PRIVATE ip in /etc/hosts<br/>so the SG reference still applies<br/>(workspace token rides the URL, now under TLS)" --> caddy
   codex --- gateway
   codex -- "HTTPS" --> openai
   codex -- "HTTPS traces" --> langfuse
@@ -86,8 +101,10 @@ flowchart LR
 <tr><td>EC2 instance</td><td><code>crux-control</code> (tag CruxRole=control)</td><td>make-control-box.sh</td><td>Persistent</td></tr>
 <tr><td>EC2 instance</td><td><code>crux-codex-N</code> (tag CruxRole=run)</td><td>provision-workspace-aws-resources.sh</td><td>Ephemeral — teardown-workspace-aws-resources.sh terminates</td></tr>
 <tr><td>EBS gp3 volume</td><td><code>crux-control-data</code> → /srv/agentrq</td><td>make-control-box.sh</td><td>Outlives the instance (control state)</td></tr>
-<tr><td>Security group</td><td><code>crux-control-sg</code> — 22 from /32; 2026 from crux-run-sg</td><td>make-control-box.sh</td><td>Shared, kept on teardown</td></tr>
+<tr><td>Security group</td><td><code>crux-control-sg</code> — 22 + 443 from operator /32; 443 from crux-run-sg; 80 from 0.0.0.0/0; 2026 from crux-run-sg</td><td>make-control-box.sh</td><td>Shared, kept on teardown</td></tr>
 <tr><td>Security group</td><td><code>crux-run-sg</code> — 22 from /32 only</td><td>make-control-box.sh (referenced by run boxes)</td><td>Shared, kept on teardown</td></tr>
+<tr><td>TLS certificate</td><td><code>&lt;dashed-eip&gt;.sslip.io</code> — Let's Encrypt, 90 days</td><td>Caddy on the control box (<code>TLS_ENABLED=1</code>)</td><td>Auto-renewed — <b>requires :80 open to 0.0.0.0/0</b>. Name is tied to the Elastic IP</td></tr>
+<tr><td>AgentRQ workspace</td><td>one per run box, same slug</td><td><code>make-new-workspace.sh</code> (or bootstrap-workspace.sh)</td><td><b>Outlives its box</b> — teardown leaves it, holding a live 365-day MCP token</td></tr>
 <tr><td>Elastic IP</td><td>one per box (stable addr across stop/start)</td><td>both make scripts</td><td>Run-box EIP released by teardown-workspace-aws-resources.sh</td></tr>
 <tr><td>IAM role/profile</td><td><code>crux-control-role</code> / <code>crux-system-role</code> (all run boxes)</td><td>make-control-box.sh / <code>--put-system-secrets</code></td><td>Shared; scoped to one SSM path each; kept on teardown</td></tr>
 <tr><td>SSM parameter</td><td><code>/crux/control/env</code>, <code>/crux/system/env</code> (Langfuse, fleet-wide)</td><td><code>--put-secrets</code> (control) / <code>--put-system-secrets</code> (system)</td><td>Shared, kept on teardown</td></tr>
