@@ -1,4 +1,4 @@
-# `ec2-acp/` — Workspace-level scripts
+# `ec2-workspaces/` — Workspace-level scripts
 
 ## Usage
 

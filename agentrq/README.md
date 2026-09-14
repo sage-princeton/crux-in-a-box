@@ -6,12 +6,12 @@
 
 ### Do next
 
-- [ ] Use Google Cloud for spend for agents, optional
 - [ ] copy the run-harness directory to new boxes / configure similar setup
+- [ ] add Claude support
+- [ ] Use Google Cloud for spend for agents, optional
 
 ### Backlog
 
-- [ ] Add Claude support
 - [ ] set up some basic monitoring / incident reporting to escalate suspicious activity to the team (with a high bar for suspicious)
 - [ ] archive older openclaw architecture (`/linux` directory, parts of `/utils`, etc.)
 - [ ] whitelist other collaorators' IPs
