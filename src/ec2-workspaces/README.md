@@ -117,6 +117,38 @@ These tests exercise the shell entry points and generated config with stubbed
 AWS, SSH, model calls, and root commands. A live dashboard turn and Langfuse
 delivery check are still required when deploying a new box.
 
+### Live Claude verification — September 15, 2026
+
+Provisioned `crux-claude-1` from branch `ae-209-claude-provisioning-live`
+(implementation commits `35cf8f5`, `230d2d7`), using separate Claude base
+files. The workspace is left running:
+[open AgentRQ](https://32-195-122-118.sslip.io/workspaces/0inLNjkTlB3/board),
+or connect with `ssh crux-claude-1`.
+
+- EC2 instance `i-07f050b3722ee1f0d`; workspace `0inLNjkTlB3`.
+- Claude CLI `2.1.272`, Claude ACP `0.77.0`, gateway `0.2.17`;
+  configured model `claude-opus-5`, effort `high`.
+- Provisioning's paid CLI probe answered successfully and processed a new
+  Stop-hook turn. The gateway connected and advertised Claude to AgentRQ.
+- Task `0inLkItagDZ` read a fresh random input, multiplied 17 by 23,
+  calculated SHA-256 of the product plus nonce, wrote `validation/result.json`,
+  read it back, and completed. The operator independently compared the exact
+  JSON against a locally calculated result. AgentRQ recorded the write as
+  `auto_allowed`; no manual tool approval was needed.
+- Automatic Langfuse traces `836f3eac72acf2fa2e4835b9468ae200` and
+  `907407aafb6dae8bc59c9c300971e57d` contain `claude-opus-5` generations,
+  read/write/shell tools, the expected reply, and environment `crux-claude-1`.
+  Ingestion took about two minutes after each hook. A successful hook log
+  means processing finished; allow for ingest delay and verify the trace in
+  Langfuse before diagnosing missing delivery. Diagnostic transcript replays
+  were also performed; the first automatic trace's ingestion timestamp
+  predates those replays.
+- After the task and ACP turn finished, the test gateway was restarted.
+  AgentRQ reconnected and a follow-up wrote `validation/resumed.txt` with
+  the saved digest. The service remained active with zero automatic restarts.
+  Temporary hook diagnostics were removed and the deployed hook's SHA-256
+  matched the repository copy.
+
 ### Teardown a workspace
 
 This will:
