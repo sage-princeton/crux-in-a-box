@@ -109,9 +109,18 @@ permission mechanism: AgentRQ's workspace/task YOLO setting handles it.
 
 ### Local verification
 
+Install Bash, Python 3, jq, and ShellCheck, then run from the repository root:
+
 ```bash
+for script in src/ec2-workspaces/*.sh; do bash -n "$script"; done
+shellcheck -x -e SC2029,SC2088 src/ec2-workspaces/*.sh
 python3 -m unittest discover -s src/ec2-workspaces -p 'test_*.py' -v
 ```
+
+The `Workspace checks` GitHub Actions workflow runs these checks on every PR
+and push to `main`, plus whitespace and secret scans over changed files.
+It can also be run manually. ShellCheck excludes SC2029 (intentional local
+expansion in SSH commands) and SC2088 (quoted remote tilde paths).
 
 These tests exercise the shell entry points and generated config with stubbed
 AWS, SSH, model calls, and root commands. A live dashboard turn and Langfuse
