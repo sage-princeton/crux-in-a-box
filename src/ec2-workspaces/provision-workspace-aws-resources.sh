@@ -439,7 +439,8 @@ done
 
 info "Staging run-harness/ on $SLUG"
 ssh "$SLUG" 'sudo install -d -o ubuntu -g ubuntu /srv/crux-run /srv/crux-run/run-harness'
-scp -q -r "$HARNESS_DIR/." "$SLUG:/srv/crux-run/run-harness/"
+git -C "$SCRIPT_DIR/../.." archive HEAD run-harness \
+  | ssh "$SLUG" 'tar -x -C /srv/crux-run'
 ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before launch"
 
 # ====== INSTALL (software, bakeable) ======
