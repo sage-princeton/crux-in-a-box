@@ -75,6 +75,8 @@ ok "Base config and secrets present; control box '$CONTROL_SLUG'"
 # Validate the selected platform before AWS calls or minting a workspace.
 load_agent_config all
 validate_agent_key "$BASE_SECRETS"
+[ -d "$SCRIPT_DIR/../../run-harness/workspace" ] \
+  || die "run-harness/workspace is missing from the repository checkout."
 AGENT_API_KEY="$(jq -r --arg key "$API_KEY_NAME" '.[$key]' "$BASE_SECRETS")"
 if [ "$AGENT_PLATFORM" = claude ]; then
   [ -f "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" ] \
@@ -142,6 +144,7 @@ if [ "$DRY_RUN" = 1 ]; then
      platform $AGENT_PLATFORM, model $MODEL, effort $EFFORT, dialling ${MCP_BASE:-<private default>}
   3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS") + the minted id/token
   4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
+     and stages run-harness/ at /srv/crux-run/run-harness
 
 Nothing was created — not the workspace either.
 PLAN

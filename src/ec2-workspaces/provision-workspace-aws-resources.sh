@@ -241,6 +241,10 @@ if [ "$HANDSHAKE" = 1 ]; then
   exit $?
 fi
 
+HARNESS_DIR="$SCRIPT_DIR/../../run-harness"
+[ -d "$HARNESS_DIR/workspace" ] \
+  || die "run-harness/workspace is missing from the repository checkout."
+
 if [ "$DRY_RUN" = 1 ]; then
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
@@ -250,6 +254,7 @@ if [ "$DRY_RUN" = 1 ]; then
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
+  harness           run-harness/ -> /srv/crux-run/run-harness (staged for run setup)
   elastic ip        associated to $SLUG      (stable address across stop/start)
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
                                              deleted there after configure
@@ -432,6 +437,11 @@ done
     $PUBLIC_IP first, so this should not happen; verify by hand with
     ssh -v $SLUG"
 
+info "Staging run-harness/ on $SLUG"
+ssh "$SLUG" 'sudo install -d -o ubuntu -g ubuntu /srv/crux-run /srv/crux-run/run-harness'
+scp -q -r "$HARNESS_DIR/." "$SLUG:/srv/crux-run/run-harness/"
+ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before launch"
+
 # ====== INSTALL (software, bakeable) ======
 info "install-run.sh — software"
 scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
@@ -505,6 +515,7 @@ $(ok "Run box ready")
   instance   $INSTANCE_ID ($INSTANCE_TYPE) at $PUBLIC_IP
   ssh        ssh $SLUG
   agent      $AGENT_PLATFORM, $MODEL, effort $EFFORT
+  harness    /srv/crux-run/run-harness (unconfigured scaffold)
   dials      $CONTROL_MCP_BASE
   logs       ssh $SLUG 'journalctl -u crux-acp-gateway -f'
   langfuse   environment=$SLUG
