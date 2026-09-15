@@ -1,3 +1,5 @@
+<!-- FIXME: clean this up, becoming a mess -->
+
 # `ec2-workspaces/` — Workspace-level scripts
 
 ## Usage
@@ -18,10 +20,10 @@ the workspace is minted, so bad credentials cost nothing.
 `placeholders-base.txt` and supply that platform's model and effort. Older
 configs without `AGENT_PLATFORM` retain Codex behavior.
 
-| Platform | Required model | Required effort | Per-run API key |
-|---|---|---|---|
-| `codex` | `CODEX_MODEL` | `CODEX_REASONING_EFFORT`: `minimal`, `low`, `medium`, `high` | `OPENAI_API_KEY` |
-| `claude` | `CLAUDE_MODEL` | `CLAUDE_EFFORT`: `low`, `medium`, `high`, `xhigh`, `max` | `ANTHROPIC_API_KEY` |
+| Platform | Required model | Required effort                                              | Per-run API key     |
+| -------- | -------------- | ------------------------------------------------------------ | ------------------- |
+| `codex`  | `CODEX_MODEL`  | `CODEX_REASONING_EFFORT`: `minimal`, `low`, `medium`, `high` | `OPENAI_API_KEY`    |
+| `claude` | `CLAUDE_MODEL` | `CLAUDE_EFFORT`: `low`, `medium`, `high`, `xhigh`, `max`     | `ANTHROPIC_API_KEY` |
 
 Model and effort have no defaults. Both entry points validate the selected
 platform's settings and version pins before creating resources. To run
