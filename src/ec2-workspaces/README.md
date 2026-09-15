@@ -83,6 +83,15 @@ Langfuse credentials. `configure-run.sh` copies the existing standalone
 tags its tracing environment with the run slug. It does not install the
 Langfuse plugin, whose prompt filtering is unsuitable for AgentRQ.
 
+Both platforms also propagate `workspaceId`, `runSlug`, `agentPlatform`,
+`configuredModel`, and `configuredEffort` as Langfuse metadata, with
+`workspace:<id>`, `run:<slug>`, and `platform:<platform>` tags. These fields
+capture provisioning settings; the generation's native `model` field records
+the model reported by the transcript. `configuredEffort` is the requested
+level, not a measurement of effective thinking or later session changes.
+Native conversation IDs remain Langfuse session IDs. Claude receives the
+metadata through `CC_LANGFUSE_METADATA`; Codex uses its tracing plugin config.
+
 Before starting the gateway, provisioning runs a short paid Claude probe and
 requires both a successful answer and a newly processed tracing-hook turn.
 A failed model/auth call, silent hook, or stale success log fails provisioning.

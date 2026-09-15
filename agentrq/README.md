@@ -131,9 +131,10 @@ Everything lives under `claude/.claude/`, so a fresh clone on an AWS box is
 already wired. Only requirement on the box is `uv`; the hook's PEP 723 header
 resolves the SDK itself, no venv to provision.
 
-- `hooks/langfuse_hook.py` — vendored from the docs. Two changes, both marked
-  `LOCAL` in its docstring: the PEP 723 header, and `STATE_DIR` honouring
-  `CC_LANGFUSE_STATE_DIR`. Re-syncing upstream means re-applying both.
+- `hooks/langfuse_hook.py` — vendored from the docs. Local changes include the
+  PEP 723 header, `STATE_DIR` honouring `CC_LANGFUSE_STATE_DIR`, and propagated
+  `CC_LANGFUSE_METADATA` with workspace/run/platform tags. Re-syncing upstream
+  means re-applying the changes marked `LOCAL` in its docstring.
 - `settings.json` — registers the `Stop` hook via `${CLAUDE_PROJECT_DIR}` and
   points state at `.claude/state/` (gitignored). Checked in; no secrets.
 - `settings.local.json` — keys, gitignored, see `.example`.

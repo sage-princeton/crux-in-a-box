@@ -7,15 +7,17 @@
 Claude Code -> Langfuse hook
 
 Vendored from https://langfuse.com/integrations/developer-tools/claude-code.md
-(the non-plugin "Quick Start" script). Two local changes, both marked LOCAL:
+(the non-plugin "Quick Start" script). Local changes marked LOCAL:
 
   1. PEP 723 header above, so `uv run --script` resolves the SDK with no venv
      to provision. The `>=4.0,<5` pin is upstream's: the script reaches into
      SDK 4.x internals (_otel_tracer, _create_observation_from_otel_span).
   2. STATE_DIR honours CC_LANGFUSE_STATE_DIR, so state stays project-local
      instead of machine-global in ~/.claude/state.
+  3. CC_LANGFUSE_METADATA propagates provisioned workspace/run identifiers
+     and configured model/effort, with matching workspace/run/platform tags.
 
-Re-syncing with upstream means re-applying both.
+Re-syncing with upstream means re-applying these changes.
 """
 
 import json
@@ -536,6 +538,22 @@ def _start_backdated(langfuse: Langfuse, *, name: str, as_type: str,
     )
 
 
+# LOCAL: optional metadata keeps the standalone hook usable outside CRUX.
+def configured_metadata() -> Dict[str, str]:
+    try:
+        metadata = json.loads(os.environ.get("CC_LANGFUSE_METADATA", "{}"))
+        if not isinstance(metadata, dict) or not all(
+            isinstance(key, str) and key.isascii() and key.isalnum()
+            and isinstance(value, str) and len(value) <= 200
+            for key, value in metadata.items()
+        ):
+            raise ValueError("expected alphanumeric keys and string values up to 200 characters")
+        return metadata
+    except (ValueError, TypeError):
+        info("Invalid CC_LANGFUSE_METADATA; tracing without configured metadata")
+        return {}
+
+
 def emit_turn(langfuse: Langfuse, session_id: str, turn_num: int, turn: Turn, transcript_path: Path) -> None:
     user_text_raw = extract_text(get_content(turn.user_msg))
     user_text, user_text_meta = truncate_text(user_text_raw)
@@ -553,10 +571,19 @@ def emit_turn(langfuse: Langfuse, session_id: str, turn_num: int, turn: Turn, tr
             candidate_end_ts.append(t)
     turn_end_ts = max(candidate_end_ts) if candidate_end_ts else None
 
+    # LOCAL: apply the same identifiers to generations and tools, not just the root.
+    metadata = configured_metadata()
+    tags = ["claude-code"] + [
+        f"{prefix}:{metadata[key]}"
+        for prefix, key in (("workspace", "workspaceId"), ("run", "runSlug"),
+                            ("platform", "agentPlatform"))
+        if metadata.get(key)
+    ]
     with propagate_attributes(
         session_id=session_id,
         trace_name=f"Claude Code - Turn {turn_num}",
-        tags=["claude-code"],
+        tags=tags,
+        metadata=metadata,
     ):
         trace_span = _start_backdated(
             langfuse,

@@ -105,6 +105,13 @@ GW_ENV=/etc/crux-run.env
 } > "$GW_ENV"
 chmod 600 "$GW_ENV"
 
+# Provisioning settings are a snapshot; each generation separately records
+# the model reported by the agent transcript.
+TRACE_METADATA="$(jq -cn --arg workspace "$WORKSPACE_ID" --arg slug "$RUN_SLUG" \
+  --arg platform "$AGENT_PLATFORM" --arg model "$MODEL" --arg effort "$EFFORT" \
+  '{workspaceId: $workspace, runSlug: $slug, agentPlatform: $platform,
+    configuredModel: $model, configuredEffort: $effort}')"
+
 if [ "$AGENT_PLATFORM" = codex ]; then
 # ====== CODEX CONFIG ======
 info "codex config"
@@ -116,9 +123,11 @@ mkdir -p "$CODEX_DIR"
 # (fail_on_error defaults false, so nothing surfaces). On a single-purpose box
 # the home-dir location is the correct one.
 jq -n --arg pk "$LANGFUSE_PUBLIC_KEY" --arg sk "$LANGFUSE_SECRET_KEY" \
-      --arg url "$LANGFUSE_BASE_URL" --arg env "$RUN_SLUG" \
+      --arg url "$LANGFUSE_BASE_URL" --arg env "$RUN_SLUG" --argjson metadata "$TRACE_METADATA" \
   '{enabled: true, public_key: $pk, secret_key: $sk, base_url: $url,
-    environment: $env, user_id: $env}' > "$CODEX_DIR/langfuse.json"
+    environment: $env, user_id: $env, metadata: $metadata,
+    tags: [("workspace:" + $metadata.workspaceId), ("run:" + $metadata.runSlug),
+           ("platform:" + $metadata.agentPlatform)]}' > "$CODEX_DIR/langfuse.json"
 chmod 600 "$CODEX_DIR/langfuse.json"
 
 # environment/user_id set from the slug so a trace names the box that made it;
@@ -258,7 +267,7 @@ jq -n --arg model "$MODEL" --arg effort "$EFFORT" \
   --arg key "$AGENT_API_KEY" --arg pk "$LANGFUSE_PUBLIC_KEY" \
   --arg sk "$LANGFUSE_SECRET_KEY" --arg url "$LANGFUSE_BASE_URL" \
   --arg slug "$RUN_SLUG" --arg state "$STATE_DIR" --arg hook "$HOOK_PATH" \
-  --arg uv "$RUN_HOME/.local/bin/uv" \
+  --arg uv "$RUN_HOME/.local/bin/uv" --arg metadata "$TRACE_METADATA" \
   '{
     model: $model,
     env: {
@@ -269,6 +278,7 @@ jq -n --arg model "$MODEL" --arg effort "$EFFORT" \
       LANGFUSE_SECRET_KEY: $sk,
       LANGFUSE_BASE_URL: $url,
       LANGFUSE_TRACING_ENVIRONMENT: $slug,
+      CC_LANGFUSE_METADATA: $metadata,
       CC_LANGFUSE_STATE_DIR: $state
     },
     hooks: {Stop: [{hooks: [{
