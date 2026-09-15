@@ -83,6 +83,15 @@ Langfuse credentials. `configure-run.sh` copies the existing standalone
 tags its tracing environment with the run slug. It does not install the
 Langfuse plugin, whose prompt filtering is unsuitable for AgentRQ.
 
+Both platforms also propagate `workspaceId`, `runSlug`, `agentPlatform`,
+`configuredModel`, and `configuredEffort` as Langfuse metadata, with
+`workspace:<id>`, `run:<slug>`, and `platform:<platform>` tags. These fields
+capture provisioning settings; the generation's native `model` field records
+the model reported by the transcript. `configuredEffort` is the requested
+level, not a measurement of effective thinking or later session changes.
+Native conversation IDs remain Langfuse session IDs. Claude receives the
+metadata through `CC_LANGFUSE_METADATA`; Codex uses its tracing plugin config.
+
 Before starting the gateway, provisioning runs a short paid Claude probe and
 requires both a successful answer and a newly processed tracing-hook turn.
 A failed model/auth call, silent hook, or stale success log fails provisioning.
@@ -158,6 +167,48 @@ or connect with `ssh crux-claude-1`.
   the saved digest. The service remained active with zero automatic restarts.
   Temporary hook diagnostics were removed and the deployed hook's SHA-256
   matched the repository copy.
+
+### Live metadata verification — September 15, 2026
+
+Workspace [crux-trace-effort-1](https://32-195-122-118.sslip.io/workspaces/0inRZtxmwMr/board)
+is running `claude-opus-5` with configured effort `high`. Filter Langfuse by
+environment `crux-trace-effort-1` or tag `workspace:0inRZtxmwMr`.
+
+- Reasoning conversation: trace `d31e90bb49c9815e61079324ac699468`.
+- File write/read/hash conversation: trace `384fd56f15944db05d8034b023d5ef67`.
+- Arithmetic follow-up: trace `68bded4e1631efd03af4775364e5de87`, sharing the
+  first conversation's session ID.
+
+All 26 observations across these turns contain the five configured metadata
+fields. Verification used `/api/public/v2/observations` with the `metadata`
+and `trace_context` field groups; the legacy observations endpoint does not
+include propagated trace metadata in each observation's metadata object.
+The file contents and SHA-256 digest were independently verified.
+
+### Live Codex metadata verification — September 15, 2026
+
+Workspace [crux-codex-trace-1](https://32-195-122-118.sslip.io/workspaces/0inUyGEHB21/board)
+is running source commit `c858e68` with `gpt-6-astra` and configured effort
+`low`. Filter Langfuse by environment `crux-codex-trace-1` or tag
+`workspace:0inUyGEHB21`.
+
+- Reasoning conversation: trace `391b21859d85cbe8f982a4ba49cbd65b`, computing
+  19 × 23 = 437.
+- File write/read/hash conversation: trace `b459c9f5fb888a740fd7988073e6790f`.
+  The exact file bytes and reported SHA-256 digest were independently verified.
+- Arithmetic follow-up: trace `72a489543cb9f71c89d6218ff35f6e8c`, computing
+  437 + 13 = 450 and retaining the first conversation's session ID.
+- The configured metadata reports `agentPlatform: codex`,
+  `configuredModel: gpt-6-astra`, and `configuredEffort: low`; generation
+  observations also report native model `gpt-6-astra`. All five configured
+  fields were verified on the 20 observations in these three traces using
+  Observations API v2.
+
+The workspace is left running on EC2 instance `i-09895f1145385a196`, with an
+active gateway and zero automatic restarts. The account's Elastic IP quota
+was full, so provisioning was resumed with a temporary script using this
+instance's automatic public IP. Its SSH address can change after stop/start;
+the repository provisioner still requires an Elastic IP.
 
 ### Teardown a workspace
 
