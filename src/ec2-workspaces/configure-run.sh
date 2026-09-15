@@ -128,7 +128,7 @@ hooks = true
 [plugins."tracing@codex-observability-plugin"]
 enabled = true
 
-# Pin trusted_hash to authorise the Stop hook on unattended instances.
+# Pin trusted_hash to authorize the Stop hook on unattended instances.
 [hooks.state."tracing@codex-observability-plugin:hooks/hooks.json:stop:0:0"]
 trusted_hash = "$TRACING_HOOK_TRUSTED_HASH"
 enabled = true

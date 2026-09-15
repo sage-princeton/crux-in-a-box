@@ -1,15 +1,26 @@
-# AgentRQ workspaces
+# Agent RQ - crus-in-a-box v3
 
-AgentRQ manages Codex and Claude research workspaces on EC2.
+## Terminology
 
-- A workspace pairs an AgentRQ workspace with an EC2 instance for one run.
-- The controller hosts the dashboard and exchanges messages with workspace
-  agents through the Agent Client Protocol (ACP).
+- **Workspace**: This is a space for a single run. This corresponds to a
+  workspace in the Agent RQ interface and a EC2 box.
+- **Controller**: This is the Agent RQ interface. It's where we send and
+  receive messages to/from agents. Workspaces appear on the controller's
+  dashboard. We can connect to the controller's dashboard via https.
 
-## Setup
+## How it works
 
-1. [Create the controller](ec2-control/README.md).
-2. [Provision a workspace](ec2-workspaces/README.md) with the required
-   platform, model, effort and API key.
+- The interface between the controller and each workspace's box is ACP
+- We abstract out multiple agents; each EC2 instance can have it's own agent
 
-Each workspace can use a different agent and configuration.
+## Usage
+
+### Adding a new workspace
+
+Use `make-new-workspace.sh`. This will set up a workspace on the controller
+and will also provision all required AWS resources.
+Set `AGENT_PLATFORM=codex|claude` and the matching model, effort, and API-key
+settings; see [workspace provisioning](ec2-workspaces/README.md).
+FIXME: consider copying in the run-harness directory here
+
+_(more usage information to be added here)_
