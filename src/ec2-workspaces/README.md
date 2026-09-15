@@ -58,6 +58,10 @@ Copy `run-secrets-claude-base.json.example` to `run-secrets-base.json`, fill in
 ./make-new-workspace.sh crux-claude-1
 ```
 
+To keep a separate Claude base alongside the existing Codex defaults, pass
+`--base-config placeholders-claude-base.txt --base-secrets run-secrets-claude-base.json`.
+Both files follow the same formats above; the default files are left intact.
+
 The dry run performs read-only prerequisite checks. For an already-created
 AgentRQ workspace, use `run-secrets-claude.json.example` with
 `provision-workspace-aws-resources.sh --secrets <file> <config>` instead.

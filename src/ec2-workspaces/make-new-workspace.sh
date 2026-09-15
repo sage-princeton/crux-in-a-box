@@ -40,6 +40,7 @@ set -euo pipefail
 #
 # Usage:
 #   ./make-new-workspace.sh <slug> [--description TEXT] [--dry-run]
+#     [--base-config FILE] [--base-secrets FILE]
 #
 # ==========================================================================
 
@@ -60,6 +61,8 @@ BASE_SECRETS="$SCRIPT_DIR/run-secrets-base.json"
 SLUG=""; DESC=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
+    --base-config) BASE_CONFIG="${2:-}"; [ -n "$BASE_CONFIG" ] || die "--base-config needs a file"; shift 2 ;;
+    --base-secrets) BASE_SECRETS="${2:-}"; [ -n "$BASE_SECRETS" ] || die "--base-secrets needs a file"; shift 2 ;;
     --description) DESC="${2:-}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
     -h|--help)     sed -n '4,44p' "$0"; exit 0 ;;

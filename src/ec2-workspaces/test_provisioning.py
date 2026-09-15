@@ -137,6 +137,21 @@ esac
         self.assertEqual(secrets.stat().st_mode & 0o777, 0o600)
         self.assertNotIn("fixture-key", result.stdout + result.stderr)
 
+    def test_explicit_base_files_leave_codex_defaults_intact(self):
+        self.config("claude", "max")
+        config = self.scripts / "placeholders-claude-base.txt"
+        secrets = self.scripts / "run-secrets-claude-base.json"
+        (self.scripts / "placeholders-base.txt").rename(config)
+        self.secrets.rename(secrets)
+        self.config("codex")
+        original = (self.scripts / "placeholders-base.txt").read_text()
+        result = self.run_script("make-new-workspace.sh", "fresh-box", "--dry-run",
+                                 "--base-config", config, "--base-secrets", secrets)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("platform claude", result.stdout)
+        self.assertIn("effort max", result.stdout)
+        self.assertEqual((self.scripts / "placeholders-base.txt").read_text(), original)
+
     def test_install_selects_only_the_requested_pinned_adapter(self):
         script = self.scripts / "install-run.sh"
         script.write_text(script.read_text().replace('RUN_HOME="/home/$RUN_USER"',
