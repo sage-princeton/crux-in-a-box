@@ -8,6 +8,13 @@
 
 - [ ] copy the run-harness directory to new boxes / configure similar setup
 - [ ] add Claude support
+      Provisioning is codex-only today: `grep -ri claude src/ec2-workspaces/`
+      returns nothing. The model/effort validation carries a `TODO(claude)` at
+      both entry points (`make-new-workspace.sh`,
+      `provision-workspace-aws-resources.sh`) — it needs an `AGENT_PLATFORM`
+      key (codex|claude) in the placeholders picking which config file
+      `configure-run.sh` writes, and a per-platform effort enum, since Claude's
+      thinking levels are not `minimal|low|medium|high`.
 - [ ] Use Google Cloud for spend for agents, optional
 
 ### Backlog
@@ -16,7 +23,6 @@
 - [ ] archive older openclaw architecture (`/linux` directory, parts of `/utils`, etc.)
 - [ ] whitelist other collaorators' IPs
 - [ ] tag langfuse traces somehow with an id / slug / etc.
-- [ ] ensure we can set model types and thinking levels when making new boxes!
 - [ ] reconsider workspace lifecycle: workspaces outlive their boxes
       `teardown-workspace-aws-resources.sh` removes the instance, the Elastic IP and the ssh alias, but
       deliberately never touches the control plane — so a torn-down box leaves
@@ -35,6 +41,17 @@
 
 ### Done
 
+- [x] ensure we can set model types and thinking levels when making new boxes!
+      `CODEX_MODEL` / `CODEX_REASONING_EFFORT` in `placeholders-base.txt`, now
+      **required** rather than defaulted: `make-new-workspace.sh` refuses to
+      mint a workspace unless both are set and the effort is one of
+      `minimal|low|medium|high`, which is checked before the mint so a bad
+      value costs nothing. They were briefly `--model` / `--effort` flags over
+      a default in the base file; the flags are gone, because the common case
+      was forgetting them and getting a box at the default with nothing in the
+      run record saying the choice was never made. The values are copied into
+      `placeholders-<slug>.txt`, so a box's settings stay readable next to the
+      box even after the base file moves on.
 - [x] set up langfuse on codex
       Working. Ingest latency is ~17s; the apparent delay is that the plugin
       only exports at end of turn.

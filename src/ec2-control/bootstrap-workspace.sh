@@ -135,6 +135,7 @@ print(json.dumps({"workspace": {
     "icon": "",
     "selfLearningLoopNote": "",
     "workingDirectory": os.environ["WORKDIR"],
+    "allowAllCommands": True,
 }}))')
 
 resp=$(curl -sS -b "$JAR" -X POST -H 'Content-Type: application/json' \

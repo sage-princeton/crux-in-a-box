@@ -52,6 +52,10 @@ KEY_NAME=crux-acp
 # without a code change: configure-run.sh writes these straight into
 # ~/.codex/config.toml.
 #
+# Both are REQUIRED, here and in placeholders-base.txt, and nothing supplies a
+# default: a box provisioned at an unnoticed default is a run whose settings
+# nobody chose. There are no --model / --effort flags for the same reason.
+#
 # CODEX_REASONING_EFFORT is one of minimal | low | medium | high. Codex
 # rejects an unknown value at startup, and because the gateway is a systemd
 # unit with Restart=always that presents as a crash-loop rather than an error
