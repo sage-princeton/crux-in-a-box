@@ -33,7 +33,7 @@ CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
 
 cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1/p" "$CONFIG_FILE" | head -1; }
 PROFILE="$(cfg AWS_PROFILE)"; REGION="$(cfg AWS_REGION)"; SLUG="$(cfg RUN_SLUG)"
-[ -n "$REGION" ] && [ -n "$SLUG" ] || die "AWS_REGION and RUN_SLUG must be set in $CONFIG_FILE"
+[[ -n "$REGION" && -n "$SLUG" ]] || die "AWS_REGION and RUN_SLUG must be set in $CONFIG_FILE"
 
 if [ -n "$PROFILE" ]; then PROFILE_ARGS=(--profile "$PROFILE"); else PROFILE_ARGS=(); fi
 aws_() { aws "${PROFILE_ARGS[@]}" --region "$REGION" "$@"; }

@@ -1,0 +1,62 @@
+name: Workspace checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: workspace-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provisioning:
+    name: Shell and hygiene checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install check dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Bash syntax
+        run: |
+          for script in src/ec2-workspaces/*.sh; do
+            bash -n "$script"
+          done
+      - name: ShellCheck
+        # SSH commands intentionally expand locally; quoted tildes are remote paths.
+        run: shellcheck -x -e SC2029,SC2088 src/ec2-workspaces/*.sh
+      - name: Changed-file whitespace and secret checks
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+
+          base = os.environ.get("BASE_SHA", "")
+          if not base or set(base) == {"0"}:
+              # Manual runs check the latest commit.
+              base = "HEAD^"
+          subprocess.run(["git", "diff", "--check", base, "HEAD"], check=True)
+          changed = subprocess.check_output([
+              "git", "diff", "--name-only", "--diff-filter=ACMR", "-z", base, "HEAD"
+          ]).decode().split("\0")
+          files = [path for path in changed if path and os.path.isfile(path)]
+          if files:
+              subprocess.run(["python3", "utils/scan-secrets.py", *files], check=True)
+          else:
+              print("No changed files to scan.")
+          PY

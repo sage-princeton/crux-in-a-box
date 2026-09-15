@@ -7,14 +7,6 @@
 ### Do next
 
 - [ ] copy the run-harness directory to new boxes / configure similar setup
-- [ ] add Claude support
-      Provisioning is codex-only today: `grep -ri claude src/ec2-workspaces/`
-      returns nothing. The model/effort validation carries a `TODO(claude)` at
-      both entry points (`make-new-workspace.sh`,
-      `provision-workspace-aws-resources.sh`) — it needs an `AGENT_PLATFORM`
-      key (codex|claude) in the placeholders picking which config file
-      `configure-run.sh` writes, and a per-platform effort enum, since Claude's
-      thinking levels are not `minimal|low|medium|high`.
 - [ ] Use Google Cloud for spend for agents, optional
 
 ### Backlog
@@ -41,6 +33,17 @@
 
 ### Done
 
+- [x] add Claude support
+      Live on `crux-claude-1` (Sept 15): `AGENT_PLATFORM=claude`,
+      `CLAUDE_MODEL=claude-opus-5`, and `CLAUDE_EFFORT=high` select the
+      pinned CLI/ACP adapter, Anthropic key, and standalone Langfuse hook.
+      Both entry points validate platform-specific settings before creating
+      resources; legacy configs remain Codex. A dashboard task executed
+      real read/write/shell tools with
+      AgentRQ YOLO approvals; its output was independently verified and
+      its model/tool traces arrived in Langfuse. A follow-up after an idle
+      gateway restart also passed. See `src/ec2-workspaces/README.md` for
+      configuration and live verification evidence.
 - [x] ensure we can set model types and thinking levels when making new boxes!
       `CODEX_MODEL` / `CODEX_REASONING_EFFORT` in `placeholders-base.txt`, now
       **required** rather than defaulted: `make-new-workspace.sh` refuses to

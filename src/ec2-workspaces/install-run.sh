@@ -9,15 +9,21 @@ set -euo pipefail
 # per-run value. If you find yourself wanting an API key here, it belongs in
 # configure-run.sh instead.
 #
-# Expects in the environment: CODEX_VERSION, CODEX_ACP_VERSION,
-# ACP_GATEWAY_VERSION.
+# Expects AGENT_PLATFORM (defaults to codex), ACP_GATEWAY_VERSION, and
+# CODEX_VERSION / CODEX_ACP_VERSION or CLAUDE_VERSION / CLAUDE_ACP_VERSION.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-: "${CODEX_VERSION:?}" "${CODEX_ACP_VERSION:?}" "${ACP_GATEWAY_VERSION:?}"
+: "${ACP_GATEWAY_VERSION:?}"
+AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
+case "$AGENT_PLATFORM" in
+  codex) : "${CODEX_VERSION:?}" "${CODEX_ACP_VERSION:?}" ;;
+  claude) : "${CLAUDE_VERSION:?}" "${CLAUDE_ACP_VERSION:?}" ;;
+  *) die "AGENT_PLATFORM must be codex|claude." ;;
+esac
 
 RUN_USER=ubuntu
 RUN_HOME="/home/$RUN_USER"
@@ -47,9 +53,9 @@ fi
 
 # ====== NODE ======
 # codex-acp and acp-gateway are both npm packages. NodeSource rather than the
-# Ubuntu archive: 24.04 ships Node 18, and both packages want >=20.
+# Ubuntu archive: Claude's pinned CLI and adapter require Node >=22.
 info "Node.js 22"
-if command -v node >/dev/null 2>&1 && [ "$(node -v | cut -c2- | cut -d. -f1)" -ge 20 ]; then
+if command -v node >/dev/null 2>&1 && [ "$(node -v | cut -c2- | cut -d. -f1)" -ge 22 ]; then
   ok "already present ($(node -v))"
 else
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
@@ -77,6 +83,7 @@ fi
 # version it happens to have, and re-running this script never corrects it.
 # That matters beyond tidiness, because TRACING_HOOK_TRUSTED_HASH is validated
 # against one codex/plugin pairing.
+if [ "$AGENT_PLATFORM" = codex ]; then
 info "codex CLI @$CODEX_VERSION"
 CODEX_HAVE="$(codex --version 2>/dev/null | awk '{print $2}' || true)"
 if [ "$CODEX_HAVE" = "$CODEX_VERSION" ]; then
@@ -91,22 +98,37 @@ else
   ok "codex $CODEX_NOW"
 fi
 
+  AGENT_PACKAGE="@agentclientprotocol/codex-acp"
+  AGENT_VERSION="$CODEX_ACP_VERSION"
+  AGENT_BIN=codex-acp
+  CLI_BIN=codex
+else
+  info "Claude CLI @$CLAUDE_VERSION"
+  CLAUDE_HAVE="$(claude --version 2>/dev/null | awk '{print $1}' || true)"
+  if [ "$CLAUDE_HAVE" != "$CLAUDE_VERSION" ]; then
+    npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}" >/dev/null 2>&1 \
+      || die "Installing the pinned Claude CLI failed."
+  fi
+  CLAUDE_NOW="$(claude --version 2>/dev/null | awk '{print $1}' || true)"
+  [ "$CLAUDE_NOW" = "$CLAUDE_VERSION" ] || die "Claude CLI does not match the requested pin."
+  AGENT_PACKAGE="@agentclientprotocol/claude-agent-acp"
+  AGENT_VERSION="$CLAUDE_ACP_VERSION"
+  AGENT_BIN=claude-agent-acp
+  CLI_BIN=claude
+fi
+
 # ====== PINNED AGENT PACKAGES ======
-# Installed globally at a pinned version rather than left to `npx @latest`:
-# a box built today and one built next week must be the same machine.
-info "codex-acp@$CODEX_ACP_VERSION and acp-gateway@$ACP_GATEWAY_VERSION"
+info "$AGENT_BIN@$AGENT_VERSION and acp-gateway@$ACP_GATEWAY_VERSION"
 npm install -g \
-  "@agentclientprotocol/codex-acp@${CODEX_ACP_VERSION}" \
+  "$AGENT_PACKAGE@$AGENT_VERSION" \
   "@agentrq/acp-gateway@${ACP_GATEWAY_VERSION}" >/dev/null 2>&1 \
   || die "npm install of the pinned agent packages failed"
 ok "installed"
 
 # ====== VERIFY ======
-# Every binary answers before we call this done, so a broken install fails
-# here rather than as a mystery at gateway start.
 info "Verifying"
-for bin in aws node npm codex codex-acp acp-gateway; do
+for bin in aws node npm "$CLI_BIN" "$AGENT_BIN" acp-gateway; do
   command -v "$bin" >/dev/null 2>&1 || die "$bin is not on PATH after install"
 done
-ok "aws, node, npm, codex, codex-acp, acp-gateway all resolve"
+ok "aws, node, npm, $CLI_BIN, $AGENT_BIN, acp-gateway all resolve"
 ok "acp-gateway $(acp-gateway --help 2>&1 | head -1)"
