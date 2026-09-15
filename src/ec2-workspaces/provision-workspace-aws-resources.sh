@@ -77,7 +77,7 @@ while IFS= read -r line || [ -n "$line" ]; do
 done < "$CONFIG_FILE"
 
 cfg() { printf '%s' "${CFG[$1]:-}"; }
-load_agent_config
+load_agent_config all
 
 MISSING=()
 for k in AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE \
@@ -205,7 +205,7 @@ if [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY_RUN" != 1 ]; then
     --query 'Reservations[0].Instances[0].[PrivateDnsName,PrivateIpAddress]' --output text 2>/dev/null || true)"
   CONTROL_LIVE_DNS="$(printf '%s' "$CONTROL_INFO" | awk '{print $1}')"
   CONTROL_PRIVATE_IP="$(printf '%s' "$CONTROL_INFO" | awk '{print $2}')"
-  [ -n "$CONTROL_PRIVATE_IP" ] && [ "$CONTROL_PRIVATE_IP" != "None" ] \
+  [[ -n "$CONTROL_PRIVATE_IP" && "$CONTROL_PRIVATE_IP" != "None" ]] \
     || die "No running instance tagged Name=$CONTROL_NAME. Provision the control box first: ../ec2-control/make-control-box.sh"
   if [ -n "$CONTROL_DNS" ] && [ "$CONTROL_DNS" != "$CONTROL_LIVE_DNS" ]; then
     warn "CONTROL_PRIVATE_DNS in $(basename "$CONFIG_FILE") says $CONTROL_DNS,"
@@ -340,10 +340,10 @@ ok "Present"
 info "Default VPC and subnet"
 VPC_ID="$(aws_ ec2 describe-vpcs --filters Name=isDefault,Values=true \
   --query 'Vpcs[0].VpcId' --output text)"
-[ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ] || die "No default VPC in $REGION"
+[[ "$VPC_ID" != "None" && -n "$VPC_ID" ]] || die "No default VPC in $REGION"
 SUBNET_ID="$(aws_ ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
   "Name=map-public-ip-on-launch,Values=true" --query 'Subnets[0].SubnetId' --output text)"
-[ "$SUBNET_ID" != "None" ] && [ -n "$SUBNET_ID" ] || die "No public subnet in $VPC_ID"
+[[ "$SUBNET_ID" != "None" && -n "$SUBNET_ID" ]] || die "No public subnet in $VPC_ID"
 ok "VPC $VPC_ID, subnet $SUBNET_ID"
 
 # ====== SECURITY GROUP ======
@@ -354,7 +354,7 @@ info "Security group '$RUN_SG'"
 RUN_SG_ID="$(aws_ ec2 describe-security-groups \
   --filters "Name=group-name,Values=$RUN_SG" "Name=vpc-id,Values=$VPC_ID" \
   --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)"
-[ -n "$RUN_SG_ID" ] && [ "$RUN_SG_ID" != "None" ] \
+[[ -n "$RUN_SG_ID" && "$RUN_SG_ID" != "None" ]] \
   || die "$RUN_SG does not exist. Run src/ec2-control/make-control-box.sh first: it creates both SGs, and crux-control-sg's :2026 rule references this one."
 ok "$RUN_SG_ID"
 
@@ -367,7 +367,7 @@ info "Ubuntu 24.04 AMI"
 AMI_ID="$(aws_ ssm get-parameters \
   --names /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
   --query 'Parameters[0].Value' --output text)"
-[ -n "$AMI_ID" ] && [ "$AMI_ID" != "None" ] || die "Could not resolve the Ubuntu 24.04 AMI"
+[[ -n "$AMI_ID" && "$AMI_ID" != "None" ]] || die "Could not resolve the Ubuntu 24.04 AMI"
 ok "AMI $AMI_ID"
 
 # ====== INSTANCE ======

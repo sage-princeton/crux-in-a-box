@@ -112,7 +112,7 @@ MCP_BASE="$(cfg CONTROL_MCP_BASE)"
 ok "Base config and secrets present; control box '$CONTROL_SLUG'"
 
 # Validate the selected platform before AWS calls or minting a workspace.
-load_agent_config
+load_agent_config all
 validate_agent_key "$BASE_SECRETS"
 AGENT_API_KEY="$(jq -r --arg key "$API_KEY_NAME" '.[$key]' "$BASE_SECRETS")"
 if [ "$AGENT_PLATFORM" = claude ]; then
@@ -141,7 +141,7 @@ aws_() { aws "${PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
 # AWS credentials first: expired SSO is the likeliest reason this script is
 # run and fails, and it must not cost a workspace to find out.
 ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text 2>/dev/null || true)"
-[ -n "$ACCOUNT_ID" ] && [ "$ACCOUNT_ID" != "None" ] \
+[[ -n "$ACCOUNT_ID" && "$ACCOUNT_ID" != "None" ]] \
   || die "Not authenticated to AWS with $CRED_DESC. $AUTH_HINT"
 ok "AWS account $ACCOUNT_ID in $REGION via $CRED_DESC"
 
@@ -160,7 +160,7 @@ aws_ iam get-instance-profile --instance-profile-name crux-system-profile >/dev/
   || die "Instance profile crux-system-profile does not exist. --put-system-secrets creates it."
 RUN_SG_ID="$(aws_ ec2 describe-security-groups --filters "Name=group-name,Values=crux-run-sg" \
   --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)"
-[ -n "$RUN_SG_ID" ] && [ "$RUN_SG_ID" != "None" ] \
+[[ -n "$RUN_SG_ID" && "$RUN_SG_ID" != "None" ]] \
   || die "crux-run-sg does not exist. Run ../ec2-control/make-control-box.sh first: it creates both security groups."
 ok "Key pair, /crux/system/env, crux-system-profile and crux-run-sg all present"
 

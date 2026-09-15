@@ -171,8 +171,10 @@ if [ ! -f "$PLUGIN_ENTRY" ]; then
   for attempt in 1 2; do
     [ -f "$PLUGIN_ENTRY" ] && break
     # A half-installed plugin makes `add` a no-op, so clear it before retrying.
-    [ "$attempt" = 2 ] && su - "$RUN_USER" -c \
-      'codex plugin remove tracing@codex-observability-plugin' >/dev/null 2>&1 || true
+    if [ "$attempt" = 2 ]; then
+      su - "$RUN_USER" -c \
+        'codex plugin remove tracing@codex-observability-plugin' >/dev/null 2>&1 || true
+    fi
     su - "$RUN_USER" -c 'codex plugin add tracing@codex-observability-plugin' >/dev/null 2>&1 || true
   done
 
