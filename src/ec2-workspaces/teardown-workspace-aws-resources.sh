@@ -1,18 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==========================================================================
-# teardown-workspace-aws-resources.sh — terminate a run box and remove what it left behind.
-#
-# Only touches things tagged for this slug. It deliberately does NOT remove
-# crux-run-sg, the key pair, crux-system-role/profile or /crux/system/env:
-# those are shared with the control box and other run boxes, and deleting
-# them would break the next launch. There is nothing per-box in SSM or IAM —
-# per-run secrets were scp'd at provision time and deleted on the box after
-# configure, so they die with the instance.
+# Terminate the instance for a slug, release its Elastic IP and remove its SSH alias.
+# Retain the AgentRQ workspace and shared security groups, key pair, IAM and SSM resources.
 #
 # Usage: ./teardown-workspace-aws-resources.sh [CONFIG_FILE] [--yes]
-# ==========================================================================
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
@@ -75,18 +67,14 @@ if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   ok "Terminated (its root volume had DeleteOnTermination=true)"
 fi
 
-# Released AFTER the instance is terminated: an EIP still associated to a live
-# instance is free, but an allocated one that is not associated bills by the
-# hour. Releasing it is the difference between "torn down" and "still paying".
+# Release the Elastic IP after terminating the instance.
 if [ -n "$ALLOC_ID" ] && [ "$ALLOC_ID" != "None" ]; then
   info "Releasing Elastic IP $ALLOC_ID"
   aws_ ec2 release-address --allocation-id "$ALLOC_ID" >/dev/null
   ok "Released"
 fi
 
-# Legacy cleanup: boxes provisioned before the scp-secrets change left a
-# per-run parameter at /crux/run/<slug>/env holding the OpenAI key and the
-# workspace token. Delete it if it is still there; new boxes never create one.
+# Delete /crux/run/<slug>/env if present.
 LEGACY_SSM_PARAM="/crux/run/${SLUG}/env"
 if aws_ ssm get-parameter --name "$LEGACY_SSM_PARAM" >/dev/null 2>&1; then
   aws_ ssm delete-parameter --name "$LEGACY_SSM_PARAM" >/dev/null

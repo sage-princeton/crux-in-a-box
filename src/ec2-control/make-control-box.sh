@@ -1,28 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==========================================================================
-# make-control-box.sh — provision the persistent AgentRQ control plane
-# ==========================================================================
-# Run on your LOCAL machine. Creates (idempotently) the key pair, the two
-# security groups, the instance role, an Elastic IP and a data volume, then
-# launches the control box and hands off to configure-control.sh on the box.
-#
-# Access is HTTPS: Caddy fronts AgentRQ with a real Let's Encrypt certificate
-# and :443 is restricted to TLS_INGRESS_CIDR. There is no tunnel and no second
-# access path — :22 and :443 are gated by the same address, so a changed IP is
-# fixed by reopening the security group, not by falling back to SSH.
+# Provision or update the persistent AgentRQ controller from the local machine.
+# Creates the key pair, security groups, IAM role, Elastic IP and data volume,
+# then runs configure-control.sh on the instance.
 #
 # Usage:
-#   ./make-control-box.sh [CONFIG_FILE]                 # provision
+#   ./make-control-box.sh [CONFIG_FILE]
 #   ./make-control-box.sh --put-secrets <envfile> [CONFIG_FILE]
-#                                                       # upload AgentRQ .env
-#                                                       # to SSM, then exit
-#   ./make-control-box.sh --dry-run [CONFIG_FILE]       # print the plan, touch
-#                                                       # nothing
+#   ./make-control-box.sh --dry-run [CONFIG_FILE]
 #
-# CONFIG_FILE defaults to placeholders-control.txt (see the .example).
-# ==========================================================================
+# CONFIG_FILE defaults to placeholders-control.txt.
+# --put-secrets uploads the AgentRQ environment to SSM and exits.
+# --dry-run prints the plan without creating resources.
+# HTTPS access uses TLS_INGRESS_CIDR; SSH uses OPERATOR_CIDR.
 
 # ====== HELPERS ======
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
@@ -41,7 +32,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --put-secrets) PUT_SECRETS="${2:-}"; [ -n "$PUT_SECRETS" ] || die "--put-secrets needs a file"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
-    -h|--help)     sed -n '3,26p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '4,16p' "$0"; exit 0 ;;
     -*)            die "Unknown flag: $1" ;;
     *)             [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
@@ -82,21 +73,14 @@ INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
 DATA_DISK_GB="${CFG[DATA_DISK_GB]}"
 KEY_NAME="${CFG[KEY_NAME]}"
-# TLS is mandatory: the dashboard is reached over HTTPS and there is no other
-# path in. A config file predating this still works — TLS_ENABLED is simply
-# ignored now, and the remaining TLS_* keys have workable defaults.
+# TLS is required; TLS_ENABLED is ignored.
 TLS_HOSTNAME="${CFG[TLS_HOSTNAME]:-}"
 TLS_EMAIL="${CFG[TLS_EMAIL]:-}"
 TLS_INGRESS_CIDR="${CFG[TLS_INGRESS_CIDR]:-$OPERATOR_CIDR}"
 
-# OPERATOR_CIDR and TLS_INGRESS_CIDR are comma-separated lists, each entry
-# optionally labelled as CIDR=LABEL. The label becomes the rule's Description
-# in AWS, which is the only way `describe-security-groups` can tell you whose
-# address a rule belongs to — without it, a team's rules are anonymous.
-#
-#   OPERATOR_CIDR=203.0.113.10/32=andrew, 198.51.100.7/32=alice
-#
-# Parsed into parallel arrays: CIDR_x[i] with LABEL_x[i].
+# Parse comma-separated CIDR=LABEL entries into CIDR and label arrays.
+# Labels become AWS rule descriptions.
+# Example: OPERATOR_CIDR=203.0.113.10/32=andrew,198.51.100.7/32=alice
 parse_cidr_list() {   # $1 list, $2 array prefix, $3 require /32, $4 key name for errors
   local list="$1" prefix="$2" require32="$3" keyname="$4" entry cidr label i=0
   # shellcheck disable=SC2034
@@ -279,23 +263,16 @@ for i in "${!OP_CIDRS[@]}"; do
   allow_labelled "$RUN_SG_ID"     22 "${OP_CIDRS[$i]}" "${OP_LABELS[$i]}"
   allow_labelled "$CONTROL_SG_ID" 22 "${OP_CIDRS[$i]}" "${OP_LABELS[$i]}"
 done
-# The whole point: AgentRQ's port is reachable from run boxes and nowhere else.
-# An SG reference rather than a CIDR keeps this correct as boxes come and go.
+# Allow AgentRQ access from instances in the workspace security group.
 allow --group-id "$CONTROL_SG_ID" --protocol tcp --port "$AGENTRQ_PORT" \
       --source-group "$RUN_SG_ID"
-# HTTPS, when enabled. :443 is narrow (yours by default), but :80 MUST be open
-# to the world: Let's Encrypt validates the HTTP-01 challenge from its own
-# servers, so a restricted :80 means no certificate now and no renewal in 90
-# days. Caddy answers only the ACME challenge and a redirect there.
+# Restrict HTTPS ingress. Keep port 80 public for HTTP-01 validation and renewal.
 for i in "${!TLS_CIDRS[@]}"; do
   allow_labelled "$CONTROL_SG_ID" 443 "${TLS_CIDRS[$i]}" "${TLS_LABELS[$i]}"
 done
 allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 80 --cidr 0.0.0.0/0
-# Run boxes reach the workspace over :443, not the private :2026. AgentRQ
-# ROUTES BY HOST: any request whose Host is not AGENTRQ_DOMAIN gets a 404, so
-# the private-DNS path cannot work once AGENTRQ_DOMAIN is the public hostname.
-# Dialling the public name is what keeps Host matching — and it means the
-# workspace token, which rides in the URL query string, is not sent in plaintext.
+# Workspace instances use HTTPS with the AGENTRQ_DOMAIN hostname.
+# This preserves Host routing and encrypts workspace tokens.
 allow --group-id "$CONTROL_SG_ID" --protocol tcp --port 443 --source-group "$RUN_SG_ID"
 ok "Ingress set: 22 from ${#OP_CIDRS[@]} operator address(es) [$OP_SUMMARY] on both; 443 from ${#TLS_CIDRS[@]} [$TLS_SUMMARY] and from $RUN_SG; 80 from 0.0.0.0/0 (ACME); $AGENTRQ_PORT on control from $RUN_SG"
 
@@ -374,9 +351,7 @@ aws_ ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 ok "Running"
 
 # ====== DATA VOLUME ======
-# Kept out of the block-device mapping and tagged separately so it can outlive
-# the instance: the control plane's state is the one thing here that is not
-# disposable.
+# Create a separate data volume that persists across controller replacements.
 info "Data volume (${DATA_DISK_GB}GB, for /srv/agentrq)"
 VOL_ID="$(aws_ ec2 describe-volumes \
   --filters "Name=tag:Name,Values=${SLUG}-data" "Name=status,Values=available,in-use" \
@@ -427,18 +402,13 @@ PRIVATE_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)"
 ok "Public $PUBLIC_IP / private $PRIVATE_IP ($PRIVATE_DNS)"
 
-# sslip.io resolves <dashed-ip>.sslip.io to the IP in the name, which is what
-# buys a trusted certificate with no domain and no DNS account. Derived here
-# rather than in the config file because it must track the Elastic IP.
+# Derive the sslip.io hostname from the Elastic IP.
 if [ -z "$TLS_HOSTNAME" ]; then
   TLS_HOSTNAME="${PUBLIC_IP//./-}.sslip.io"
   ok "TLS hostname derived from the Elastic IP: $TLS_HOSTNAME"
 fi
-# Resolve it before asking Caddy to: a name pointing elsewhere burns a
-# Let's Encrypt failure, and those are rate-limited.
-# python3, not getent: getent does not exist on macOS, and this script runs on
-# the operator's laptop. python3 is already required below for the
-# ~/.ssh/config rewrite.
+# Check DNS before requesting a certificate to avoid ACME failure limits.
+# Use Python for compatibility with Linux and macOS.
 RESOLVED="$(python3 -c 'import socket,sys
 try: print(socket.gethostbyname(sys.argv[1]))
 except OSError: pass' "$TLS_HOSTNAME" 2>/dev/null || true)"
@@ -449,8 +419,7 @@ except OSError: pass' "$TLS_HOSTNAME" 2>/dev/null || true)"
 ok "$TLS_HOSTNAME resolves to $PUBLIC_IP"
 
 # ====== SSH CONFIG ENTRY ======
-# The old create-new-crux-box.sh only printed an IP, so aliases were added by
-# hand. bootstrap-workspace.sh and the run-box scripts both expect this alias.
+# Create the SSH alias required by workspace scripts.
 info "~/.ssh/config entry for '$SLUG'"
 SSH_CONFIG="$HOME/.ssh/config"
 touch "$SSH_CONFIG"; chmod 600 "$SSH_CONFIG"
@@ -482,12 +451,8 @@ fi
 
 # ====== WAIT FOR SSH ======
 # ====== STALE HOST KEY ======
-# A replaced instance keeps the same Elastic IP, so ~/.ssh/known_hosts still
-# holds the OLD box's host key for this address. `StrictHostKeyChecking
-# accept-new` does NOT cover that: it auto-accepts UNKNOWN hosts, but a
-# CHANGED key is always refused. The result is that every rebuild fails in the
-# SSH wait below, under BatchMode, so the only symptom is a timeout — which
-# reads as a firewall or a wrong /32 rather than a host key.
+# Remove the cached host key for a replacement instance.
+# StrictHostKeyChecking=accept-new rejects changed keys.
 info "Clearing any stale host key for $PUBLIC_IP"
 ssh-keygen -R "$PUBLIC_IP" >/dev/null 2>&1 || true
 ssh-keygen -R "$SLUG" >/dev/null 2>&1 || true

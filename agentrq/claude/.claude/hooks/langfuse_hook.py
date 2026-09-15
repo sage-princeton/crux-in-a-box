@@ -3,21 +3,13 @@
 # requires-python = ">=3.10"
 # dependencies = ["langfuse>=4.0,<5"]
 # ///
-"""
-Claude Code -> Langfuse hook
+"""Claude Code to Langfuse Stop hook.
 
-Vendored from https://langfuse.com/integrations/developer-tools/claude-code.md
-(the non-plugin "Quick Start" script). Local changes marked LOCAL:
-
-  1. PEP 723 header above, so `uv run --script` resolves the SDK with no venv
-     to provision. The `>=4.0,<5` pin is upstream's: the script reaches into
-     SDK 4.x internals (_otel_tracer, _create_observation_from_otel_span).
-  2. STATE_DIR honours CC_LANGFUSE_STATE_DIR, so state stays project-local
-     instead of machine-global in ~/.claude/state.
-  3. CC_LANGFUSE_METADATA propagates provisioned workspace/run identifiers
-     and configured model/effort, with matching workspace/run/platform tags.
-
-Re-syncing with upstream means re-applying these changes.
+Source: https://langfuse.com/integrations/developer-tools/claude-code.md
+Preserve the LOCAL integration points when updating from upstream:
+- PEP 723 dependencies for uv, pinned to SDK 4.x internals used by this hook.
+- CC_LANGFUSE_STATE_DIR for the state directory.
+- CC_LANGFUSE_METADATA for workspace settings and tags.
 """
 
 import json

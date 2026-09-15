@@ -1,38 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==========================================================================
-# provision-workspace-aws-resources.sh — provision an ephemeral Codex or Claude ACP run box
-# ==========================================================================
-# Run on your LOCAL machine. Launches the box into crux-run-sg (which is what
-# grants it access to the control box's :2026), installs the software, writes
-# the per-run config and starts the ACP gateway.
-#
-# The run box dials the control box. It needs no inbound to do its job; the
-# SSH rule is break-glass only.
-#
-# Secrets travel two ways, deliberately different:
-#   - PER-RUN secrets (provider API key, workspace id/token) are scp'd to the box
-#     at provision time and deleted there once configure-run.sh has written
-#     them where they live. No SSM, no per-box IAM role.
-#   - SYSTEM-WIDE secrets (the Langfuse keys, shared by every box) live in
-#     one SSM parameter, /crux/system/env, read at boot via the shared
-#     crux-system-role. Upload once with --put-system-secrets.
+# Provision a Codex or Claude workspace instance from the local machine.
 #
 # Usage:
-#   ./provision-workspace-aws-resources.sh --secrets <json> [CONFIG_FILE]    # provision
-#   ./provision-workspace-aws-resources.sh --put-system-secrets <json> [CONFIG]
-#                                                       # upload the shared
-#                                                       # Langfuse config, once
-#   ./provision-workspace-aws-resources.sh --dry-run [CONFIG_FILE]           # print plan, touch nothing
-#   ./provision-workspace-aws-resources.sh --handshake [CONFIG_FILE]         # ACP handshake only
+#   ./provision-workspace-aws-resources.sh --secrets <json> [CONFIG_FILE]
+#   ./provision-workspace-aws-resources.sh --put-system-secrets <json> [CONFIG_FILE]
+#   ./provision-workspace-aws-resources.sh --dry-run [CONFIG_FILE]
+#   ./provision-workspace-aws-resources.sh --handshake [CONFIG_FILE]
 #
-# The per-run secrets file is JSON (see run-secrets.json.example):
-#   OPENAI_API_KEY (codex) or ANTHROPIC_API_KEY (claude), plus
-#   AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN
-# The system secrets file is JSON (see run-system-secrets.json.example):
-#   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL
-# ==========================================================================
+# Per-run JSON: provider API key, AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN.
+# It is copied over SSH and deleted on the instance after configuration.
+# Shared JSON: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL.
+# Upload shared credentials to /crux/system/env with --put-system-secrets.
+# Instances read them through crux-system-role.
+# See README.md and the example files for configuration.
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
@@ -50,7 +32,7 @@ while [ $# -gt 0 ]; do
     --put-secrets)        die "--put-secrets is gone: per-run secrets are scp'd now. Use --secrets <json> on the provision run." ;;
     --dry-run)            DRY_RUN=1; shift ;;
     --handshake)          HANDSHAKE=1; shift ;;
-    -h|--help)            sed -n '3,40p' "$0"; exit 0 ;;
+    -h|--help)            sed -n '4,17p' "$0"; exit 0 ;;
     -*)                   die "Unknown flag: $1" ;;
     *)                    [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
@@ -89,27 +71,18 @@ done
 PROFILE="${CFG[AWS_PROFILE]:-}"
 REGION="${CFG[AWS_REGION]}"
 SLUG="${CFG[RUN_SLUG]}"
-# Optional now: authoritative value comes from the running control box below.
-# Kept so an existing config file still parses, and so a stale entry can be
-# reported rather than silently believed.
+# Read the current controller address from AWS; report stale config values.
 CONTROL_DNS="${CFG[CONTROL_PRIVATE_DNS]:-}"
 CONTROL_NAME="${CFG[CONTROL_SSH_ALIAS]:-crux-control}"
-# Where the box dials its workspace. REQUIRED, with no default: the control
-# box always serves HTTPS now, and AgentRQ routes by Host, so the old private
-# http://<dns>:2026 default would 404 every time. A default that cannot work
-# is worse than a missing one — it fails late, on the box, looking like a
-# network fault.
+# Require the controller HTTPS URL; its hostname must match AGENTRQ_DOMAIN.
 CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-}"
 [ -n "$CONTROL_MCP_BASE" ] \
   || die "CONTROL_MCP_BASE is not set in $CONFIG_FILE. It must be the control box's public https base, e.g. https://<dashed-eip>.sslip.io — make-control-box.sh prints it."
 OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
-# Matched to the OpenClaw boxes in linux/create-new-crux-box.sh, whose comment
-# explains why: gp3 defaults are 3000 IOPS / 125 MB/s, and raising them gives
-# the volume headroom while EBS lazily hydrates first-touched blocks from S3
-# (the cold-boot I/O tax). Cheap — the first 3000 IOPS and 125 MB/s are free,
-# only the delta bills.
+# Use the same gp3 throughput and IOPS as the OpenClaw provisioner.
+# Additional capacity supports initial reads while EBS loads snapshot blocks.
 ROOT_IOPS="${CFG[ROOT_IOPS]:-6000}"
 ROOT_THROUGHPUT="${CFG[ROOT_THROUGHPUT]:-250}"
 KEY_NAME="${CFG[KEY_NAME]}"
@@ -188,16 +161,8 @@ ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text)"
 ok "Authenticated to account $ACCOUNT_ID in $REGION using $CRED_DESC"
 
 # ====== WHERE IS THE CONTROL BOX? ======
-# Asked of AWS rather than taken from the config file, because the control
-# box's PRIVATE ip changes every time that box is replaced while its Elastic IP
-# does not — so a hand-maintained CONTROL_PRIVATE_DNS goes stale on exactly the
-# occasions you are least likely to suspect it.
-#
-# The trap this closes: ec2.internal names are PATTERN-BASED. AWS resolves
-# ip-172-31-13-27.ec2.internal to 172.31.13.27 whether or not any instance
-# holds that address, so a stale name resolves happily, the /etc/hosts pin
-# "succeeds", and the run box quietly dials a dead address — surfacing much
-# later as an unreachable-control-box error listing three wrong causes.
+# Look up the controller private IP from AWS. Pattern-based ec2.internal
+# DNS resolution can return an address with no running instance.
 if [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY_RUN" != 1 ]; then
   info "Locating the control box (tag Name=$CONTROL_NAME)"
   CONTROL_INFO="$(aws_ ec2 describe-instances \
@@ -269,8 +234,7 @@ if [ -n "$PUT_SYSTEM_SECRETS" ]; then
 fi
 
 # ====== --handshake: prove ACP works, no AgentRQ involved ======
-# Deliberately separable from the full round trip: this answers "can we speak
-# ACP to codex on that box" without also depending on the VPC path to AgentRQ.
+# Check ACP independently of the AgentRQ network connection.
 if [ "$HANDSHAKE" = 1 ]; then
   info "ACP handshake against $SLUG (no AgentRQ, no workspace)"
   ssh "$SLUG" "cd /srv/crux-run && acp-gateway --agent-info -- $ACP_COMMAND" 2>&1
@@ -300,8 +264,7 @@ PLAN
 fi
 
 # ====== PER-RUN SECRETS FILE (required for a real provision) ======
-# Validated here, before anything billable happens: a placeholder that reaches
-# the box would fail at gateway start, far from its cause.
+# Validate per-run secrets before launching an instance.
 [ -n "$RUN_SECRETS_FILE" ] \
   || die "A provision run needs --secrets <json> (copy run-secrets.json.example). It is scp'd to the box and deleted there after configure."
 [ -f "$RUN_SECRETS_FILE" ] || die "No such file: $RUN_SECRETS_FILE"
@@ -319,8 +282,7 @@ if [ "$AGENT_PLATFORM" = claude ]; then
 fi
 
 # ====== SYSTEM PARAMETER MUST ALREADY EXIST ======
-# Checked before launching anything: configure-run.sh needs it, and failing
-# here costs nothing while failing there leaves a half-configured instance.
+# Require the shared SSM parameter before launching an instance.
 info "System secrets at $SYSTEM_SSM_PARAM"
 aws_ ssm get-parameter --name "$SYSTEM_SSM_PARAM" >/dev/null 2>&1 \
   || die "$SYSTEM_SSM_PARAM does not exist. Upload it once first: ./provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json"
@@ -347,9 +309,7 @@ SUBNET_ID="$(aws_ ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
 ok "VPC $VPC_ID, subnet $SUBNET_ID"
 
 # ====== SECURITY GROUP ======
-# crux-run-sg is created by make-control-box.sh, because crux-control-sg's
-# :2026 rule references it. Requiring it here rather than creating a second
-# one keeps a single SG as the thing that grants control-plane access.
+# Use crux-run-sg, created by make-control-box.sh for controller access.
 info "Security group '$RUN_SG'"
 RUN_SG_ID="$(aws_ ec2 describe-security-groups \
   --filters "Name=group-name,Values=$RUN_SG" "Name=vpc-id,Values=$VPC_ID" \
@@ -399,9 +359,7 @@ aws_ ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 ok "Running"
 
 # ====== ELASTIC IP ======
-# Every box gets a stable address. Without one, a stop/start hands the box a
-# new public IP and silently invalidates the ~/.ssh/config entry — which
-# presents as an SSH hang, not as an obviously wrong address.
+# Allocate a stable public IP for the SSH alias.
 info "Elastic IP"
 ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
   --query 'Addresses[0].AllocationId' --output text)"
@@ -452,12 +410,8 @@ fi
 
 # ====== WAIT FOR SSH ======
 # ====== STALE HOST KEY ======
-# A replaced instance keeps the same Elastic IP, so ~/.ssh/known_hosts still
-# holds the OLD box's host key for this address. `StrictHostKeyChecking
-# accept-new` does NOT cover that: it auto-accepts UNKNOWN hosts, but a
-# CHANGED key is always refused. The result is that every rebuild fails in the
-# SSH wait below, under BatchMode, so the only symptom is a timeout — which
-# reads as a firewall or a wrong /32 rather than a host key.
+# Remove the cached host key for a replacement instance.
+# StrictHostKeyChecking=accept-new rejects changed keys.
 info "Clearing any stale host key for $PUBLIC_IP"
 ssh-keygen -R "$PUBLIC_IP" >/dev/null 2>&1 || true
 ssh-keygen -R "$SLUG" >/dev/null 2>&1 || true
@@ -489,19 +443,9 @@ ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
   /tmp/install-run.sh"
 
 # ====== PRIVATE PATH FOR THE PUBLIC HOSTNAME ======
-# When CONTROL_MCP_BASE is the control box's public https name, the run box
-# must still reach it over the VPC, so the name is pinned to the control box's
-# PRIVATE ip in /etc/hosts.
-#
-# Why this is necessary rather than tidy: a security-group reference only
-# matches traffic arriving on a private address. Dialling the Elastic IP from
-# inside the VPC leaves through the internet gateway and arrives with the run
-# box's PUBLIC source address, which `443 from crux-run-sg` does not match —
-# observed as a flat connection timeout. Pinning keeps the packets internal
-# (so the SG rule applies) while the TLS handshake and the Host header still
-# use the public name, which is what makes the certificate valid and stops
-# AgentRQ's host routing 404ing us. All three constraints are satisfied only
-# by this combination.
+# Resolve the public controller hostname to its private IP. This preserves
+# the TLS hostname and AgentRQ Host routing while using private traffic
+# covered by the security-group reference.
 MCP_HOST="$(printf '%s' "$CONTROL_MCP_BASE" | sed -E 's#^https?://##; s#[:/].*$##')"
 if [ "$MCP_HOST" != "$CONTROL_DNS" ]; then
   info "Pinning $MCP_HOST to the control box's private address on $SLUG"
@@ -516,9 +460,7 @@ if [ "$MCP_HOST" != "$CONTROL_DNS" ]; then
 fi
 
 # ====== REACHABILITY GATE ======
-# Checked before configuring the gateway: if the VPC path is shut, the gateway
-# would come up and fail to reach its workspace, which is a much harder
-# failure to read than this one line.
+# Check controller reachability before starting the gateway.
 info "Can the run box reach the control box at $CONTROL_MCP_BASE?"
 if ssh "$SLUG" "curl -fsS -o /dev/null --max-time 8 '${CONTROL_MCP_BASE}/'" 2>/dev/null; then
   ok "$CONTROL_MCP_BASE answers"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 # Shared preflight for both local entry points. Callers provide cfg KEY and die.
-# Missing AGENT_PLATFORM means codex for configs created before Claude support.
+# An omitted AGENT_PLATFORM selects Codex.
 load_agent_config() {
   AGENT_PLATFORM="$(cfg AGENT_PLATFORM)"
   AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"

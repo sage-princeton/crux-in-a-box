@@ -1,25 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==========================================================================
-# configure-run.sh — runs ON the run box, as root. PER-RUN CONFIG AND
-# SECRETS. Idempotent: safe to re-run after a config change — but a re-run
-# needs the per-run secrets file scp'd again, because this script deletes it
-# once the values are written where they live.
+# Configure a workspace as root. Copy the secrets file again before each run.
 #
-# Deliberately separate from install-run.sh, which is the bakeable half.
+# Per-run secrets arrive at RUN_SECRETS_PATH and are deleted after reading.
+# Shared Langfuse credentials come from SYSTEM_SSM_PARAM via crux-system-role.
 #
-# Secrets arrive two ways:
-#   - per-run (provider API key, workspace id/token): a JSON file at
-#     RUN_SECRETS_PATH, scp'd by provision-workspace-aws-resources.sh, deleted here after use
-#   - system-wide (Langfuse): SSM SYSTEM_SSM_PARAM, read via the shared
-#     crux-system-role
-#
-# Expects in the environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
-# RUN_SLUG, AGENT_PLATFORM, CONTROL_MCP_BASE, and the selected platform's
-# model/effort keys. Codex also needs its tracing version and trust hash.
-# agent-config.sh must be alongside this script; Claude also needs langfuse_hook.py.
-# ==========================================================================
+# Required environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
+# RUN_SLUG, CONTROL_MCP_BASE and the selected platform's model and effort.
+# AGENT_PLATFORM defaults to codex; Codex also requires its tracing pin and hash.
+# Place agent-config.sh beside this script; Claude also requires langfuse_hook.py.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
@@ -117,11 +107,7 @@ if [ "$AGENT_PLATFORM" = codex ]; then
 info "codex config"
 mkdir -p "$CODEX_DIR"
 
-# ~/.codex/langfuse.json, NOT <cwd>/.codex/. The plugin resolves
-# defaults -> ~/.codex/langfuse.json -> <cwd>/.codex/langfuse.json -> env, and
-# a cwd-scoped file silently drops every trace produced from anywhere else
-# (fail_on_error defaults false, so nothing surfaces). On a single-purpose box
-# the home-dir location is the correct one.
+# Use the home-directory tracing config for sessions in any working directory.
 jq -n --arg pk "$LANGFUSE_PUBLIC_KEY" --arg sk "$LANGFUSE_SECRET_KEY" \
       --arg url "$LANGFUSE_BASE_URL" --arg env "$RUN_SLUG" --argjson metadata "$TRACE_METADATA" \
   '{enabled: true, public_key: $pk, secret_key: $sk, base_url: $url,
@@ -130,8 +116,7 @@ jq -n --arg pk "$LANGFUSE_PUBLIC_KEY" --arg sk "$LANGFUSE_SECRET_KEY" \
            ("platform:" + $metadata.agentPlatform)]}' > "$CODEX_DIR/langfuse.json"
 chmod 600 "$CODEX_DIR/langfuse.json"
 
-# environment/user_id set from the slug so a trace names the box that made it;
-# both were empty/"default" on every trace in the local setup.
+# Set the tracing environment and user ID to the run slug.
 cat > "$CODEX_DIR/config.toml" <<TOML
 personality = "pragmatic"
 model = "$CODEX_MODEL"
@@ -143,11 +128,7 @@ hooks = true
 [plugins."tracing@codex-observability-plugin"]
 enabled = true
 
-# trusted_hash is REQUIRED, not decorative. Codex refuses to run a hook it has
-# not been told to trust, and refuses silently — no warning, no trace, a
-# completely normal-looking run. \`enabled = true\` alone is not enough.
-# Interactively a human accepts the hook and codex records this; an unattended
-# box has nobody to click, so the value is pinned in placeholders-run.txt.
+# Pin trusted_hash to authorize the Stop hook on unattended instances.
 [hooks.state."tracing@codex-observability-plugin:hooks/hooks.json:stop:0:0"]
 trusted_hash = "$TRACING_HOOK_TRUSTED_HASH"
 enabled = true
@@ -160,18 +141,11 @@ chown -R "$RUN_USER:$RUN_USER" "$CODEX_DIR"
 ok "Wrote langfuse.json (environment=$RUN_SLUG) and config.toml (model=$CODEX_MODEL, effort=$CODEX_REASONING_EFFORT)"
 
 # ====== OBSERVABILITY PLUGIN ======
-# config.toml above only ENABLES the plugin. Enabling one that was never
-# installed is a SILENT NO-OP: codex starts fine, the run works, and no trace
-# is ever emitted. The plugin must be fetched from its marketplace first.
-# This is what actually produces the Langfuse traces.
+# Install the plugin package before enabling its hooks.
 info "codex observability plugin"
 PLUGIN_ENTRY="$RUN_HOME/.codex/plugins/cache/codex-observability-plugin/tracing/0.3.0/dist/index.mjs"
 
-# CHECK THE ARTIFACT, NOT THE STATUS STRING. `codex plugin list` will happily
-# report "installed, enabled" from config state alone while the npm package
-# was never unpacked — observed on a first run here. In that state codex
-# behaves perfectly and emits no traces at all, so the only trustworthy test
-# is whether the hook file exists on disk.
+# Check that the hook file exists; plugin status can reflect configuration only.
 if [ ! -f "$PLUGIN_ENTRY" ]; then
   su - "$RUN_USER" -c \
     'codex plugin marketplace add https://github.com/langfuse/codex-observability-plugin.git' \
@@ -198,13 +172,7 @@ else
 fi
 
 # ====== CODEX LOGIN ======
-# codex does NOT pick the key up from OPENAI_API_KEY in the environment. It
-# reads ~/.codex/auth.json, and with no auth.json it sends no Authorization
-# header at all — which surfaces as
-#     401 Unauthorized: Missing bearer or basic authentication in header
-# i.e. a message that reads like a revoked key rather than a missing login.
-# The first box in this fleet worked only because a human had run the login by
-# hand; doing it here is what makes a box self-sufficient.
+# Run Codex login to write the API key to ~/.codex/auth.json.
 info "codex login (writes ~/.codex/auth.json)"
 AUTH_JSON="$CODEX_DIR/auth.json"
 if ! printf '%s' "$OPENAI_API_KEY" \
@@ -219,12 +187,7 @@ chmod 600 "$AUTH_JSON"
 ok "$(su "$RUN_USER" -c 'codex login status' 2>&1 | tail -1)"
 
 # ====== PROVE THE HOOK ACTUALLY FIRES ======
-# Every failure in this area has been silent: plugin "installed" but not
-# unpacked, hook present but untrusted. Neither shows up as an error — you
-# just get no traces, and only notice days later when you go looking. So the
-# check is behavioural, not a config inspection: run one real codex turn and
-# require codex to report that it ran the Stop hook.
-# Costs a few cents and ~15s. Worth it — the alternative is an unmonitored run.
+# Run a paid Codex probe and require a Stop-hook event.
 info "Verifying the Stop hook fires (one real codex turn)"
 HOOK_OUT="$(su - "$RUN_USER" -c \
   "cd '$WORK_DIR' && \
@@ -233,9 +196,7 @@ HOOK_OUT="$(su - "$RUN_USER" -c \
 if printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
   ok "Stop hook fired — traces will reach Langfuse as environment=$RUN_SLUG"
 elif printf '%s' "$HOOK_OUT" | grep -qE '401 Unauthorized|Missing bearer|invalid_api_key'; then
-  # Separated from the tracing diagnosis below because the symptom is the same
-  # — no 'hook: Stop' — while the cause is not tracing at all. Reporting a
-  # credential failure as a trusted_hash problem sends you to the wrong file.
+  # Report model or credential failures separately from hook failures.
   printf '\n%s\n' "$HOOK_OUT" | tail -5
   die "The probe turn never reached the model: OpenAI rejected the request (401).
 The hook cannot fire because no turn completed, so this is NOT a tracing fault.
@@ -314,8 +275,7 @@ ok "Claude answered and the standalone Stop hook processed its transcript"
 fi
 
 # ====== GATEWAY SERVICE ======
-# A unit rather than a foreground command so a dropped connection recovers by
-# itself; the run is long-lived and nobody is watching the terminal.
+# Run the gateway as a service with automatic restart.
 info "Installing crux-acp-gateway.service"
 cat > /etc/systemd/system/crux-acp-gateway.service <<UNIT
 [Unit]
@@ -344,9 +304,7 @@ systemctl restart crux-acp-gateway
 ok "Service enabled and started"
 
 # ====== HEALTH ======
-# Confirm it is actually up rather than crash-looping: a unit with
-# Restart=always reports "activating" indefinitely on a failing binary, which
-# reads as success if you only glance at systemctl.
+# Require an active service; repeated restarts can leave it activating.
 info "Checking the gateway stays up"
 sleep 8
 STATE="$(systemctl is-active crux-acp-gateway || true)"
