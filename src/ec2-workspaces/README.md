@@ -168,6 +168,23 @@ or connect with `ssh crux-claude-1`.
   Temporary hook diagnostics were removed and the deployed hook's SHA-256
   matched the repository copy.
 
+### Live metadata verification — September 15, 2026
+
+Workspace [crux-trace-effort-1](https://32-195-122-118.sslip.io/workspaces/0inRZtxmwMr/board)
+is running `claude-opus-5` with configured effort `high`. Filter Langfuse by
+environment `crux-trace-effort-1` or tag `workspace:0inRZtxmwMr`.
+
+- Reasoning conversation: trace `d31e90bb49c9815e61079324ac699468`.
+- File write/read/hash conversation: trace `384fd56f15944db05d8034b023d5ef67`.
+- Arithmetic follow-up: trace `68bded4e1631efd03af4775364e5de87`, sharing the
+  first conversation's session ID.
+
+All 26 observations across these turns contain the five configured metadata
+fields. Verification used `/api/public/v2/observations` with the `metadata`
+and `trace_context` field groups; the legacy observations endpoint does not
+include propagated trace metadata in each observation's metadata object.
+The file contents and SHA-256 digest were independently verified.
+
 ### Teardown a workspace
 
 This will:
