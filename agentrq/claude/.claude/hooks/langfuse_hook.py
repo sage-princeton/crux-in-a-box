@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["langfuse>=4.0,<5"]
+# dependencies = ["langfuse>=4.7.0,<5"]
 # ///
 """Claude Code to Langfuse Stop hook.
 
 Source: https://langfuse.com/integrations/developer-tools/claude-code.md
 Preserve the LOCAL integration points when updating from upstream:
-- PEP 723 dependencies for uv, pinned to SDK 4.x internals used by this hook.
+- PEP 723 dependencies for uv: >=4.7.0 for v4 ingestion, <5 for SDK internals.
 - CC_LANGFUSE_STATE_DIR for the state directory.
 - CC_LANGFUSE_METADATA for workspace settings and tags.
 """
@@ -515,7 +515,7 @@ def _start_backdated(langfuse: Langfuse, *, name: str, as_type: str,
         raise RuntimeError(
             f"Langfuse SDK {sdk_version} is missing _otel_tracer or "
             f"_create_observation_from_otel_span. This hook targets SDK 4.x; "
-            f"pin with `pip install \"langfuse>=4.0,<5\"` or update the hook script."
+            f"pin with `pip install \"langfuse>=4.7.0,<5\"` or update the hook script."
         )
     start_ns = _to_ns(start_time)
     if parent_otel_span is not None:
