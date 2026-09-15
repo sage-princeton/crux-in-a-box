@@ -185,6 +185,31 @@ and `trace_context` field groups; the legacy observations endpoint does not
 include propagated trace metadata in each observation's metadata object.
 The file contents and SHA-256 digest were independently verified.
 
+### Live Codex metadata verification — September 15, 2026
+
+Workspace [crux-codex-trace-1](https://32-195-122-118.sslip.io/workspaces/0inUyGEHB21/board)
+is running source commit `c858e68` with `gpt-6-astra` and configured effort
+`low`. Filter Langfuse by environment `crux-codex-trace-1` or tag
+`workspace:0inUyGEHB21`.
+
+- Reasoning conversation: trace `391b21859d85cbe8f982a4ba49cbd65b`, computing
+  19 × 23 = 437.
+- File write/read/hash conversation: trace `b459c9f5fb888a740fd7988073e6790f`.
+  The exact file bytes and reported SHA-256 digest were independently verified.
+- Arithmetic follow-up: trace `72a489543cb9f71c89d6218ff35f6e8c`, computing
+  437 + 13 = 450 and retaining the first conversation's session ID.
+- The configured metadata reports `agentPlatform: codex`,
+  `configuredModel: gpt-6-astra`, and `configuredEffort: low`; generation
+  observations also report native model `gpt-6-astra`. All five configured
+  fields were verified on the 20 observations in these three traces using
+  Observations API v2.
+
+The workspace is left running on EC2 instance `i-09895f1145385a196`, with an
+active gateway and zero automatic restarts. The account's Elastic IP quota
+was full, so provisioning was resumed with a temporary script using this
+instance's automatic public IP. Its SSH address can change after stop/start;
+the repository provisioner still requires an Elastic IP.
+
 ### Teardown a workspace
 
 This will:
