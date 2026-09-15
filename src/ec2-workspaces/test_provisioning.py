@@ -78,6 +78,7 @@ esac
                               capture_output=True, timeout=15)
 
     def test_entry_points_accept_claude_and_legacy_codex(self):
+        # Both entry points accept platform-specific efforts and Codex configs without a selector.
         for platform, effort in (("claude", "max"), ("claude", "xhigh"),
                                  ("codex", "minimal")):
             with self.subTest(platform=platform, effort=effort):
@@ -92,6 +93,7 @@ esac
                     self.assertIn(effort, result.stdout)
 
     def test_invalid_settings_fail_before_external_calls(self):
+        # Invalid or unsafe settings must fail before any AWS or SSH command runs.
         for platform, effort, extra in (
             ("claude", "minimal", {}), ("codex", "max", {}),
             ("claude", "", {}), ("claude", "high", {"CLAUDE_MODEL": ""}),
@@ -111,6 +113,7 @@ esac
                     self.assertFalse(self.calls.exists(), result.stdout + result.stderr)
 
     def test_wrong_provider_key_fails_before_mint(self):
+        # A Claude workspace requires an Anthropic key and must not expose a rejected key.
         self.config()
         self.secrets.write_text('{"OPENAI_API_KEY":"fixture-wrong-provider"}')
         result = self.run_script("make-new-workspace.sh", "fresh-box")
@@ -120,6 +123,7 @@ esac
         self.assertFalse(self.calls.exists())
 
     def test_mint_preserves_selected_platform_and_secret(self):
+        # Generated files retain the chosen settings and store workspace credentials privately.
         self.config(effort="max")
         bootstrap = self.root / "src/ec2-control/bootstrap-workspace.sh"
         bootstrap.write_text('#!/bin/sh\necho \'{"id":"workspace-test","token":"fixture-token"}\'\n')
@@ -138,6 +142,7 @@ esac
         self.assertNotIn("fixture-key", result.stdout + result.stderr)
 
     def test_explicit_base_files_leave_codex_defaults_intact(self):
+        # Separate Claude base files must work without overwriting the existing Codex defaults.
         self.config("claude", "max")
         config = self.scripts / "placeholders-claude-base.txt"
         secrets = self.scripts / "run-secrets-claude-base.json"
@@ -153,6 +158,7 @@ esac
         self.assertEqual((self.scripts / "placeholders-base.txt").read_text(), original)
 
     def test_install_selects_only_the_requested_pinned_adapter(self):
+        # Each platform installs its pinned ACP adapter alongside the shared pinned gateway.
         script = self.scripts / "install-run.sh"
         script.write_text(script.read_text().replace('RUN_HOME="/home/$RUN_USER"',
                                                    f'RUN_HOME="{self.home}"'))
@@ -180,6 +186,7 @@ esac
                 self.assertNotIn(other, calls)
 
     def test_provision_transfers_claude_config_and_hook(self):
+        # SSH transfers Claude settings and its hook while excluding inactive Codex values.
         config, _ = self.config(CODEX_MODEL="ignored'unsafe")
         bundle = json.loads(self.secrets.read_text()) | {
             "AGENTRQ_WORKSPACE_ID": "workspace-test", "AGENTRQ_WORKSPACE_TOKEN": "fixture-token"}
@@ -265,6 +272,7 @@ esac
         return self.run_script("configure-run.sh", env=env), work, etc
 
     def test_claude_config_secrets_tracing_and_gateway(self):
+        # Claude gets private credentials, tracing, and the correct service after a successful probe.
         result, work, etc = self.configure_box()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         path = self.home / ".claude/settings.json"
@@ -285,6 +293,7 @@ esac
         self.assertFalse(self.secrets.exists())
 
     def test_legacy_codex_config_and_gateway_still_work(self):
+        # Legacy Codex provisioning keeps its model and adapter without creating Claude config.
         result, _, etc = self.configure_box("codex")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('model = "gpt-5.5"', (self.home / ".codex/config.toml").read_text())
@@ -292,12 +301,14 @@ esac
         self.assertFalse((self.home / ".claude").exists())
 
     def test_stale_hook_success_cannot_start_gateway(self):
+        # An old successful hook log cannot substitute for tracing the current probe.
         result, _, etc = self.configure_box(probe="stale")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("did not process", result.stderr)
         self.assertFalse((etc / "systemd/system/crux-acp-gateway.service").exists())
 
     def test_failed_claude_probe_cannot_start_gateway(self):
+        # A failed model probe must stop provisioning before the gateway service is installed.
         result, _, etc = self.configure_box(probe="fail")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Claude probe failed", result.stderr)
