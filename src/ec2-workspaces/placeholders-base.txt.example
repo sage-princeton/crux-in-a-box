@@ -8,7 +8,7 @@
 # DO NOT set RUN_SLUG here: the script refuses a base file that does, because
 # it would outrank the per-box value and point the box at the wrong workspace.
 #
-# No secrets belong in this file. The OpenAI key goes in run-secrets-base.json;
+# No secrets belong here. The selected provider key goes in run-secrets-base.json;
 # the fleet-wide Langfuse keys go to SSM /crux/system/env once, via
 # `provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json`.
 
@@ -60,6 +60,17 @@ KEY_NAME=crux-acp
 # Restart=always that presents as a crash-loop rather than an error message —
 # so make-new-workspace.sh and provision-workspace-aws-resources.sh both
 # validate it before launching anything.
+# Platform selector. Omit only for legacy Codex configs.
+AGENT_PLATFORM=codex
+
+# For Claude, set AGENT_PLATFORM=claude and fill in these instead of CODEX_*:
+# CLAUDE_MODEL=<explicit-model-id>
+# CLAUDE_EFFORT=high
+# Claude effort: low | medium | high | xhigh | max.
+# Model support for effort levels varies; the probe checks model availability.
+CLAUDE_VERSION=2.1.272
+CLAUDE_ACP_VERSION=0.77.0
+
 CODEX_MODEL=
 CODEX_REASONING_EFFORT=
 

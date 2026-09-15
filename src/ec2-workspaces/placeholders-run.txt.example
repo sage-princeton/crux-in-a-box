@@ -1,6 +1,6 @@
 # Config for provision-workspace-aws-resources.sh — copy to placeholders-run.txt and fill in.
 # placeholders-run.txt is gitignored. No secrets belong in THIS file: the
-# OpenAI key and workspace token go in run-secrets-<slug>.json (scp'd to the
+# provider API key and workspace token go in run-secrets-<slug>.json (scp'd to the
 # box by `provision-workspace-aws-resources.sh --secrets <file>`, deleted there after configure);
 # the fleet-wide Langfuse keys go to SSM /crux/system/env once, via
 # `provision-workspace-aws-resources.sh --put-system-secrets run-system-secrets.json`.
@@ -20,9 +20,8 @@ RUN_SLUG=crux-codex-1
 # group rule. make-control-box.sh prints this.
 CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal
 
-# Where the box dials its workspace. Leave EMPTY for the private
-# http://<CONTROL_PRIVATE_DNS>:2026 path, which is right for a plain-HTTP
-# control box.
+# Where the box dials its workspace. REQUIRED: use the control box's
+# public HTTPS hostname; provisioning pins it to the control box's private IP.
 #
 # If the control box has HTTPS on (TLS_ENABLED=1), this MUST be its public
 # https base — e.g. https://32-195-122-118.sslip.io. AgentRQ ROUTES BY HOST:
@@ -30,7 +29,7 @@ CONTROL_PRIVATE_DNS=ip-172-31-13-27.ec2.internal
 # private name gets a flat 404 with nothing in the logs to explain it. Dialling
 # the public name also stops the workspace token, which rides in the URL query
 # string, from crossing the VPC in plaintext.
-CONTROL_MCP_BASE=
+CONTROL_MCP_BASE=https://<dashed-eip>.sslip.io
 
 # Break-glass SSH. Same comma-separated, optionally labelled form as the
 # control box (CIDR=LABEL, every entry a /32) — though the rules themselves are
@@ -60,6 +59,17 @@ KEY_NAME=crux-acp
 # rejects an unknown value at startup, and because the gateway is a systemd
 # unit with Restart=always that presents as a crash-loop rather than an error
 # message — so provision-workspace-aws-resources.sh validates it before launching anything.
+# Platform selector. Omit only for legacy Codex configs.
+AGENT_PLATFORM=codex
+
+# For Claude, set AGENT_PLATFORM=claude and fill in these instead of CODEX_*:
+# CLAUDE_MODEL=<explicit-model-id>
+# CLAUDE_EFFORT=high
+# Claude effort: low | medium | high | xhigh | max.
+# Model support for effort levels varies; the probe checks model availability.
+CLAUDE_VERSION=2.1.272
+CLAUDE_ACP_VERSION=0.77.0
+
 CODEX_MODEL=gpt-5.5
 CODEX_REASONING_EFFORT=high
 

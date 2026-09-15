@@ -10,14 +10,15 @@ set -euo pipefail
 # Deliberately separate from install-run.sh, which is the bakeable half.
 #
 # Secrets arrive two ways:
-#   - per-run (OpenAI key, workspace id/token): a JSON file at
+#   - per-run (provider API key, workspace id/token): a JSON file at
 #     RUN_SECRETS_PATH, scp'd by provision-workspace-aws-resources.sh, deleted here after use
 #   - system-wide (Langfuse): SSM SYSTEM_SSM_PARAM, read via the shared
 #     crux-system-role
 #
 # Expects in the environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
-# RUN_SLUG, CODEX_MODEL, CODEX_REASONING_EFFORT, CONTROL_MCP_BASE,
-# TRACING_PLUGIN_VERSION, TRACING_HOOK_TRUSTED_HASH.
+# RUN_SLUG, AGENT_PLATFORM, CONTROL_MCP_BASE, and the selected platform's
+# model/effort keys. Codex also needs its tracing version and trust hash.
+# agent-config.sh must be alongside this script; Claude also needs langfuse_hook.py.
 # ==========================================================================
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
@@ -25,9 +26,19 @@ ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 : "${AWS_REGION:?}" "${RUN_SECRETS_PATH:?}" "${SYSTEM_SSM_PARAM:?}" \
-  "${RUN_SLUG:?}" "${CODEX_MODEL:?}" "${CODEX_REASONING_EFFORT:?}" \
-  "${CONTROL_MCP_BASE:?}" \
-  "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
+  "${RUN_SLUG:?}" "${CONTROL_MCP_BASE:?}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=src/ec2-workspaces/agent-config.sh
+source "$SCRIPT_DIR/agent-config.sh"
+cfg() { local key="$1"; printf '%s' "${!key:-}"; }
+load_agent_config settings
+if [ "$AGENT_PLATFORM" = codex ]; then
+  : "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
+else
+  [ -f "$SCRIPT_DIR/langfuse_hook.py" ] || die "Claude Langfuse hook was not copied alongside configure-run.sh."
+fi
+# Every config/credential file starts private, including during its creation.
+umask 077
 
 RUN_USER=ubuntu
 RUN_HOME="/home/$RUN_USER"
@@ -45,7 +56,9 @@ SECRETS="$(cat "$RUN_SECRETS_PATH")"
 
 get() { printf '%s' "$SECRETS" | jq -re --arg k "$1" '.[$k] // empty'; }
 
-OPENAI_API_KEY="$(get OPENAI_API_KEY)"      || die "OPENAI_API_KEY missing from $RUN_SECRETS_PATH"
+validate_agent_key "$RUN_SECRETS_PATH"
+AGENT_API_KEY="$(get "$API_KEY_NAME")" || die "$API_KEY_NAME missing from $RUN_SECRETS_PATH"
+OPENAI_API_KEY="$AGENT_API_KEY"  # Used only by the Codex branch below.
 WORKSPACE_ID="$(get AGENTRQ_WORKSPACE_ID)"  || die "AGENTRQ_WORKSPACE_ID missing from $RUN_SECRETS_PATH"
 WORKSPACE_TOKEN="$(get AGENTRQ_WORKSPACE_TOKEN)" || die "AGENTRQ_WORKSPACE_TOKEN missing from $RUN_SECRETS_PATH"
 rm -f "$RUN_SECRETS_PATH"
@@ -80,6 +93,19 @@ chown -R "$RUN_USER:$RUN_USER" "$WORK_DIR"
 chmod 600 "$WORK_DIR/.mcp.json"
 ok "Wrote .mcp.json -> ${CONTROL_MCP_BASE}/mcp/${WORKSPACE_ID}?token=<redacted> (mode 600)"
 
+# ====== GATEWAY ENVIRONMENT ======
+# systemd reads this root-only file; credential values are quoted, not shell code.
+GW_ENV=/etc/crux-run.env
+{
+  jq -nr --arg key "$API_KEY_NAME" --arg value "$AGENT_API_KEY" '$key + "=" + ($value | @json)'
+  printf 'PATH=%s/.local/bin:/usr/local/bin:/usr/bin:/bin\nHOME=%s\n' "$RUN_HOME" "$RUN_HOME"
+  if [ "$AGENT_PLATFORM" = claude ]; then
+    printf 'CLAUDE_CODE_EXECUTABLE=/usr/bin/claude\n'
+  fi
+} > "$GW_ENV"
+chmod 600 "$GW_ENV"
+
+if [ "$AGENT_PLATFORM" = codex ]; then
 # ====== CODEX CONFIG ======
 info "codex config"
 mkdir -p "$CODEX_DIR"
@@ -190,7 +216,7 @@ ok "$(su "$RUN_USER" -c 'codex login status' 2>&1 | tail -1)"
 # Costs a few cents and ~15s. Worth it — the alternative is an unmonitored run.
 info "Verifying the Stop hook fires (one real codex turn)"
 HOOK_OUT="$(su - "$RUN_USER" -c \
-  "cd '$WORK_DIR' && export OPENAI_API_KEY='$OPENAI_API_KEY' && \
+  "cd '$WORK_DIR' && \
    timeout 180 codex exec --skip-git-repo-check 'Say exactly: HOOK-PROBE' </dev/null 2>&1" || true)"
 
 if printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
@@ -217,18 +243,63 @@ Compare against a machine where tracing works:
     grep -A3 'hooks.state' ~/.codex/config.toml"
 fi
 
-# ====== GATEWAY ENVIRONMENT ======
-# Root-only file rather than inline Environment= lines: systemd unit contents
-# are world-readable via `systemctl cat`, and this holds the OpenAI key.
-info "Gateway environment file"
-GW_ENV=/etc/crux-run.env
-cat > "$GW_ENV" <<ENV
-OPENAI_API_KEY=${OPENAI_API_KEY}
-PATH=${RUN_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin
-HOME=${RUN_HOME}
-ENV
-chmod 600 "$GW_ENV"
-ok "Wrote $GW_ENV (mode 600, root only)"
+else
+# ====== CLAUDE CONFIG AND STANDALONE TRACING ======
+# The adapter loads user settings. Keep the same explicit model/effort for
+# both its SDK process and the CLI probe, including max via the env setting.
+CLAUDE_DIR="$RUN_HOME/.claude"
+HOOK_PATH="$CLAUDE_DIR/hooks/langfuse_hook.py"
+STATE_DIR="$WORK_DIR/.claude/state"
+mkdir -p "$CLAUDE_DIR/hooks" "$STATE_DIR"
+cp "$SCRIPT_DIR/langfuse_hook.py" "$HOOK_PATH"
+jq -n --arg model "$MODEL" --arg effort "$EFFORT" \
+  --arg key "$AGENT_API_KEY" --arg pk "$LANGFUSE_PUBLIC_KEY" \
+  --arg sk "$LANGFUSE_SECRET_KEY" --arg url "$LANGFUSE_BASE_URL" \
+  --arg slug "$RUN_SLUG" --arg state "$STATE_DIR" --arg hook "$HOOK_PATH" \
+  --arg uv "$RUN_HOME/.local/bin/uv" \
+  '{
+    model: $model,
+    env: {
+      ANTHROPIC_API_KEY: $key,
+      CLAUDE_CODE_EFFORT_LEVEL: $effort,
+      TRACE_TO_LANGFUSE: "true",
+      LANGFUSE_PUBLIC_KEY: $pk,
+      LANGFUSE_SECRET_KEY: $sk,
+      LANGFUSE_BASE_URL: $url,
+      LANGFUSE_TRACING_ENVIRONMENT: $slug,
+      CC_LANGFUSE_STATE_DIR: $state
+    },
+    hooks: {Stop: [{hooks: [{
+      type: "command",
+      command: (($uv | @sh) + " run --quiet --script " + ($hook | @sh)),
+      timeout: 120
+    }]}]}
+  }' > "$CLAUDE_DIR/settings.json"
+# No Langfuse plugin: its isMeta filter drops AgentRQ prompts. The standalone
+# hook is the same vendored implementation used by agentrq/claude/.
+chmod 600 "$CLAUDE_DIR/settings.json"
+chown -R "$RUN_USER:$RUN_USER" "$CLAUDE_DIR" "$WORK_DIR/.claude"
+ok "Wrote Claude settings (model=$MODEL, effort=$EFFORT) and standalone Stop hook"
+
+# Provisioning must fail when the model cannot answer or the hook cannot
+# process a transcript. Inspect only new hook log bytes, never a stale success.
+HOOK_LOG="$STATE_DIR/langfuse_hook.log"
+HOOK_OFFSET=0
+[ ! -f "$HOOK_LOG" ] || HOOK_OFFSET="$(wc -c < "$HOOK_LOG")"
+info "Verifying Claude and its Stop hook (one real Claude turn)"
+if ! HOOK_OUT="$(su - "$RUN_USER" -c \
+  "cd '$WORK_DIR' && timeout 180 claude -p --output-format json --max-turns 1 'Say exactly: HOOK-PROBE' </dev/null" 2>/dev/null)"; then
+  die "Claude probe failed. Check the selected model and ANTHROPIC_API_KEY; gateway was not started."
+fi
+printf '%s' "$HOOK_OUT" | jq -e '.is_error == false and (.result | contains("HOOK-PROBE"))' >/dev/null \
+  || die "Claude probe did not return a successful result; gateway was not started."
+HOOK_NEW="$(tail -c "+$((HOOK_OFFSET + 1))" "$HOOK_LOG" 2>/dev/null || true)"
+if ! printf '%s' "$HOOK_NEW" | grep -qE 'Processed [1-9][0-9]* turns' \
+   || printf '%s' "$HOOK_NEW" | grep -q 'emit_turn failed'; then
+  die "Claude answered but its Langfuse hook did not process the turn. Inspect $HOOK_LOG; gateway was not started."
+fi
+ok "Claude answered and the standalone Stop hook processed its transcript"
+fi
 
 # ====== GATEWAY SERVICE ======
 # A unit rather than a foreground command so a dropped connection recovers by
@@ -236,7 +307,7 @@ ok "Wrote $GW_ENV (mode 600, root only)"
 info "Installing crux-acp-gateway.service"
 cat > /etc/systemd/system/crux-acp-gateway.service <<UNIT
 [Unit]
-Description=CRUX ACP gateway (codex -> AgentRQ)
+Description=CRUX ACP gateway ($AGENT_PLATFORM -> AgentRQ)
 After=network-online.target
 Wants=network-online.target
 
@@ -245,7 +316,7 @@ Type=simple
 User=${RUN_USER}
 WorkingDirectory=${WORK_DIR}
 EnvironmentFile=${GW_ENV}
-ExecStart=/usr/bin/acp-gateway -- codex-acp
+ExecStart=/usr/bin/acp-gateway -- $ACP_COMMAND
 Restart=always
 RestartSec=10
 StandardOutput=journal

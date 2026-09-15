@@ -17,18 +17,18 @@ set -euo pipefail
 #   placeholders-base.txt     the shared knobs — control box, key pair, pinned
 #                             versions, model and effort. NO RUN_SLUG: that is
 #                             what this script fills in per box.
-#   run-secrets-base.json     {"OPENAI_API_KEY": "sk-..."} and nothing else.
+#   run-secrets-base.json     OPENAI_API_KEY (codex) or ANTHROPIC_API_KEY (claude).
 #                             The workspace id/token are minted per box, so
 #                             the key is the only per-box secret you supply.
 #
 # FIXME: pass in the placeholders and secrets as arguments here
 #
-# The OpenAI key stays a per-box secret in the three-tier sense — still scp'd
+# The provider API key stays a per-box secret in the three-tier sense — still scp'd
 # at launch and deleted on the box — it is just sourced from one local file
 # instead of being retyped into a new one every time.
 #
-# WHAT THE AGENT RUNS AS is config, not a flag. CODEX_MODEL and
-# CODEX_REASONING_EFFORT must both be set in placeholders-base.txt, and this
+# WHAT THE AGENT RUNS AS is config, not a flag. The selected platform's model
+# and effort must both be set in placeholders-base.txt, and this
 # script refuses to mint a box without them. They used to be `--model` /
 # `--effort` over a base-file default, which meant the common case — forgetting
 # the flags — produced a box at whatever the default happened to be, and
@@ -50,6 +50,8 @@ die()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTROL_DIR="$(cd "$SCRIPT_DIR/../ec2-control" && pwd)"
+# shellcheck source=src/ec2-workspaces/agent-config.sh
+source "$SCRIPT_DIR/agent-config.sh"
 
 BASE_CONFIG="$SCRIPT_DIR/placeholders-base.txt"
 BASE_SECRETS="$SCRIPT_DIR/run-secrets-base.json"
@@ -65,7 +67,7 @@ while [ $# -gt 0 ]; do
     # unknown-flag arm: an old command line must say why it stopped working,
     # not just that it did.
     --model|--effort)
-      die "$1 is no longer a flag. Set CODEX_MODEL and CODEX_REASONING_EFFORT in $(basename "$SCRIPT_DIR")/placeholders-base.txt instead — what a box runs as is config, so it lives with the rest of the box's config." ;;
+      die "$1 is no longer a flag. Set AGENT_PLATFORM and its model/effort keys in $(basename "$SCRIPT_DIR")/placeholders-base.txt instead — what a box runs as is config, so it lives with the rest of the box's config." ;;
     -*)            die "Unknown flag: $1" ;;
     *)             [ -z "$SLUG" ] || die "Only one slug"; SLUG="$1"; shift ;;
   esac
@@ -92,11 +94,8 @@ for b in jq ssh python3 aws curl; do command -v "$b" >/dev/null || die "$b not f
 [ -f "$BASE_CONFIG" ] \
   || die "$BASE_CONFIG not found. Copy placeholders-base.txt.example and fill in the shared values (control box, key pair, versions)."
 [ -f "$BASE_SECRETS" ] \
-  || die "$BASE_SECRETS not found. Create it: printf '{\"OPENAI_API_KEY\":\"sk-...\"}' > $BASE_SECRETS && chmod 600 $BASE_SECRETS"
+  || die "$BASE_SECRETS not found. Copy the selected platform's secrets example and fill in its API key."
 jq -e . "$BASE_SECRETS" >/dev/null 2>&1 || die "$BASE_SECRETS is not valid JSON"
-OPENAI_KEY="$(jq -re '.OPENAI_API_KEY // empty' "$BASE_SECRETS")" \
-  || die "$BASE_SECRETS has no OPENAI_API_KEY"
-case "$OPENAI_KEY" in *CHANGE*|*REPLACE*|*xxx*|"") die "OPENAI_API_KEY in $BASE_SECRETS still looks like a placeholder" ;; esac
 
 # A base config carrying RUN_SLUG would silently win over the one written here
 # on some edits, and the resulting box would answer to the wrong workspace.
@@ -104,43 +103,20 @@ if grep -qE '^[[:space:]]*RUN_SLUG[[:space:]]*=[[:space:]]*[^[:space:]#]' "$BASE
   die "$BASE_CONFIG sets RUN_SLUG. Remove it — make-new-workspace.sh sets it per box."
 fi
 
-cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1/p" "$BASE_CONFIG" | head -1; }
+cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*(.*)/\1/p" "$BASE_CONFIG" | sed -e 's/#.*//' -e 's/[[:space:]]*$//' | tail -1; }
 CONTROL_SLUG="$(cfg CONTROL_SSH_ALIAS)"; CONTROL_SLUG="${CONTROL_SLUG:-crux-control}"
 MCP_BASE="$(cfg CONTROL_MCP_BASE)"
 ok "Base config and secrets present; control box '$CONTROL_SLUG'"
 
-# What the agent runs as: required, with no default anywhere in the chain.
-# provision-workspace-aws-resources.sh requires both too, but its preflight
-# runs after the workspace exists — checking here is the difference between a
-# clean refusal and an orphaned workspace holding a live 365-day token.
-MODEL="$(cfg CODEX_MODEL)"
-EFFORT="$(cfg CODEX_REASONING_EFFORT)"
-for _pair in "CODEX_MODEL=$MODEL" "CODEX_REASONING_EFFORT=$EFFORT"; do
-  _k="${_pair%%=*}"; _v="${_pair#*=}"
-  [ -n "$_v" ] \
-    || die "$_k is not set in $(basename "$BASE_CONFIG"). Every box must state what it runs as — there is no default, because a box provisioned at an unnoticed default is a run whose settings nobody chose."
-  case "$_v" in
-    *CHANGE*|*REPLACE*|*'<'*) die "$_k in $(basename "$BASE_CONFIG") still looks like a placeholder ('$_v')." ;;
-  esac
-done
-# Same enum provision-workspace-aws-resources.sh enforces: codex rejects an
-# unknown effort at startup, and under Restart=always that surfaces as a
-# gateway crash-loop rather than a legible error.
-#
-# TODO(claude): this validation is codex-only — the keys are CODEX_*, the enum
-# is codex's, and configure-run.sh writes them to ~/.codex/config.toml. Adding
-# Claude (backlog item in agentrq/README.md) is not a rename: it needs an
-# AGENT_PLATFORM key (codex|claude) in the placeholders choosing which config
-# file gets written, and this enum becoming per-platform — Claude's thinking
-# levels are not minimal|low|medium|high, so one shared `case` would either
-# reject a valid Claude value or wave through an invalid codex one. Keep the
-# fail-before-mint position: whatever the platform, an unsettable value must
-# still cost nothing.
-case "$EFFORT" in
-  minimal|low|medium|high) ;;
-  *) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$EFFORT' in $(basename "$BASE_CONFIG"))." ;;
-esac
-ok "Agent settings: model $MODEL, reasoning effort $EFFORT"
+# Validate the selected platform before AWS calls or minting a workspace.
+load_agent_config
+validate_agent_key "$BASE_SECRETS"
+AGENT_API_KEY="$(jq -r --arg key "$API_KEY_NAME" '.[$key]' "$BASE_SECRETS")"
+if [ "$AGENT_PLATFORM" = claude ]; then
+  [ -f "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" ] \
+    || die "The vendored Claude Langfuse hook is missing."
+fi
+ok "Agent settings: $AGENT_PLATFORM, model $MODEL, effort $EFFORT"
 
 # Existing artefacts are never silently reused: a stale token or a stale slug
 # in one of these is a box that comes up healthy and talks to the wrong place.
@@ -203,8 +179,8 @@ if [ "$DRY_RUN" = 1 ]; then
 [dry-run] Would, for slug '$SLUG':
   1. create AgentRQ workspace '$SLUG' on $CONTROL_SLUG (workingDirectory /srv/crux-run)
   2. write $CONFIG           from $(basename "$BASE_CONFIG")
-     model $MODEL, effort $EFFORT, dialling ${MCP_BASE:-<private default>}
-  3. write $SECRETS   OpenAI key from $(basename "$BASE_SECRETS") + the minted id/token
+     platform $AGENT_PLATFORM, model $MODEL, effort $EFFORT, dialling ${MCP_BASE:-<private default>}
+  3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS") + the minted id/token
   4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
 
 Nothing was created — not the workspace either.
@@ -245,8 +221,8 @@ MY_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr 
   # Restated from the base file, not overridden: the per-box config is the
   # record of what this box was provisioned as, and it should still read true
   # after someone edits the base file for the next box.
-  printf 'CODEX_MODEL=%s\n' "$MODEL"
-  printf 'CODEX_REASONING_EFFORT=%s\n' "$EFFORT"
+  printf 'AGENT_PLATFORM=%s\n' "$AGENT_PLATFORM"
+  printf '%s=%s\n' "$MODEL_KEY" "$MODEL" "$EFFORT_KEY" "$EFFORT"
   if [ -n "$MY_IP" ];  then printf 'OPERATOR_CIDR=%s/32\n' "$MY_IP"; fi
 } > "$CONFIG"
 # Later keys win in provision-workspace-aws-resources.sh's parser, so the appended block overrides
@@ -255,8 +231,9 @@ ok "Wrote $(basename "$CONFIG")${MY_IP:+ (operator $MY_IP/32)}"
 
 # ====== 3. PER-BOX SECRETS ======
 info "Writing $(basename "$SECRETS")"
-jq -n --arg k "$OPENAI_KEY" --arg id "$WS_ID" --arg t "$WS_TOKEN" \
-  '{OPENAI_API_KEY:$k, AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t}' > "$SECRETS"
+umask 077
+jq -n --arg key "$API_KEY_NAME" --arg k "$AGENT_API_KEY" --arg id "$WS_ID" --arg t "$WS_TOKEN" \
+  '{($key):$k, AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t}' > "$SECRETS"
 chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
@@ -271,7 +248,7 @@ cat <<DONE
 $(ok "'$SLUG' is up and attached to its own workspace")
 
   workspace  $WS_ID   (named '$SLUG' in the dashboard)
-  agent      $MODEL, reasoning effort $EFFORT
+  agent      $AGENT_PLATFORM, $MODEL, effort $EFFORT
   config     $(basename "$CONFIG")
   secrets    $(basename "$SECRETS")
   teardown   ./teardown-workspace-aws-resources.sh $(basename "$CONFIG")

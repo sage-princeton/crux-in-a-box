@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==========================================================================
-# provision-workspace-aws-resources.sh — provision an ephemeral codex ACP run box
+# provision-workspace-aws-resources.sh — provision an ephemeral Codex or Claude ACP run box
 # ==========================================================================
 # Run on your LOCAL machine. Launches the box into crux-run-sg (which is what
 # grants it access to the control box's :2026), installs the software, writes
@@ -12,7 +12,7 @@ set -euo pipefail
 # SSH rule is break-glass only.
 #
 # Secrets travel two ways, deliberately different:
-#   - PER-RUN secrets (OpenAI key, workspace id/token) are scp'd to the box
+#   - PER-RUN secrets (provider API key, workspace id/token) are scp'd to the box
 #     at provision time and deleted there once configure-run.sh has written
 #     them where they live. No SSM, no per-box IAM role.
 #   - SYSTEM-WIDE secrets (the Langfuse keys, shared by every box) live in
@@ -28,7 +28,8 @@ set -euo pipefail
 #   ./provision-workspace-aws-resources.sh --handshake [CONFIG_FILE]         # ACP handshake only
 #
 # The per-run secrets file is JSON (see run-secrets.json.example):
-#   OPENAI_API_KEY, AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN
+#   OPENAI_API_KEY (codex) or ANTHROPIC_API_KEY (claude), plus
+#   AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN
 # The system secrets file is JSON (see run-system-secrets.json.example):
 #   LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL
 # ==========================================================================
@@ -55,6 +56,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# shellcheck source=src/ec2-workspaces/agent-config.sh
+source "$SCRIPT_DIR/agent-config.sh"
+
 CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
 [ -f "$CONFIG_FILE" ] \
   || die "Config file not found: $CONFIG_FILE (copy placeholders-run.txt.example)"
@@ -72,11 +76,12 @@ while IFS= read -r line || [ -n "$line" ]; do
   CFG["$key"]="$val"
 done < "$CONFIG_FILE"
 
+cfg() { printf '%s' "${CFG[$1]:-}"; }
+load_agent_config
+
 MISSING=()
 for k in AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE \
-         ROOT_DISK_GB KEY_NAME CODEX_MODEL CODEX_REASONING_EFFORT \
-         CODEX_VERSION CODEX_ACP_VERSION ACP_GATEWAY_VERSION \
-         TRACING_PLUGIN_VERSION TRACING_HOOK_TRUSTED_HASH; do
+         ROOT_DISK_GB KEY_NAME ACP_GATEWAY_VERSION; do
   [ -n "${CFG[$k]:-}" ] || MISSING+=("$k")
 done
 [ ${#MISSING[@]} -eq 0 ] || die "Missing required key(s) in $CONFIG_FILE: ${MISSING[*]}"
@@ -108,13 +113,25 @@ ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
 ROOT_IOPS="${CFG[ROOT_IOPS]:-6000}"
 ROOT_THROUGHPUT="${CFG[ROOT_THROUGHPUT]:-250}"
 KEY_NAME="${CFG[KEY_NAME]}"
-CODEX_MODEL="${CFG[CODEX_MODEL]}"
-CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]}"
-CODEX_VERSION="${CFG[CODEX_VERSION]}"
-CODEX_ACP_VERSION="${CFG[CODEX_ACP_VERSION]}"
+CODEX_MODEL="${CFG[CODEX_MODEL]:-}"
+CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]:-}"
+CODEX_VERSION="${CFG[CODEX_VERSION]:-}"
+CODEX_ACP_VERSION="${CFG[CODEX_ACP_VERSION]:-}"
 ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]}"
-TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]}"
-TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]}"
+CLAUDE_MODEL="${CFG[CLAUDE_MODEL]:-}"
+CLAUDE_EFFORT="${CFG[CLAUDE_EFFORT]:-}"
+CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
+CLAUDE_ACP_VERSION="${CFG[CLAUDE_ACP_VERSION]:-}"
+TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]:-}"
+TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]:-}"
+
+# Only validated, selected-platform values cross the remote shell boundary.
+if [ "$AGENT_PLATFORM" = claude ]; then
+  CODEX_MODEL=; CODEX_REASONING_EFFORT=; CODEX_VERSION=; CODEX_ACP_VERSION=
+  TRACING_PLUGIN_VERSION=; TRACING_HOOK_TRUSTED_HASH=
+else
+  CLAUDE_MODEL=; CLAUDE_EFFORT=; CLAUDE_VERSION=; CLAUDE_ACP_VERSION=
+fi
 
 # A comma-separated list, each entry optionally CIDR=LABEL. This script does
 # not create SSH rules — make-control-box.sh owns crux-run-sg's ingress — so it
@@ -143,19 +160,6 @@ esac
 case "$CONTROL_MCP_BASE" in
   */) die "CONTROL_MCP_BASE must not end in a slash (got '$CONTROL_MCP_BASE') — the MCP path is appended to it." ;;
 esac
-# Caught here rather than on the box: codex rejects an unknown effort at
-# startup, and under Restart=always that surfaces as a gateway crash-loop
-# instead of a legible error.
-#
-# TODO(claude): codex-only, and paired with the same check in
-# make-new-workspace.sh — see the longer note there. Adding Claude means an
-# AGENT_PLATFORM key and a per-platform enum; both copies move together or the
-# two entry points start disagreeing about what a valid box is.
-case "$CODEX_REASONING_EFFORT" in
-  minimal|low|medium|high) ;;
-  *) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$CODEX_REASONING_EFFORT')." ;;
-esac
-
 RUN_SG="crux-run-sg"
 SYSTEM_IAM_ROLE="crux-system-role"
 SYSTEM_IAM_PROFILE="crux-system-profile"
@@ -269,7 +273,7 @@ fi
 # ACP to codex on that box" without also depending on the VPC path to AgentRQ.
 if [ "$HANDSHAKE" = 1 ]; then
   info "ACP handshake against $SLUG (no AgentRQ, no workspace)"
-  ssh "$SLUG" 'cd /srv/crux-run && acp-gateway --agent-info -- codex-acp' 2>&1
+  ssh "$SLUG" "cd /srv/crux-run && acp-gateway --agent-info -- $ACP_COMMAND" 2>&1
   exit $?
 fi
 
@@ -286,8 +290,8 @@ if [ "$DRY_RUN" = 1 ]; then
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
                                              deleted there after configure
   dials             $CONTROL_MCP_BASE
-  agent             $CODEX_MODEL, reasoning effort $CODEX_REASONING_EFFORT
-  pins              codex@$CODEX_VERSION, codex-acp@$CODEX_ACP_VERSION, acp-gateway@$ACP_GATEWAY_VERSION
+  agent             $AGENT_PLATFORM, $MODEL, effort $EFFORT
+  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION
 teardown-workspace-aws-resources.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
 the hour, so leaking one is the easy way to pay for a box you deleted.
 Nothing billable was created.
@@ -302,12 +306,17 @@ fi
   || die "A provision run needs --secrets <json> (copy run-secrets.json.example). It is scp'd to the box and deleted there after configure."
 [ -f "$RUN_SECRETS_FILE" ] || die "No such file: $RUN_SECRETS_FILE"
 jq -e . "$RUN_SECRETS_FILE" >/dev/null 2>&1 || die "$RUN_SECRETS_FILE is not valid JSON"
-for k in OPENAI_API_KEY AGENTRQ_WORKSPACE_ID AGENTRQ_WORKSPACE_TOKEN; do
+validate_agent_key "$RUN_SECRETS_FILE"
+for k in AGENTRQ_WORKSPACE_ID AGENTRQ_WORKSPACE_TOKEN; do
   v="$(jq -re --arg k "$k" '.[$k] // empty' "$RUN_SECRETS_FILE")" \
     || die "$RUN_SECRETS_FILE is missing required key: $k"
   case "$v" in *CHANGE*|*REPLACE*|*xxx*|"") die "$k still looks like a placeholder" ;; esac
 done
-ok "Per-run secrets file $RUN_SECRETS_FILE looks complete (3 keys, not echoed)"
+ok "Per-run secrets file $RUN_SECRETS_FILE looks complete ($API_KEY_NAME and workspace credentials, not echoed)"
+if [ "$AGENT_PLATFORM" = claude ]; then
+  [ -f "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" ] \
+    || die "The vendored Claude Langfuse hook is missing."
+fi
 
 # ====== SYSTEM PARAMETER MUST ALREADY EXIST ======
 # Checked before launching anything: configure-run.sh needs it, and failing
@@ -473,6 +482,8 @@ done
 info "install-run.sh — software"
 scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
 ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
+  AGENT_PLATFORM='$AGENT_PLATFORM' \
+  CLAUDE_VERSION='$CLAUDE_VERSION' CLAUDE_ACP_VERSION='$CLAUDE_ACP_VERSION' \
   CODEX_VERSION='$CODEX_VERSION' \
   CODEX_ACP_VERSION='$CODEX_ACP_VERSION' ACP_GATEWAY_VERSION='$ACP_GATEWAY_VERSION' \
   /tmp/install-run.sh"
@@ -531,10 +542,14 @@ ok "Copied (mode 600; configure-run.sh deletes it)"
 
 # ====== CONFIGURE (secrets, per-run) ======
 info "configure-run.sh — config and gateway"
-scp -q "$SCRIPT_DIR/configure-run.sh" "$SLUG:/tmp/configure-run.sh"
+scp -q "$SCRIPT_DIR/configure-run.sh" "$SCRIPT_DIR/agent-config.sh" "$SLUG:/tmp/"
+if [ "$AGENT_PLATFORM" = claude ]; then
+  scp -q "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" "$SLUG:/tmp/langfuse_hook.py"
+fi
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
-  RUN_SLUG='$SLUG' \
+  RUN_SLUG='$SLUG' AGENT_PLATFORM='$AGENT_PLATFORM' \
+  CLAUDE_MODEL='$CLAUDE_MODEL' CLAUDE_EFFORT='$CLAUDE_EFFORT' \
   CODEX_MODEL='$CODEX_MODEL' CODEX_REASONING_EFFORT='$CODEX_REASONING_EFFORT' \
   CONTROL_MCP_BASE='$CONTROL_MCP_BASE' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
@@ -547,7 +562,7 @@ $(ok "Run box ready")
 
   instance   $INSTANCE_ID ($INSTANCE_TYPE) at $PUBLIC_IP
   ssh        ssh $SLUG
-  agent      $CODEX_MODEL, reasoning effort $CODEX_REASONING_EFFORT
+  agent      $AGENT_PLATFORM, $MODEL, effort $EFFORT
   dials      $CONTROL_MCP_BASE
   logs       ssh $SLUG 'journalctl -u crux-acp-gateway -f'
   langfuse   environment=$SLUG

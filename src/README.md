@@ -19,6 +19,8 @@
 
 Use `make-new-workspace.sh`. This will set up a workspace on the controller
 and will also provision all required AWS resources.
+Set `AGENT_PLATFORM=codex|claude` and the matching model, effort, and API-key
+settings; see [workspace provisioning](ec2-workspaces/README.md).
 FIXME: consider copying in the run-harness directory here
 
 _(more usage information to be added here)_

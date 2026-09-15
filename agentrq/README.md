@@ -8,13 +8,14 @@
 
 - [ ] copy the run-harness directory to new boxes / configure similar setup
 - [ ] add Claude support
-      Provisioning is codex-only today: `grep -ri claude src/ec2-workspaces/`
-      returns nothing. The model/effort validation carries a `TODO(claude)` at
-      both entry points (`make-new-workspace.sh`,
-      `provision-workspace-aws-resources.sh`) — it needs an `AGENT_PLATFORM`
-      key (codex|claude) in the placeholders picking which config file
-      `configure-run.sh` writes, and a per-platform effort enum, since Claude's
-      thinking levels are not `minimal|low|medium|high`.
+      Implemented locally: `AGENT_PLATFORM=claude`, `CLAUDE_MODEL`, and
+      `CLAUDE_EFFORT` select Claude provisioning, its pinned CLI/ACP adapter,
+      Anthropic API key, and standalone Langfuse hook. Both entry points
+      validate platform-specific settings before creating resources; legacy
+      configs without a platform selector remain Codex. Ten local behavior
+      tests and a credential-free ACP handshake pass. Still pending: deploy
+      a Claude box and verify a dashboard task and trace delivery in Langfuse.
+      See `src/ec2-workspaces/README.md` for configuration and verification.
 - [ ] Use Google Cloud for spend for agents, optional
 
 ### Backlog
