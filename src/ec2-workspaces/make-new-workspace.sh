@@ -15,21 +15,31 @@ set -euo pipefail
 #
 # TWO FILES YOU SET UP ONCE (both gitignored, see the .example of each):
 #   placeholders-base.txt     the shared knobs — control box, key pair, pinned
-#                             versions, default model. NO RUN_SLUG: that is
+#                             versions, model and effort. NO RUN_SLUG: that is
 #                             what this script fills in per box.
 #   run-secrets-base.json     {"OPENAI_API_KEY": "sk-..."} and nothing else.
 #                             The workspace id/token are minted per box, so
 #                             the key is the only per-box secret you supply.
 #
 # FIXME: pass in the placeholders and secrets as arguments here
-# FIXME: require the model and effort to be set; maybe set them in placeholders; not as CLI args
+#
 # The OpenAI key stays a per-box secret in the three-tier sense — still scp'd
 # at launch and deleted on the box — it is just sourced from one local file
 # instead of being retyped into a new one every time.
 #
+# WHAT THE AGENT RUNS AS is config, not a flag. CODEX_MODEL and
+# CODEX_REASONING_EFFORT must both be set in placeholders-base.txt, and this
+# script refuses to mint a box without them. They used to be `--model` /
+# `--effort` over a base-file default, which meant the common case — forgetting
+# the flags — produced a box at whatever the default happened to be, and
+# nothing in the run record said the choice was never made. To run a box at
+# different settings, edit placeholders-base.txt before minting; the values are
+# copied into placeholders-<slug>.txt, so what a box ran as stays readable next
+# to the box. An unset value now fails before the workspace is minted rather
+# than becoming a silent default.
+#
 # Usage:
-#   ./make-new-workspace.sh <slug> [--model M] [--effort E] [--description TEXT]
-#                       [--dry-run]
+#   ./make-new-workspace.sh <slug> [--description TEXT] [--dry-run]
 #
 # ==========================================================================
 
@@ -45,19 +55,22 @@ BASE_CONFIG="$SCRIPT_DIR/placeholders-base.txt"
 BASE_SECRETS="$SCRIPT_DIR/run-secrets-base.json"
 
 # ====== ARGS ======
-SLUG=""; MODEL=""; EFFORT=""; DESC=""; DRY_RUN=0
+SLUG=""; DESC=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --model)       MODEL="${2:-}"; [ -n "$MODEL" ] || die "--model needs a value"; shift 2 ;;
-    --effort)      EFFORT="${2:-}"; [ -n "$EFFORT" ] || die "--effort needs a value"; shift 2 ;;
     --description) DESC="${2:-}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
-    -h|--help)     sed -n '4,40p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '4,44p' "$0"; exit 0 ;;
+    # Retired deliberately, and named rather than swept up by the generic
+    # unknown-flag arm: an old command line must say why it stopped working,
+    # not just that it did.
+    --model|--effort)
+      die "$1 is no longer a flag. Set CODEX_MODEL and CODEX_REASONING_EFFORT in $(basename "$SCRIPT_DIR")/placeholders-base.txt instead — what a box runs as is config, so it lives with the rest of the box's config." ;;
     -*)            die "Unknown flag: $1" ;;
     *)             [ -z "$SLUG" ] || die "Only one slug"; SLUG="$1"; shift ;;
   esac
 done
-[ -n "$SLUG" ] || die "Usage: ./make-new-workspace.sh <slug> [--model M] [--effort E]"
+[ -n "$SLUG" ] || die "Usage: ./make-new-workspace.sh <slug> [--description TEXT] [--dry-run]"
 
 # The slug becomes an EC2 tag, an ssh alias, a filename and a Langfuse
 # environment, so keep it to what all four accept.
@@ -95,6 +108,39 @@ cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1
 CONTROL_SLUG="$(cfg CONTROL_SSH_ALIAS)"; CONTROL_SLUG="${CONTROL_SLUG:-crux-control}"
 MCP_BASE="$(cfg CONTROL_MCP_BASE)"
 ok "Base config and secrets present; control box '$CONTROL_SLUG'"
+
+# What the agent runs as: required, with no default anywhere in the chain.
+# provision-workspace-aws-resources.sh requires both too, but its preflight
+# runs after the workspace exists — checking here is the difference between a
+# clean refusal and an orphaned workspace holding a live 365-day token.
+MODEL="$(cfg CODEX_MODEL)"
+EFFORT="$(cfg CODEX_REASONING_EFFORT)"
+for _pair in "CODEX_MODEL=$MODEL" "CODEX_REASONING_EFFORT=$EFFORT"; do
+  _k="${_pair%%=*}"; _v="${_pair#*=}"
+  [ -n "$_v" ] \
+    || die "$_k is not set in $(basename "$BASE_CONFIG"). Every box must state what it runs as — there is no default, because a box provisioned at an unnoticed default is a run whose settings nobody chose."
+  case "$_v" in
+    *CHANGE*|*REPLACE*|*'<'*) die "$_k in $(basename "$BASE_CONFIG") still looks like a placeholder ('$_v')." ;;
+  esac
+done
+# Same enum provision-workspace-aws-resources.sh enforces: codex rejects an
+# unknown effort at startup, and under Restart=always that surfaces as a
+# gateway crash-loop rather than a legible error.
+#
+# TODO(claude): this validation is codex-only — the keys are CODEX_*, the enum
+# is codex's, and configure-run.sh writes them to ~/.codex/config.toml. Adding
+# Claude (backlog item in agentrq/README.md) is not a rename: it needs an
+# AGENT_PLATFORM key (codex|claude) in the placeholders choosing which config
+# file gets written, and this enum becoming per-platform — Claude's thinking
+# levels are not minimal|low|medium|high, so one shared `case` would either
+# reject a valid Claude value or wave through an invalid codex one. Keep the
+# fail-before-mint position: whatever the platform, an unsettable value must
+# still cost nothing.
+case "$EFFORT" in
+  minimal|low|medium|high) ;;
+  *) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$EFFORT' in $(basename "$BASE_CONFIG"))." ;;
+esac
+ok "Agent settings: model $MODEL, reasoning effort $EFFORT"
 
 # Existing artefacts are never silently reused: a stale token or a stale slug
 # in one of these is a box that comes up healthy and talks to the wrong place.
@@ -157,7 +203,7 @@ if [ "$DRY_RUN" = 1 ]; then
 [dry-run] Would, for slug '$SLUG':
   1. create AgentRQ workspace '$SLUG' on $CONTROL_SLUG (workingDirectory /srv/crux-run)
   2. write $CONFIG           from $(basename "$BASE_CONFIG")
-     ${MODEL:+model $MODEL, }${EFFORT:+effort $EFFORT, }dialling ${MCP_BASE:-<private default>}
+     model $MODEL, effort $EFFORT, dialling ${MCP_BASE:-<private default>}
   3. write $SECRETS   OpenAI key from $(basename "$BASE_SECRETS") + the minted id/token
   4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
 
@@ -196,8 +242,11 @@ MY_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr 
   cat "$BASE_CONFIG"
   printf '\n# ---- set per box by make-new-workspace.sh ----\n'
   printf 'RUN_SLUG=%s\n' "$SLUG"
-  if [ -n "$MODEL" ];  then printf 'CODEX_MODEL=%s\n' "$MODEL"; fi
-  if [ -n "$EFFORT" ]; then printf 'CODEX_REASONING_EFFORT=%s\n' "$EFFORT"; fi
+  # Restated from the base file, not overridden: the per-box config is the
+  # record of what this box was provisioned as, and it should still read true
+  # after someone edits the base file for the next box.
+  printf 'CODEX_MODEL=%s\n' "$MODEL"
+  printf 'CODEX_REASONING_EFFORT=%s\n' "$EFFORT"
   if [ -n "$MY_IP" ];  then printf 'OPERATOR_CIDR=%s/32\n' "$MY_IP"; fi
 } > "$CONFIG"
 # Later keys win in provision-workspace-aws-resources.sh's parser, so the appended block overrides
@@ -222,6 +271,7 @@ cat <<DONE
 $(ok "'$SLUG' is up and attached to its own workspace")
 
   workspace  $WS_ID   (named '$SLUG' in the dashboard)
+  agent      $MODEL, reasoning effort $EFFORT
   config     $(basename "$CONFIG")
   secrets    $(basename "$SECRETS")
   teardown   ./teardown-workspace-aws-resources.sh $(basename "$CONFIG")

@@ -1,6 +1,8 @@
 # Shared base config for make-new-workspace.sh — copy to placeholders-base.txt
-# and fill in. It holds only what every box has in common; make-new-workspace.sh
-# appends the per-box keys (RUN_SLUG, model/effort, OPERATOR_CIDR) when it
+# and fill in. It holds what every box has in common — including CODEX_MODEL
+# and CODEX_REASONING_EFFORT, which are required here rather than passed as
+# flags. make-new-workspace.sh appends the machine-derived per-box keys
+# (RUN_SLUG, OPERATOR_CIDR) and a copy of the model/effort it used when it
 # generates placeholders-<slug>.txt.
 #
 # DO NOT set RUN_SLUG here: the script refuses a base file that does, because
@@ -39,8 +41,27 @@ ROOT_DISK_GB=80
 # EC2 key pair. Shared with the control box by default.
 KEY_NAME=crux-acp
 
-# What the agent runs as (per-box, not secret).
-# Effort is minimal|low|medium|high.
+# ==== What the agent runs as (per-box config, not secret) ====
+#
+# REQUIRED, and deliberately blank here: make-new-workspace.sh refuses to mint
+# a workspace until both are set. They were once `--model` / `--effort` flags
+# over a default in this file, which meant the common case — forgetting the
+# flags — produced a box at whatever the default happened to be, with nothing
+# in the run record saying the choice was never made. Filling them in is the
+# choice; there is no value that means "whatever".
+#
+# Both are written straight into ~/.codex/config.toml by configure-run.sh, and
+# copied into placeholders-<slug>.txt so what a box ran as stays readable next
+# to the box. Change them here between boxes to run the fleet at mixed
+# settings.
+#
+# CODEX_REASONING_EFFORT is one of minimal | low | medium | high. Codex rejects
+# an unknown value at startup, and because the gateway is a systemd unit with
+# Restart=always that presents as a crash-loop rather than an error message —
+# so make-new-workspace.sh and provision-workspace-aws-resources.sh both
+# validate it before launching anything.
+CODEX_MODEL=
+CODEX_REASONING_EFFORT=
 
 # Pinned agent versions. Unpinned `@latest` on a fresh box means a run box
 # built today and one built next week are not the same machine.
@@ -66,10 +87,6 @@ ACP_GATEWAY_VERSION=0.2.17
 # a stale hash fails the build rather than quietly disabling tracing.
 TRACING_PLUGIN_VERSION=0.3.0
 TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74
-
-# Defaults for every new box; make-new-workspace.sh --model/--effort override per box.
-CODEX_MODEL=gpt-5.5
-CODEX_REASONING_EFFORT=medium
 
 # The control box's ssh alias, used to mint workspaces.
 CONTROL_SSH_ALIAS=crux-control

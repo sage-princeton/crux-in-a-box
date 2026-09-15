@@ -146,6 +146,11 @@ esac
 # Caught here rather than on the box: codex rejects an unknown effort at
 # startup, and under Restart=always that surfaces as a gateway crash-loop
 # instead of a legible error.
+#
+# TODO(claude): codex-only, and paired with the same check in
+# make-new-workspace.sh — see the longer note there. Adding Claude means an
+# AGENT_PLATFORM key and a per-platform enum; both copies move together or the
+# two entry points start disagreeing about what a valid box is.
 case "$CODEX_REASONING_EFFORT" in
   minimal|low|medium|high) ;;
   *) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$CODEX_REASONING_EFFORT')." ;;
