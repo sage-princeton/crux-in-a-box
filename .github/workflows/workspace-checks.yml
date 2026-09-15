@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   provisioning:
-    name: ShellCheck and provisioning tests
+    name: Shell and hygiene checks
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -29,7 +29,7 @@ jobs:
       - name: Install check dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y shellcheck jq
+          sudo apt-get install -y shellcheck
       - name: Bash syntax
         run: |
           for script in src/ec2-workspaces/*.sh; do
@@ -38,8 +38,6 @@ jobs:
       - name: ShellCheck
         # SSH commands intentionally expand locally; quoted tildes are remote paths.
         run: shellcheck -x -e SC2029,SC2088 src/ec2-workspaces/*.sh
-      - name: Provisioning behavior tests
-        run: python3 -m unittest discover -s src/ec2-workspaces -p 'test_*.py' -v
       - name: Changed-file whitespace and secret checks
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}

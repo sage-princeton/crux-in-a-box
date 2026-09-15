@@ -38,8 +38,8 @@
       `CLAUDE_MODEL=claude-opus-5`, and `CLAUDE_EFFORT=high` select the
       pinned CLI/ACP adapter, Anthropic key, and standalone Langfuse hook.
       Both entry points validate platform-specific settings before creating
-      resources; legacy configs remain Codex. Eleven local behavior tests
-      pass. A dashboard task executed real read/write/shell tools with
+      resources; legacy configs remain Codex. A dashboard task executed
+      real read/write/shell tools with
       AgentRQ YOLO approvals; its output was independently verified and
       its model/tool traces arrived in Langfuse. A follow-up after an idle
       gateway restart also passed. See `src/ec2-workspaces/README.md` for
