@@ -1,47 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==========================================================================
-# bootstrap-workspace.sh — create an AgentRQ workspace and print its id and
-# MCP token, without a browser.
-# ==========================================================================
-# This removes the one manual step in the PoC. It runs the same calls the web
-# UI makes, discovered from its JS bundle:
-#
-#   POST /api/v1/auth/root/login   {"rootToken": "..."}   -> sets cookies
-#   POST /api/v1/workspaces        {"workspace": {...}}   -> 201
-#   GET  /api/v1/workspaces/<id>/token                    -> {"token": "..."}
-#
-# THREE THINGS THAT WILL WASTE YOUR TIME IF YOU DO NOT KNOW THEM:
-#
-# 1. The session cookie is issued with `domain=.<AGENTRQ_DOMAIN>`. Logging in
-#    against 127.0.0.1 returns 200 and then every later call is 401, because
-#    the cookie is never sent back. Everything here must go through the
-#    control box's own hostname, which is why this script runs over ssh and
-#    dials $AGENTRQ_DOMAIN rather than localhost.
-#
-# 2. The create payload is wrapped: {"workspace": {...}}. A bare object gets
-#    a 422 "invalid request payload".
-#
-# 3. The `mcpUrl` the API returns is a SUBDOMAIN url
-#    (http://<rand>.mcp.<domain>) and it DOES NOT RESOLVE in a VPC — plain
-#    NXDOMAIN, and forcing the Host header gives 401. The working form is
-#    path-based, which this script prints:
-#        http://<host>:<port>/mcp/<workspace-id>?token=<token>
-#    Verified: path form returns 200 to an MCP `initialize`.
+# Create an AgentRQ workspace over SSH and return its credentials as JSON.
 #
 # Usage:
-#   ./bootstrap-workspace.sh <ssh-alias> <name> [description]   # create
-#   ./bootstrap-workspace.sh --list <ssh-alias>                 # list
-#   ./bootstrap-workspace.sh --token <ws-id> <ssh-alias>        # fresh token
+#   ./bootstrap-workspace.sh <ssh-alias> <name> [description]
+#   ./bootstrap-workspace.sh --list <ssh-alias>
+#   ./bootstrap-workspace.sh --token <ws-id> <ssh-alias>
 #
-# Workspace tokens are JWTs with a 365-day expiry, so --token exists for
-# re-provisioning a box later without making a new workspace.
+# Requests use AGENTRQ_DOMAIN to match host routing and the session cookie.
+# Workspace creation requires a {"workspace": {...}} payload.
+# MCP URLs use /mcp/<workspace-id>?token=<token> without a subdomain.
 #
-# Prints JSON on stdout: {"id": "...", "token": "...", "mcp_url": "..."}
-# The token is a credential — it is not echoed to the terminal by any of the
-# progress messages, which go to stderr.
-# ==========================================================================
+# Tokens expire after 365 days; --token issues a fresh token.
+# Stdout contains {"id": "...", "token": "...", "mcp_url": "..."}.
+# Treat stdout as secret. Progress messages go to stderr.
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*" >&2; }
 ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*" >&2; }
@@ -62,8 +35,7 @@ WS_NAME="${1:-}"; WS_DESC="${2:-}"
 
 AGENTRQ_PORT=2026
 
-# The whole conversation happens on the box: the control box has no public
-# web port, and the cookie domain means it must be addressed by its own name.
+# Run requests on the controller using its configured hostname.
 REMOTE=$(cat <<'REMOTE_SCRIPT'
 set -euo pipefail
 ENV_FILE=/srv/agentrq/agentrq.env

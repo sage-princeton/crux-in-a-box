@@ -1,42 +1,49 @@
-<!-- FIXME: clean this up, becoming a mess -->
+# Workspace provisioning
 
-# `ec2-workspaces/` — Workspace-level scripts
+Run these scripts locally from `src/ec2-workspaces/`.
 
-## Usage
+## Configuration
 
-### Make a new workspace
+Copy `placeholders-base.txt.example` to `placeholders-base.txt` and fill in
+the AWS, controller and agent settings. Set `AGENT_PLATFORM` to `codex` or
+`claude`; an omitted platform selects Codex.
 
-This will:
+| Platform | Model | Effort | API key |
+| --- | --- | --- | --- |
+| `codex` | `CODEX_MODEL` | `CODEX_REASONING_EFFORT`: `minimal`, `low`, `medium`, `high` | `OPENAI_API_KEY` |
+| `claude` | `CLAUDE_MODEL` | `CLAUDE_EFFORT`: `low`, `medium`, `high`, `xhigh`, `max` | `ANTHROPIC_API_KEY` |
 
-- Create the AWS assets
-- Create the workspace in Agent RQ
+Model, effort and version pins are required. Both provisioning entry points
+validate the selected platform's settings before creating resources.
+Each workspace receives a copy in `placeholders-<slug>.txt`.
 
-**`make-new-workspace.sh`** — laptop, and the one you normally want:
-`./make-new-workspace.sh <slug>` mints the workspace, writes the per-box config and
-secrets, and calls `provision-workspace-aws-resources.sh`. ~2 minutes. All AWS checks run _before_
-the workspace is minted, so bad credentials cost nothing.
+Copy `run-secrets-base.json.example` for Codex or
+`run-secrets-claude-base.json.example` for Claude to `run-secrets-base.json`.
+Fill in the provider API key and set file mode 600.
+Keep configuration and secrets in the gitignored files.
 
-**What the agent runs as is config, not a flag.** Set `AGENT_PLATFORM` in
-`placeholders-base.txt` and supply that platform's model and effort. Older
-configs without `AGENT_PLATFORM` retain Codex behavior.
+## Create a workspace
 
-| Platform | Required model | Required effort                                              | Per-run API key     |
-| -------- | -------------- | ------------------------------------------------------------ | ------------------- |
-| `codex`  | `CODEX_MODEL`  | `CODEX_REASONING_EFFORT`: `minimal`, `low`, `medium`, `high` | `OPENAI_API_KEY`    |
-| `claude` | `CLAUDE_MODEL` | `CLAUDE_EFFORT`: `low`, `medium`, `high`, `xhigh`, `max`     | `ANTHROPIC_API_KEY` |
+```bash
+./make-new-workspace.sh <slug> --dry-run
+./make-new-workspace.sh <slug>
+```
 
-Model and effort have no defaults. Both entry points validate the selected
-platform's settings and version pins before creating resources. To run
-boxes at mixed settings, edit the base file between boxes — each box's values
-are copied into its `placeholders-<slug>.txt`, so what a box ran as stays
-readable next to the box. The old `--model` / `--effort` flags are gone: the
-common case was forgetting them, which produced a box at whatever the default
-happened to be with nothing in the run record saying the choice was never made.
+The script checks prerequisites, creates the AgentRQ workspace, writes its
+configuration and secrets, and provisions the EC2 instance. Each instance
+requires an available Elastic IP allocation.
 
-### Provision a Claude workspace
+Use `--base-config <file> --base-secrets <file>` to select separate base files.
+For an existing AgentRQ workspace, supply its ID and token in the per-run
+secrets file and run:
 
-Copy `placeholders-base.txt.example` to `placeholders-base.txt`, fill in the
-shared AWS/control settings, and set:
+```bash
+./provision-workspace-aws-resources.sh --secrets <file> <config>
+```
+
+### Claude settings
+
+Example configuration:
 
 ```ini
 AGENT_PLATFORM=claude
@@ -47,176 +54,79 @@ CLAUDE_ACP_VERSION=0.77.0
 ACP_GATEWAY_VERSION=0.2.17
 ```
 
-Choose a model your Anthropic API key can access. The model above illustrates
-the format; it is not a default. The Claude CLI and adapter require Node 22,
-which `install-run.sh` installs. Codex version and tracing-plugin settings
-are ignored for Claude boxes.
+Select a model available to the Anthropic API key. Supported effort levels
+depend on the model; Claude may reduce an unsupported level.
 
-Copy `run-secrets-claude-base.json.example` to `run-secrets-base.json`, fill in
-`ANTHROPIC_API_KEY`, and restrict the file to mode 600. Then run:
+`install-run.sh` installs Node 22, the Claude CLI and `claude-agent-acp`.
+The adapter uses the installed CLI through `CLAUDE_CODE_EXECUTABLE`.
+Model and effort are stored in `/home/ubuntu/.claude/settings.json`.
+Effort is supplied through `CLAUDE_CODE_EFFORT_LEVEL`, including `max`.
 
-```bash
-./make-new-workspace.sh crux-claude-1 --dry-run
-./make-new-workspace.sh crux-claude-1
-```
+The settings file has mode 600 and contains the API key and Langfuse credentials.
+`configure-run.sh` installs the standalone Claude Stop hook. It runs a paid
+probe before starting the gateway, requiring an answer and a newly processed
+hook turn. The source secrets bundle is deleted on the instance.
 
-To keep a separate Claude base alongside the existing Codex defaults, pass
-`--base-config placeholders-claude-base.txt --base-secrets run-secrets-claude-base.json`.
-Both files follow the same formats above; the default files are left intact.
+See the [adapter source](https://github.com/agentclientprotocol/claude-agent-acp)
+and [Claude model configuration](https://code.claude.com/docs/en/model-config).
 
-The dry run performs read-only prerequisite checks. For an already-created
-AgentRQ workspace, use `run-secrets-claude.json.example` with
-`provision-workspace-aws-resources.sh --secrets <file> <config>` instead.
+## Tracing
 
-Claude boxes run `claude-agent-acp` through the same gateway as Codex. The
-adapter uses the explicitly installed Claude CLI via `CLAUDE_CODE_EXECUTABLE`,
-so the CLI probe and gateway use the same version. Model and effort live in
-`/home/ubuntu/.claude/settings.json`; effort is supplied through
-`CLAUDE_CODE_EFFORT_LEVEL`, including `max`, which is not a persistent
-`effortLevel` setting. Supported effort levels depend on the chosen model;
-Claude may reduce an unsupported level, so confirm the model's capabilities
-when selecting `xhigh` or `max`.
+Both platforms attach these Langfuse metadata fields:
 
-The mode-600 Claude settings file also contains its API key and the shared
-Langfuse credentials. `configure-run.sh` copies the existing standalone
-`agentrq/claude/.claude/hooks/langfuse_hook.py`, enables its Stop hook, and
-tags its tracing environment with the run slug. It does not install the
-Langfuse plugin, whose prompt filtering is unsuitable for AgentRQ.
+| Field | Value |
+| --- | --- |
+| `workspaceId` | AgentRQ workspace ID |
+| `runSlug` | Provisioning slug |
+| `agentPlatform` | `codex` or `claude` |
+| `configuredModel` | Model selected at provisioning |
+| `configuredEffort` | Effort selected at provisioning |
 
-Both platforms also propagate `workspaceId`, `runSlug`, `agentPlatform`,
-`configuredModel`, and `configuredEffort` as Langfuse metadata, with
-`workspace:<id>`, `run:<slug>`, and `platform:<platform>` tags. These fields
-capture provisioning settings; the generation's native `model` field records
-the model reported by the transcript. `configuredEffort` is the requested
-level, not a measurement of effective thinking or later session changes.
-Native conversation IDs remain Langfuse session IDs. Claude receives the
-metadata through `CC_LANGFUSE_METADATA`; Codex uses its tracing plugin config.
+Tags are `workspace:<id>`, `run:<slug>` and `platform:<platform>`.
+The environment is the run slug; the session ID is the native conversation ID.
+The generation's `model` field records the transcript model.
+Configured effort records the provisioning request, including any level the
+model reduces. It does not track later session changes.
 
-Before starting the gateway, provisioning runs a short paid Claude probe and
-requires both a successful answer and a newly processed tracing-hook turn.
-A failed model/auth call, silent hook, or stale success log fails provisioning.
-This verifies transcript processing; verify delivery in Langfuse when checking
-the first dashboard task. The source secrets bundle is deleted on the box.
+Claude receives metadata through `CC_LANGFUSE_METADATA`.
+Codex uses its tracing plugin configuration.
 
-The adapter integration follows its [published source](https://github.com/agentclientprotocol/claude-agent-acp)
-and Claude's [model and effort configuration](https://code.claude.com/docs/en/model-config).
+Verify delivery after a dashboard task; allow for ingestion delay.
+A successful hook log confirms processing only. To inspect propagated metadata
+on observations, use `/api/public/v2/observations` with the `metadata` and
+`trace_context` field groups.
 
-### Tool Permissions
+## Tool permissions
 
-New workspaces enable AgentRQ's built-in YOLO mode (`allowAllCommands=true`).
-New dashboard tasks inherit this setting, and agent-created tasks use it as
-their default. API callers creating human tasks must set `allowAllCommands=true`
-in their task payload. Existing tasks retain their own setting.
+New workspaces enable AgentRQ YOLO mode (`allowAllCommands=true`). Dashboard
+and agent-created tasks inherit this setting. API callers creating human tasks
+must include `allowAllCommands=true` in the task payload.
 
-The gateway is the unmodified, pinned npm package. For both platforms it forwards tool permission
-requests to AgentRQ, which automatically approves them for YOLO tasks. Its
-`read-only` session-mode log for Codex is expected: approvals are handled by AgentRQ.
-There is no gateway patch or permission environment variable. The workspace
-default is visible under Settings -> Automations -> YOLO Mode (Execute All).
+The gateway forwards tool permission requests to AgentRQ for approval.
+Codex's `read-only` session-mode log is expected with this arrangement.
+Claude uses its default permission mode and sends requests through ACP.
+The workspace setting is under Settings → Automations → YOLO Mode (Execute All).
 
-Claude retains its default permission mode and sends approval requests through
-ACP. The old local-channel YOLO FIXME does not require bypassing Claude's
-permission mechanism: AgentRQ's workspace/task YOLO setting handles it.
+## Local checks
 
-### Local verification
-
-Install Bash and ShellCheck, then run from the repository root:
+Run from the repository root:
 
 ```bash
 for script in src/ec2-workspaces/*.sh; do bash -n "$script"; done
 shellcheck -x -e SC2029,SC2088 src/ec2-workspaces/*.sh
 ```
 
-The `Workspace checks` GitHub Actions workflow runs these checks on every PR
-and push to `main`, plus whitespace and secret scans over changed files.
-Python 3 is used for the secret scan.
-It can also be run manually. ShellCheck excludes SC2029 (intentional local
-expansion in SSH commands) and SC2088 (quoted remote tilde paths).
+The `Workspace checks` workflow runs these checks on pull requests and pushes
+to `main`, plus whitespace and secret scans. It also supports manual runs.
+Python 3 is required for the secret scan.
+ShellCheck excludes intentional SSH expansion (SC2029) and quoted remote
+paths containing a tilde (SC2088).
 
-A live dashboard turn and Langfuse delivery check are required when deploying
-a new box; CI checks shell syntax and static analysis without provisioning.
+Each deployment requires a live dashboard task and Langfuse delivery check.
+CI does not provision instances.
 
-### Live Claude verification — September 15, 2026
+## Teardown
 
-Provisioned `crux-claude-1` from branch `ae-209-claude-provisioning-live`
-(implementation commits `35cf8f5`, `230d2d7`), using separate Claude base
-files. The workspace is left running:
-[open AgentRQ](https://32-195-122-118.sslip.io/workspaces/0inLNjkTlB3/board),
-or connect with `ssh crux-claude-1`.
-
-- EC2 instance `i-07f050b3722ee1f0d`; workspace `0inLNjkTlB3`.
-- Claude CLI `2.1.272`, Claude ACP `0.77.0`, gateway `0.2.17`;
-  configured model `claude-opus-5`, effort `high`.
-- Provisioning's paid CLI probe answered successfully and processed a new
-  Stop-hook turn. The gateway connected and advertised Claude to AgentRQ.
-- Task `0inLkItagDZ` read a fresh random input, multiplied 17 by 23,
-  calculated SHA-256 of the product plus nonce, wrote `validation/result.json`,
-  read it back, and completed. The operator independently compared the exact
-  JSON against a locally calculated result. AgentRQ recorded the write as
-  `auto_allowed`; no manual tool approval was needed.
-- Automatic Langfuse traces `836f3eac72acf2fa2e4835b9468ae200` and
-  `907407aafb6dae8bc59c9c300971e57d` contain `claude-opus-5` generations,
-  read/write/shell tools, the expected reply, and environment `crux-claude-1`.
-  Ingestion took about two minutes after each hook. A successful hook log
-  means processing finished; allow for ingest delay and verify the trace in
-  Langfuse before diagnosing missing delivery. Diagnostic transcript replays
-  were also performed; the first automatic trace's ingestion timestamp
-  predates those replays.
-- After the task and ACP turn finished, the test gateway was restarted.
-  AgentRQ reconnected and a follow-up wrote `validation/resumed.txt` with
-  the saved digest. The service remained active with zero automatic restarts.
-  Temporary hook diagnostics were removed and the deployed hook's SHA-256
-  matched the repository copy.
-
-### Live metadata verification — September 15, 2026
-
-Workspace [crux-trace-effort-1](https://32-195-122-118.sslip.io/workspaces/0inRZtxmwMr/board)
-is running `claude-opus-5` with configured effort `high`. Filter Langfuse by
-environment `crux-trace-effort-1` or tag `workspace:0inRZtxmwMr`.
-
-- Reasoning conversation: trace `d31e90bb49c9815e61079324ac699468`.
-- File write/read/hash conversation: trace `384fd56f15944db05d8034b023d5ef67`.
-- Arithmetic follow-up: trace `68bded4e1631efd03af4775364e5de87`, sharing the
-  first conversation's session ID.
-
-All 26 observations across these turns contain the five configured metadata
-fields. Verification used `/api/public/v2/observations` with the `metadata`
-and `trace_context` field groups; the legacy observations endpoint does not
-include propagated trace metadata in each observation's metadata object.
-The file contents and SHA-256 digest were independently verified.
-
-### Live Codex metadata verification — September 15, 2026
-
-Workspace [crux-codex-trace-1](https://32-195-122-118.sslip.io/workspaces/0inUyGEHB21/board)
-is running source commit `c858e68` with `gpt-6-astra` and configured effort
-`low`. Filter Langfuse by environment `crux-codex-trace-1` or tag
-`workspace:0inUyGEHB21`.
-
-- Reasoning conversation: trace `391b21859d85cbe8f982a4ba49cbd65b`, computing
-  19 × 23 = 437.
-- File write/read/hash conversation: trace `b459c9f5fb888a740fd7988073e6790f`.
-  The exact file bytes and reported SHA-256 digest were independently verified.
-- Arithmetic follow-up: trace `72a489543cb9f71c89d6218ff35f6e8c`, computing
-  437 + 13 = 450 and retaining the first conversation's session ID.
-- The configured metadata reports `agentPlatform: codex`,
-  `configuredModel: gpt-6-astra`, and `configuredEffort: low`; generation
-  observations also report native model `gpt-6-astra`. All five configured
-  fields were verified on the 20 observations in these three traces using
-  Observations API v2.
-
-The workspace is left running on EC2 instance `i-09895f1145385a196`, with an
-active gateway and zero automatic restarts. The account's Elastic IP quota
-was full, so provisioning was resumed with a temporary script using this
-instance's automatic public IP. Its SSH address can change after stop/start;
-the repository provisioner still requires an Elastic IP.
-
-### Teardown a workspace
-
-This will:
-
-- Delete the AWS assets
-- **Keep** the workspace in Agent RQ
-
-**`teardown-workspace-aws-resources.sh`** — laptop. Terminates one box, releases its Elastic IP,
-removes the ssh alias. Deliberately keeps the shared SG / key pair / IAM —
-and the AgentRQ workspace, which outlives its box.
+`teardown-workspace-aws-resources.sh` terminates the instance, releases its
+Elastic IP and removes the SSH alias. It retains the AgentRQ workspace,
+shared security group, key pair and IAM resources.

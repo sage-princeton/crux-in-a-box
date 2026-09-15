@@ -1,17 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==========================================================================
-# install-run.sh — runs ON the run box, as root. SOFTWARE ONLY, NO SECRETS.
+# Install workspace software as root. This phase contains no secrets.
+# Use configure-run.sh for credentials and per-run settings.
 #
-# Kept separate from configure-run.sh precisely so it stays bakeable: this is
-# the half that can become an AMI, and it must never touch a credential or a
-# per-run value. If you find yourself wanting an API key here, it belongs in
-# configure-run.sh instead.
-#
-# Expects AGENT_PLATFORM (defaults to codex), ACP_GATEWAY_VERSION, and
-# CODEX_VERSION / CODEX_ACP_VERSION or CLAUDE_VERSION / CLAUDE_ACP_VERSION.
-# ==========================================================================
+# Required: ACP_GATEWAY_VERSION and the selected platform's CLI and ACP pins.
+# AGENT_PLATFORM defaults to codex.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
@@ -36,8 +30,7 @@ apt-get install -y -qq curl unzip jq git ca-certificates >/dev/null
 ok "apt packages in"
 
 # ====== AWS CLI v2 ======
-# Ubuntu 24.04 dropped the `awscli` package from the archive; Amazon's zip is
-# the documented route and avoids a snapd dependency.
+# Install AWS CLI v2 from the official archive.
 info "AWS CLI v2"
 if command -v aws >/dev/null 2>&1; then
   ok "already present ($(aws --version 2>&1))"
@@ -52,8 +45,7 @@ else
 fi
 
 # ====== NODE ======
-# codex-acp and acp-gateway are both npm packages. NodeSource rather than the
-# Ubuntu archive: Claude's pinned CLI and adapter require Node >=22.
+# The Claude CLI and ACP adapter require Node 22 or later.
 info "Node.js 22"
 if command -v node >/dev/null 2>&1 && [ "$(node -v | cut -c2- | cut -d. -f1)" -ge 22 ]; then
   ok "already present ($(node -v))"

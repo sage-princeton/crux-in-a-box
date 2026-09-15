@@ -1,48 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ==========================================================================
-# make-new-workspace.sh — one command: new workspace + new run box, ready to answer
-# ==========================================================================
-#   ./make-new-workspace.sh crux-codex-4
+# Create an AgentRQ workspace and provision its EC2 instance.
 #
-#   1. mints an AgentRQ workspace named after the slug (bootstrap-workspace.sh)
-#   2. writes placeholders-<slug>.txt from placeholders-base.txt
-#   3. writes run-secrets-<slug>.json from run-secrets-base.json + the minted
-#      workspace id/token
-#   4. hands off to provision-workspace-aws-resources.sh, which provisions and verifies
+# Usage: ./make-new-workspace.sh <slug> [--description TEXT] [--dry-run]
+#          [--base-config FILE] [--base-secrets FILE]
 #
-#
-# TWO FILES YOU SET UP ONCE (both gitignored, see the .example of each):
-#   placeholders-base.txt     the shared knobs — control box, key pair, pinned
-#                             versions, model and effort. NO RUN_SLUG: that is
-#                             what this script fills in per box.
-#   run-secrets-base.json     OPENAI_API_KEY (codex) or ANTHROPIC_API_KEY (claude).
-#                             The workspace id/token are minted per box, so
-#                             the key is the only per-box secret you supply.
-#
-# FIXME: pass in the placeholders and secrets as arguments here
-#
-# The provider API key stays a per-box secret in the three-tier sense — still scp'd
-# at launch and deleted on the box — it is just sourced from one local file
-# instead of being retyped into a new one every time.
-#
-# WHAT THE AGENT RUNS AS is config, not a flag. The selected platform's model
-# and effort must both be set in placeholders-base.txt, and this
-# script refuses to mint a box without them. They used to be `--model` /
-# `--effort` over a base-file default, which meant the common case — forgetting
-# the flags — produced a box at whatever the default happened to be, and
-# nothing in the run record said the choice was never made. To run a box at
-# different settings, edit placeholders-base.txt before minting; the values are
-# copied into placeholders-<slug>.txt, so what a box ran as stays readable next
-# to the box. An unset value now fails before the workspace is minted rather
-# than becoming a silent default.
-#
-# Usage:
-#   ./make-new-workspace.sh <slug> [--description TEXT] [--dry-run]
-#     [--base-config FILE] [--base-secrets FILE]
-#
-# ==========================================================================
+# Defaults: placeholders-base.txt and run-secrets-base.json (gitignored).
+# Set the platform, model, effort and version pins in the base config.
+# Supply the provider API key in the base secrets file. Omit RUN_SLUG.
+# The script writes per-workspace config and secrets using the new ID and token.
+# See README.md for configuration and prerequisite checks.
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
@@ -65,10 +33,8 @@ while [ $# -gt 0 ]; do
     --base-secrets) BASE_SECRETS="${2:-}"; [ -n "$BASE_SECRETS" ] || die "--base-secrets needs a file"; shift 2 ;;
     --description) DESC="${2:-}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
-    -h|--help)     sed -n '4,44p' "$0"; exit 0 ;;
-    # Retired deliberately, and named rather than swept up by the generic
-    # unknown-flag arm: an old command line must say why it stopped working,
-    # not just that it did.
+    -h|--help)     sed -n '4,13p' "$0"; exit 0 ;;
+    # Report the configuration keys for unsupported model and effort flags.
     --model|--effort)
       die "$1 is no longer a flag. Set AGENT_PLATFORM and its model/effort keys in $(basename "$SCRIPT_DIR")/placeholders-base.txt instead — what a box runs as is config, so it lives with the rest of the box's config." ;;
     -*)            die "Unknown flag: $1" ;;
@@ -87,11 +53,7 @@ CONFIG="$SCRIPT_DIR/placeholders-${SLUG}.txt"
 SECRETS="$SCRIPT_DIR/run-secrets-${SLUG}.json"
 
 # ====== PREFLIGHT ======
-# Everything checkable is checked BEFORE the workspace is minted, because
-# minting is this script's first irreversible act: fail after it and you are
-# left with an orphaned workspace holding a live 365-day token, which nothing
-# here cleans up. Some of these duplicate provision-workspace-aws-resources.sh's own checks on
-# purpose — its preflight runs too late to protect the workspace.
+# Check prerequisites before creating a workspace and its token.
 info "Preflight"
 for b in jq ssh python3 aws curl; do command -v "$b" >/dev/null || die "$b not found"; done
 [ -f "$BASE_CONFIG" ] \
@@ -100,8 +62,7 @@ for b in jq ssh python3 aws curl; do command -v "$b" >/dev/null || die "$b not f
   || die "$BASE_SECRETS not found. Copy the selected platform's secrets example and fill in its API key."
 jq -e . "$BASE_SECRETS" >/dev/null 2>&1 || die "$BASE_SECRETS is not valid JSON"
 
-# A base config carrying RUN_SLUG would silently win over the one written here
-# on some edits, and the resulting box would answer to the wrong workspace.
+# Reject RUN_SLUG in the base config to avoid conflicting workspace names.
 if grep -qE '^[[:space:]]*RUN_SLUG[[:space:]]*=[[:space:]]*[^[:space:]#]' "$BASE_CONFIG"; then
   die "$BASE_CONFIG sets RUN_SLUG. Remove it — make-new-workspace.sh sets it per box."
 fi
@@ -121,8 +82,7 @@ if [ "$AGENT_PLATFORM" = claude ]; then
 fi
 ok "Agent settings: $AGENT_PLATFORM, model $MODEL, effort $EFFORT"
 
-# Existing artefacts are never silently reused: a stale token or a stale slug
-# in one of these is a box that comes up healthy and talks to the wrong place.
+# Reject existing files to avoid reusing another workspace's token or slug.
 for f in "$CONFIG" "$SECRETS"; do
   [ -f "$f" ] && die "$f already exists. Remove it, or pick another slug — reusing one silently keeps its old workspace token."
 done
@@ -138,16 +98,13 @@ else
 fi
 aws_() { aws "${PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
 
-# AWS credentials first: expired SSO is the likeliest reason this script is
-# run and fails, and it must not cost a workspace to find out.
+# Validate AWS credentials before creating the workspace.
 ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text 2>/dev/null || true)"
 [[ -n "$ACCOUNT_ID" && "$ACCOUNT_ID" != "None" ]] \
   || die "Not authenticated to AWS with $CRED_DESC. $AUTH_HINT"
 ok "AWS account $ACCOUNT_ID in $REGION via $CRED_DESC"
 
-# The shared prerequisites provision-workspace-aws-resources.sh needs. Each one is a hard stop for
-# it, so checking them here is the difference between a clean refusal and a
-# half-made box plus a stray workspace.
+# Check the AWS resources required by the provisioner.
 KEY_NAME_CFG="$(cfg KEY_NAME)"
 [ -n "$KEY_NAME_CFG" ] || die "KEY_NAME is not set in $BASE_CONFIG"
 aws_ ec2 describe-key-pairs --key-names "$KEY_NAME_CFG" >/dev/null 2>&1 \
@@ -202,8 +159,7 @@ WS_ID="$(printf '%s' "$WS_JSON" | jq -re '.id')" || die "No workspace id in the 
 WS_TOKEN="$(printf '%s' "$WS_JSON" | jq -re '.token')" || die "No workspace token in the response"
 ok "Workspace $WS_ID (token expires $(printf '%s' "$WS_JSON" | jq -r '.token_expires_utc // "unknown"'))"
 
-# From here on a failure leaves a workspace behind, so say so rather than
-# letting it become a mystery entry in the dashboard later.
+# Report the workspace ID on failure so the operator can clean it up.
 cleanup_note() {
   warn "Workspace $WS_ID ('$SLUG') was created and is still there."
   warn "Re-running needs a new slug, or delete that workspace in the dashboard first."
@@ -212,8 +168,7 @@ trap 'cleanup_note' ERR
 
 # ====== 2. PER-BOX CONFIG ======
 info "Writing $(basename "$CONFIG")"
-# Refreshed on every box: a stale /32 is the most common reason a provision
-# run hangs at "waiting for SSH", and it is free to get right.
+# Refresh the operator address for SSH access.
 MY_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr -d '[:space:]' || true)"
 {
   printf '# Generated by make-new-workspace.sh for %s. Edit freely; it is yours now.\n' "$SLUG"
@@ -221,9 +176,7 @@ MY_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr 
   cat "$BASE_CONFIG"
   printf '\n# ---- set per box by make-new-workspace.sh ----\n'
   printf 'RUN_SLUG=%s\n' "$SLUG"
-  # Restated from the base file, not overridden: the per-box config is the
-  # record of what this box was provisioned as, and it should still read true
-  # after someone edits the base file for the next box.
+  # Record the selected settings in the per-workspace config.
   printf 'AGENT_PLATFORM=%s\n' "$AGENT_PLATFORM"
   printf '%s=%s\n' "$MODEL_KEY" "$MODEL" "$EFFORT_KEY" "$EFFORT"
   if [ -n "$MY_IP" ];  then printf 'OPERATOR_CIDR=%s/32\n' "$MY_IP"; fi

@@ -6,8 +6,7 @@ linux/placeholders*.txt
 src/**/placeholders*.txt
 !src/**/placeholders*.txt.example
 
-# run-box secrets bundle (OpenAI key, workspace MCP token, Langfuse keys).
-# Uploaded to SSM by make-run-box.sh --put-secrets; never committed.
+# Local secrets bundles; example files remain tracked.
 src/**/*secrets*.json
 !src/**/*secrets*.json.example
 
