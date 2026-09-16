@@ -34,6 +34,7 @@ RUN_USER=ubuntu
 RUN_HOME="/home/$RUN_USER"
 WORK_DIR=/srv/crux-run          # acp-gateway's cwd; holds .mcp.json
 CODEX_DIR="$RUN_HOME/.codex"
+PROBE_LOG=/var/log/crux-agent-probe.log
 
 # ====== PER-RUN SECRETS FROM THE SCP'D FILE ======
 # Delivered over the same SSH channel that delivered this script; deleted as
@@ -220,7 +221,11 @@ HOOK_STATUS=0
 HOOK_OUT="$(su "$RUN_USER" -c \
   "cd '$WORK_DIR' && \
    timeout 180 codex exec --skip-git-repo-check 'Say exactly: HOOK-PROBE' </dev/null 2>&1")" || HOOK_STATUS=$?
-[ "$HOOK_STATUS" = 0 ] || die "Codex probe failed (exit $HOOK_STATUS). Check $MODEL_PROVIDER model access and $API_KEY_NAME; gateway was not started."
+if [ "$HOOK_STATUS" != 0 ]; then
+  install -m 600 /dev/null "$PROBE_LOG"
+  printf '%s\n' "$HOOK_OUT" > "$PROBE_LOG"
+  die "Codex probe failed (exit $HOOK_STATUS). Inspect $PROBE_LOG with sudo for the provider error; gateway was not started."
+fi
 
 if printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
   ok "Stop hook fired — traces will reach Langfuse as environment=$RUN_SLUG"
@@ -279,9 +284,11 @@ HOOK_LOG="$STATE_DIR/langfuse_hook.log"
 HOOK_OFFSET=0
 [ ! -f "$HOOK_LOG" ] || HOOK_OFFSET="$(wc -c < "$HOOK_LOG")"
 info "Verifying Claude and its Stop hook (one real Claude turn)"
+install -m 600 /dev/null "$PROBE_LOG"
 if ! HOOK_OUT="$(su - "$RUN_USER" -c \
-  "cd '$WORK_DIR' && timeout 180 claude -p --output-format json --max-turns 1 'Say exactly: HOOK-PROBE' </dev/null" 2>/dev/null)"; then
-  die "Claude probe failed. Check the selected model and $API_KEY_NAME; gateway was not started."
+  "cd '$WORK_DIR' && timeout 180 claude -p --output-format json --max-turns 1 'Say exactly: HOOK-PROBE' </dev/null" 2>>"$PROBE_LOG")"; then
+  printf '%s\n' "$HOOK_OUT" >> "$PROBE_LOG"
+  die "Claude probe failed. Inspect $PROBE_LOG with sudo for the provider error; gateway was not started."
 fi
 printf '%s' "$HOOK_OUT" | jq -e '.is_error == false and (.result | contains("HOOK-PROBE"))' >/dev/null \
   || die "Claude probe did not return a successful result; gateway was not started."
