@@ -289,13 +289,18 @@ HOOK_OFFSET=0
 info "Verifying Claude and its Stop hook (one real Claude turn)"
 install -m 600 /dev/null "$PROBE_LOG"
 if ! HOOK_OUT="$(su - "$RUN_USER" -c \
-  "cd '$WORK_DIR' && timeout 180 claude -p --output-format json --max-turns 1 \
+  "cd '$WORK_DIR' && timeout 180 claude -p --output-format stream-json --verbose --max-turns 1 \
    --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}' \
    -- 'Say exactly: HOOK-PROBE' </dev/null" 2>>"$PROBE_LOG")"; then
   printf '%s\n' "$HOOK_OUT" >> "$PROBE_LOG"
   die "Claude probe failed. Inspect $PROBE_LOG with sudo for the provider error; gateway was not started."
 fi
-printf '%s' "$HOOK_OUT" | jq -e '.is_error == false and (.result | contains("HOOK-PROBE"))' >/dev/null \
+# Gateway streams can emit thinking after text, leaving result.result empty.
+# Require both a successful result and the marker in an assistant text event.
+printf '%s' "$HOOK_OUT" | jq -se '
+  ([.[] | select(.type == "result")] | last | .is_error == false) and
+  any(.[] | select(.type == "assistant") | .message.content[]?;
+    .type == "text" and (.text | contains("HOOK-PROBE")))' >/dev/null \
   || die "Claude probe did not return a successful result; gateway was not started."
 HOOK_NEW="$(tail -c "+$((HOOK_OFFSET + 1))" "$HOOK_LOG" 2>/dev/null || true)"
 if ! printf '%s' "$HOOK_NEW" | grep -qE 'Processed [1-9][0-9]* turns' \
