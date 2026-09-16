@@ -48,7 +48,6 @@ get() { printf '%s' "$SECRETS" | jq -re --arg k "$1" '.[$k] // empty'; }
 
 validate_agent_key "$RUN_SECRETS_PATH"
 AGENT_API_KEY="$(get "$API_KEY_NAME")" || die "$API_KEY_NAME missing from $RUN_SECRETS_PATH"
-OPENAI_API_KEY="$AGENT_API_KEY"  # Used only by the Codex branch below.
 WORKSPACE_ID="$(get AGENTRQ_WORKSPACE_ID)"  || die "AGENTRQ_WORKSPACE_ID missing from $RUN_SECRETS_PATH"
 WORKSPACE_TOKEN="$(get AGENTRQ_WORKSPACE_TOKEN)" || die "AGENTRQ_WORKSPACE_TOKEN missing from $RUN_SECRETS_PATH"
 rm -f "$RUN_SECRETS_PATH"
@@ -85,9 +84,16 @@ ok "Wrote .mcp.json -> ${CONTROL_MCP_BASE}/mcp/${WORKSPACE_ID}?token=<redacted> 
 
 # ====== GATEWAY ENVIRONMENT ======
 # systemd reads this root-only file; credential values are quoted, not shell code.
+AGENT_ENV="$(jq -cn --arg platform "$AGENT_PLATFORM" --arg provider "$MODEL_PROVIDER" \
+  --arg name "$API_KEY_NAME" --arg key "$AGENT_API_KEY" '
+  if $platform == "claude" and $provider == "openrouter" then {
+    ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+    ANTHROPIC_AUTH_TOKEN: $key,
+    ANTHROPIC_API_KEY: ""
+  } else {($name): $key} end')"
 GW_ENV=/etc/crux-run.env
 {
-  jq -nr --arg key "$API_KEY_NAME" --arg value "$AGENT_API_KEY" '$key + "=" + ($value | @json)'
+  printf '%s' "$AGENT_ENV" | jq -r 'to_entries[] | .key + "=" + (.value | @json)'
   printf 'PATH=%s/.local/bin:/usr/local/bin:/usr/bin:/bin\nHOME=%s\n' "$RUN_HOME" "$RUN_HOME"
   if [ "$AGENT_PLATFORM" = claude ]; then
     printf 'CLAUDE_CODE_EXECUTABLE=/usr/bin/claude\n'
@@ -121,6 +127,7 @@ cat > "$CODEX_DIR/config.toml" <<TOML
 personality = "pragmatic"
 model = "$CODEX_MODEL"
 model_reasoning_effort = "$CODEX_REASONING_EFFORT"
+model_provider = "${MODEL_PROVIDER/direct/openai}"
 
 [features]
 hooks = true
@@ -136,6 +143,19 @@ enabled = true
 [projects."$WORK_DIR"]
 trust_level = "trusted"
 TOML
+
+if [ "$MODEL_PROVIDER" = openrouter ]; then
+  cat >> "$CODEX_DIR/config.toml" <<'TOML'
+
+[model_providers.openrouter]
+name = "OpenRouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+wire_api = "responses"
+supports_websockets = false
+TOML
+  export OPENROUTER_API_KEY="$AGENT_API_KEY"
+fi
 
 chown -R "$RUN_USER:$RUN_USER" "$CODEX_DIR"
 ok "Wrote langfuse.json (environment=$RUN_SLUG) and config.toml (model=$CODEX_MODEL, effort=$CODEX_REASONING_EFFORT)"
@@ -172,10 +192,11 @@ else
 fi
 
 # ====== CODEX LOGIN ======
+if [ "$MODEL_PROVIDER" = direct ]; then
 # Run Codex login to write the API key to ~/.codex/auth.json.
 info "codex login (writes ~/.codex/auth.json)"
 AUTH_JSON="$CODEX_DIR/auth.json"
-if ! printf '%s' "$OPENAI_API_KEY" \
+if ! printf '%s' "$AGENT_API_KEY" \
      | su "$RUN_USER" -c "cd '$RUN_HOME' && codex login --with-api-key" >/dev/null 2>&1; then
   die "codex login --with-api-key failed. Check the OPENAI_API_KEY in the per-run secrets file."
 fi
@@ -185,25 +206,19 @@ chmod 600 "$AUTH_JSON"
 # 2>&1, not 2>/dev/null: codex reports login status on stderr, so discarding it
 # prints a blank line that reads like a failed login.
 ok "$(su "$RUN_USER" -c 'codex login status' 2>&1 | tail -1)"
+fi
 
 # ====== PROVE THE HOOK ACTUALLY FIRES ======
 # Run a paid Codex probe and require a Stop-hook event.
 info "Verifying the Stop hook fires (one real codex turn)"
-HOOK_OUT="$(su - "$RUN_USER" -c \
+HOOK_STATUS=0
+HOOK_OUT="$(su "$RUN_USER" -c \
   "cd '$WORK_DIR' && \
-   timeout 180 codex exec --skip-git-repo-check 'Say exactly: HOOK-PROBE' </dev/null 2>&1" || true)"
+   timeout 180 codex exec --skip-git-repo-check 'Say exactly: HOOK-PROBE' </dev/null 2>&1")" || HOOK_STATUS=$?
+[ "$HOOK_STATUS" = 0 ] || die "Codex probe failed (exit $HOOK_STATUS). Check $MODEL_PROVIDER model access and $API_KEY_NAME; gateway was not started."
 
 if printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
   ok "Stop hook fired — traces will reach Langfuse as environment=$RUN_SLUG"
-elif printf '%s' "$HOOK_OUT" | grep -qE '401 Unauthorized|Missing bearer|invalid_api_key'; then
-  # Report model or credential failures separately from hook failures.
-  printf '\n%s\n' "$HOOK_OUT" | tail -5
-  die "The probe turn never reached the model: OpenAI rejected the request (401).
-The hook cannot fire because no turn completed, so this is NOT a tracing fault.
-Check, in order:
-  - OPENAI_API_KEY in the per-run secrets file is current and not revoked
-  - $AUTH_JSON exists and holds that key (codex ignores the env var)
-    Re-run:  printenv OPENAI_API_KEY | codex login --with-api-key"
 else
   printf '\n%s\n' "$HOOK_OUT" | tail -20
   die "codex ran but never fired the Stop hook, so NOTHING will be traced.
@@ -225,14 +240,13 @@ STATE_DIR="$WORK_DIR/.claude/state"
 mkdir -p "$CLAUDE_DIR/hooks" "$STATE_DIR"
 cp "$SCRIPT_DIR/langfuse_hook.py" "$HOOK_PATH"
 jq -n --arg model "$MODEL" --arg effort "$EFFORT" \
-  --arg key "$AGENT_API_KEY" --arg pk "$LANGFUSE_PUBLIC_KEY" \
+  --argjson agent_env "$AGENT_ENV" --arg pk "$LANGFUSE_PUBLIC_KEY" \
   --arg sk "$LANGFUSE_SECRET_KEY" --arg url "$LANGFUSE_BASE_URL" \
   --arg slug "$RUN_SLUG" --arg state "$STATE_DIR" --arg hook "$HOOK_PATH" \
   --arg uv "$RUN_HOME/.local/bin/uv" --arg metadata "$TRACE_METADATA" \
   '{
     model: $model,
-    env: {
-      ANTHROPIC_API_KEY: $key,
+    env: ($agent_env + {
       CLAUDE_CODE_EFFORT_LEVEL: $effort,
       TRACE_TO_LANGFUSE: "true",
       LANGFUSE_PUBLIC_KEY: $pk,
@@ -241,7 +255,7 @@ jq -n --arg model "$MODEL" --arg effort "$EFFORT" \
       LANGFUSE_TRACING_ENVIRONMENT: $slug,
       CC_LANGFUSE_METADATA: $metadata,
       CC_LANGFUSE_STATE_DIR: $state
-    },
+    }),
     hooks: {Stop: [{hooks: [{
       type: "command",
       command: (($uv | @sh) + " run --quiet --script " + ($hook | @sh)),
@@ -262,7 +276,7 @@ HOOK_OFFSET=0
 info "Verifying Claude and its Stop hook (one real Claude turn)"
 if ! HOOK_OUT="$(su - "$RUN_USER" -c \
   "cd '$WORK_DIR' && timeout 180 claude -p --output-format json --max-turns 1 'Say exactly: HOOK-PROBE' </dev/null" 2>/dev/null)"; then
-  die "Claude probe failed. Check the selected model and ANTHROPIC_API_KEY; gateway was not started."
+  die "Claude probe failed. Check the selected model and $API_KEY_NAME; gateway was not started."
 fi
 printf '%s' "$HOOK_OUT" | jq -e '.is_error == false and (.result | contains("HOOK-PROBE"))' >/dev/null \
   || die "Claude probe did not return a successful result; gateway was not started."

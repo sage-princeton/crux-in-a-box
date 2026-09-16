@@ -27,6 +27,11 @@ KEY_NAME=crux-acp
 # Codex effort: minimal | low | medium | high. An omitted platform selects Codex.
 AGENT_PLATFORM=codex
 
+# Optional gateway: direct (default) | openrouter. OpenRouter requires an
+# OPENROUTER_API_KEY in the secrets file and a full model ID such as
+# openai/gpt-5.5 or anthropic/claude-opus-5 in the selected platform's model key.
+MODEL_PROVIDER=direct
+
 # For Claude, set AGENT_PLATFORM=claude and fill in these instead of CODEX_*:
 # CLAUDE_MODEL=<explicit-model-id>
 # CLAUDE_EFFORT=high

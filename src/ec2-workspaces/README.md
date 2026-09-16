@@ -16,6 +16,16 @@ This will:
 secrets, and calls `provision-workspace-aws-resources.sh`. ~2 minutes. All AWS checks run _before_
 the workspace is minted, so bad credentials cost nothing.
 
+Set `MODEL_PROVIDER=openrouter` in a separate base config to use OpenRouter
+with either agent. Set `CODEX_MODEL` or `CLAUDE_MODEL` to its full OpenRouter
+model ID, and put `OPENROUTER_API_KEY` in the base secrets JSON. Omitting
+`MODEL_PROVIDER` keeps direct OpenAI/Anthropic billing.
+
+OpenRouter access alone does not establish Google Cloud billing. That requires
+a configured Vertex AI BYOK account and a model served by Vertex. To require
+that billing path, restrict routing to Vertex and disable shared-capacity
+fallback in OpenRouter; verify the actual provider and BYOK usage before a run.
+
 ### Teardown a workspace
 
 This will:
