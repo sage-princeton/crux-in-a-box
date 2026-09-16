@@ -81,6 +81,11 @@ CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-}"
 OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
+USE_ELASTIC_IP="${CFG[USE_ELASTIC_IP]:-true}"
+case "$USE_ELASTIC_IP" in
+  true|false) ;;
+  *) die "USE_ELASTIC_IP must be true|false." ;;
+esac
 # Use the same gp3 throughput and IOPS as the OpenClaw provisioner.
 # Additional capacity supports initial reads while EBS loads snapshot blocks.
 ROOT_IOPS="${CFG[ROOT_IOPS]:-6000}"
@@ -351,6 +356,7 @@ else
   INSTANCE_ID="$(aws_ ec2 run-instances \
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
     --security-group-ids "$RUN_SG_ID" --subnet-id "$SUBNET_ID" \
+    --associate-public-ip-address \
     --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
     --metadata-options "HttpTokens=required" \
     --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT},\"DeleteOnTermination\":true}}]" \
@@ -365,6 +371,7 @@ ok "Running"
 
 # ====== ELASTIC IP ======
 # Allocate a stable public IP for the SSH alias.
+if [ "$USE_ELASTIC_IP" = true ]; then
 info "Elastic IP"
 ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
   --query 'Addresses[0].AllocationId' --output text)"
@@ -380,6 +387,13 @@ aws_ ec2 associate-address --instance-id "$INSTANCE_ID" \
   --allocation-id "$ALLOC_ID" >/dev/null
 PUBLIC_IP="$(aws_ ec2 describe-addresses --allocation-ids "$ALLOC_ID" \
   --query 'Addresses[0].PublicIp' --output text)"
+else
+  PUBLIC_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
+  [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" != "None" ]] \
+    || die "Instance has no public IPv4 address; use an Elastic IP or a subnet with public IP assignment."
+  warn "Using instance public IP; after stop/start, rerun provisioning to refresh the SSH alias."
+fi
 PRIVATE_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)"
 ok "Public $PUBLIC_IP / private $PRIVATE_IP"
