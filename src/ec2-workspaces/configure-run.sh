@@ -156,9 +156,12 @@ if [ "$MODEL_PROVIDER" = openrouter ]; then
 [model_providers.openrouter]
 name = "OpenRouter"
 base_url = "https://openrouter.ai/api/v1"
-env_key = "OPENROUTER_API_KEY"
 wire_api = "responses"
 supports_websockets = false
+
+[model_providers.openrouter.auth]
+command = "printenv"
+args = ["OPENROUTER_API_KEY"]
 TOML
   export OPENROUTER_API_KEY="$AGENT_API_KEY"
 fi
