@@ -289,7 +289,9 @@ HOOK_OFFSET=0
 info "Verifying Claude and its Stop hook (one real Claude turn)"
 install -m 600 /dev/null "$PROBE_LOG"
 if ! HOOK_OUT="$(su - "$RUN_USER" -c \
-  "cd '$WORK_DIR' && timeout 180 claude -p --output-format json --max-turns 1 'Say exactly: HOOK-PROBE' </dev/null" 2>>"$PROBE_LOG")"; then
+  "cd '$WORK_DIR' && timeout 180 claude -p --output-format json --max-turns 1 \
+   --tools '' --strict-mcp-config --mcp-config '{\"mcpServers\":{}}' \
+   -- 'Say exactly: HOOK-PROBE' </dev/null" 2>>"$PROBE_LOG")"; then
   printf '%s\n' "$HOOK_OUT" >> "$PROBE_LOG"
   die "Claude probe failed. Inspect $PROBE_LOG with sudo for the provider error; gateway was not started."
 fi
