@@ -85,11 +85,16 @@ ok "Wrote .mcp.json -> ${CONTROL_MCP_BASE}/mcp/${WORKSPACE_ID}?token=<redacted> 
 # ====== GATEWAY ENVIRONMENT ======
 # systemd reads this root-only file; credential values are quoted, not shell code.
 AGENT_ENV="$(jq -cn --arg platform "$AGENT_PLATFORM" --arg provider "$MODEL_PROVIDER" \
-  --arg name "$API_KEY_NAME" --arg key "$AGENT_API_KEY" '
+  --arg name "$API_KEY_NAME" --arg key "$AGENT_API_KEY" --arg model "$MODEL" '
   if $platform == "claude" and $provider == "openrouter" then {
     ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
     ANTHROPIC_AUTH_TOKEN: $key,
-    ANTHROPIC_API_KEY: ""
+    ANTHROPIC_API_KEY: "",
+    ANTHROPIC_DEFAULT_FABLE_MODEL: $model,
+    ANTHROPIC_DEFAULT_OPUS_MODEL: $model,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: $model,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: $model,
+    CLAUDE_CODE_SUBAGENT_MODEL: $model
   } else {($name): $key} end')"
 GW_ENV=/etc/crux-run.env
 {
