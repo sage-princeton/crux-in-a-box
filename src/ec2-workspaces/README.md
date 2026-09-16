@@ -25,6 +25,9 @@ OpenRouter access alone does not establish Google Cloud billing. That requires
 a configured Vertex AI BYOK account and a model served by Vertex. To require
 that billing path, restrict routing to Vertex and disable shared-capacity
 fallback in OpenRouter; verify the actual provider and BYOK usage before a run.
+An OpenRouter preset can enforce `provider.only=["google-vertex"]` and
+`allow_fallbacks=false`; select it with `google/gemini-3.5-flash@preset/<slug>`
+as the model. The BYOK key's shared-capacity fallback setting is still required.
 
 ### Teardown a workspace
 

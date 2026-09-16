@@ -39,7 +39,7 @@ load_agent_config() {
     esac
     # Config values cross an SSH shell and, for Codex, a TOML string. Reject
     # shell syntax/quotes rather than allowing config to become remote code.
-    [[ "$value" =~ ^[a-zA-Z0-9._:/+-]+(\[[a-zA-Z0-9]+\])?$ ]] \
+    [[ "$value" =~ ^[a-zA-Z0-9._:/+@-]+(\[[a-zA-Z0-9]+\])?$ ]] \
       || die "$key contains unsupported characters."
   done
   case "$AGENT_PLATFORM:$EFFORT" in
