@@ -4,12 +4,18 @@ set -euo pipefail
 # Create an AgentRQ workspace and provision its EC2 instance.
 #
 # Usage: ./make-new-workspace.sh <slug> [--description TEXT] [--dry-run]
-#          [--base-config FILE] [--base-secrets FILE]
+#          [--base-config FILE] [--base-secrets FILE] [--elastic-ip ALLOCATION_ID]
 #
 # Defaults: placeholders-base.txt and run-secrets-base.json (gitignored).
 # Set the platform, model, effort and version pins in the base config.
 # Supply the provider API key in the base secrets file. Omit RUN_SLUG.
 # The script writes per-workspace config and secrets using the new ID and token.
+#
+# --elastic-ip ALLOCATION_ID reuses an existing Elastic IP (e.g. one already
+# allowlisted by a web host) instead of allocating a fresh one for this slug.
+# It is never released by teardown-workspace-aws-resources.sh, so it can be
+# handed to the next workspace once this one is torn down.
+#
 # See README.md for configuration and prerequisite checks.
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
@@ -26,14 +32,15 @@ BASE_CONFIG="$SCRIPT_DIR/placeholders-base.txt"
 BASE_SECRETS="$SCRIPT_DIR/run-secrets-base.json"
 
 # ====== ARGS ======
-SLUG=""; DESC=""; DRY_RUN=0
+SLUG=""; DESC=""; DRY_RUN=0; ELASTIC_IP_ALLOC=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --base-config) BASE_CONFIG="${2:-}"; [ -n "$BASE_CONFIG" ] || die "--base-config needs a file"; shift 2 ;;
     --base-secrets) BASE_SECRETS="${2:-}"; [ -n "$BASE_SECRETS" ] || die "--base-secrets needs a file"; shift 2 ;;
     --description) DESC="${2:-}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
-    -h|--help)     sed -n '4,13p' "$0"; exit 0 ;;
+    --elastic-ip)  ELASTIC_IP_ALLOC="${2:-}"; [ -n "$ELASTIC_IP_ALLOC" ] || die "--elastic-ip needs an allocation id"; shift 2 ;;
+    -h|--help)     sed -n '4,19p' "$0"; exit 0 ;;
     # Report the configuration keys for unsupported model and effort flags.
     --model|--effort)
       die "$1 is no longer a flag. Set AGENT_PLATFORM and its model/effort keys in $(basename "$SCRIPT_DIR")/placeholders-base.txt instead — what a box runs as is config, so it lives with the rest of the box's config." ;;
@@ -123,6 +130,12 @@ RUN_SG_ID="$(aws_ ec2 describe-security-groups --filters "Name=group-name,Values
   || die "crux-run-sg does not exist. Run ../ec2-control/make-control-box.sh first: it creates both security groups."
 ok "Key pair, /crux/system/env, crux-system-profile and crux-run-sg all present"
 
+if [ -n "$ELASTIC_IP_ALLOC" ]; then
+  aws_ ec2 describe-addresses --allocation-ids "$ELASTIC_IP_ALLOC" >/dev/null 2>&1 \
+    || die "--elastic-ip '$ELASTIC_IP_ALLOC' does not exist in $REGION."
+  ok "Elastic IP override $ELASTIC_IP_ALLOC exists"
+fi
+
 EXISTING="$(aws_ ec2 describe-instances \
   --filters "Name=tag:Name,Values=$SLUG" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
   --query 'Reservations[].Instances[0].InstanceId' --output text 2>/dev/null || true)"
@@ -145,6 +158,7 @@ if [ "$DRY_RUN" = 1 ]; then
   3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS") + the minted id/token
   4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
      and stages run-harness/ at /srv/crux-run/run-harness
+$(if [ -n "$ELASTIC_IP_ALLOC" ]; then printf '  elastic ip        %s (override, reused as-is; not released on teardown)\n' "$ELASTIC_IP_ALLOC"; else printf '  elastic ip        allocated fresh, tagged Name=%s\n' "$SLUG"; fi)
 
 Nothing was created — not the workspace either.
 PLAN
@@ -183,6 +197,7 @@ MY_IP="$(curl -fsS --max-time 10 https://checkip.amazonaws.com 2>/dev/null | tr 
   printf 'AGENT_PLATFORM=%s\n' "$AGENT_PLATFORM"
   printf '%s=%s\n' "$MODEL_KEY" "$MODEL" "$EFFORT_KEY" "$EFFORT"
   if [ -n "$MY_IP" ];  then printf 'OPERATOR_CIDR=%s/32\n' "$MY_IP"; fi
+  if [ -n "$ELASTIC_IP_ALLOC" ]; then printf 'ELASTIC_IP_ALLOCATION_ID=%s\n' "$ELASTIC_IP_ALLOC"; fi
 } > "$CONFIG"
 # Later keys win in provision-workspace-aws-resources.sh's parser, so the appended block overrides
 # whatever the base file said.

@@ -16,6 +16,13 @@ This will:
 secrets, and calls `provision-workspace-aws-resources.sh`. ~2 minutes. All AWS checks run _before_
 the workspace is minted, so bad credentials cost nothing.
 
+By default each workspace gets its own Elastic IP, allocated and tagged to its slug.
+Pass `--elastic-ip <allocation-id>` to reuse an existing one instead — e.g. an address
+a web host has allowlisted for crawling, that needs to stay stable across pilots and
+workspaces. An EIP can only be associated with one running instance at a time, so only
+one workspace can hold it live at once; provisioning fails fast if it's already in use
+by another live workspace. Tear that workspace down (or use a different address) first.
+
 ### Teardown a workspace
 
 This will:
@@ -25,4 +32,6 @@ This will:
 
 **`teardown-workspace-aws-resources.sh`** — laptop. Terminates one box, releases its Elastic IP,
 removes the ssh alias. Deliberately keeps the shared SG / key pair / IAM —
-and the AgentRQ workspace, which outlives its box.
+and the AgentRQ workspace, which outlives its box. If the box used an `--elastic-ip`
+override, that address is left allocated (just disassociated) so the next workspace
+can reuse it — pass it as `--elastic-ip` again.

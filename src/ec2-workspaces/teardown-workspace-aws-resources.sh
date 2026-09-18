@@ -3,6 +3,8 @@ set -euo pipefail
 
 # Terminate the instance for a slug, release its Elastic IP and remove its SSH alias.
 # Retain the AgentRQ workspace and shared security groups, key pair, IAM and SSM resources.
+# If the box used an --elastic-ip override (ELASTIC_IP_ALLOCATION_ID in CONFIG_FILE),
+# that address is disassociated but never released — it's shared across workspaces.
 #
 # Usage: ./teardown-workspace-aws-resources.sh [CONFIG_FILE] [--yes]
 
@@ -26,6 +28,10 @@ CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
 cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1/p" "$CONFIG_FILE" | head -1; }
 PROFILE="$(cfg AWS_PROFILE)"; REGION="$(cfg AWS_REGION)"; SLUG="$(cfg RUN_SLUG)"
 [[ -n "$REGION" && -n "$SLUG" ]] || die "AWS_REGION and RUN_SLUG must be set in $CONFIG_FILE"
+# Set when this box used an --elastic-ip override: that address is shared
+# across workspaces, so it is disassociated (by terminating the instance)
+# but never released.
+ELASTIC_IP_OVERRIDE="$(cfg ELASTIC_IP_ALLOCATION_ID)"
 
 if [ -n "$PROFILE" ]; then PROFILE_ARGS=(--profile "$PROFILE"); else PROFILE_ARGS=(); fi
 aws_() { aws "${PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
@@ -42,10 +48,18 @@ if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
 else
   echo "  (no live instance tagged Name=$SLUG)"
 fi
-ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
-  --query 'Addresses[0].AllocationId' --output text 2>/dev/null || true)"
+if [ -n "$ELASTIC_IP_OVERRIDE" ]; then
+  ALLOC_ID="$ELASTIC_IP_OVERRIDE"
+else
+  ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
+    --query 'Addresses[0].AllocationId' --output text 2>/dev/null || true)"
+fi
 if [ -n "$ALLOC_ID" ] && [ "$ALLOC_ID" != "None" ]; then
-  echo "  release Elastic IP   $ALLOC_ID"
+  if [ -n "$ELASTIC_IP_OVERRIDE" ]; then
+    echo "  keep Elastic IP      $ALLOC_ID (override; disassociated only, shared across workspaces)"
+  else
+    echo "  release Elastic IP   $ALLOC_ID"
+  fi
 fi
 echo "  remove ~/.ssh/config entry for $SLUG"
 echo
@@ -67,11 +81,17 @@ if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   ok "Terminated (its root volume had DeleteOnTermination=true)"
 fi
 
-# Release the Elastic IP after terminating the instance.
+# Release the Elastic IP after terminating the instance — unless it's a
+# shared override, in which case terminating the instance already
+# disassociated it and it's left allocated for the next workspace.
 if [ -n "$ALLOC_ID" ] && [ "$ALLOC_ID" != "None" ]; then
-  info "Releasing Elastic IP $ALLOC_ID"
-  aws_ ec2 release-address --allocation-id "$ALLOC_ID" >/dev/null
-  ok "Released"
+  if [ -n "$ELASTIC_IP_OVERRIDE" ]; then
+    ok "Left Elastic IP $ALLOC_ID allocated (override; not released)"
+  else
+    info "Releasing Elastic IP $ALLOC_ID"
+    aws_ ec2 release-address --allocation-id "$ALLOC_ID" >/dev/null
+    ok "Released"
+  fi
 fi
 
 # Delete /crux/run/<slug>/env if present.
