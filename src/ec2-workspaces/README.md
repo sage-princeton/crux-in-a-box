@@ -70,7 +70,35 @@ mints its AgentRQ workspace over this connection:
 ssh -o ConnectTimeout=10 -o BatchMode=yes crux-control true && echo OK
 ```
 
-### 4. Configure and create your workspace
+### 4. (Optional) Log into the AgentRQ dashboard
+
+`make-new-workspace.sh` does **not** need this — it mints workspaces over the
+SSH connection from step 3, fetching the root token itself on the controller
+side (`../ec2-control/bootstrap-workspace.sh` greps it out of
+`/srv/agentrq/agentrq.env` via `sudo`). You only need this if you want to log
+into the AgentRQ web dashboard yourself (e.g. to browse/manage workspaces by
+hand).
+
+The root login credential, `AGENTRQ_AUTH_ROOT_ACCESS_TOKEN`, lives in AWS SSM
+Parameter Store as a `SecureString` — pull it directly, no SSH required:
+```bash
+aws ssm get-parameter --name /crux/control/env --with-decryption \
+  --query 'Parameter.Value' --output text | grep '^AGENTRQ_AUTH_ROOT_ACCESS_TOKEN=' | cut -d= -f2-
+```
+Treat the output as a secret: don't paste it into chat, tickets, or shell
+history you'll share. It logs you in at `POST /api/v1/auth/root/login` (the
+dashboard's login form does this for you) against the controller's public
+HTTPS base (`CONTROL_MCP_BASE`, e.g. `https://<dashed-eip>.sslip.io`).
+
+To reach the dashboard in a browser at all, your IP also needs port 443 on
+`crux-control-sg` (separate from the SSH rule in step 3):
+```bash
+aws ec2 authorize-security-group-ingress --group-id "$(aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=crux-control-sg" --query 'SecurityGroups[0].GroupId' --output text)" \
+  --ip-permissions "IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges=[{CidrIp=${MY_IP}/32,Description=\"$(whoami)\"}]"
+```
+
+### 5. Configure and create your workspace
 
 ```bash
 cp placeholders-base.txt.example placeholders-base.txt
