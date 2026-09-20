@@ -187,4 +187,31 @@ for name in "${!WANT_POLICIES[@]}"; do
   ok "Attached $name"
 done
 
-die "Config write-back is not implemented yet."
+# ====== WRITE CONFIG ======
+# Portable in-place rewrite: filter out any prior AUX_RESOURCE_ACCOUNT_ID /
+# AUX_RESOURCE_ROLE_ARN lines, then append current values. Avoids sed -i,
+# whose -i flag syntax differs between BSD (macOS) and GNU sed.
+info "Recording AUX_RESOURCE_ACCOUNT_ID / AUX_RESOURCE_ROLE_ARN in $CONFIG_FILE"
+TMP_CONFIG="$(mktemp)"
+grep -vE '^(AUX_RESOURCE_ACCOUNT_ID|AUX_RESOURCE_ROLE_ARN)=' "$CONFIG_FILE" > "$TMP_CONFIG" || true
+{
+  cat "$TMP_CONFIG"
+  printf '\n# ---- set by provision-aux-aws-resources.sh ----\n'
+  printf 'AUX_RESOURCE_ACCOUNT_ID=%s\n' "$AUX_ACCOUNT_ID"
+  printf 'AUX_RESOURCE_ROLE_ARN=%s\n' "$AUX_ROLE_ARN"
+} > "$CONFIG_FILE"
+rm -f "$TMP_CONFIG"
+ok "Recorded"
+
+cat <<DONE
+
+$(ok "Aux-resource access provisioned for '$SLUG'")
+
+  main account role       $RUN_ROLE ($MAIN_ACCOUNT_ID)
+  isolated account role   $AUX_ROLE ($AUX_ACCOUNT_ID), trusts $RUN_ROLE only
+  granted                 $( [ "$FLAG_POSTGRES" = 1 ] && printf 'postgres ' )$( [ "$FLAG_S3" = 1 ] && printf 's3 ' )$( [ "$FLAG_EC2" = 1 ] && printf 'ec2 ' )$( [ "$FLAG_DNS" = 1 ] && printf 'dns ' )
+
+Launch the instance with provision-workspace-aws-resources.sh — it will use
+the $RUN_ROLE instance profile since it now exists for '$SLUG'.
+Teardown: ./teardown-aux-aws-resources.sh $(basename "$CONFIG_FILE")
+DONE
