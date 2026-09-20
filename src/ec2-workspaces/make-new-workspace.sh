@@ -143,7 +143,10 @@ if [ "$DRY_RUN" = 1 ]; then
   2. write $CONFIG           from $(basename "$BASE_CONFIG")
      platform $AGENT_PLATFORM, model $MODEL, effort $EFFORT, dialling ${MCP_BASE:-<private default>}
   3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS") + the minted id/token
-  4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
+  4. if any PROVISION_* flag is set in $(basename "$BASE_CONFIG"), run
+     provision-aux-aws-resources.sh to grant scoped isolated-account access
+     before the instance launches
+  5. run provision-workspace-aws-resources.sh, which provisions and verifies the box
      and stages run-harness/ at /srv/crux-run/run-harness
 
 Nothing was created — not the workspace either.
@@ -196,7 +199,14 @@ jq -n --arg key "$API_KEY_NAME" --arg k "$AGENT_API_KEY" --arg id "$WS_ID" --arg
 chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
-# ====== 4. PROVISION ======
+# ====== 4. AUX AWS RESOURCES (opt-in) ======
+if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1' "$CONFIG"; then
+  info "Aux AWS resource flag(s) set — granting access before instance launch"
+  "$SCRIPT_DIR/provision-aux-aws-resources.sh" "$CONFIG"
+  printf '\n'
+fi
+
+# ====== 5. PROVISION ======
 info "Handing off to provision-workspace-aws-resources.sh"
 printf '\n'
 "$SCRIPT_DIR/provision-workspace-aws-resources.sh" --secrets "$SECRETS" "$CONFIG"
