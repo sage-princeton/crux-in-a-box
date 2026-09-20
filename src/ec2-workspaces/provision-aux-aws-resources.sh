@@ -151,4 +151,40 @@ else
   ok "Created instance profile"
 fi
 
-die "Isolated-account provisioning is not implemented yet."
+# ====== ISOLATED ACCOUNT: crux-agent-devops role ======
+info "IAM role '$AUX_ROLE' (isolated account $AUX_ACCOUNT_ID)"
+TRUST_POLICY="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"$RUN_ROLE_ARN\"},\"Action\":\"sts:AssumeRole\"}]}"
+if aws_aux_iam_ get-role --role-name "$AUX_ROLE" >/dev/null 2>&1; then
+  aws_aux_iam_ update-assume-role-policy --role-name "$AUX_ROLE" --policy-document "$TRUST_POLICY" >/dev/null
+  ok "Role exists; trust policy set to $RUN_ROLE_ARN only"
+else
+  aws_aux_iam_ create-role --role-name "$AUX_ROLE" \
+    --description "CRUX agent devops access, scoped to the currently opted-in run" \
+    --assume-role-policy-document "$TRUST_POLICY" >/dev/null
+  ok "Created role; trust policy scoped to $RUN_ROLE_ARN"
+fi
+
+info "Reconciling managed policy attachments to the current PROVISION_* flags"
+declare -A WANT_POLICIES=()
+[ "$FLAG_POSTGRES" = 1 ] && WANT_POLICIES[AmazonRDSFullAccess]=1
+[ "$FLAG_S3" = 1 ] && WANT_POLICIES[AmazonS3FullAccess]=1
+[ "$FLAG_EC2" = 1 ] && WANT_POLICIES[AmazonEC2FullAccess]=1
+[ "$FLAG_DNS" = 1 ] && WANT_POLICIES[AmazonRoute53FullAccess]=1
+
+ATTACHED="$(aws_aux_iam_ list-attached-role-policies --role-name "$AUX_ROLE" --query 'AttachedPolicies[].PolicyName' --output text)"
+for name in $ATTACHED; do
+  case "$name" in
+    AmazonRDSFullAccess|AmazonS3FullAccess|AmazonEC2FullAccess|AmazonRoute53FullAccess)
+      if [ -z "${WANT_POLICIES[$name]:-}" ]; then
+        aws_aux_iam_ detach-role-policy --role-name "$AUX_ROLE" --policy-arn "arn:aws:iam::aws:policy/$name" >/dev/null
+        ok "Detached $name (no longer enabled)"
+      fi
+      ;;
+  esac
+done
+for name in "${!WANT_POLICIES[@]}"; do
+  aws_aux_iam_ attach-role-policy --role-name "$AUX_ROLE" --policy-arn "arn:aws:iam::aws:policy/$name" >/dev/null
+  ok "Attached $name"
+done
+
+die "Config write-back is not implemented yet."
