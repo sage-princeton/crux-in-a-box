@@ -22,6 +22,8 @@ a web host has allowlisted for crawling, that needs to stay stable across pilots
 workspaces. An EIP can only be associated with one running instance at a time, so only
 one workspace can hold it live at once; provisioning fails fast if it's already in use
 by another live workspace. Tear that workspace down (or use a different address) first.
+Use `../../utils/manage-elastic-ips.sh` to allocate, list and release the standalone
+addresses these overrides point at, independent of any one workspace.
 
 ### Teardown a workspace
 
