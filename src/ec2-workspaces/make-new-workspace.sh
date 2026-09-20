@@ -200,7 +200,7 @@ chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
 # ====== 4. AUX AWS RESOURCES (opt-in) ======
-if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1' "$CONFIG"; then
+if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1$' "$CONFIG"; then
   info "Aux AWS resource flag(s) set — granting access before instance launch"
   "$SCRIPT_DIR/provision-aux-aws-resources.sh" "$CONFIG"
   printf '\n'
