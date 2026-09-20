@@ -176,6 +176,7 @@ if [ -n "$ELASTIC_IP_ALLOCATION_ID" ] && [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY
     --query 'Addresses[0].InstanceId' --output text 2>/dev/null || true)"
   [ -n "$EIP_INFO" ] || die "ELASTIC_IP_ALLOCATION_ID '$ELASTIC_IP_ALLOCATION_ID' does not exist in $REGION."
   if [ "$EIP_INFO" != "None" ]; then
+    # shellcheck disable=SC2016 # backtick is literal JMESPath syntax, not command substitution
     EIP_INSTANCE_NAME="$(aws_ ec2 describe-instances --instance-ids "$EIP_INFO" \
       --query 'Reservations[0].Instances[0].Tags[?Key==`Name`].Value | [0]' --output text 2>/dev/null || true)"
     [ "$EIP_INSTANCE_NAME" = "$SLUG" ] \
