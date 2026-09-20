@@ -309,10 +309,15 @@ if [ "$DRY_RUN" = 1 ]; then
   else
     EIP_PLAN_LINE="  elastic ip        associated to $SLUG      (stable address across stop/start)"
   fi
+  if [ "$RUN_IAM_PROFILE" = "$SYSTEM_IAM_PROFILE" ]; then
+    PROFILE_DESC="shared; read-only on $SYSTEM_SSM_PARAM (must exist: --put-system-secrets creates it)"
+  else
+    PROFILE_DESC="per-workspace (aux AWS resources enabled)"
+  fi
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
-  instance profile  $RUN_IAM_PROFILE      $( [ "$RUN_IAM_PROFILE" = "$SYSTEM_IAM_PROFILE" ] && echo "shared; read-only on $SYSTEM_SSM_PARAM (must exist: --put-system-secrets creates it)" || echo "per-workspace (aux AWS resources enabled)" )
+  instance profile  $RUN_IAM_PROFILE      $PROFILE_DESC
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
