@@ -123,4 +123,32 @@ PLAN
   exit 0
 fi
 
-die "Real (non-dry-run) provisioning is not implemented yet."
+# ====== MAIN ACCOUNT: crux-run-$SLUG role + instance profile ======
+info "IAM role '$RUN_ROLE' (main account, per-workspace)"
+if aws_main_iam_ get-role --role-name "$RUN_ROLE" >/dev/null 2>&1; then
+  ok "Role exists"
+else
+  aws_main_iam_ create-role --role-name "$RUN_ROLE" \
+    --description "CRUX run box $SLUG - baseline system access plus aux-resource devops" \
+    --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
+  ok "Created role"
+fi
+aws_main_iam_ put-role-policy --role-name "$RUN_ROLE" --policy-name "read-system-env" \
+  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"ssm:GetParameter\"],\"Resource\":\"arn:aws:ssm:${REGION}:${MAIN_ACCOUNT_ID}:parameter/crux/system/env\"}]}" >/dev/null
+ok "Inline policy: ssm:GetParameter on /crux/system/env"
+aws_main_iam_ put-role-policy --role-name "$RUN_ROLE" --policy-name "assume-aux-resource-role" \
+  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRole\",\"Resource\":\"$AUX_ROLE_ARN\"}]}" >/dev/null
+ok "Inline policy: sts:AssumeRole on $AUX_ROLE_ARN only"
+
+if aws_main_iam_ get-instance-profile --instance-profile-name "$RUN_ROLE" >/dev/null 2>&1; then
+  ok "Instance profile exists"
+else
+  aws_main_iam_ create-instance-profile --instance-profile-name "$RUN_ROLE" >/dev/null
+  aws_main_iam_ add-role-to-instance-profile \
+    --instance-profile-name "$RUN_ROLE" --role-name "$RUN_ROLE"
+  info "Waiting 10s for IAM to propagate"
+  sleep 10
+  ok "Created instance profile"
+fi
+
+die "Isolated-account provisioning is not implemented yet."
