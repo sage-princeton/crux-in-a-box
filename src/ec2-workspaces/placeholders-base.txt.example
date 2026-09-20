@@ -51,3 +51,16 @@ TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae8
 
 # The control box's ssh alias, used to mint workspaces.
 CONTROL_SSH_ALIAS=crux-control
+
+# Opt in, per resource type, to grant this run's agent scoped AWS access to
+# provision that resource in a separate, pre-existing isolated AWS account
+# (self-hosting devops pilot — see docs/superpowers/specs/2026-09-20-aux-aws-resources-design.md
+# in a local checkout; the spec itself is not committed). All default off.
+# AUX_RESOURCE_PROFILE names the AWS CLI profile for the isolated account.
+# provision-aux-aws-resources.sh writes AUX_RESOURCE_ACCOUNT_ID and
+# AUX_RESOURCE_ROLE_ARN below this block once it has run.
+PROVISION_POSTGRES=
+PROVISION_S3=
+PROVISION_DNS=
+PROVISION_EC2=
+AUX_RESOURCE_PROFILE=
