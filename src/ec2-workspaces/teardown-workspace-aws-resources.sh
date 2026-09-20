@@ -50,8 +50,10 @@ fi
 echo "  remove ~/.ssh/config entry for $SLUG"
 echo
 echo "Keeping (shared): crux-run-sg, the key pair, crux-system-role/profile,"
-echo "/crux/system/env, and the control box. Nothing per-box lives in SSM or"
-echo "IAM — the scp'd secrets file was deleted on the box after configure."
+echo "/crux/system/env, and the control box. If aux AWS resources were"
+echo "enabled for this slug, its per-workspace crux-run-\$SLUG role and the"
+echo "isolated-account crux-agent-devops role are deleted by the step above,"
+echo "not kept."
 echo
 
 if [ "$ASSUME_YES" != 1 ]; then
@@ -59,6 +61,9 @@ if [ "$ASSUME_YES" != 1 ]; then
   read -r reply
   [ "$reply" = "$SLUG" ] || die "Did not match. Nothing was deleted."
 fi
+
+info "Aux AWS resources (no-op if never provisioned for this slug)"
+"$SCRIPT_DIR/teardown-aux-aws-resources.sh" "$CONFIG_FILE" --yes
 
 if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   info "Terminating $INSTANCE_ID"
