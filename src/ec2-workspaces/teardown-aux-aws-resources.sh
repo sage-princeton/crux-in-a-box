@@ -56,6 +56,17 @@ AUX_ACCOUNT_ID="$(aws_aux_ sts get-caller-identity --query Account --output text
 [[ -n "$AUX_ACCOUNT_ID" && "$AUX_ACCOUNT_ID" != "None" ]] \
   || die "Not authenticated to the isolated account with profile '$AUX_PROFILE'. Run: aws sso login --sso-session <session>"
 
+MAIN_ACCOUNT_ID="$(aws_main_ sts get-caller-identity --query Account --output text 2>/dev/null || true)"
+[[ -n "$MAIN_ACCOUNT_ID" && "$MAIN_ACCOUNT_ID" != "None" ]] \
+  || die "Not authenticated to the main account with profile '${PROFILE:-<ambient>}'. Run: aws sso login --sso-session <session>"
+[ "$MAIN_ACCOUNT_ID" != "$AUX_ACCOUNT_ID" ] \
+  || die "AUX_RESOURCE_PROFILE '$AUX_PROFILE' resolves to the SAME account ($MAIN_ACCOUNT_ID) as the main profile. Refusing to run destructive teardown against the main account — this would delete every RDS instance, S3 bucket, EC2 instance and public Route53 zone there. Check AUX_RESOURCE_PROFILE and AWS_PROFILE in $CONFIG_FILE."
+
+RECORDED_AUX_ACCOUNT_ID="$(cfg AUX_RESOURCE_ACCOUNT_ID)"
+if [ -n "$RECORDED_AUX_ACCOUNT_ID" ] && [ "$RECORDED_AUX_ACCOUNT_ID" != "$AUX_ACCOUNT_ID" ]; then
+  die "AUX_RESOURCE_PROFILE '$AUX_PROFILE' now resolves to account $AUX_ACCOUNT_ID, but $CONFIG_FILE recorded AUX_RESOURCE_ACCOUNT_ID=$RECORDED_AUX_ACCOUNT_ID at provisioning time. The profile's underlying credentials appear to have changed since then. Refusing to run destructive teardown against a different account than was provisioned."
+fi
+
 echo
 echo "About to tear down aux AWS resources for '$SLUG' in isolated account $AUX_ACCOUNT_ID:"
 echo "  every RDS instance, S3 bucket, EC2 instance, and non-default Route53"
