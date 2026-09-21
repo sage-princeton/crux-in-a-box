@@ -122,6 +122,8 @@ else
 fi
 
 info "Route53 hosted zones"
+# Backticks below are JMESPath literal syntax (false), not shell expansion.
+# shellcheck disable=SC2016
 ZONE_IDS="$(aws_aux_ route53 list-hosted-zones --query 'HostedZones[?Config.PrivateZone==`false`].Id' --output text 2>/dev/null || true)"
 if [ -n "$ZONE_IDS" ] && [ "$ZONE_IDS" != "None" ]; then
   for zone_id in $ZONE_IDS; do
