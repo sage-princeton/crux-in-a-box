@@ -131,7 +131,7 @@ if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1$' 
   AUX_PROFILE_CFG="$(cfg AUX_RESOURCE_PROFILE)"
   [ -n "$AUX_PROFILE_CFG" ] \
     || die "A PROVISION_* flag is set in $(basename "$BASE_CONFIG") but AUX_RESOURCE_PROFILE is not. It must name the AWS CLI profile for the isolated account these resources are granted in."
-  aws --profile "$AUX_PROFILE_CFG" sts get-caller-identity >/dev/null 2>&1 \
+  aws --profile "$AUX_PROFILE_CFG" --region "$REGION" sts get-caller-identity >/dev/null 2>&1 \
     || die "Not authenticated to the isolated account with profile '$AUX_PROFILE_CFG' (AUX_RESOURCE_PROFILE in $(basename "$BASE_CONFIG")). Run: aws sso login --sso-session <session>"
   ok "AUX_RESOURCE_PROFILE '$AUX_PROFILE_CFG' authenticated"
 fi

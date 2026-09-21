@@ -361,33 +361,6 @@ if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   STATE="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
     --query 'Reservations[0].Instances[0].State.Name' --output text)"
   [ "$STATE" = "stopped" ] && { info "Starting it"; aws_ ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null; }
-
-  # A stopped/reused instance keeps whatever profile it launched with — the
-  # --iam-instance-profile flag below only applies to a fresh run-instances
-  # call. Fix it up here so enabling aux resources on an existing box and
-  # re-running this script actually attaches the per-workspace profile.
-  CURRENT_PROFILE_INFO="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
-    --query 'Reservations[0].Instances[0].IamInstanceProfile.[Arn,Id]' --output text 2>/dev/null || true)"
-  CURRENT_PROFILE_ARN="$(printf '%s' "$CURRENT_PROFILE_INFO" | awk '{print $1}')"
-  CURRENT_ASSOC_ID="$(printf '%s' "$CURRENT_PROFILE_INFO" | awk '{print $2}')"
-  if [[ -z "$CURRENT_PROFILE_ARN" || "$CURRENT_PROFILE_ARN" == "None" || "$CURRENT_PROFILE_ARN" != */"$RUN_IAM_PROFILE" ]]; then
-    info "Instance profile mismatch (current: ${CURRENT_PROFILE_ARN:-none}, want: $RUN_IAM_PROFILE) — fixing up"
-    if [[ -n "$CURRENT_ASSOC_ID" && "$CURRENT_ASSOC_ID" != "None" ]]; then
-      aws_ ec2 disassociate-iam-instance-profile --association-id "$CURRENT_ASSOC_ID" >/dev/null
-      info "Waiting for the old association to clear"
-      for i in $(seq 1 12); do
-        STILL="$(aws_ ec2 describe-iam-instance-profile-associations --association-ids "$CURRENT_ASSOC_ID" \
-          --query 'IamInstanceProfileAssociations[0].State' --output text 2>/dev/null || true)"
-        [ "$STILL" = "disassociated" ] && break
-        sleep 5
-      done
-    fi
-    aws_ ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" \
-      --iam-instance-profile "Name=$RUN_IAM_PROFILE" >/dev/null
-    ok "Associated $RUN_IAM_PROFILE"
-  else
-    ok "Instance profile already $RUN_IAM_PROFILE"
-  fi
 else
   INSTANCE_ID="$(aws_ ec2 run-instances \
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
@@ -403,6 +376,32 @@ fi
 info "Waiting for 'running'"
 aws_ ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 ok "Running"
+
+# ====== INSTANCE PROFILE FIXUP ======
+# A fresh launch already got $RUN_IAM_PROFILE via --iam-instance-profile
+# above, so this is a no-op there. A reused/restarted instance keeps
+# whatever profile it originally launched with, so this fixes it up when
+# enabling (or disabling) aux resources and re-running against an existing
+# box. Runs only after the instance is confirmed running: EC2 rejects
+# instance-profile changes on a pending instance.
+CURRENT_PROFILE_ARN="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+  --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text 2>/dev/null || true)"
+if [[ -z "$CURRENT_PROFILE_ARN" || "$CURRENT_PROFILE_ARN" == "None" || "$CURRENT_PROFILE_ARN" != */"$RUN_IAM_PROFILE" ]]; then
+  info "Instance profile mismatch (current: ${CURRENT_PROFILE_ARN:-none}, want: $RUN_IAM_PROFILE) — fixing up"
+  CURRENT_ASSOC_ID="$(aws_ ec2 describe-iam-instance-profile-associations \
+    --filters "Name=instance-id,Values=$INSTANCE_ID" "Name=state,Values=associating,associated" \
+    --query 'IamInstanceProfileAssociations[0].AssociationId' --output text 2>/dev/null || true)"
+  if [[ -n "$CURRENT_ASSOC_ID" && "$CURRENT_ASSOC_ID" != "None" ]]; then
+    aws_ ec2 replace-iam-instance-profile-association --association-id "$CURRENT_ASSOC_ID" \
+      --iam-instance-profile "Name=$RUN_IAM_PROFILE" >/dev/null
+  else
+    aws_ ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" \
+      --iam-instance-profile "Name=$RUN_IAM_PROFILE" >/dev/null
+  fi
+  ok "Associated $RUN_IAM_PROFILE"
+else
+  ok "Instance profile already $RUN_IAM_PROFILE"
+fi
 
 # ====== ELASTIC IP ======
 # Allocate a stable public IP for the SSH alias.
