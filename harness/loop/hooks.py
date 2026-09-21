@@ -63,6 +63,33 @@ byte-for-byte; only the copy after the current tail is new. That is the append-o
 per-turn reminder shape the provider guidance asks for, done host-side. The model reads
 the newest line; the older ones are cached prefix.
 
+Four things the first version got wrong on the Claude arm (found in the rehearsals of
+2026-09-17, where zero lines were injected and cache writes were $20.68 of $24.43):
+Claude Code 2.1.27x ends every request with trailing *system* reminders after the
+user/tool turn, so the anchor is the last user or tool message and the line goes after
+the reminders; the line itself must be a *system* turn on Claude 4.8+, because a user
+turn appended after a tool result folds into the tool-result message and ends the
+tool-use continuation (prior thinking stripped); Claude served through Google Cloud
+needs `compat.enable_vertex_mid_conversation_system` so those reminders are sent as
+system turns instead of being hoisted into an ever-changing top-level system field
+(with the shim alone the fourth rehearsal read 3.65M tokens and wrote 0.30M; a
+top-level `cache_control` directive is not needed, and `GenerateConfig.extra_body` is
+not forwarded by Inspect's Anthropic provider anyway); and the replay map is keyed by
+content, not by message id — the bridge re-derives ids per `agent_bridge()` instance,
+i.e. per harness turn, so an id-keyed map replayed nothing on the first request of the
+next turn and the whole conversation was re-written once per turn (120,921 tokens at
+the fourth rehearsal's final pass). The key is a running hash of the conversation up to
+the message (`_message_keys`): the same prefix always gets the same line back, and two
+conversations collide only when they are byte-identical, where the same line is exactly
+right. `cache.rewrite` records (and `cache_rewrites` in the run summary) flag any call
+that wrote `_CACHE_REWRITE_TOKENS`+ tokens and more than it read — expect one per
+compaction and one per turn that starts after the cache TTL lapsed (5 minutes on
+Vertex, heartbeats tick every HEARTBEAT_MINUTES); a run of them inside one turn
+means the replay is broken again. Replayed lines sit immediately before the next
+assistant turn: on a resumed session the CLI appends user text to a dangling tool
+result, and a line flushed before that text lands in a slot the provider repositions
+into the system field (rehearsal 5's one hoist and full re-write).
+
 The line text is refreshed at most every `BUDGET_REFRESH_SECONDS` (the same clock as the
 `BUDGET.json` throttle), so one `sample_limits()` read serves a burst of calls and the
 agent is never told two different numbers within one window. The filter must never
@@ -133,6 +160,7 @@ from inspect_ai.hooks import (
 from inspect_ai.log._samples import sample_active
 from inspect_ai.model import (
     ChatMessage,
+    ChatMessageAssistant,
     ChatMessageSystem,
     ChatMessageTool,
     ChatMessageUser,
@@ -215,6 +243,14 @@ DISK_CHECK_INTERVAL_S: Final[int] = 300
 # lines drowning the operator's tail.
 _STATUS_LINE_MAP_CAP: Final[int] = 50_000
 _STATUS_LINE_ERROR_RECORD_CAP: Final[int] = 10
+# A call that writes this much to the prompt cache AND writes more than it read has
+# re-written conversation the cache already held (Claude Code caps tool results far
+# below this; a normal call reads the whole prefix and writes a few thousand tokens).
+# Expected ones: the first call after a compaction, and the first call of a harness
+# turn that starts more than the cache TTL after the previous one ended (Vertex has
+# only the 5-minute TTL and heartbeats tick every HEARTBEAT_MINUTES). A run of them
+# within one turn means the status-line replay is broken again.
+_CACHE_REWRITE_TOKENS: Final[int] = 50_000
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +368,9 @@ class _SampleState:
     status_lines_injected: int = 0
     status_lines_replayed: int = 0
     status_line_failures: int = 0
+    # Calls that wrote _CACHE_REWRITE_TOKENS+ tokens of prefix (see the usage hook).
+    cache_rewrites: int = 0
+    cache_rewrite_tokens: int = 0
 
 
 # Module-level registries. Everything keyed by sample; nothing global that a second
@@ -732,8 +771,43 @@ def _current_status_line(st: _SampleState, cfg: RunConfig, format_line: Any) -> 
     return st.status_line_text
 
 
-def _remember_status_line(st: _SampleState, message_id: str, text: str) -> None:
-    st.status_lines[message_id] = text
+# Fields that can differ between two parses of the same wire content (the bridge
+# assigns `id` per agent_bridge() instance; `source`/`model`/`metadata`/`internal` are
+# set from wherever the object was built) and so must not enter the replay key.
+_KEY_EXCLUDE: Final[frozenset[str]] = frozenset({"id", "source", "model", "metadata", "internal"})
+
+
+def _message_keys(messages: list[ChatMessage]) -> list[str]:
+    """One replay key per message: a running hash of the conversation up to it.
+
+    Message ids are not usable as keys: the bridge re-derives them per
+    `agent_bridge()` instance (one per harness turn), so a map keyed by id replays
+    nothing on the first request of the next turn and the whole conversation is
+    re-written to the prompt cache. Content is what the CLI replays byte-identically,
+    and hashing the prefix rather than the message alone means a line is only ever
+    replayed into the exact conversation that first saw it (two conversations that
+    share a key are byte-identical up to that point, where the same line is right).
+    """
+    keys: list[str] = []
+    h = hashlib.sha256()
+    for m in messages:
+        h.update(m.role.encode("utf-8"))
+        h.update(b"\x1f")
+        h.update(
+            json.dumps(
+                m.model_dump(mode="json", exclude=set(_KEY_EXCLUDE)),
+                sort_keys=True,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+        h.update(b"\x1e")
+        keys.append(h.copy().hexdigest())
+    return keys
+
+
+def _remember_status_line(st: _SampleState, key: str, text: str) -> None:
+    st.status_lines[key] = text
     if len(st.status_lines) > _STATUS_LINE_MAP_CAP:
         # Insertion order is age; drop the oldest half. A dropped entry means that one
         # old turn loses its replayed copy — a single cache break, not a wrong number.
@@ -782,36 +856,78 @@ def budget_filter(cfg: RunConfig) -> GenerateFilter:
         config: GenerateConfig,
     ) -> GenerateInput | None:
         try:
-            if not cfg.status_line or not input:
+            if not input:
                 return None
             st = _state()
             if st is None or st.run_ctx is None:
                 return None
-            tail = input[-1]
-            # Shape guard: the line is a user turn. After a user or tool message it
-            # folds into that turn (Anthropic) or follows it (Responses). After
-            # anything else — an assistant prefill, a bare system message — appending
-            # a user turn would change what the request means, so leave it alone.
-            if not isinstance(tail, (ChatMessageUser, ChatMessageTool)):
+
+            if not cfg.status_line:
                 return None
+
+            # The anchor is the last user or tool message. Claude Code 2.1.27x ends
+            # every request with one or more trailing system reminders after that turn
+            # (a token budget, a planning nudge); they belong to the turn, so the line
+            # goes after them and is keyed by the anchor, whose content — unlike the
+            # reminders' — is replayed byte-identically. After anything else (an
+            # assistant prefill, a system-only request) appending a turn would change
+            # what the request means, so leave it alone.
+            k = len(input) - 1
+            while k >= 0 and isinstance(input[k], ChatMessageSystem):
+                k -= 1
+            if k < 0 or not isinstance(input[k], (ChatMessageUser, ChatMessageTool)):
+                return None
+
+            # Replay keys are content hashes (see _message_keys), never message ids.
+            keys = _message_keys(input)
+
+            # The line's role. On Claude 4.8+ (direct API, and Vertex through the
+            # compat shim) it is a mid-conversation SYSTEM turn: a user turn appended
+            # after a tool result folds into the tool-result message on the wire, which
+            # ends the tool-use continuation and strips the prior thinking (verified on
+            # Vertex 2026-09-17), while a trailing system turn is what the CLI itself
+            # sends and leaves the loop intact. Elsewhere (Responses, older Claude) it
+            # stays a user turn, which those paths accept after a tool message.
+            supports_system = getattr(
+                getattr(model, "api", None), "supports_mid_conversation_system", None
+            )
+            line_cls: type[ChatMessageUser] | type[ChatMessageSystem] = (
+                ChatMessageSystem if callable(supports_system) and supports_system() else ChatMessageUser
+            )
 
             out: list[ChatMessage] = []
             replayed = 0
-            for m in input:
+            pending: list[str] = []
+            for i, m in enumerate(input):
+                # A remembered line is emitted where the model first saw it and where
+                # the API allows a system turn: after the message it was keyed to and
+                # everything the CLI attaches to that turn — its trailing system
+                # reminders and, on a resumed session, the user text it appends to a
+                # dangling tool result ("Continue from where you left off.") — i.e.
+                # immediately before the next assistant turn, or at the end. Flushing
+                # at the first non-system message instead put the line between a tool
+                # result and that appended text, a slot the provider repositions into
+                # the top-level system field (rehearsal 5, 2026-09-17: one hoist at the
+                # final-pass boundary and the whole context re-written with it).
+                if pending and isinstance(m, ChatMessageAssistant):
+                    out.extend(line_cls(content=p) for p in pending)
+                    replayed += len(pending)
+                    pending = []
                 out.append(m)
-                if m is tail or not m.id:
+                if i == k:
                     continue
-                earlier = st.status_lines.get(m.id)
+                earlier = st.status_lines.get(keys[i])
                 if earlier is not None:
-                    out.append(ChatMessageUser(content=earlier))
-                    replayed += 1
+                    pending.append(earlier)
+            if pending:
+                out.extend(line_cls(content=p) for p in pending)
+                replayed += len(pending)
 
-            text = st.status_lines.get(tail.id) if tail.id else None
+            text = st.status_lines.get(keys[k])
             if text is None:
                 text = _current_status_line(st, cfg, format_status_line)
-                if tail.id:
-                    _remember_status_line(st, tail.id, text)
-            out.append(ChatMessageUser(content=text))
+                _remember_status_line(st, keys[k], text)
+            out.append(line_cls(content=text))
 
             st.status_lines_injected += 1
             st.status_lines_replayed += replayed
@@ -1071,6 +1187,21 @@ class CruxHarnessTelemetry(Hooks):
             cum_tokens=st.totals.total_tokens,
         )
 
+        # A call that wrote this much prefix re-wrote conversation the cache already
+        # held. Recorded so a broken status-line replay (or a CLI that rewrote its
+        # history) shows up in the run summary rather than only in the bill.
+        wrote = u.input_tokens_cache_write or 0
+        if wrote >= _CACHE_REWRITE_TOKENS and wrote > (u.input_tokens_cache_read or 0):
+            st.cache_rewrites += 1
+            st.cache_rewrite_tokens += wrote
+            record(
+                "cache.rewrite",
+                model=data.model_name,
+                cache_read=u.input_tokens_cache_read or 0,
+                cache_write=wrote,
+                cum_cost_usd=round(st.totals.cost_usd, 4),
+            )
+
         _check_disk_space(st)
 
         # Keep the agent's view of spend fresh between turns; the status line refreshes
@@ -1183,6 +1314,8 @@ class CruxHarnessTelemetry(Hooks):
                 "status_lines_injected": st.status_lines_injected,
                 "status_lines_replayed": st.status_lines_replayed,
                 "status_line_failures": st.status_line_failures,
+                "cache_rewrites": st.cache_rewrites,
+                "cache_rewrite_tokens": st.cache_rewrite_tokens,
                 "telemetry_failures": st.telemetry_failures,
                 # Straight from the log, for reconciliation against the above.
                 "log_model_usage": {

@@ -74,6 +74,7 @@ class RunConfig:
     subagent_depth: int = 1            # {{SUBAGENT_DEPTH|1}}: 1 = subagents cannot spawn subagents
     subagent_model: str = ""           # {{SUBAGENT_MODEL|}}: blank = the main model (Inspect model string or role)
     prompt_cache_ttl: str = "1h"       # {{PROMPT_CACHE_TTL|1h}}: heartbeats re-send context; a long TTL keeps that cheap
+    context_window: str = "auto"       # {{CONTEXT_WINDOW|auto}}: tokens the CLI budgets context against; auto = the served model's real window
     # --- what the container gets -------------------------------------------
     workspace_dir: str = ""            # resolved workspace to seed into /workspace (written by configure.sh)
     agent_env_keys: tuple[str, ...] = field(default_factory=tuple)  # host env names passed into the container (never a provider key)
@@ -102,9 +103,48 @@ class RunConfig:
         if self.workspace_dir and not Path(self.workspace_dir).is_dir():
             problems.append(f"WORKSPACE_DIR {self.workspace_dir!r} is not a directory")
         for k in self.agent_env_keys:
-            if k.upper() in {"ANTHROPIC_API_KEY", "OPENAI_API_KEY"} or k.upper().endswith("_ADMIN_KEY"):
-                problems.append(f"AGENT_ENV_KEYS must never carry a provider key ({k}); the container is metered through the bridge")
+            ku = k.upper()
+            # Every credential the host uses to reach the arm's model — the two API keys,
+            # the Vertex project/credential variables, an auth token — and any admin key.
+            if (ku.startswith(("ANTHROPIC_", "OPENAI_API", "GOOGLE_APPLICATION_CREDENTIALS"))
+                    or ku.endswith("_ADMIN_KEY")):
+                problems.append(f"AGENT_ENV_KEYS must never carry a provider credential ({k}); the container is metered through the bridge")
+        cw = self.context_window.strip().lower()
+        if cw not in ("auto", "off", "") and not (cw.isdigit() and int(cw) > 0):
+            problems.append(f"CONTEXT_WINDOW must be 'auto', 'off', or a positive token count, got {self.context_window!r}")
         return problems
+
+    def context_window_tokens(self) -> int | None:
+        """The context window the CLI should budget against, in tokens; None = leave the CLI's own default.
+
+        `auto` reads the served model's limit from Inspect's model database; `off` leaves
+        the CLI to its own catalog; a number is used as given. The reason this exists: the
+        Codex CLI sizes compaction from the catalog entry of the slug it is *launched* with,
+        not from the model the bridge actually serves. Two real runs on models with a
+        1,050,000-token window compacted at 258,400 — Codex 0.149's usable window for its
+        newest catalog entry — 3,673 and 2,177 times respectively, because nobody told the
+        CLI otherwise.
+
+        `auto` prefers the model's INPUT limit over its total window. The CLI budgets the
+        prompt against this number and keeps ~5% back, and a total window counts output
+        too: astra is 1,050,000 total but 922,000 input, so budgeting the total would let
+        the prompt overrun the input cap. 95% of 922,000 is 876,000, which happens to sit
+        right at the 872,000 ceiling Codex's own catalog gives that profile.
+        """
+        cw = self.context_window.strip().lower()
+        if cw.isdigit():
+            return int(cw)
+        if cw == "off":
+            return None
+        try:
+            from inspect_ai.model import get_model_info
+            info = get_model_info(self.model)
+            if not info:
+                return None
+            limit = info.input_tokens or info.context_length
+            return int(limit) if limit else None
+        except Exception:  # noqa: BLE001 — a database miss means "leave it to the CLI", never a failed launch
+            return None
 
 
 _FIELD_MAP: dict[str, tuple[str, object]] = {
@@ -131,6 +171,7 @@ _FIELD_MAP: dict[str, tuple[str, object]] = {
     "SUBAGENT_DEPTH": ("subagent_depth", int),
     "SUBAGENT_MODEL": ("subagent_model", str),
     "PROMPT_CACHE_TTL": ("prompt_cache_ttl", str),
+    "CONTEXT_WINDOW": ("context_window", str),
     "WORKSPACE_DIR": ("workspace_dir", str),
     "AGENT_ENV_KEYS": ("agent_env_keys", lambda v: tuple(k.strip() for k in v.split(",") if k.strip())),
 }

@@ -52,6 +52,11 @@ API_BUDGET=$200
 # REASONING_EFFORT=high             # none|minimal|low|medium|high|xhigh|max — set eval-side, since the bridge drops the CLI's own generation settings
 # SUBAGENT_MODEL=                   # blank = subagents run on the main model; else an Inspect model string the eval can serve (add it to pricing.yaml)
 # PROMPT_CACHE_TTL=1h               # 5m|1h — heartbeats re-send the context; a long TTL keeps that cheap
+# CONTEXT_WINDOW=auto               # auto|off|<tokens> — what the CLI budgets context against. auto = the served model's
+#                                   # real input limit from Inspect's model database. Exists because Codex sizes compaction
+#                                   # from ITS catalog entry for the slug it is launched with, not from the served model:
+#                                   # two runs on 1,050,000-token models compacted at 258,400. off = leave it to the CLI.
+#                                   # Codex gets it as -c model_context_window, Claude Code as CLAUDE_CODE_MAX_CONTEXT_TOKENS.
 
 # ── Optional: heartbeat cadence ─────────────────────────────────────────────
 
@@ -76,9 +81,9 @@ API_BUDGET=$200
 # (compute, experiment-LLM and external-review services). Only these cross
 # into the container; a provider key never does — configure.sh refuses one.
 
-# AGENT_ENV_KEYS=OPENROUTER_API_KEY,RUNPOD_API_KEY,REFINE_INK_API_KEY
+# AGENT_ENV_KEYS=TOGETHERAI_API_KEY,RUNPOD_API_KEY,REFINE_INK_API_KEY   # or OPENROUTER_API_KEY — see .env.example
 # CLOUD_SPEND_LIMIT=$500            # compute cap the agent is told (n/a when no compute key is provisioned)
-# OPENROUTER_BUDGET=$500            # experiment-LLM cap the agent is told (n/a when no OpenRouter key is provisioned)
+# EXPERIMENT_LLM_BUDGET=$500       # experiment-LLM cap the agent is told, across Together/OpenRouter (n/a when no such key is provisioned); OPENROUTER_BUDGET is the legacy name
 
 # ── Optional: the deliverable and its gate (scripts/gate_artifact.sh) ───────
 
@@ -94,15 +99,21 @@ API_BUDGET=$200
 # ── Optional: how the environment is described to the agent ────────────────
 
 # PYTHON_SETUP=a 3.12 venv at /opt/venv (writable; pip/uv install what you need)
-# HOST_DESCRIPTION=Docker container on an EC2 host, amd64, 3.5 CPU / 12 GiB
+# HOST_DESCRIPTION=Docker container on an EC2 host, amd64, 7 CPU / 24 GiB   # must match container/compose.yaml
+# EXTRA_RESOURCES=none   # credentials in AGENT_ENV_KEYS beyond the providers AGENTS.md already describes, and what each unlocks — e.g. HF_TOKEN (Hugging Face read token: faster downloads) · TABPFN_TOKEN (Prior Labs key: TabPFN 9.x gated weights)
 # WORKSPACE_PATH=/workspace
 # AGENT_NAME=CRUX
 # OPERATOR_NAME=operator
 
 # ── Optional: image build arguments (ops/provision-box.sh) ──────────────────
-# The CLI versions baked into the image — the ones verified against
-# inspect_swe 0.2.70. Change deliberately: the bridge's resume paths and
-# permission flags were read out of these exact releases.
+# The CLI versions baked into the image. Claude Code 2.1.272 and Codex 0.149.0
+# are the ones a full rehearsal passed on inspect_swe 0.2.70 (2026-09-17); the
+# served model can impose a floor — Fable 5.1 on Agent Platform answers 400
+# `claude_code_version_too_old` below 2.1.255. Change deliberately and rehearse.
 
-# CLAUDE_CODE_VERSION=2.1.240
+# CLAUDE_CODE_VERSION=2.1.272            # Fable 5.1 on Agent Platform rejects < 2.1.255 (claude_code_version_too_old); 2.1.272 passed a full rehearsal 2026-09-17
 # CODEX_VERSION=0.149.0
+# MODEL_ARGS=                       # Inspect model args as -M key=value, comma-separated. gpt-6-astra needs responses_api=true on inspect_ai 0.3.260 (its name is not in that version's Responses-API list)
+# MAX_CONNECTIONS=                # Inspect --max-connections: requests in flight at once, across session + heartbeats + subagents. Blank = Inspect's
+#                                   # default. Set it when the model sits under a provider quota (a per-project Agent Platform quota, a low-tier key)
+# MAX_RETRIES=5                     # Inspect --max-retries: how many times a throttled/failed call is retried (retry-after honoured) before the turn fails

@@ -139,7 +139,10 @@ import compat
 
 # Applied at import so the bridge is patched before the first model call; recorded
 # at preflight (see _preflight) so the run's record names the shim.
-_COMPAT_SHIMS: list[dict] = [compat.widen_agent_message_fields()]
+_COMPAT_SHIMS: list[dict] = [
+    compat.widen_agent_message_fields(),
+    compat.enable_vertex_mid_conversation_system(),
+]
 import prompts
 from agents import AGENT_USER, make_agent
 from config import RunConfig, load_run_config
@@ -573,26 +576,85 @@ def _codex_version_number(raw: str) -> str | None:
     return None
 
 
-async def _codex_slug_facts(codex_version_line: str) -> dict[str, str]:
-    """Resolve and record the Codex `--model` slug the CLI will actually present.
+async def _codex_slug_facts(codex_version_line: str, cfg: RunConfig) -> dict[str, str]:
+    """Record which model Codex will BELIEVE it is running, against the one it is served.
 
-    `codex_cli()` resolves it through a models catalog fetched on the HOST at first
-    use, with a bundled snapshot as fallback — so which system prompt and tool
-    profile Codex runs with depends on a network call and an appdirs cache. Resolving
-    it here records the slug in the run record and warms that cache at hour zero
-    rather than mid-run. Guarded because the function is private; a failure here
+    `codex_cli()` resolves Codex's `--model` slug through a models catalog fetched on
+    the HOST at first use (bundled snapshot as fallback), so the system prompt and tool
+    profile Codex runs with depend on a network call and an appdirs cache. Resolving it
+    here warms that cache at hour zero and writes the answer into the run record.
+
+    The record matters more than it looks. A served model newer than the pinned CLI is
+    aliased to the newest catalog entry, and Codex then adopts that entry's identity
+    wholesale — name, prompt profile, and context window. The first astra run ran 460
+    turns believing it was gpt-5.6-sol, and this very field said so in preflight and
+    was read as a harmless default. So the facts now carry the reason and the two
+    context windows side by side, and `CODEX_ALIGNMENT` states plainly whether the CLI
+    and the wire agree. Guarded because the functions are private; a failure here
     costs a log line, never the run.
     """
     version = _codex_version_number(codex_version_line)
     facts: dict[str, str] = {"CODEX_VERSION_PARSED": version or "unparsed"}
+    served = cfg.model
+    served_name = served.split("/", 1)[1] if "/" in served else served
+    facts["SERVED_MODEL"] = served
     try:
+        from inspect_ai.model import get_model_info
+        from inspect_swe._codex_cli.agentbinary import codex_models_catalog  # type: ignore[attr-defined]
         from inspect_swe._codex_cli.codex_cli import (  # type: ignore[attr-defined]
             resolve_codex_model,
         )
+        from inspect_swe._codex_cli.model_catalog import resolve_codex_model_slug  # type: ignore[attr-defined]
 
-        facts["CODEX_MODEL_SLUG"] = await resolve_codex_model(None, None, version)
+        # Catalog-side resolution first: it needs no active model, so the facts are
+        # populated even if the live cross-check below cannot run.
+        catalog = await codex_models_catalog(version)
+        res = resolve_codex_model_slug(served_name, api="openai", catalog=catalog, override=None, is_latest=False)
+        slug = res.slug
+        facts["CODEX_MODEL_SLUG"] = slug
+        facts["CODEX_SLUG_REASON"] = res.reason
+        # The window Codex would size compaction from, absent our override.
+        entry = next((m for m in (catalog or {}).get("models", []) if isinstance(m, dict) and m.get("slug") == slug), None)
+        catalog_window = entry.get("context_window") if entry else None
+        facts["CODEX_CATALOG_WINDOW"] = str(catalog_window) if catalog_window else "unknown"
+        info = get_model_info(served)
+        real_window = int(info.input_tokens or info.context_length) if info and (info.input_tokens or info.context_length) else None
+        facts["SERVED_MODEL_WINDOW"] = str(real_window) if real_window else "unknown"
+        override = cfg.context_window_tokens()
+        facts["CODEX_WINDOW_OVERRIDE"] = str(override) if override else "none"
+        # Live cross-check: what codex_cli() itself will resolve inside the eval. It
+        # goes through the active model, so it only runs where one exists.
+        try:
+            live = await resolve_codex_model(None, None, version)
+            facts["CODEX_MODEL_SLUG_LIVE"] = live
+            if live != slug:
+                facts["CODEX_SLUG_DISAGREEMENT"] = f"catalog says {slug!r}, codex_cli() resolved {live!r}"
+        except Exception as ex:  # noqa: BLE001 — no active model here; the catalog answer stands
+            facts["CODEX_MODEL_SLUG_LIVE"] = f"unavailable: {_error_text(ex)[:80]}"
+        if slug == served_name:
+            facts["CODEX_ALIGNMENT"] = (
+                "exact: the CLI's slug is the served model"
+                + (f"; catalog window {catalog_window} vs real {real_window}" if catalog_window and real_window else "")
+                + (f"; model_context_window override={override} applied" if override else "")
+            )
+        else:
+            facts["CODEX_ALIGNMENT"] = (
+                f"ALIASED: Codex will run as '{slug}' while the bridge serves '{served}'"
+                + (f"; catalog window {catalog_window} vs real {real_window}" if catalog_window and real_window else "")
+                + (f"; model_context_window override={override} applied" if override else "; NO window override — Codex uses the alias's window")
+            )
+            hooks.record(
+                "codex.model_alias",
+                slug=slug,
+                served=served,
+                reason=res.reason,
+                catalog_window=catalog_window,
+                real_window=real_window,
+                override=override,
+            )
     except Exception as ex:  # noqa: BLE001 — recorded, never fatal
-        facts["CODEX_MODEL_SLUG"] = f"unresolved: {_error_text(ex)}"
+        facts.setdefault("CODEX_MODEL_SLUG", f"unresolved: {_error_text(ex)}")
+        facts["CODEX_ALIGNMENT"] = f"unresolved: {_error_text(ex)}"
     return facts
 
 
@@ -631,15 +693,17 @@ async def _preflight(cfg: RunConfig) -> dict[str, str]:
         facts["WHOAMI_EXEC_REMOTE"] = f"error: {_error_text(ex)}"
 
     if cfg.arm == "codex":
-        facts.update(await _codex_slug_facts(facts.get("CODEX_VERSION", "")))
+        facts.update(await _codex_slug_facts(facts.get("CODEX_VERSION", ""), cfg))
 
+    # The timeline record is flat (one JSON string); the audit file keeps the list.
+    facts["compat_shims"] = json.dumps(_COMPAT_SHIMS, sort_keys=True)
     try:
         (hooks.run_artifacts_dir() / "preflight.json").write_text(
-            json.dumps(facts, indent=2) + "\n", encoding="utf-8"
+            json.dumps({**facts, "compat_shims": _COMPAT_SHIMS}, indent=2) + "\n",
+            encoding="utf-8",
         )
     except Exception as ex:  # noqa: BLE001
         hooks.record("preflight.write.error", error=_error_text(ex))
-    facts["compat_shims"] = json.dumps(_COMPAT_SHIMS, sort_keys=True)
     hooks.record("preflight", **facts)
     return facts
 

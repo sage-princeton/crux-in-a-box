@@ -151,6 +151,9 @@ val(){
   local v
   if [ "$1" = RUN_NAME ] && [ -n "$NAME_ARG" ]; then printf '%s' "$NAME_ARG"; return 0; fi
   v="$(cfg_get "$1" || true)"
+  # EXPERIMENT_LLM_BUDGET replaced OPENROUTER_BUDGET when the experiment provider became
+  # a choice; an older placeholders file that still sets the old name keeps working.
+  if [ "$1" = EXPERIMENT_LLM_BUDGET ] && [ -z "$v" ]; then v="$(cfg_get OPENROUTER_BUDGET || true)"; fi
   if [ -n "$v" ]; then printf '%s' "$v"; return 0; fi
   def_get "$1" || true
 }
@@ -161,6 +164,9 @@ def RUN_NAME "crux"
 def CLAUDE_MODEL "anthropic/claude-opus-5"
 def CODEX_MODEL "openai/gpt-5.6-sol"
 def REASONING_EFFORT "high"
+def MODEL_ARGS ""                 # Inspect model args passed as -M key=value (comma-separated); e.g. responses_api=true
+def MAX_CONNECTIONS ""            # Inspect --max-connections: concurrent requests to the model; blank = Inspect's default. Set it under a provider quota
+def MAX_RETRIES "5"               # Inspect --max-retries on a failed/throttled model call; raise it under a tight quota
 def RUN_HOURS "10"
 def COST_STOP_FRACTION "0.95"
 def DEADLINE "$(val RUN_HOURS) hours from launch"
@@ -177,6 +183,7 @@ def MAX_CONCURRENT_SUBAGENTS "8"
 def SUBAGENT_DEPTH "1"
 def SUBAGENT_MODEL ""
 def PROMPT_CACHE_TTL "1h"
+def CONTEXT_WINDOW "auto"
 def AGENT_ENV_KEYS ""
 def REQUIRE_EXTERNAL_REVIEWS "0"
 def REQUIRE_REPLICATION_PACKAGE "1"
@@ -187,13 +194,15 @@ def BACKMATTER_ALLOWANCE "15"
 def ABSTRACT_WORD_CAP "200"
 def DELIVERABLE_TOOLCHAIN "LaTeX via tectonic + the venue template at templates/paper_template.zip — unzip into paper/ and build the skeleton at hour 0"
 def PYTHON_SETUP "a 3.12 venv at /opt/venv (writable; pip/uv install what you need)"
-def HOST_DESCRIPTION "Docker container on an EC2 host, amd64, 3.5 CPU / 12 GiB"
+def HOST_DESCRIPTION "Docker container on an EC2 host, amd64, 7 CPU / 24 GiB"
+def EXTRA_RESOURCES "none"
 def AGENT_NAME "CRUX"
 def OPERATOR_NAME "operator"
 def WORKSPACE_PATH "/workspace"
 def CLOUD_SPEND_LIMIT "n/a"
 def OPENROUTER_BUDGET "n/a"
-def CLAUDE_CODE_VERSION "2.1.240"
+def EXPERIMENT_LLM_BUDGET "n/a"   # the experiment-LLM cap the agent is told, across providers; OPENROUTER_BUDGET is its legacy name
+def CLAUDE_CODE_VERSION "2.1.272"
 def CODEX_VERSION "0.149.0"
 
 # ── Validate (all problems at once, before anything is written) ──────────────
@@ -217,6 +226,12 @@ fi
 for key in RUN_HOURS HEARTBEAT_MINUTES LEDGER_BEAT_HOURS SNAPSHOT_HOURS FINAL_WINDOW_MINUTES AUDIT_SNAPSHOT_MINUTES; do
   v="$(val "$key")"; is_num "$v" && gt_zero "$v" || PROBLEMS+=("$key must be a positive number, got '$v'")
 done
+for key in MAX_CONNECTIONS MAX_RETRIES; do
+  v="$(val "$key")"
+  [ -z "$v" ] && continue
+  is_int "$v" || PROBLEMS+=("$key must be a whole number (Inspect passes it straight to the eval), got '$v'")
+  [ "$key" = MAX_CONNECTIONS ] && [ -n "$v" ] && is_int "$v" && ! gt_zero "$v" && PROBLEMS+=("MAX_CONNECTIONS must be at least 1, got '$v'")
+done
 for key in FINAL_GATE_RETRIES BUDGET_REFRESH_SECONDS MAX_CONCURRENT_SUBAGENTS SUBAGENT_DEPTH PAGE_BUDGET BACKMATTER_ALLOWANCE ABSTRACT_WORD_CAP; do
   v="$(val "$key")"; is_int "$v" || PROBLEMS+=("$key must be a whole number, got '$v'")
 done
@@ -236,6 +251,8 @@ for key in REQUIRE_EXTERNAL_REVIEWS REQUIRE_REPLICATION_PACKAGE REQUIRE_FLOAT_CA
 done
 v="$(val PROMPT_CACHE_TTL)"
 case "$v" in 5m|1h) : ;; *) PROBLEMS+=("PROMPT_CACHE_TTL must be 5m or 1h, got '$v'") ;; esac
+v="$(val CONTEXT_WINDOW)"
+case "$v" in auto|off) : ;; *) is_int "$v" && gt_zero "$v" || PROBLEMS+=("CONTEXT_WINDOW must be auto, off, or a positive token count, got '$v'") ;; esac
 for key in CLAUDE_MODEL CODEX_MODEL; do
   v="$(val "$key")"
   case "$v" in */*) : ;; *) PROBLEMS+=("$key must be a provider-qualified Inspect model string (provider/model), got '$v'") ;; esac
@@ -250,8 +267,8 @@ if [ -n "$v" ]; then
   for k in "${ENV_KEYS[@]}"; do
     k="$(trim "$k")"; [ -n "$k" ] || continue
     [[ "$k" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || PROBLEMS+=("AGENT_ENV_KEYS entry '$k' is not an environment variable name")
-    case "$k" in ANTHROPIC_API_KEY|OPENAI_API_KEY|*_ADMIN_KEY)
-      PROBLEMS+=("AGENT_ENV_KEYS must never carry a provider key ($k): the container is metered through the bridge and holds only a dummy key") ;; esac
+    case "$k" in ANTHROPIC_*|OPENAI_API*|GOOGLE_APPLICATION_CREDENTIALS*|*_ADMIN_KEY)
+      PROBLEMS+=("AGENT_ENV_KEYS must never carry a provider credential ($k): the container is metered through the bridge and holds only a dummy key") ;; esac
   done
 fi
 if [ "${#PROBLEMS[@]}" -gt 0 ]; then
@@ -475,6 +492,9 @@ kv(){ printf '%s=%s\n' "$1" "$2"; }
   kv CLAUDE_MODEL "$(val CLAUDE_MODEL)"
   kv CODEX_MODEL "$(val CODEX_MODEL)"
   kv REASONING_EFFORT "$(val REASONING_EFFORT)"
+  kv MODEL_ARGS "$(val MODEL_ARGS)"
+  kv MAX_CONNECTIONS "$(val MAX_CONNECTIONS)"
+  kv MAX_RETRIES "$(val MAX_RETRIES)"
   echo
   echo "# the run's hard shape (backstops; the agent works cooperatively)"
   kv RUN_HOURS "$(val RUN_HOURS)"
@@ -501,6 +521,7 @@ kv(){ printf '%s=%s\n' "$1" "$2"; }
   kv SUBAGENT_DEPTH "$(val SUBAGENT_DEPTH)"
   kv SUBAGENT_MODEL "$(val SUBAGENT_MODEL)"
   kv PROMPT_CACHE_TTL "$(val PROMPT_CACHE_TTL)"
+  kv CONTEXT_WINDOW "$(val CONTEXT_WINDOW)"
   echo
   echo "# what the container gets"
   kv WORKSPACE_DIR "$WORKSPACE_DIR"

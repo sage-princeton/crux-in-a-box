@@ -34,7 +34,16 @@ requires-python = ">=3.11"
 dependencies = [
     # The evaluation framework: Task, the sandbox provider, the agent bridge,
     # sample_limits(), the cost meter and the hooks API.
-    "inspect_ai==0.3.260",
+    #
+    # Floor is 0.3.263, not a preference: the cost meter refuses to price a
+    # model that is absent from Inspect's own model database, and `--model-cost-config`
+    # is applied before the task file is even imported, so no shim in loop/ can
+    # register it in time. 0.3.260 does not know `openai/gpt-6-astra` and an
+    # astra run dies two seconds in with "Model 'openai/gpt-6-astra' not found."
+    # 0.3.263 carries the entry (1,050,000 context / 128,000 output). Whenever the
+    # arm's model is newer than the pin, check `inspect_ai/model/_model_data/*.yml`
+    # for it before launching. loop/compat.py is still required at 0.3.263.
+    "inspect_ai==0.3.263",
 
     # claude_code() and codex_cli() -- the only place the two arms differ.
     # Requires inspect-ai>=0.3.255, which the pin above satisfies.
@@ -46,7 +55,10 @@ dependencies = [
     # container starts, which is the good version of this failure. The floors
     # inspect_ai 0.3.260 tests against are anthropic>=1.0.0 and openai>=3.1.0;
     # these pins are at or above them.
-    "anthropic==1.0.0",
+    # [vertex] pulls google-auth: Inspect's Anthropic provider builds AsyncAnthropicVertex
+    # for `anthropic/vertex/<id>` models, and that client cannot mint a bearer token
+    # without it. Harmless for the direct-API path.
+    "anthropic[vertex]==1.0.0",
     "openai==3.3.1",
 
     # loop/task.py drives its sleeps and subprocesses through anyio directly

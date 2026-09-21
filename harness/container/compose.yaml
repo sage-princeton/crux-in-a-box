@@ -160,11 +160,14 @@ services:
     # The cgroup limits. These are the numbers AGENTS.md quotes to the agent
     # (`HOST_DESCRIPTION`), so changing one here means changing it there. Sized
     # for one container plus the Inspect host process on one m7i.2xlarge
-    # (8 vCPU / 32 GiB), leaving ample room for the host process and the bridge
-    # -- if the box OOMs it must kill the agent, not sshd.
-    pids_limit: 512
-    mem_limit: 12g
-    cpus: 3.5
+    # (8 vCPU / 32 GiB), leaving one vCPU and 8 GiB for the host process, the
+    # bridge and sshd -- if the box OOMs it must kill the agent, not sshd. The
+    # 2026-09-17 rehearsals ran CPU-bound at the old 3.5 / 12g (eight workers
+    # took 40-100 s per split instead of 17), hence the current numbers; the pids
+    # cap counts threads, and torch spawns one per core per process.
+    pids_limit: 1024
+    mem_limit: 24g
+    cpus: 7
     # Note for whoever reads a slow turn: `cpus` is a CFS quota, not a CPU
     # count, so `nproc` inside the container still reports the host's core count
     # and any library that sizes a worker pool from it will oversubscribe the

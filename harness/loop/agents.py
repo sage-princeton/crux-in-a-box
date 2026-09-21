@@ -57,7 +57,12 @@ Residual asymmetries (true of a single-arm run; carry them into the report)
     Code's own `cache_control` markers are dropped by the bridge and the Inspect
     Anthropic provider places its own (system, tools, and a lookback breakpoint on the
     messages, TTL from the provider's `cache_ttl` model arg). Hit rates differ; report
-    cache-read and cache-write tokens separately.
+    cache-read and cache-write tokens separately. On Vertex, `compat` makes the provider
+    send the CLI's mid-conversation system reminders as system turns (upstream hoists
+    them into the top-level system field, which changes every call, and that alone
+    re-wrote every conversation in full); `hooks.budget_filter` injects the status line
+    as a system turn so tool-use continuations stay intact and replays earlier lines
+    keyed by content, so the prefix survives the per-turn bridge restart.
 7.  **Presented identity.** Each CLI is told it is running its own vendor's model and
     uses that slug to select its system prompt and tool profile
     (`resolve_claude_code_models`, `resolve_codex_model`). That is the scaffold each
@@ -197,6 +202,20 @@ def _codex_config_overrides(cfg: RunConfig) -> dict[str, str]:
         # Delegation fan-out cap, the Codex side of MAX_CONCURRENT_SUBAGENTS.
         "agents.max_concurrent_threads_per_session": str(cfg.max_concurrent_subagents),
     }
+    # The context window Codex budgets compaction against. Load-bearing, and the
+    # reason is not obvious: `codex_cli()` aligns Codex's `--model` slug to the
+    # bridged model through Codex's OWN catalog, and a model newer than the pinned
+    # CLI is aliased to the newest catalog entry so it keeps the coding prompt and
+    # `apply_patch`/`tool_search` (a slug Codex does not recognise degrades to the
+    # generic profile, which is worse). Correct for tooling; but Codex then takes
+    # that entry's context window too. Codex 0.149's newest entry is gpt-5.6-sol at
+    # 272,000, so a gpt-6-astra run — and the sol run itself — compacted at 258,400
+    # while the served model had 1,050,000. This override sets the window Codex
+    # actually has. The slug alias is left alone on purpose and is recorded in
+    # preflight (`CODEX_MODEL_SLUG`, `CODEX_SLUG_REASON`) so it is never invisible.
+    window = cfg.context_window_tokens()
+    if window:
+        overrides["model_context_window"] = str(window)
     if cfg.subagent_model:
         # Codex names this slug in its subagent requests; `model_aliases` below maps the
         # slug back to the Inspect model so the bridge serves (and meters) it.
@@ -252,14 +271,26 @@ def _claude_env(cfg: RunConfig) -> dict[str, str]:
     governs; the names also did not appear in a local Claude Code 2.1.241 binary, so
     treat them as intent, not mechanism. The subagent concurrency and depth names do
     appear there.
+
+    CONTEXT_WINDOW reaches this arm as `CLAUDE_CODE_MAX_CONTEXT_TOKENS` — the Claude Code
+    analogue of Codex's `-c model_context_window`. The CLI sizes auto-compaction from its
+    own table of models; a served model it does not know (a 2.1.272 binary also carries
+    `CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT`, so unknown models are clamped)
+    would compact at a fraction of the real window, which is exactly what the Codex runs
+    did at 258,400 of 922,000 tokens. Same rule as the other arm: `auto` is the served
+    model's real input limit from Inspect's model database, `off` leaves the CLI alone.
     """
-    return {
+    env = {
         "CLAUDE_CODE_EFFORT_LEVEL": cfg.reasoning_effort,
         "CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS": str(cfg.max_concurrent_subagents),
         "CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH": str(cfg.subagent_depth),
         "CLAUDE_CODE_PROMPT_CACHE_TTL": cfg.prompt_cache_ttl,
         "CLAUDE_CODE_SUBAGENT_PROMPT_CACHE_TTL": cfg.prompt_cache_ttl,
     }
+    window = cfg.context_window_tokens()
+    if window:
+        env["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = str(window)
+    return env
 
 
 # ---------------------------------------------------------------------------

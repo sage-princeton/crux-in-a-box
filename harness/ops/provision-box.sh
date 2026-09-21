@@ -23,6 +23,8 @@
 #   AWS_REGION (us-east-1)          CRUX_DISK_GB (200)      CRUX_KEY_NAME (crux-harness)
 #   CRUX_SG_NAME (crux-harness-sg)  CRUX_AMI_ID             CRUX_SSH_CIDR (0.0.0.0/0)
 #   CRUX_SWAP_GB (16)               CRUX_REMOTE_DIR (crux-harness)
+#   CRUX_GOOGLE_CREDENTIALS_LOCAL   local path of the service-account JSON to ship to the box path
+#                                   named by GOOGLE_APPLICATION_CREDENTIALS in the env file (Claude via Google Cloud)
 #
 # It does NOT start a run. The clock starts in ops/run.sh, on the box, when you
 # say so. Reruns with the same suffix re-provision the same instance.
@@ -104,7 +106,7 @@ ok "config validated (CRUX_IMAGE=$CRUX_IMAGE_TAG)"
 
 # The run, if one is named: its run.env decides which provider key must exist
 # and which CLI versions the image is built with.
-CLAUDE_CODE_VERSION="2.1.240"
+CLAUDE_CODE_VERSION="2.1.272"
 CODEX_VERSION="0.149.0"
 ARM=""
 RUN_DIR=""
@@ -117,12 +119,26 @@ if [ -n "$RUN_NAME" ]; then
   case "$ARM" in claude|codex) : ;; *) die "run.env of '$RUN_NAME' has ARM='$ARM' (claude|codex expected)" ;; esac
   v="$(get_kv "$RUN_DIR/run.env" CLAUDE_CODE_VERSION)"; [ -z "$v" ] || CLAUDE_CODE_VERSION="$v"
   v="$(get_kv "$RUN_DIR/run.env" CODEX_VERSION)";       [ -z "$v" ] || CODEX_VERSION="$v"
-  case "$ARM" in
-    claude) KEY_NAME_FOR_ARM=ANTHROPIC_API_KEY ;;
-    codex)  KEY_NAME_FOR_ARM=OPENAI_API_KEY ;;
+  # The credential the arm needs follows the MODEL prefix (same rule as ops/run.sh):
+  # anthropic/<id> is an API key; anthropic/vertex/<id> is served through Google
+  # Cloud, whose Claude endpoint rejects API keys, so the env file must name the
+  # project, the endpoint region and a service-account file path on the box.
+  MODEL_FOR_ARM="$(get_kv "$RUN_DIR/run.env" MODEL)"
+  case "$ARM/$MODEL_FOR_ARM" in
+    claude/anthropic/vertex/*)
+      for v in ANTHROPIC_VERTEX_PROJECT_ID ANTHROPIC_VERTEX_REGION GOOGLE_APPLICATION_CREDENTIALS; do
+        [ -n "$(get_kv "$ENV_FILE" "$v")" ] \
+          || die "$v is blank in $ENV_FILE, and run '$RUN_NAME' serves $MODEL_FOR_ARM through Google Cloud. ops/run.sh will refuse to launch without it (see .env.example § 1)."
+      done
+      [ -n "${CRUX_GOOGLE_CREDENTIALS_LOCAL:-}" ] || warn "CRUX_GOOGLE_CREDENTIALS_LOCAL is not set: the service-account file must reach the box at $(get_kv "$ENV_FILE" GOOGLE_APPLICATION_CREDENTIALS) by hand before ops/run.sh"
+      ;;
+    claude/*) KEY_NAME_FOR_ARM=ANTHROPIC_API_KEY
+      [ -n "$(get_kv "$ENV_FILE" "$KEY_NAME_FOR_ARM")" ] \
+        || die "$KEY_NAME_FOR_ARM is blank in $ENV_FILE, and run '$RUN_NAME' is ARM=$ARM. ops/run.sh will refuse to launch without it." ;;
+    codex/*)  KEY_NAME_FOR_ARM=OPENAI_API_KEY
+      [ -n "$(get_kv "$ENV_FILE" "$KEY_NAME_FOR_ARM")" ] \
+        || die "$KEY_NAME_FOR_ARM is blank in $ENV_FILE, and run '$RUN_NAME' is ARM=$ARM. ops/run.sh will refuse to launch without it." ;;
   esac
-  [ -n "$(get_kv "$ENV_FILE" "$KEY_NAME_FOR_ARM")" ] \
-    || die "$KEY_NAME_FOR_ARM is blank in $ENV_FILE, and run '$RUN_NAME' is ARM=$ARM. ops/run.sh will refuse to launch without it."
   # Keys the agent may use: named in run.env, defined in .env. Absent ones are
   # skipped silently by the loop, which is a capability decision to make now.
   AGENT_ENV_KEYS="$(get_kv "$RUN_DIR/run.env" AGENT_ENV_KEYS)"
@@ -182,8 +198,8 @@ if [ -n "$DATA_DIR_LOCAL" ]; then
 fi
 
 REGION="${AWS_REGION:-us-east-1}"
-# m7i.2xlarge (8 vCPU / 32 GiB, non-burstable). The container takes cpus 3.5 /
-# mem 12g (container/compose.yaml), leaving the rest for the Inspect host
+# m7i.2xlarge (8 vCPU / 32 GiB, non-burstable). The container takes cpus 7 /
+# mem 24g (container/compose.yaml), leaving the rest for the Inspect host
 # process, the bridge, the image build and the operator's own tooling.
 # 200 GB, not 100: the image is ~2.3 GB, the container's writable layer holds a
 # run's worth of agent output, the .eval log and the audit bundles are the
@@ -360,6 +376,21 @@ scp "${SSH_OPTS[@]}" -q "$STAGE/env" "${SSH_USER}@${PUBLIC_IP}:${REMOTE_DIR}/.en
 ssh "${SSH_OPTS[@]}" "${SSH_USER}@${PUBLIC_IP}" "chmod 600 ~/${REMOTE_DIR}/.env"
 ok ".env on box (0600), paths resolved to box paths"
 
+# A Google service-account file, if the env file names one: shipped to exactly the
+# box path GOOGLE_APPLICATION_CREDENTIALS names, 0600 in a 0700 directory. It is
+# a host credential like the keys in .env — it never enters the container.
+GAC_BOX="$(get_kv "$ENV_FILE" GOOGLE_APPLICATION_CREDENTIALS)"
+if [ -n "$GAC_BOX" ] && [ -n "${CRUX_GOOGLE_CREDENTIALS_LOCAL:-}" ]; then
+  [ -f "$CRUX_GOOGLE_CREDENTIALS_LOCAL" ] || die "CRUX_GOOGLE_CREDENTIALS_LOCAL='$CRUX_GOOGLE_CREDENTIALS_LOCAL' is not a file"
+  GAC_DIR="$(dirname "$GAC_BOX")"
+  ssh "${SSH_OPTS[@]}" "${SSH_USER}@${PUBLIC_IP}" "mkdir -p '$GAC_DIR' && chmod 700 '$GAC_DIR'"
+  scp "${SSH_OPTS[@]}" -q "$CRUX_GOOGLE_CREDENTIALS_LOCAL" "${SSH_USER}@${PUBLIC_IP}:$GAC_BOX"
+  ssh "${SSH_OPTS[@]}" "${SSH_USER}@${PUBLIC_IP}" "chmod 600 '$GAC_BOX'"
+  ok "Google service-account file on box at $GAC_BOX (0600)"
+elif [ -n "$GAC_BOX" ]; then
+  warn "GOOGLE_APPLICATION_CREDENTIALS=$GAC_BOX is named in the env file but no local file was shipped (set CRUX_GOOGLE_CREDENTIALS_LOCAL); copy it there before ops/run.sh"
+fi
+
 # ── Remote provision ────────────────────────────────────────────────────────
 # Built locally into a file and left on the box rather than piped into `bash -s`:
 # it is then re-runnable by hand, greppable when something goes wrong, and free
@@ -406,7 +437,7 @@ apt-get install -y --no-install-recommends \
 ok "base packages"
 
 # ── 2. Swap backstop ──────────────────────────────────────────────────────
-# The container is capped at 12 GiB and the box has 32 GiB, so the cgroup limit
+# The container is capped at 24 GiB and the box has 32 GiB, so the cgroup limit
 # should bite first — but the agent writes its own analysis code, and swap turns
 # a host-level memory spike into slowness rather than an OOM kill that takes
 # sshd (and with it the run) down.

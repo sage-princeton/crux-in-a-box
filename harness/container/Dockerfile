@@ -8,12 +8,12 @@
 #
 #     cd harness
 #     docker build --platform linux/amd64 -f container/Dockerfile \
-#         --build-arg CLAUDE_CODE_VERSION=2.1.240 \
+#         --build-arg CLAUDE_CODE_VERSION=2.1.272 \
 #         --build-arg CODEX_VERSION=0.149.0 \
 #         -t crux-harness:<tag> .
 #
 # `ops/provision-box.sh` runs exactly that, taking the two versions from the
-# resolved placeholders `{{CLAUDE_CODE_VERSION|2.1.240}}` and
+# resolved placeholders `{{CLAUDE_CODE_VERSION|2.1.272}}` and
 # `{{CODEX_VERSION|0.149.0}}`. The ARG defaults below must stay equal to those
 # placeholder defaults: they are the versions verified against inspect_swe
 # 0.2.70, and a build that silently picked a different pair would not be the
@@ -135,7 +135,7 @@ ENV VIRTUAL_ENV=/opt/venv \
 # different platform optional dependency, a moved dist-tag) the run would be
 # driving a CLI nobody verified. The assertion turns that into a failed build
 # instead of a quiet substitution.
-ARG CLAUDE_CODE_VERSION=2.1.240
+ARG CLAUDE_CODE_VERSION=2.1.272
 ARG CODEX_VERSION=0.149.0
 RUN npm install -g --no-fund --no-audit \
       "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \

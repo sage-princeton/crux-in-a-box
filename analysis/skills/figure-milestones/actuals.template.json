@@ -1,0 +1,13 @@
+{
+  "_help": {
+    "what": "Actual completion time per milestone, when the plan's Status cell does not carry one. Each 'actual' is a judgment call: the milestone's own gate or deliverable passing (gate green, blind review returned, completion report written), cross-validated against LOG.md. Entries here override the Status cell.",
+    "launch": "Optional: the run's first model call as ISO-8601 UTC; only needed when no --timeline is given.",
+    "note": "Record the evidence for the timestamp (the LOG.md entry, commit, or harness event) so the judgment is auditable. The builder ignores it.",
+    "label": "Optional: a shorter row label than the plan's milestone text."
+  },
+  "launch": "2026-01-01T12:00:00Z",
+  "milestones": [
+    {"num": 1, "actual": "2026-01-01T12:40:00Z", "note": "LOG.md 2026-01-01 12:40 — gate passed"},
+    {"num": 2, "actual": "2026-01-02T03:15:00Z", "note": "commit abc1234 'direction chosen'"}
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "_help": {
+    "what": "The phases of the run, in order. Each becomes a numbered chip above the resource-timeline plot and a note below it, rendered as 'label — tip'.",
+    "startHour": "Hours after the run's first model call (the x-axis origin), OR give 'start' as an ISO-8601 UTC timestamp instead and the builder converts it.",
+    "anchoring": "Every boundary must rest on evidence: a LOG.md entry header, a commit time, an operator intervention, the final pass. collect.py --log emits the log entry headers with their hours; events.interventions / final_pass / final_gate carry theirs. Record the anchor in 'basis' so the choice is auditable (the builder ignores that field).",
+    "count": "Aim for 5–8 phases. The first starts at 0.0; the last runs to the end of the run.",
+    "style": "label: 2–5 words, a headline. tip: one or two plain sentences a non-expert can read — what happened and what it changed. No jargon, no arrows, no memo codes."
+  },
+  "sections": [
+    {
+      "startHour": 0.0,
+      "label": "Short phase headline",
+      "tip": "One or two plain sentences: what the agent did in this phase and what came of it.",
+      "basis": "run start (first model call)"
+    },
+    {
+      "start": "2026-01-01T12:00:00Z",
+      "label": "Next phase headline",
+      "tip": "What changed here, and why it matters for the rest of the run.",
+      "basis": "LOG.md entry '2026-01-01 12:00 — ...'"
+    }
+  ]
+}

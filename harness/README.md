@@ -11,14 +11,14 @@ What is different from `run-harness/`: there is no chat channel and no box-side 
 
 - On your machine: AWS CLI with authentication (`aws sts get-caller-identity` works), `ssh`, `rsync`, `jq`, `bash`
 - A provider key for the arm you are running (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`), on the host only — no key ever enters the container
-- Optionally, keys for services the agent may use (OpenRouter, RunPod, refine.ink) — defined in `.env`, passed into the container only if named in `AGENT_ENV_KEYS`
+- Optionally, keys for services the agent may use (Together AI or OpenRouter, RunPod, refine.ink) — defined in `.env`, passed into the container only if named in `AGENT_ENV_KEYS`
 
 ## The two arms
 
 | | Claude Code | Codex |
 |---|---|---|
 | Selected by | `ARM=claude` | `ARM=codex` |
-| CLI in the image | `@anthropic-ai/claude-code@{{CLAUDE_CODE_VERSION\|2.1.240}}` | `@openai/codex@{{CODEX_VERSION\|0.149.0}}` |
+| CLI in the image | `@anthropic-ai/claude-code@{{CLAUDE_CODE_VERSION\|2.1.272}}` | `@openai/codex@{{CODEX_VERSION\|0.149.0}}` |
 | Model | `{{CLAUDE_MODEL\|anthropic/claude-opus-5}}` | `{{CODEX_MODEL\|openai/gpt-5.6-sol}}` |
 | Inspect solver | `inspect_swe.claude_code()` | `inspect_swe.codex_cli()` |
 | Subagents | the Agent tool | `spawn_agent` |
@@ -41,7 +41,7 @@ HOST — EC2 (m7i.2xlarge by default); holds the provider key; runs exactly one 
 ├─ pricing.yaml                 real rates; what the meter and the hard limits price against
 └─ hard limits                  Task(time_limit={{RUN_HOURS|10}} h, cost_limit={{API_BUDGET}}) — backstops, not the control
 │
-└─ sandbox: docker (container/compose.yaml) — one container, uid 1000, 3.5 CPU / 12 GiB, dummy provider key
+└─ sandbox: docker (container/compose.yaml) — one container, uid 1000, 7 CPU / 24 GiB, dummy provider key
       claude_code()  OR  codex_cli()
       model traffic ───► sandbox agent bridge ───► host ───► provider     (metered, hard-limited)
       everything else ─► open egress; only the cloud metadata endpoint and the two provider API domains are blocked

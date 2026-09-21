@@ -54,3 +54,4 @@ Installed by default:
 - `harness-overview.html` — human-facing overview
 - `utils/` — gog bootstrap; the post-run export pipeline (`export-run.sh` drives it: `make-blacklist.sh` and `extract_run_log.py --scrub` run on the box, `scan-secrets.py` checks the result with class-shape patterns, counts only)
 - `runs-export/` — scrubbed run records pulled by `utils/export-run.sh` (gitignored). The session store is the record; plugin telemetry is a supplement. Raw `sessions/` and raw `telemetry.jsonl*` never leave the box; `run_events.jsonl` / `run_summary.json` are what you share, after a human look
+- `analysis/` — post-run analysis tooling: `clean-room/` (gitignored scratch for run data) and `skills/` (agent skills: the OpenClaw run timeline page, and the four figure skills — resource timeline, referee rounds, abstract screen grab, milestones — that turn a run export into CRUX 2-style figures; see `analysis/README.md`)

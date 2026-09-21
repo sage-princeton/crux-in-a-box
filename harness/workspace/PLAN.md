@@ -11,16 +11,16 @@ _The research question restated in your own words, and — once they form — th
 _Write at hour 0; revise freely; keep continuously current. Allocate each resource across the phases you foresee, estimate what each major item costs and buys, and update spent/remaining whenever you spend meaningfully or an estimate proves wrong. A revision is a logged decision, not a failure._
 
 <!-- prettier-ignore -->
-| Phase / item | Time | API $ | GPU $ | OpenRouter $ | What it buys |
+| Phase / item | Time | API $ | GPU $ | Experiment LLM $ | What it buys |
 |---|---|---|---|---|---|
 | Exploration (literature + candidate approaches) | | | | | |
 | Main experiments | | | | | |
 | Writing + figures | | | | | |
 | Review rounds + responses | | | | | |
 | Final pass + reserve | | | | | |
-| **Allocated / cap** | / {{DEADLINE|10 hours from launch}} | / {{API_BUDGET}} | / {{CLOUD_SPEND_LIMIT|n/a}} | / {{OPENROUTER_BUDGET|n/a}} | |
+| **Allocated / cap** | / {{DEADLINE|10 hours from launch}} | / {{API_BUDGET}} | / {{CLOUD_SPEND_LIMIT|n/a}} | / {{EXPERIMENT_LLM_BUDGET|n/a}} | |
 
-**Current position** _(refresh at least every few hours — the heartbeat checks this)_: per budget (API · GPU · OpenRouter): spent … · remaining … · as of …
+**Current position** _(refresh at least every few hours — the heartbeat checks this)_: per budget (API · GPU · experiment LLM): spent … · remaining … · as of …
 
 ## Approach & milestones
 

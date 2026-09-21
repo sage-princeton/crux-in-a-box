@@ -91,12 +91,49 @@ anthropic/claude-opus-5:
   input_cache_write: 6.25   # 5-minute TTL write = 1.25x base input. NOT the 1h rate
   input_cache_read: 0.50    # cache hit = 0.1x base input
 
+# Claude Fable 5.1 on the direct Claude API — Standard tier, read from
+# platform.claude.com/docs/en/about-claude/pricing on 2026-09-17: input $10 · 5m cache write
+# $12.50 (1h write $20; Inspect applies the TTL multiplier itself, so the 5m rate goes here) ·
+# cache read $0.25 (0.025x on Fable 5.1 and Mythos 5.1, not the usual 0.1x) · output $50 per
+# MTok. The full 1M window is billed at these rates (no long-context surcharge on Claude 4.6+).
+anthropic/claude-fable-5-1:
+  input: 10.00
+  output: 50.00
+  input_cache_write: 20.00   # the 1-hour TTL rate (MODEL_ARGS=cache_ttl=1h); the 5-minute rate is 12.50
+  input_cache_read: 0.25
+
+# The same model served through Google Cloud's Agent Platform (CLAUDE_MODEL=anthropic/vertex/
+# claude-fable-5-1, ANTHROPIC_VERTEX_REGION=global). Google bills Claude at Anthropic's list
+# rates on the GLOBAL endpoint and 10% above them on a multi-region (`us`/`eu`) or regional
+# endpoint (platform.claude.com/docs/en/build-with-claude/claude-on-vertex-ai, 2026-09-17, which
+# also says models newer than Sonnet 4.6 are served from the global or multi-region endpoints,
+# not single regions). These are the GLOBAL figures; multiply every field by 1.1 if
+# ANTHROPIC_VERTEX_REGION is `us` or `eu`. Same 0.025x cache read as the direct API. Re-check
+# against cloud.google.com/vertex-ai/generative-ai/pricing before launch — that page would not
+# render for the fetch that filled this in.
+anthropic/vertex/claude-fable-5-1:
+  input: 10.00
+  output: 50.00
+  input_cache_write: 12.50
+  input_cache_read: 0.25
+
 # --- Codex CLI (ARM=codex, CODEX_MODEL default) ------------------------------
 openai/gpt-5.6-sol:
   input: 4.00
   output: 20.00
   input_cache_write: 5.00
   input_cache_read: 0.40
+
+# GPT-6 Astra — Standard tier, short-context rates, read from platform.openai.com/docs/pricing.md on
+# 2026-09-04 (input $10 · cached input $1 · cache write $12.50 · output $50 per MTok). Long-context
+# rates are double and the meter does not switch tiers, so a run that lives above the short-context
+# boundary is under-billed here by up to 2x. 2.5x gpt-5.6-sol on every field.
+openai/gpt-6-astra:
+  input: 10.00
+  output: 50.00
+  input_cache_write: 12.50
+  input_cache_read: 1.00
+
 
 # --- A separate subagent model -------------------------------------------------
 # Only if SUBAGENT_MODEL in placeholders.txt names a model that is not one of

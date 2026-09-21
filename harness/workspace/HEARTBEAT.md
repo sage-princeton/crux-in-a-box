@@ -13,7 +13,7 @@ The one thing to police: if PLAN.md § Current position is older than about 1.5�
 
 Then, in priority order:
 
-- **Harvest** any finished subagent or background job: read its report/output, log the result, act on it. Any work-in-flight row overrunning — a subagent past +50% of its budget, a background job whose `out.log` has gone silent, a GPU pod billing with no results arriving — gets inspected now: preempt and re-scope if wedged, correct the row if the estimate was wrong. Never just keep waiting.
+- **Harvest** any finished subagent or background job (nothing spawned in a turn is guaranteed to be alive at the next heartbeat — subagents end with the turn, and unverified background jobs do too; what carries over is what reached disk): read its report/output, log the result, act on it. Any work-in-flight row overrunning — a subagent past +50% of its budget, a background job whose `out.log` has gone silent, a GPU pod billing with no results arriving — gets inspected now: preempt and re-scope if wedged, correct the row if the estimate was wrong. Never just keep waiting.
 - **Commit** (locally) if the tree is dirty.
 - **Take the next action** from `PLAN.md`.
 

@@ -84,6 +84,9 @@ ok "tooling: $("$VENV/bin/inspect" --version), docker $(docker version --format 
 ARM="$(kv "$RUN_ENV" ARM)"
 MODEL="$(kv "$RUN_ENV" MODEL)"
 EFFORT="$(kv "$RUN_ENV" REASONING_EFFORT)"
+MODEL_ARGS="$(kv "$RUN_ENV" MODEL_ARGS)"   # Inspect -M key=value pairs, comma-separated (e.g. responses_api=true)
+MAX_CONNECTIONS="$(kv "$RUN_ENV" MAX_CONNECTIONS)"   # Inspect --max-connections; blank = Inspect default
+MAX_RETRIES="$(kv "$RUN_ENV" MAX_RETRIES)"           # Inspect --max-retries; blank = 5
 RUN_HOURS="$(kv "$RUN_ENV" RUN_HOURS)"
 API_BUDGET="$(kv "$RUN_ENV" API_BUDGET)"
 COST_STOP_FRACTION="$(kv "$RUN_ENV" COST_STOP_FRACTION)"
@@ -121,13 +124,39 @@ ok "run.env: arm $ARM · $MODEL · effort $EFFORT · ${RUN_HOURS} h · $API_BUDG
 [ -f "$HARNESS/.env" ] || die "no $HARNESS/.env — Inspect reads the provider key from it (copy .env.example, fill it in, chmod 600)"
 ENV_MODE="$(stat -c %a "$HARNESS/.env" 2>/dev/null || echo '?')"
 [ "$ENV_MODE" = "600" ] || warn ".env is mode $ENV_MODE, not 600 — it holds every key on this box"
+# The credential the arm needs follows the MODEL string's service prefix, not the
+# arm alone: Inspect's Anthropic provider serves `anthropic/<id>` with an API key
+# and `anthropic/vertex/<id>` through Google Cloud, where the Claude endpoint
+# (rawPredict) rejects API keys outright and needs an OAuth2 principal —
+# application-default credentials or a service-account file — for the project
+# named in ANTHROPIC_VERTEX_PROJECT_ID. The credential stays on the host either way.
 case "$ARM" in
-  claude) ARM_KEY=ANTHROPIC_API_KEY ;;
+  claude)
+    case "$MODEL" in
+      anthropic/vertex/*)
+        for v in ANTHROPIC_VERTEX_PROJECT_ID ANTHROPIC_VERTEX_REGION; do
+          [ -n "$(get_env "$v")" ] || die "$v is not set (neither exported nor in .env); MODEL=$MODEL is served through Google Cloud and Inspect's Anthropic provider reads it from that variable."
+        done
+        GAC="$(get_env GOOGLE_APPLICATION_CREDENTIALS)"
+        ADC="$HOME/.config/gcloud/application_default_credentials.json"
+        if [ -n "$GAC" ]; then
+          [ -f "$GAC" ] || die "GOOGLE_APPLICATION_CREDENTIALS=$GAC is not a file — Vertex rejects API keys for Claude models; it needs a service-account JSON (or an ADC login) for project $(get_env ANTHROPIC_VERTEX_PROJECT_ID)."
+          ok "Vertex credentials: service account file $GAC · project $(get_env ANTHROPIC_VERTEX_PROJECT_ID) · region $(get_env ANTHROPIC_VERTEX_REGION) (host only)"
+        elif [ -f "$ADC" ]; then
+          ok "Vertex credentials: application-default login at $ADC · project $(get_env ANTHROPIC_VERTEX_PROJECT_ID) · region $(get_env ANTHROPIC_VERTEX_REGION) (host only)"
+        else
+          die "no Google credential for MODEL=$MODEL: set GOOGLE_APPLICATION_CREDENTIALS to a service-account JSON in .env, or run 'gcloud auth application-default login' on this host. An API key cannot call Claude on Vertex (the rawPredict endpoint answers 401 'API keys are not supported')."
+        fi
+        ARM_KEY="" ;;
+      *) ARM_KEY=ANTHROPIC_API_KEY ;;
+    esac ;;
   codex)  ARM_KEY=OPENAI_API_KEY ;;
   *) die "ARM='$ARM' in run.env (claude|codex expected)" ;;
 esac
-[ -n "$(get_env "$ARM_KEY")" ] || die "$ARM_KEY is not set (neither exported nor in .env) and ARM=$ARM cannot run without it."
-ok "$ARM_KEY present (host only — no provider key enters the container)"
+if [ -n "$ARM_KEY" ]; then
+  [ -n "$(get_env "$ARM_KEY")" ] || die "$ARM_KEY is not set (neither exported nor in .env) and ARM=$ARM cannot run without it."
+  ok "$ARM_KEY present (host only — no provider key enters the container)"
+fi
 if [ -n "$AGENT_ENV_KEYS" ]; then
   MISSING_AGENT=""; PASSED_AGENT=""
   IFS=',' read -ra EK <<< "$AGENT_ENV_KEYS"
@@ -277,6 +306,9 @@ CRUX_RUN_NAME_L='$NAME'
 CRUX_ARM_L='$ARM'
 CRUX_MODEL_L='$MODEL'
 CRUX_EFFORT_L='$EFFORT'
+CRUX_MODEL_ARGS_L='$MODEL_ARGS'
+CRUX_MAX_CONNECTIONS_L='$MAX_CONNECTIONS'
+CRUX_MAX_RETRIES_L='${MAX_RETRIES:-5}'
 CRUX_LOG_DIR_L='$LOG_DIR'
 CRUX_RUN_ENV_L='$RUN_ENV'
 CRUX_PRICING_L='$HARNESS/pricing.yaml'
@@ -314,6 +346,25 @@ export INSPECT_TRANSCRIPT_BOUNDED="${INSPECT_TRANSCRIPT_BOUNDED:-1}"
 CTL_ARGS=()
 [ -n "$CRUX_CTL_KEEP_L" ] && CTL_ARGS=(--ctl-server=keep)
 
+# Model args: provider knobs Inspect passes to the model constructor, as -M key=value.
+# The one this harness has needed so far is responses_api=true for a model name the
+# pinned inspect_ai does not yet route to the Responses API (gpt-6-astra on 0.3.260);
+# Codex speaks the Responses wire format, so a Chat Completions fallback fails.
+MODEL_ARG_FLAGS=()
+if [ -n "${CRUX_MODEL_ARGS_L:-}" ]; then
+  IFS=',' read -ra _MA <<< "$CRUX_MODEL_ARGS_L"
+  for _a in "${_MA[@]}"; do
+    _a="${_a#"${_a%%[![:space:]]*}"}"; _a="${_a%"${_a##*[![:space:]]}"}"
+    [ -z "$_a" ] || MODEL_ARG_FLAGS+=(-M "$_a")
+  done
+fi
+# Throughput caps for a quota-bound model (a per-project quota on a cloud platform,
+# a low-tier key): --max-connections bounds how many requests are in flight at once
+# across the session, heartbeats and subagents, and --max-retries is how long a
+# 429 is waited out (Inspect honours retry-after) before the call — and the turn —
+# fails. Both come from run.env (MAX_CONNECTIONS, MAX_RETRIES in placeholders.txt).
+CONN_FLAGS=()
+[ -z "${CRUX_MAX_CONNECTIONS_L:-}" ] || CONN_FLAGS=(--max-connections "$CRUX_MAX_CONNECTIONS_L")
 CMD=(
   "$CRUX_VENV/bin/inspect" eval "$CRUX_TASK_L"
   -T "arm=$CRUX_ARM_L"
@@ -325,7 +376,9 @@ CMD=(
   # The one knob that reaches the wire: the bridge drops the CLI's own
   # reasoning settings, so effort is pinned here, eval-side.
   --reasoning-effort "$CRUX_EFFORT_L"
-  --max-retries 5
+  "${MODEL_ARG_FLAGS[@]}"
+  "${CONN_FLAGS[@]}"
+  --max-retries "${CRUX_MAX_RETRIES_L:-5}"
   --timeout 900
   # One sample, one sandbox. The subprocess cap bounds docker exec fan-out on
   # a box sized for one run.
@@ -355,7 +408,7 @@ printf '\n' >> "$CRUX_LOG_DIR_L/cmdline.txt"
 {
   echo "==============================================================="
   echo " run $CRUX_RUN_NAME_L · arm $CRUX_ARM_L · started $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  echo " model $CRUX_MODEL_L · effort $CRUX_EFFORT_L"
+  echo " model $CRUX_MODEL_L · effort $CRUX_EFFORT_L${CRUX_MODEL_ARGS_L:+ · model args $CRUX_MODEL_ARGS_L}${CRUX_MAX_CONNECTIONS_L:+ · max connections $CRUX_MAX_CONNECTIONS_L} · max retries ${CRUX_MAX_RETRIES_L:-5}"
   echo " logs  $CRUX_LOG_DIR_L"
   echo "==============================================================="
 } | tee -a "$CONSOLE"

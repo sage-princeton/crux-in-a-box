@@ -89,7 +89,7 @@ awk -v p="$TMP/paper.pdf" 'BEGIN { gsub(/\\/, "\\\\", p); gsub(/&/, "\\\\&", p) 
 RC=0
 case "$ARM" in
   claude)
-    # Claude Code 2.1.240. --bare skips hooks, plugins, auto-memory, keychain
+    # Claude Code 2.1.272 (flags unchanged since 2.1.240). --bare skips hooks, plugins, auto-memory, keychain
     # reads and CLAUDE.md auto-discovery, and takes auth strictly from
     # ANTHROPIC_API_KEY (the bridge supplies ANTHROPIC_AUTH_TOKEN plus an
     # apiKeyHelper in ~/.claude/settings.json, which bare mode does not read),

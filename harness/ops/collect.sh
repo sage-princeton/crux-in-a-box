@@ -21,8 +21,11 @@
 #                plus history/ — `git log -p --all` renderings of the bundles
 #   workspace/   the container's final /workspace prose and paper (AGENTS.md,
 #                PLAN.md, LOG.md, SNAPSHOTS.md, COMPLETION_REPORT.md,
-#                BUDGET.json, reviews/, paper/, results.html, README.md) and
-#                under git/ a fresh full-history bundle, git log, docker diff
+#                BUDGET.json, reviews/, paper/, results.html, README.md),
+#                under tree/ the tracked source tree at HEAD (`git archive`:
+#                the code, data manifests and results the agent committed,
+#                scrubbed and scanned file by file), and under git/ a fresh
+#                full-history bundle, git log, docker diff
 #   sessions/    the native CLI session store out of the container
 #                (~/.claude/projects and /workspace/.codex/sessions) — the
 #                secondary audit trail, and the reason the run was launched
@@ -47,8 +50,15 @@
 #      patterns plus the blacklist; COUNTS ONLY) over the scrubbed tree
 #   4. a hit in a required output (timeline, workspace prose, run/, meta/)
 #      FAILS the collection and nothing is pulled; a hit in a session store,
-#      an eval rendering, a history rendering or console.log WITHHOLDS that
-#      file (quarantined on the box, named in the manifest)
+#      an eval rendering, a history rendering, the source tree or console.log
+#      SHAPE-SCRUBS that file — every match of a scanner pattern is replaced
+#      by [REDACTED:<pattern>], counts per file in the manifest — and a file
+#      still hit after that is WITHHELD (quarantined on the box, named in the
+#      manifest). The shape scrub exists because those files carry whatever
+#      the agent fetched or committed — a public leaked-secrets corpus, a
+#      Maps key on a fetched page — and Codex's encrypted reasoning blobs
+#      contain `sk-`/`hf_`-shaped fragments by chance; withholding a whole
+#      eval rendering for a third-party string loses the primary telemetry
 # Then only the scrubbed staging tree is pulled, re-scanned locally (patterns
 # only — the blacklist stayed behind), bundled and checksummed.
 #
@@ -355,6 +365,29 @@ for name in $NAMES; do
     else
       note "workspace/$label: git bundle failed inside the container"
     fi
+    # The tracked source tree at HEAD — the code, data manifests and results
+    # the agent committed. A plain file tree is scrubbed and scanned file by
+    # file, so one third-party string in a dataset costs that file, not the
+    # whole bundle (whose rendering is all-or-nothing).
+    #
+    # Guarded by file COUNT, because the count is what hurts. The first run to
+    # use this had 2,310 tracked files; the second committed its whole working
+    # set and reached 1,253,078, of which 986,433 were scratch exploration data.
+    # Extracting and then per-file scrubbing that many files does not finish in
+    # any useful time, and `du`/`find` over it wedges on its own. Above the
+    # ceiling the bundle is the record: it holds the same commit, compressed,
+    # as one object the scan can handle. Raise CRUX_TREE_MAX_FILES knowingly.
+    TREE_MAX="${CRUX_TREE_MAX_FILES:-50000}"
+    N_TRACKED="$($DOCKER exec -u 1000 "$name" git -C /workspace ls-files 2>/dev/null | wc -l | tr -d ' ')"
+    if [ -n "$N_TRACKED" ] && [ "$N_TRACKED" -gt "$TREE_MAX" ] 2>/dev/null; then
+      note "workspace/$label: SKIPPED tree/ — $N_TRACKED tracked files exceeds CRUX_TREE_MAX_FILES=$TREE_MAX; the full-history bundle carries the same commit (clone it locally to browse)"
+    elif $DOCKER exec -u 1000 "$name" git -C /workspace archive --format=tar HEAD > "$W/tree.tar" 2>/dev/null \
+       && mkdir -p "$W/tree" && tar -xf "$W/tree.tar" -C "$W/tree"; then
+      note "workspace/$label/tree ($(du -sh "$W/tree" 2>/dev/null | cut -f1), $(find "$W/tree" -type f | wc -l | tr -d ' ') tracked files at $($DOCKER exec -u 1000 "$name" git -C /workspace rev-parse --short HEAD 2>/dev/null))"
+    else
+      rm -rf "$W/tree"; note "workspace/$label: git archive HEAD failed inside the container — no tree/"
+    fi
+    rm -f "$W/tree.tar"
     $DOCKER exec -u 1000 "$name" bash -c \
       'git -C /workspace log --stat -n 300 --date=iso; echo; git -C /workspace status --porcelain' \
       > "$W/git/git-log.txt" 2>&1 || true
@@ -381,10 +414,25 @@ if ls "$LOGS"/*.eval >/dev/null 2>&1; then
   fi
 fi
 render_bundle(){ # BUNDLE OUT — `git log -p --all --stat` of a bundle, via a bare clone
-  local b="$1" o="$2" tmp
+  # Capped, because `-p` over a repo whose working set was committed is
+  # effectively unbounded: the second real run tracked 1,253,078 files (986,433
+  # of them scratch exploration data) and this rendering passed 31 GB, still
+  # growing, before it was killed — it would have filled the box and failed the
+  # collection anyway. The cap makes that a WITHHELD bundle with a reason in the
+  # manifest instead of a dead box. CRUX_HISTORY_MAX_MB raises it knowingly.
+  local b="$1" o="$2" tmp max
+  max="${CRUX_HISTORY_MAX_MB:-2048}"
   tmp="$(mktemp -d "$RAW/hist.XXXXXX")"
   if git clone -q --bare "$b" "$tmp/repo.git" 2>"$o.err"; then
-    git --git-dir="$tmp/repo.git" log -p --all --stat --date=iso > "$o" 2>>"$o.err" || true
+    # head -c stops the writer via SIGPIPE rather than letting git run to
+    # completion into a file nobody can scan.
+    git --git-dir="$tmp/repo.git" log -p --all --stat --date=iso 2>>"$o.err" \
+      | head -c "$((max * 1024 * 1024))" > "$o" || true
+    if [ "$(stat -c %s "$o" 2>/dev/null || echo 0)" -ge "$((max * 1024 * 1024))" ]; then
+      printf 'history rendering hit the %s MB cap (CRUX_HISTORY_MAX_MB); it is truncated and cannot vouch for the bundle\n' \
+        "$max" >> "$o.err"
+      rm -f "$o"                      # truncated is not a rendering; fail closed
+    fi
   fi
   rm -rf "$tmp"
   [ -s "$o" ]
@@ -509,13 +557,70 @@ fi
 # Required outputs with a hit fail the collection; withholdable ones are
 # quarantined. Then the remainder is scanned again and must be clean.
 SCAN_LOG="$STAGE/scan-box.log"
+SHAPE="$STAGE/shape-scrub.txt"; : > "$SHAPE"
+shape_scrub(){ # FILE — in place: every scanner-pattern match and blacklist literal → [REDACTED:<pattern>]; counts appended to $SHAPE. Fails on a binary.
+  python3 - "$1" "$BL" "$BIN/scan-secrets.py" "$SHAPE" "$OUT" <<'PY'
+import importlib.util, os, sys
+path, bl_path, scanner, report, out = sys.argv[1:6]
+spec = importlib.util.spec_from_file_location("ss", scanner)
+ss = importlib.util.module_from_spec(spec); spec.loader.exec_module(ss)
+with open(bl_path, encoding="utf-8", errors="replace") as fh:
+    secrets = sorted((l.rstrip("\n") for l in fh if len(l.rstrip("\n")) >= 8), key=len, reverse=True)
+
+# Streamed in fixed chunks, never whole-file. Reading a 3.9 GB eval rendering
+# with fh.read() and then chaining str.replace() over it allocates a fresh copy
+# per pass: the first version of this was OOM-killed at 31.5 GB resident on a
+# 30 GB box, which also took down the ssh session driving the collection. An
+# eval rendering is one enormous line, so chunk by BYTES rather than by line.
+# OVERLAP carries the tail of each chunk forward so a secret straddling a
+# boundary is still matched; it must exceed the longest thing we look for.
+CHUNK = 8 << 20
+OVERLAP = max([len(s) for s in secrets] + [512]) * 2
+if b"\x00" in open(path, "rb").read(8192):
+    sys.exit(1)
+counts = {}
+tmp = path + ".scrub"
+with open(path, "rb") as src, open(tmp, "wb") as dst:
+    carry = ""
+    while True:
+        raw = src.read(CHUNK)
+        if not raw:
+            break
+        text = carry + raw.decode("utf-8", errors="surrogateescape")
+        for s in secrets:
+            n = text.count(s)
+            if n:
+                counts["blacklist_literal"] = counts.get("blacklist_literal", 0) + n
+                text = text.replace(s, "[REDACTED:blacklist]")
+        for name, rx in ss.COMPILED:
+            text, n = rx.subn("[REDACTED:%s]" % name, text)
+            if n:
+                counts[name] = counts.get(name, 0) + n
+        # Hold back the tail so a match spanning this boundary is seen next pass.
+        if len(text) > OVERLAP:
+            dst.write(text[:-OVERLAP].encode("utf-8", errors="surrogateescape"))
+            carry = text[-OVERLAP:]
+        else:
+            carry = text
+    dst.write(carry.encode("utf-8", errors="surrogateescape"))
+os.replace(tmp, path)
+with open(report, "a", encoding="utf-8") as fh:
+    fh.write("%s\t%s\n" % (os.path.relpath(path, out), ", ".join("%s %d" % kv for kv in sorted(counts.items()))))
+PY
+}
 python3 "$BIN/scan-secrets.py" --blacklist "$BL" "$OUT" > "$SCAN_LOG" 2>&1 || true
 FAILED=0
 while IFS= read -r hit; do
   rel="${hit#$OUT/}"
   case "$rel" in
-    sessions/*|run/console.log|logs/*|audit/history/*|workspace/*/git/*)
-      withhold "$hit" "scan hit (see MANIFEST.txt scan counts); left in raw/quarantine on the box"
+    sessions/*|run/console.log|logs/*|audit/history/*|workspace/*/git/*|workspace/*/tree/*)
+      if shape_scrub "$hit" && python3 "$BIN/scan-secrets.py" --quiet --blacklist "$BL" "$hit" >/dev/null 2>&1; then
+        :   # the shape-scrubbed copy ships; MANIFEST.txt lists it with its counts
+      else
+        withhold "$hit" "still credential-shaped after the shape scrub, or binary; left in raw/quarantine on the box"
+      fi
+      # The opaque containers of a hit rendering never ship: they hold the
+      # unredacted content.
       case "$rel" in
         logs/json/*) withhold "$OUT/logs/$(basename "${rel%.json}").eval" "its JSON rendering had a scan hit" ;;
         audit/history/*|workspace/*/git/*)
@@ -533,6 +638,7 @@ fi
 python3 "$BIN/scan-secrets.py" --blacklist "$BL" "$OUT" > "$SCAN_LOG.final" 2>&1 \
   || { echo "collection FAILED: out/ not clean after withholding" >&2; cat "$SCAN_LOG.final"; exit 2; }
 echo "--- scan-secrets (box, counts only) ---"; cat "$SCAN_LOG.final"
+[ -s "$SHAPE" ] && echo "SHAPE-SCRUBBED $(wc -l < "$SHAPE" | tr -d ' ') file(s): scanner-pattern matches replaced by [REDACTED:<pattern>] (per-file counts in MANIFEST.txt)"
 [ -z "$WITHHELD" ] || printf '%s\n' "$WITHHELD"
 
 # ── 7. Manifest: what is in out/, with sizes and digests (no content) ────────
@@ -555,6 +661,9 @@ echo "--- scan-secrets (box, counts only) ---"; cat "$SCAN_LOG.final"
   echo "## scrub report (file, replacement count; binaries copied as-is)"
   sed "s#$OUT/##; s/^/  /" "$SCRUB"
   echo
+  echo "## shape-scrubbed (file; every scanner-pattern match replaced by [REDACTED:<pattern>]; counts per pattern)"
+  [ -s "$SHAPE" ] && sed 's/^/  /' "$SHAPE" || echo "  nothing"
+  echo
   echo "## files (bytes sha256 path)"
   ( cd "$OUT" && find . -type f ! -name MANIFEST.txt | sort | while IFS= read -r f; do
       printf '%12d %s %s\n' "$(stat -c %s "$f")" "$(sha256sum "$f" | cut -d' ' -f1)" "${f#./}"
@@ -574,6 +683,9 @@ REMOTE_OUTPUT="$(ssh "${SSH_OPTS[@]}" "$SSH_TARGET" 'bash /tmp/crux-collect-remo
   || { printf '%s\n' "${REMOTE_OUTPUT:-}" | sed 's/^/   /'; die "remote staging failed (above). Nothing was pulled. The stage is on the box under ~/crux-collect/${RUN}-${TS}/ for a look."; }
 printf '%s\n' "$REMOTE_OUTPUT" | sed 's/^/   /'
 echo "$REMOTE_OUTPUT" | grep -q 'REMOTE_COLLECT_OK' || die "remote staging did not report success"
+if echo "$REMOTE_OUTPUT" | grep -q '^SHAPE-SCRUBBED'; then
+  ok "$(echo "$REMOTE_OUTPUT" | grep '^SHAPE-SCRUBBED' | tail -1) — read those files knowing a placeholder may stand where a third-party string, or a chance match inside an encrypted reasoning blob, used to be"
+fi
 if echo "$REMOTE_OUTPUT" | grep -q 'WITHHELD'; then
   ok "box-side staging complete — required outputs scan-clean; some files were WITHHELD (quarantined on the box; MANIFEST.txt names them)"
 else
@@ -609,7 +721,8 @@ N_JSON="$(find "$OUT_ROOT/logs/json" -name '*.json' 2>/dev/null | wc -l | tr -d 
 N_TIMELINE="$(count '*.timeline.jsonl')"
 N_BUNDLE="$(count '*.bundle')"
 N_ROLLOUT="$(find "$OUT_ROOT/sessions" -name '*.jsonl' 2>/dev/null | wc -l | tr -d ' ' || true)"
-for v in N_EVAL N_JSON N_TIMELINE N_BUNDLE N_ROLLOUT; do [ -n "${!v}" ] || eval "$v=0"; done
+N_TREE="$(find "$OUT_ROOT"/workspace/*/tree -type f 2>/dev/null | wc -l | tr -d ' ' || true)"
+for v in N_EVAL N_JSON N_TIMELINE N_BUNDLE N_ROLLOUT N_TREE; do [ -n "${!v}" ] || eval "$v=0"; done
 ok "collected tree: $(du -sh "$OUT_ROOT" 2>/dev/null | cut -f1 || echo '?')"
 
 {
@@ -624,8 +737,9 @@ ok "collected tree: $(du -sh "$OUT_ROOT" 2>/dev/null | cut -f1 || echo '?')"
   echo "timelines (.timeline.jsonl) : $N_TIMELINE"
   echo "git bundles (.bundle)       : $N_BUNDLE"
   echo "native session files        : $N_ROLLOUT"
+  echo "source tree files (tree/)   : $N_TREE"
   echo
-  echo "See MANIFEST.txt (from the box) for sizes, digests, scan counts, and what was withheld."
+  echo "See MANIFEST.txt (from the box) for sizes, digests, scan counts, what was shape-scrubbed, and what was withheld."
 } > "$OUT_ROOT/COLLECTION.md"
 
 BUNDLE="$OUT_ROOT.tar.gz"
