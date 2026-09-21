@@ -1,0 +1,51 @@
+{
+  "display_information": {
+    "name": "CRUX AgentRQ",
+    "description": "Run CRUX tasks from private Princeton CITP channels",
+    "background_color": "#243447"
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "CRUX AgentRQ",
+      "always_online": false
+    },
+    "slash_commands": [
+      {
+        "command": "/t",
+        "url": "https://agentrq.example.com/slack/commands",
+        "description": "Create an AgentRQ task",
+        "usage_hint": "[task description]",
+        "should_escape": false
+      }
+    ]
+  },
+  "oauth_config": {
+    "redirect_urls": [
+      "https://agentrq.example.com/slack/oauth/callback"
+    ],
+    "scopes": {
+      "bot": [
+        "groups:write",
+        "groups:read",
+        "chat:write",
+        "app_mentions:read",
+        "commands"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://agentrq.example.com/slack/events",
+      "bot_events": [
+        "app_mention"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://agentrq.example.com/slack/interactions"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

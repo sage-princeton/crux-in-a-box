@@ -31,3 +31,28 @@ environment and authorization through workspace Settings → Slack.
 Reapplying the provisioner restarts AgentRQ and Caddy. Use an idle window on
 shared controllers. Disabling callbacks removes the public ingress rule created
 by this option before restoring the original proxy configuration.
+
+### Activate Slack after deployment approval
+
+Merging the code does not configure Slack or deploy the controller.
+
+1. Copy either [JSON](slack/manifest-princetoncitp.json.example) or
+   [YAML](slack/manifest-princetoncitp.yaml.example), replace every
+   `agentrq.example.com` with the target controller's HTTPS hostname, and import
+   it through Slack's **Create New App → From a manifest** flow in `princetoncitp`.
+   Keep the CornflowerLabs staging app and credentials separate. These manifests
+   use HTTP callbacks; Socket Mode stays disabled.
+2. Merge the four values in [credentials.env.example](slack/credentials.env.example)
+   into the existing controller environment in SSM. Preserve its authentication,
+   encryption and other settings: `--put-secrets` replaces the entire parameter.
+   Keep any populated local copy in a gitignored `.env.*` file.
+3. Set `SLACK_PUBLIC_CALLBACKS=true` in the target controller config, retain the
+   dashboard/operator and remote-agent IPs in `TLS_INGRESS_CIDR`, and run the
+   provisioner's dry run. Apply during an idle window; it restarts AgentRQ/Caddy.
+4. Verify Slack's Events Request URL, install/authorize the app through each
+   AgentRQ workspace's **Settings → Slack**, and invite users to its private
+   channel. Each linked channel routes to its own workspace.
+5. Test `/t`, a bot mention inside the resulting task thread, and a tool approval.
+   Choose each production workspace's approval policy explicitly. The tested
+   AgentRQ version does not inherit workspace YOLO for Slack-created tasks;
+   a remembered tool allowance or per-task setting is needed for automatic approval.
