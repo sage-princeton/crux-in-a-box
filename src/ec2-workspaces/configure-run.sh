@@ -86,7 +86,7 @@ install -d -m 700 -o "$RUN_USER" -g "$RUN_USER" "$RUN_HOME/.cache/crux-run"
   # Non-secret: an account id and role ARN for the agent to assume scoped
   # aux-resource access with. Only set when aux resources were provisioned.
   if [ -n "${AUX_RESOURCE_ROLE_ARN:-}" ]; then
-    printf 'AUX_RESOURCE_ACCOUNT_ID=%s\nAUX_RESOURCE_ROLE_ARN=%s\n' "$AUX_RESOURCE_ACCOUNT_ID" "$AUX_RESOURCE_ROLE_ARN"
+    printf 'AUX_RESOURCE_ACCOUNT_ID=%s\nAUX_RESOURCE_ROLE_ARN=%s\n' "${AUX_RESOURCE_ACCOUNT_ID:-}" "$AUX_RESOURCE_ROLE_ARN"
   fi
 } > "$RUN_ENV_FILE"
 chmod 600 "$RUN_ENV_FILE"
