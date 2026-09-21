@@ -528,12 +528,12 @@ $(ok "Control box ready")
   instance     $INSTANCE_ID ($INSTANCE_TYPE) in $AZ
   ssh          ssh $SLUG
   state        $VOL_ID mounted at /srv/agentrq
-  web UI       https://$TLS_HOSTNAME   (443 from $TLS_SUMMARY)
+  web UI       https://$TLS_HOSTNAME   (dashboard allowlist: $TLS_SUMMARY)
   run boxes    set CONTROL_MCP_BASE=https://$TLS_HOSTNAME in placeholders-base.txt
 
-If your address changes, both :22 and :443 are gated by it — reopen them with
-  aws ec2 authorize-security-group-ingress --group-id $CONTROL_SG_ID \
-    --protocol tcp --port 443 --cidr "\$(curl -s https://checkip.amazonaws.com)/32"
+If your address changes, update OPERATOR_CIDR and TLS_INGRESS_CIDR in $CONFIG_FILE.
+Reapply during an idle window: this restarts AgentRQ and Caddy. With public Slack
+callbacks enabled, changing AWS ingress alone does not update Caddy's allowlist.
 
 Next: the auth hygiene — root login off, JWT secret rotated — see src/ec2-control/README.md.
 DONE
