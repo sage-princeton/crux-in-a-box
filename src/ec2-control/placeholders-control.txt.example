@@ -10,6 +10,13 @@ AWS_REGION=us-east-1
 # ~/.ssh/config alias.
 CONTROL_SLUG=crux-control
 
+# For an isolated controller, use a unique slug AND resource prefix. The prefix
+# selects separate security groups, IAM role/profile and /<prefix>/control/env.
+RESOURCE_PREFIX=crux
+
+# Pin to a digest to avoid upgrading AgentRQ when applying configuration.
+AGENTRQ_IMAGE=agentrq/agentrq:latest
+
 # SSH access: comma-separated /32 addresses, optionally CIDR=LABEL.
 # Labels become AWS rule descriptions. Find the current address with:
 #   curl -s https://checkip.amazonaws.com
@@ -38,3 +45,8 @@ TLS_EMAIL=
 # HTTPS access: comma-separated CIDR=LABEL entries; ranges are permitted.
 # Port 80 remains public for certificate validation and renewal.
 TLS_INGRESS_CIDR=203.0.113.10/32
+
+# Public POST /slack/{events,commands,interactions}; all other routes (including
+# OAuth) use the TLS_INGRESS_CIDR allowlist plus loopback. Include remote test
+# agent IPs explicitly: security-group membership alone does not bypass Caddy.
+SLACK_PUBLIC_CALLBACKS=false

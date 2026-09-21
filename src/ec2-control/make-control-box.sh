@@ -77,6 +77,12 @@ KEY_NAME="${CFG[KEY_NAME]}"
 TLS_HOSTNAME="${CFG[TLS_HOSTNAME]:-}"
 TLS_EMAIL="${CFG[TLS_EMAIL]:-}"
 TLS_INGRESS_CIDR="${CFG[TLS_INGRESS_CIDR]:-$OPERATOR_CIDR}"
+RESOURCE_PREFIX="${CFG[RESOURCE_PREFIX]:-crux}"
+AGENTRQ_IMAGE="${CFG[AGENTRQ_IMAGE]:-agentrq/agentrq:latest}"
+SLACK_PUBLIC_CALLBACKS="${CFG[SLACK_PUBLIC_CALLBACKS]:-false}"
+[[ "$RESOURCE_PREFIX" =~ ^[a-z][a-z0-9-]{0,39}$ ]] || die "Invalid RESOURCE_PREFIX"
+[[ "$AGENTRQ_IMAGE" =~ ^[a-zA-Z0-9./:@_-]+$ ]] || die "Invalid AGENTRQ_IMAGE"
+case "$SLACK_PUBLIC_CALLBACKS" in true|false) ;; *) die "SLACK_PUBLIC_CALLBACKS must be true or false" ;; esac
 
 # Parse comma-separated CIDR=LABEL entries into CIDR and label arrays.
 # Labels become AWS rule descriptions.
@@ -115,6 +121,17 @@ parse_cidr_list "$TLS_INGRESS_CIDR" TLS 0 TLS_INGRESS_CIDR
 # Comma-joined, so the summaries read as lists rather than a trailing space.
 OP_SUMMARY="$(IFS=,; printf '%s' "${OP_CIDRS[*]}")"
 TLS_SUMMARY="$(IFS=,; printf '%s' "${TLS_CIDRS[*]}")"
+TLS_ALLOWED_CIDRS="${TLS_CIDRS[*]}"
+python3 - "$SLACK_PUBLIC_CALLBACKS" "${TLS_CIDRS[@]}" <<'PY' || die "Invalid TLS_INGRESS_CIDR"
+import ipaddress
+import sys
+for value in sys.argv[2:]:
+    network = ipaddress.ip_network(value, strict=False)
+    if network.version != 4:
+        raise SystemExit("TLS_INGRESS_CIDR must use IPv4, matching the security-group rules")
+    if sys.argv[1] == "true" and network.prefixlen == 0:
+        raise SystemExit("Public Slack callbacks require a restricted dashboard allowlist")
+PY
 # A hostname that does not resolve to this box fails the ACME check, and
 # Let's Encrypt rate-limits failures. Checked again after the EIP is known.
 case "$TLS_HOSTNAME" in
@@ -122,11 +139,11 @@ case "$TLS_HOSTNAME" in
     die "TLS_HOSTNAME '$TLS_HOSTNAME' is not publicly resolvable, so Let's Encrypt cannot validate it. Leave it empty for the sslip.io default." ;;
 esac
 
-CONTROL_SG="crux-control-sg"
-RUN_SG="crux-run-sg"
-IAM_ROLE="crux-control-role"
-IAM_PROFILE="crux-control-profile"
-SSM_ENV_PARAM="/crux/control/env"
+CONTROL_SG="${RESOURCE_PREFIX}-control-sg"
+RUN_SG="${RESOURCE_PREFIX}-run-sg"
+IAM_ROLE="${RESOURCE_PREFIX}-control-role"
+IAM_PROFILE="${RESOURCE_PREFIX}-control-profile"
+SSM_ENV_PARAM="/${RESOURCE_PREFIX}/control/env"
 KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
 SSH_USER="ubuntu"
 AGENTRQ_PORT=2026
@@ -182,7 +199,11 @@ if [ "$DRY_RUN" = 1 ]; then
   elastic ip        associated to $SLUG
   ssh config entry  Host $SLUG
   https             caddy + lets encrypt for ${TLS_HOSTNAME:-<dashed-eip>.sslip.io (derived)}
-                    443 from [$TLS_SUMMARY], 80 from 0.0.0.0/0 (ACME validation)Nothing billable was created.
+                    dashboard from [$TLS_SUMMARY], 80 from 0.0.0.0/0 (ACME validation)
+  slack callbacks   $SLACK_PUBLIC_CALLBACKS (public 443 only after Caddy is configured)
+  secrets           $SSM_ENV_PARAM
+  image             $AGENTRQ_IMAGE
+Nothing billable was created.
 PLAN
   exit 0
 fi
@@ -258,6 +279,18 @@ allow_labelled() {            # $1 sg, $2 port, $3 cidr, $4 label
 info "Security groups"
 RUN_SG_ID="$(ensure_sg "$RUN_SG" "CRUX ACP run boxes - egress only, SSH break-glass")"
 CONTROL_SG_ID="$(ensure_sg "$CONTROL_SG" "CRUX AgentRQ control plane - SSH only, no public web port")"
+
+# Remove our public rule before replacing the callback-only proxy with a catch-all.
+if [ "$SLACK_PUBLIC_CALLBACKS" = false ]; then
+  PUBLIC_RULE_IDS="$(aws_ ec2 describe-security-group-rules \
+    --filters "Name=group-id,Values=$CONTROL_SG_ID" \
+    --query "SecurityGroupRules[?Description=='crux-slack-callbacks' && IsEgress==\`false\`].SecurityGroupRuleId" --output text)"
+  if [ -n "$PUBLIC_RULE_IDS" ] && [ "$PUBLIC_RULE_IDS" != None ]; then
+    read -r -a PUBLIC_RULE_ARRAY <<< "$PUBLIC_RULE_IDS"
+    aws_ ec2 revoke-security-group-ingress --group-id "$CONTROL_SG_ID" \
+      --security-group-rule-ids "${PUBLIC_RULE_ARRAY[@]}" >/dev/null
+  fi
+fi
 
 for i in "${!OP_CIDRS[@]}"; do
   allow_labelled "$RUN_SG_ID"     22 "${OP_CIDRS[$i]}" "${OP_LABELS[$i]}"
@@ -475,11 +508,18 @@ done
 # ====== BOX-SIDE CONFIGURE ======
 info "Copying and running configure-control.sh"
 scp -q "$SCRIPT_DIR/configure-control.sh" "$SLUG:/tmp/configure-control.sh"
+scp -q "$SCRIPT_DIR/render-caddyfile.sh" "$SLUG:/tmp/render-caddyfile.sh"
 ssh "$SLUG" "chmod +x /tmp/configure-control.sh && sudo AWS_REGION='$REGION' \
   SSM_ENV_PARAM='$SSM_ENV_PARAM' AGENTRQ_PORT='$AGENTRQ_PORT' \
   PRIVATE_DNS='$PRIVATE_DNS' PRIVATE_IP='$PRIVATE_IP' \
-  TLS_HOSTNAME='$TLS_HOSTNAME' TLS_EMAIL='$TLS_EMAIL' \
+  TLS_HOSTNAME='$TLS_HOSTNAME' TLS_EMAIL='$TLS_EMAIL' AGENTRQ_IMAGE='$AGENTRQ_IMAGE' \
+  SLACK_PUBLIC_CALLBACKS='$SLACK_PUBLIC_CALLBACKS' TLS_ALLOWED_CIDRS='$TLS_ALLOWED_CIDRS' \
   /tmp/configure-control.sh"
+
+if [ "$SLACK_PUBLIC_CALLBACKS" = true ]; then
+  allow_labelled "$CONTROL_SG_ID" 443 0.0.0.0/0 crux-slack-callbacks
+  ok "Public HTTPS enabled after callback-only Caddy policy passed validation"
+fi
 
 cat <<DONE
 
