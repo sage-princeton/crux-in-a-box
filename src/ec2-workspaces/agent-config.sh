@@ -18,6 +18,13 @@ load_agent_config() {
       ;;
     *) die "AGENT_PLATFORM must be codex|claude (got '$AGENT_PLATFORM')." ;;
   esac
+  MODEL_PROVIDER="$(cfg MODEL_PROVIDER)"
+  MODEL_PROVIDER="${MODEL_PROVIDER:-direct}"
+  case "$MODEL_PROVIDER" in
+    direct) ;;
+    openrouter) API_KEY_NAME=OPENROUTER_API_KEY ;;
+    *) die "MODEL_PROVIDER must be direct|openrouter (got '$MODEL_PROVIDER')." ;;
+  esac
   MODEL="$(cfg "$MODEL_KEY")"
   EFFORT="$(cfg "$EFFORT_KEY")"
   local key value keys="$MODEL_KEY $EFFORT_KEY"
@@ -32,7 +39,7 @@ load_agent_config() {
     esac
     # Config values cross an SSH shell and, for Codex, a TOML string. Reject
     # shell syntax/quotes rather than allowing config to become remote code.
-    [[ "$value" =~ ^[a-zA-Z0-9._:/+-]+(\[[a-zA-Z0-9]+\])?$ ]] \
+    [[ "$value" =~ ^[a-zA-Z0-9._:/+@-]+(\[[a-zA-Z0-9]+\])?$ ]] \
       || die "$key contains unsupported characters."
   done
   case "$AGENT_PLATFORM:$EFFORT" in
