@@ -16,6 +16,10 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
   "${PRIVATE_IP:?}"
 : "${TLS_HOSTNAME:?TLS_HOSTNAME is required — TLS is mandatory and there is no other access path}"
 TLS_EMAIL="${TLS_EMAIL:-}"
+AGENTRQ_IMAGE="${AGENTRQ_IMAGE:-agentrq/agentrq:latest}"
+SLACK_PUBLIC_CALLBACKS="${SLACK_PUBLIC_CALLBACKS:-false}"
+TLS_ALLOWED_CIDRS="${TLS_ALLOWED_CIDRS:-}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 DATA_DIR=/srv/agentrq
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
@@ -103,7 +107,7 @@ ExecStart=/usr/bin/docker run --rm --name agentrq \\
   --env-file ${ENV_FILE} \\
   -v ${DATA_DIR}/_storage:/_storage \\
   -v ${DATA_DIR}/_certs:/_certs \\
-  agentrq/agentrq:latest
+  ${AGENTRQ_IMAGE}
 ExecStop=/usr/bin/docker stop agentrq
 
 [Install]
@@ -111,7 +115,7 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-docker pull -q agentrq/agentrq:latest >/dev/null
+docker pull -q "$AGENTRQ_IMAGE" >/dev/null
 systemctl enable agentrq >/dev/null
 systemctl restart agentrq
 ok "Service enabled and started"
@@ -157,13 +161,13 @@ echo "127.0.0.1 ${TLS_HOSTNAME}" >> /etc/hosts
 ok "Pinned"
 
 info "Writing /etc/caddy/Caddyfile for $TLS_HOSTNAME"
-{
-  [ -n "$TLS_EMAIL" ] && printf '{\n\temail %s\n}\n\n' "$TLS_EMAIL"
-  printf '%s {\n\treverse_proxy 127.0.0.1:%s\n}\n' "$TLS_HOSTNAME" "$AGENTRQ_PORT"
-} > /etc/caddy/Caddyfile
+TLS_HOSTNAME="$TLS_HOSTNAME" TLS_EMAIL="$TLS_EMAIL" AGENTRQ_PORT="$AGENTRQ_PORT" \
+  SLACK_PUBLIC_CALLBACKS="$SLACK_PUBLIC_CALLBACKS" TLS_ALLOWED_CIDRS="$TLS_ALLOWED_CIDRS" \
+  bash "$SCRIPT_DIR/render-caddyfile.sh" > /etc/caddy/Caddyfile.next
 [ -n "$TLS_EMAIL" ] || info "TLS_EMAIL is empty — no expiry warnings from Let's Encrypt"
-caddy validate --config /etc/caddy/Caddyfile >/dev/null 2>&1 \
-  || die "Caddy rejected the generated Caddyfile. Inspect /etc/caddy/Caddyfile."
+caddy validate --adapter caddyfile --config /etc/caddy/Caddyfile.next >/dev/null 2>&1 \
+  || die "Caddy rejected the generated Caddyfile. Inspect /etc/caddy/Caddyfile.next."
+mv /etc/caddy/Caddyfile.next /etc/caddy/Caddyfile
 
 systemctl enable caddy >/dev/null
 systemctl restart caddy
