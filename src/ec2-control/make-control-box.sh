@@ -226,11 +226,11 @@ fi
 info "Default VPC and subnet"
 VPC_ID="$(aws_ ec2 describe-vpcs --filters Name=isDefault,Values=true \
   --query 'Vpcs[0].VpcId' --output text)"
-[ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ] || die "No default VPC in $REGION"
+[[ "$VPC_ID" != "None" && -n "$VPC_ID" ]] || die "No default VPC in $REGION"
 SUBNET_ID="$(aws_ ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
   "Name=map-public-ip-on-launch,Values=true" \
   --query 'Subnets[0].SubnetId' --output text)"
-[ "$SUBNET_ID" != "None" ] && [ -n "$SUBNET_ID" ] || die "No public subnet in $VPC_ID"
+[[ "$SUBNET_ID" != "None" && -n "$SUBNET_ID" ]] || die "No public subnet in $VPC_ID"
 AZ="$(aws_ ec2 describe-subnets --subnet-ids "$SUBNET_ID" \
   --query 'Subnets[0].AvailabilityZone' --output text)"
 ok "VPC $VPC_ID, subnet $SUBNET_ID ($AZ)"
@@ -346,7 +346,7 @@ info "Ubuntu 24.04 AMI"
 AMI_ID="$(aws_ ssm get-parameters \
   --names /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
   --query 'Parameters[0].Value' --output text)"
-[ -n "$AMI_ID" ] && [ "$AMI_ID" != "None" ] || die "Could not resolve the Ubuntu 24.04 AMI"
+[[ -n "$AMI_ID" && "$AMI_ID" != "None" ]] || die "Could not resolve the Ubuntu 24.04 AMI"
 ok "AMI $AMI_ID"
 
 # ====== INSTANCE (reuse if one with this Name is already alive) ======
