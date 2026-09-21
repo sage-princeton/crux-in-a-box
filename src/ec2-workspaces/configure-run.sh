@@ -92,6 +92,11 @@ GW_ENV=/etc/crux-run.env
   if [ "$AGENT_PLATFORM" = claude ]; then
     printf 'CLAUDE_CODE_EXECUTABLE=/usr/bin/claude\n'
   fi
+  # Non-secret: an account id and role ARN for the agent to assume scoped
+  # aux-resource access with. Only set when aux resources were provisioned.
+  if [ -n "${AUX_RESOURCE_ROLE_ARN:-}" ]; then
+    printf 'AUX_RESOURCE_ACCOUNT_ID=%s\nAUX_RESOURCE_ROLE_ARN=%s\n' "$AUX_RESOURCE_ACCOUNT_ID" "$AUX_RESOURCE_ROLE_ARN"
+  fi
 } > "$GW_ENV"
 chmod 600 "$GW_ENV"
 

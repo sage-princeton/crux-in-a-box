@@ -29,11 +29,19 @@ PROFILE="$(cfg AWS_PROFILE)"; REGION="$(cfg AWS_REGION)"; SLUG="$(cfg RUN_SLUG)"
 
 if [ -n "$PROFILE" ]; then PROFILE_ARGS=(--profile "$PROFILE"); else PROFILE_ARGS=(); fi
 aws_() { aws "${PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
+aws_iam_() { aws "${PROFILE_ARGS[@]}" iam "$@"; }
 
 INSTANCE_ID="$(aws_ ec2 describe-instances \
   --filters "Name=tag:Name,Values=$SLUG" \
             "Name=instance-state-name,Values=pending,running,stopping,stopped" \
   --query 'Reservations[].Instances[0].InstanceId' --output text)"
+
+# Mirrors the same existence check teardown-aux-aws-resources.sh itself does,
+# so the operator sees the aux-resource sweep disclosed BEFORE confirming,
+# not just in that script's own banner after the fact.
+RUN_ROLE="crux-run-$SLUG"
+AUX_PROVISIONED=0
+aws_iam_ get-role --role-name "$RUN_ROLE" >/dev/null 2>&1 && AUX_PROVISIONED=1
 
 echo
 echo "About to tear down run box '$SLUG' in $REGION:"
@@ -46,6 +54,11 @@ ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
   --query 'Addresses[0].AllocationId' --output text 2>/dev/null || true)"
 if [ -n "$ALLOC_ID" ] && [ "$ALLOC_ID" != "None" ]; then
   echo "  release Elastic IP   $ALLOC_ID"
+fi
+if [ "$AUX_PROVISIONED" = 1 ]; then
+  echo "  also sweep aux AWS resources for '$SLUG' in the isolated account:"
+  echo "  every RDS instance, S3 bucket, EC2 instance and public Route53 zone"
+  echo "  found there, plus $RUN_ROLE and crux-agent-devops"
 fi
 echo "  remove ~/.ssh/config entry for $SLUG"
 echo
@@ -62,15 +75,19 @@ if [ "$ASSUME_YES" != 1 ]; then
   [ "$reply" = "$SLUG" ] || die "Did not match. Nothing was deleted."
 fi
 
-info "Aux AWS resources (no-op if never provisioned for this slug)"
-"$SCRIPT_DIR/teardown-aux-aws-resources.sh" "$CONFIG_FILE" --yes
-
 if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   info "Terminating $INSTANCE_ID"
   aws_ ec2 terminate-instances --instance-ids "$INSTANCE_ID" >/dev/null
   aws_ ec2 wait instance-terminated --instance-ids "$INSTANCE_ID"
   ok "Terminated (its root volume had DeleteOnTermination=true)"
 fi
+
+# Run after the instance is confirmed terminated: a live agent could still be
+# creating aux-account resources while the sweep runs, and detaching the
+# per-workspace instance profile from a still-running instance is bad
+# practice even though AWS technically allows it.
+info "Aux AWS resources (no-op if never provisioned for this slug)"
+"$SCRIPT_DIR/teardown-aux-aws-resources.sh" "$CONFIG_FILE" --yes
 
 # Release the Elastic IP after terminating the instance.
 if [ -n "$ALLOC_ID" ] && [ "$ALLOC_ID" != "None" ]; then

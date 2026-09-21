@@ -123,6 +123,19 @@ RUN_SG_ID="$(aws_ ec2 describe-security-groups --filters "Name=group-name,Values
   || die "crux-run-sg does not exist. Run ../ec2-control/make-control-box.sh first: it creates both security groups."
 ok "Key pair, /crux/system/env, crux-system-profile and crux-run-sg all present"
 
+# If any PROVISION_* flag is on in the base config, aux resources will be
+# provisioned before the instance launches (see step 4 below) — but that's
+# long after the workspace is minted. Validate AUX_RESOURCE_PROFILE here too,
+# so a bad/expired profile costs nothing rather than a stranded workspace.
+if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1$' "$BASE_CONFIG"; then
+  AUX_PROFILE_CFG="$(cfg AUX_RESOURCE_PROFILE)"
+  [ -n "$AUX_PROFILE_CFG" ] \
+    || die "A PROVISION_* flag is set in $(basename "$BASE_CONFIG") but AUX_RESOURCE_PROFILE is not. It must name the AWS CLI profile for the isolated account these resources are granted in."
+  aws --profile "$AUX_PROFILE_CFG" sts get-caller-identity >/dev/null 2>&1 \
+    || die "Not authenticated to the isolated account with profile '$AUX_PROFILE_CFG' (AUX_RESOURCE_PROFILE in $(basename "$BASE_CONFIG")). Run: aws sso login --sso-session <session>"
+  ok "AUX_RESOURCE_PROFILE '$AUX_PROFILE_CFG' authenticated"
+fi
+
 EXISTING="$(aws_ ec2 describe-instances \
   --filters "Name=tag:Name,Values=$SLUG" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
   --query 'Reservations[].Instances[0].InstanceId' --output text 2>/dev/null || true)"

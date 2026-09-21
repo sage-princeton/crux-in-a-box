@@ -155,6 +155,15 @@ fi
 info "IAM role '$AUX_ROLE' (isolated account $AUX_ACCOUNT_ID)"
 TRUST_POLICY="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"$RUN_ROLE_ARN\"},\"Action\":\"sts:AssumeRole\"}]}"
 if aws_aux_iam_ get-role --role-name "$AUX_ROLE" >/dev/null 2>&1; then
+  CURRENT_TRUSTED_ARN="$(aws_aux_iam_ get-role --role-name "$AUX_ROLE" \
+    --query 'Role.AssumeRolePolicyDocument.Statement[0].Principal.AWS' --output text 2>/dev/null || true)"
+  case "$CURRENT_TRUSTED_ARN" in
+    *"/crux-run-"*)
+      if [ "$CURRENT_TRUSTED_ARN" != "$RUN_ROLE_ARN" ]; then
+        warn "$AUX_ROLE currently trusts $CURRENT_TRUSTED_ARN — handing off to $RUN_ROLE_ARN. The isolated account is single-tenant, so the previous run loses its aux-resource access now."
+      fi
+      ;;
+  esac
   aws_aux_iam_ update-assume-role-policy --role-name "$AUX_ROLE" --policy-document "$TRUST_POLICY" >/dev/null
   ok "Role exists; trust policy set to $RUN_ROLE_ARN only"
 else

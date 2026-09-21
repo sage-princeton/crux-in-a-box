@@ -97,6 +97,8 @@ CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
 CLAUDE_ACP_VERSION="${CFG[CLAUDE_ACP_VERSION]:-}"
 TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]:-}"
 TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]:-}"
+AUX_RESOURCE_ACCOUNT_ID="${CFG[AUX_RESOURCE_ACCOUNT_ID]:-}"
+AUX_RESOURCE_ROLE_ARN="${CFG[AUX_RESOURCE_ROLE_ARN]:-}"
 
 # Only validated, selected-platform values cross the remote shell boundary.
 if [ "$AGENT_PLATFORM" = claude ]; then
@@ -359,6 +361,33 @@ if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   STATE="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
     --query 'Reservations[0].Instances[0].State.Name' --output text)"
   [ "$STATE" = "stopped" ] && { info "Starting it"; aws_ ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null; }
+
+  # A stopped/reused instance keeps whatever profile it launched with — the
+  # --iam-instance-profile flag below only applies to a fresh run-instances
+  # call. Fix it up here so enabling aux resources on an existing box and
+  # re-running this script actually attaches the per-workspace profile.
+  CURRENT_PROFILE_INFO="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].IamInstanceProfile.[Arn,Id]' --output text 2>/dev/null || true)"
+  CURRENT_PROFILE_ARN="$(printf '%s' "$CURRENT_PROFILE_INFO" | awk '{print $1}')"
+  CURRENT_ASSOC_ID="$(printf '%s' "$CURRENT_PROFILE_INFO" | awk '{print $2}')"
+  if [[ -z "$CURRENT_PROFILE_ARN" || "$CURRENT_PROFILE_ARN" == "None" || "$CURRENT_PROFILE_ARN" != */"$RUN_IAM_PROFILE" ]]; then
+    info "Instance profile mismatch (current: ${CURRENT_PROFILE_ARN:-none}, want: $RUN_IAM_PROFILE) — fixing up"
+    if [[ -n "$CURRENT_ASSOC_ID" && "$CURRENT_ASSOC_ID" != "None" ]]; then
+      aws_ ec2 disassociate-iam-instance-profile --association-id "$CURRENT_ASSOC_ID" >/dev/null
+      info "Waiting for the old association to clear"
+      for i in $(seq 1 12); do
+        STILL="$(aws_ ec2 describe-iam-instance-profile-associations --association-ids "$CURRENT_ASSOC_ID" \
+          --query 'IamInstanceProfileAssociations[0].State' --output text 2>/dev/null || true)"
+        [ "$STILL" = "disassociated" ] && break
+        sleep 5
+      done
+    fi
+    aws_ ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" \
+      --iam-instance-profile "Name=$RUN_IAM_PROFILE" >/dev/null
+    ok "Associated $RUN_IAM_PROFILE"
+  else
+    ok "Instance profile already $RUN_IAM_PROFILE"
+  fi
 else
   INSTANCE_ID="$(aws_ ec2 run-instances \
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
@@ -519,6 +548,8 @@ ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   CONTROL_MCP_BASE='$CONTROL_MCP_BASE' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
+  AUX_RESOURCE_ACCOUNT_ID='$AUX_RESOURCE_ACCOUNT_ID' \
+  AUX_RESOURCE_ROLE_ARN='$AUX_RESOURCE_ROLE_ARN' \
   /tmp/configure-run.sh"
 
 cat <<DONE
