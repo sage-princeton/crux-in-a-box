@@ -83,6 +83,11 @@ install -d -m 700 -o "$RUN_USER" -g "$RUN_USER" "$RUN_HOME/.cache/crux-run"
   printf 'PATH=/opt/crux-run-tools/bin:%s/.local/bin:/usr/local/bin:/usr/bin:/bin\nHOME=%s\n' "$RUN_HOME" "$RUN_HOME"
   printf 'XDG_CACHE_HOME=%s/.cache/crux-run\n' "$RUN_HOME"
   scaffold_extra_env
+  # Non-secret: an account id and role ARN for the agent to assume scoped
+  # aux-resource access with. Only set when aux resources were provisioned.
+  if [ -n "${AUX_RESOURCE_ROLE_ARN:-}" ]; then
+    printf 'AUX_RESOURCE_ACCOUNT_ID=%s\nAUX_RESOURCE_ROLE_ARN=%s\n' "$AUX_RESOURCE_ACCOUNT_ID" "$AUX_RESOURCE_ROLE_ARN"
+  fi
 } > "$RUN_ENV_FILE"
 chmod 600 "$RUN_ENV_FILE"
 
