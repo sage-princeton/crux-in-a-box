@@ -209,7 +209,9 @@ and only the base config exists at that point. **Caution:** leaving a flag
 set in the base config silently applies it to every workspace created from
 that config afterwards, and the isolated account is single-tenant — only one
 opted-in run can hold its access at a time — so unset the flags once a run's
-aux-resource work is done.
+aux-resource work is done. These config keys are the only place any of this
+is set — there's no separate CLI flag duplicating them — so provisioning and
+teardown always agree on what's enabled.
 
 Set `AUX_RESOURCE_PROFILE` to the AWS CLI profile for the isolated account.
 `make-new-workspace.sh` calls `provision-aux-aws-resources.sh` automatically
