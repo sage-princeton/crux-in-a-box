@@ -19,6 +19,9 @@ CONTROL_MCP_BASE=https://<dashed-eip>.sslip.io
 # EC2 instance and disk size. ROOT_IOPS and ROOT_THROUGHPUT default to 6000 and 250.
 INSTANCE_TYPE=t3.2xlarge
 ROOT_DISK_GB=80
+# Set false for test boxes when Elastic IP quota is exhausted. The ordinary
+# public IP changes after stop/start; rerun provisioning to refresh the SSH alias.
+USE_ELASTIC_IP=true
 
 # EC2 key pair. Shared with the control box by default.
 KEY_NAME=crux-acp
@@ -26,6 +29,11 @@ KEY_NAME=crux-acp
 # Agent settings. Model and effort are required for the selected platform.
 # Codex effort: minimal | low | medium | high. An omitted platform selects Codex.
 AGENT_PLATFORM=codex
+
+# Optional gateway: direct (default) | openrouter. OpenRouter requires an
+# OPENROUTER_API_KEY in the secrets file and a full model ID such as
+# google/gemini-3.5-flash in the selected platform's model key.
+MODEL_PROVIDER=direct
 
 # For Claude, set AGENT_PLATFORM=claude and fill in these instead of CODEX_*:
 # CLAUDE_MODEL=<explicit-model-id>

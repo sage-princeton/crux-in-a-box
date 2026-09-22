@@ -87,6 +87,11 @@ CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-}"
 OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
 ROOT_DISK_GB="${CFG[ROOT_DISK_GB]}"
+USE_ELASTIC_IP="${CFG[USE_ELASTIC_IP]:-true}"
+case "$USE_ELASTIC_IP" in
+  true|false) ;;
+  *) die "USE_ELASTIC_IP must be true|false." ;;
+esac
 # Use the same gp3 throughput and IOPS as the OpenClaw provisioner.
 # Additional capacity supports initial reads while EBS loads snapshot blocks.
 ROOT_IOPS="${CFG[ROOT_IOPS]:-6000}"
@@ -96,6 +101,8 @@ KEY_NAME="${CFG[KEY_NAME]}"
 # allocating one per slug. CONFIG_FILE is the only place this is set — see
 # the header comment above; never released by teardown.
 ELASTIC_IP_ADDRESS="${CFG[ELASTIC_IP_ADDRESS]:-}"
+[ -z "$ELASTIC_IP_ADDRESS" ] || [ "$USE_ELASTIC_IP" = true ] \
+  || die "ELASTIC_IP_ADDRESS is set but USE_ELASTIC_IP=false in $CONFIG_FILE — that override can't apply without an Elastic IP."
 CODEX_MODEL="${CFG[CODEX_MODEL]:-}"
 CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]:-}"
 CODEX_VERSION="${CFG[CODEX_VERSION]:-}"
@@ -279,7 +286,9 @@ HARNESS_DIR="$SCRIPT_DIR/../../run-harness"
   || die "run-harness/workspace is missing from the repository checkout."
 
 if [ "$DRY_RUN" = 1 ]; then
-  if [ -n "$ELASTIC_IP_ADDRESS" ]; then
+  if [ "$USE_ELASTIC_IP" != true ]; then
+    EIP_PLAN_LINE="  elastic ip        disabled (USE_ELASTIC_IP=false) — uses the instance's ephemeral public IP"
+  elif [ -n "$ELASTIC_IP_ADDRESS" ]; then
     EIP_PLAN_LINE="  elastic ip        override $ELASTIC_IP_ADDRESS    associated as-is (not released on teardown)"
   else
     EIP_PLAN_LINE="  elastic ip        associated to $SLUG      (stable address across stop/start)"
@@ -390,6 +399,7 @@ else
   INSTANCE_ID="$(aws_ ec2 run-instances \
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
     --security-group-ids "$RUN_SG_ID" --subnet-id "$SUBNET_ID" \
+    --associate-public-ip-address \
     --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
     --metadata-options "HttpTokens=required" \
     --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT},\"DeleteOnTermination\":true}}]" \
@@ -406,25 +416,33 @@ ok "Running"
 # Allocate a stable public IP for the SSH alias, unless an existing one was
 # handed in via ELASTIC_IP_ADDRESS (resolved and validated above).
 info "Elastic IP"
-if [ -n "$ELASTIC_IP_ADDRESS" ]; then
-  ALLOC_ID="$ELASTIC_IP_OVERRIDE_ALLOC_ID"
-  ok "Using override $ELASTIC_IP_ADDRESS ($ALLOC_ID; not allocated by this script; teardown will not release it)"
-else
-  ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
-    --query 'Addresses[0].AllocationId' --output text)"
-  if [ -z "$ALLOC_ID" ] || [ "$ALLOC_ID" = "None" ]; then
-    ALLOC_ID="$(aws_ ec2 allocate-address --domain vpc \
-      --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
-      --query 'AllocationId' --output text)"
-    ok "Allocated $ALLOC_ID"
+if [ "$USE_ELASTIC_IP" = true ]; then
+  if [ -n "$ELASTIC_IP_ADDRESS" ]; then
+    ALLOC_ID="$ELASTIC_IP_OVERRIDE_ALLOC_ID"
+    ok "Using override $ELASTIC_IP_ADDRESS ($ALLOC_ID; not allocated by this script; teardown will not release it)"
   else
-    ok "Reusing $ALLOC_ID"
+    ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
+      --query 'Addresses[0].AllocationId' --output text)"
+    if [ -z "$ALLOC_ID" ] || [ "$ALLOC_ID" = "None" ]; then
+      ALLOC_ID="$(aws_ ec2 allocate-address --domain vpc \
+        --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
+        --query 'AllocationId' --output text)"
+      ok "Allocated $ALLOC_ID"
+    else
+      ok "Reusing $ALLOC_ID"
+    fi
   fi
+  aws_ ec2 associate-address --instance-id "$INSTANCE_ID" \
+    --allocation-id "$ALLOC_ID" >/dev/null
+  PUBLIC_IP="$(aws_ ec2 describe-addresses --allocation-ids "$ALLOC_ID" \
+    --query 'Addresses[0].PublicIp' --output text)"
+else
+  PUBLIC_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"
+  [[ -n "$PUBLIC_IP" && "$PUBLIC_IP" != "None" ]] \
+    || die "Instance has no public IPv4 address; use an Elastic IP or a subnet with public IP assignment."
+  warn "Using instance public IP; after stop/start, rerun provisioning to refresh the SSH alias."
 fi
-aws_ ec2 associate-address --instance-id "$INSTANCE_ID" \
-  --allocation-id "$ALLOC_ID" >/dev/null
-PUBLIC_IP="$(aws_ ec2 describe-addresses --allocation-ids "$ALLOC_ID" \
-  --query 'Addresses[0].PublicIp' --output text)"
 PRIVATE_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)"
 ok "Public $PUBLIC_IP / private $PRIVATE_IP"
@@ -546,7 +564,7 @@ if [ "$AGENT_PLATFORM" = claude ]; then
 fi
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
-  RUN_SLUG='$SLUG' AGENT_PLATFORM='$AGENT_PLATFORM' \
+  RUN_SLUG='$SLUG' AGENT_PLATFORM='$AGENT_PLATFORM' MODEL_PROVIDER='$MODEL_PROVIDER' \
   CLAUDE_MODEL='$CLAUDE_MODEL' CLAUDE_EFFORT='$CLAUDE_EFFORT' \
   CODEX_MODEL='$CODEX_MODEL' CODEX_REASONING_EFFORT='$CODEX_REASONING_EFFORT' \
   CONTROL_MCP_BASE='$CONTROL_MCP_BASE' \
