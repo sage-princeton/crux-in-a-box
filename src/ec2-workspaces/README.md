@@ -17,11 +17,14 @@ secrets, and calls `provision-workspace-aws-resources.sh`. ~2 minutes. All AWS c
 the workspace is minted, so bad credentials cost nothing.
 
 By default each workspace gets its own Elastic IP, allocated and tagged to its slug.
-Pass `--elastic-ip <allocation-id>` to reuse an existing one instead — e.g. an address
-a web host has allowlisted for crawling, that needs to stay stable across pilots and
-workspaces. An EIP can only be associated with one running instance at a time, so only
-one workspace can hold it live at once; provisioning fails fast if it's already in use
-by another live workspace. Tear that workspace down (or use a different address) first.
+Set `ELASTIC_IP_ADDRESS=<public ip>` in the config file instead (the base config, so
+it flows through to every box built from it, or the per-box one) to reuse an existing
+address — e.g. one a web host has allowlisted for crawling, that needs to stay stable
+across pilots and workspaces. That config file is the only place this is set — there's
+no separate flag — so provisioning and teardown always agree on it. An EIP can only be
+associated with one running instance at a time, so only one workspace can hold it live
+at once; provisioning fails fast if it's already in use by another live workspace. Tear
+that workspace down (or use a different address) first.
 Use `../../utils/manage-elastic-ips.sh` to allocate, list and release the standalone
 addresses these overrides point at, independent of any one workspace.
 
@@ -34,6 +37,6 @@ This will:
 
 **`teardown-workspace-aws-resources.sh`** — laptop. Terminates one box, releases its Elastic IP,
 removes the ssh alias. Deliberately keeps the shared SG / key pair / IAM —
-and the AgentRQ workspace, which outlives its box. If the box used an `--elastic-ip`
-override, that address is left allocated (just disassociated) so the next workspace
-can reuse it — pass it as `--elastic-ip` again.
+and the AgentRQ workspace, which outlives its box. If `ELASTIC_IP_ADDRESS` was set in the
+box's config, that address is left allocated (just disassociated) so the next workspace
+can reuse it — set the same `ELASTIC_IP_ADDRESS` for that one.

@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # manage-elastic-ips.sh — Manage standalone Elastic IPs, independent of any
-# one workspace, for reuse with make-new-workspace.sh's --elastic-ip flag
-# (see src/ec2-workspaces/README.md). Allocations made here are tagged
+# one workspace, for reuse via ELASTIC_IP_ADDRESS in an ec2-workspaces config
+# file (see src/ec2-workspaces/README.md). Allocations made here are tagged
 # CruxRole=shared-eip so `list` can tell them apart from the per-workspace
 # EIPs provision-workspace-aws-resources.sh allocates and tags to a slug.
 #
@@ -96,7 +96,7 @@ case "$CMD" in
     PUBLIC_IP="$(printf '%s' "$RESULT" | jq -r '.PublicIp')"
     ok "Allocated $ALLOC_ID ($PUBLIC_IP)"
     echo
-    echo "Use it with: ./src/ec2-workspaces/make-new-workspace.sh <slug> --elastic-ip $ALLOC_ID"
+    echo "Use it by setting in a config file: ELASTIC_IP_ADDRESS=$PUBLIC_IP"
     ;;
 
   delete)
