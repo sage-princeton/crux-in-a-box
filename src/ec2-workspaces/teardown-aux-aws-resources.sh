@@ -2,9 +2,10 @@
 set -euo pipefail
 
 # Delete a run's access to the isolated aux-resources account, and
-# everything found there — RDS instances, S3 buckets, EC2 instances, and
-# non-default Route53 hosted zones. The account is single-tenant at a time
-# (see docs/superpowers/specs/2026-09-20-aux-aws-resources-design.md in a
+# everything found there — RDS instances, S3 buckets, EC2 instances,
+# non-default Route53 hosted zones, CloudFront distributions, and ACM
+# certificates. The account is single-tenant at a time (see
+# docs/superpowers/specs/2026-09-20-aux-aws-resources-design.md in a
 # local checkout — the spec is not committed), so "everything found" and
 # "everything this run created" are the same set. No-ops cleanly if this
 # slug never had aux resources provisioned.
@@ -51,6 +52,10 @@ fi
 AUX_PROFILE_ARGS=(--profile "$AUX_PROFILE")
 aws_aux_()     { aws "${AUX_PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
 aws_aux_iam_() { aws "${AUX_PROFILE_ARGS[@]}" iam "$@"; }
+# CloudFront and ACM certs usable by CloudFront only ever live in us-east-1,
+# regardless of $REGION — a distribution can't reference a cert from any
+# other region, so this is the only region worth sweeping for either.
+aws_aux_useast1_() { aws "${AUX_PROFILE_ARGS[@]}" --region us-east-1 "$@"; }
 
 AUX_ACCOUNT_ID="$(aws_aux_ sts get-caller-identity --query Account --output text 2>/dev/null || true)"
 [[ -n "$AUX_ACCOUNT_ID" && "$AUX_ACCOUNT_ID" != "None" ]] \
@@ -69,8 +74,9 @@ fi
 
 echo
 echo "About to tear down aux AWS resources for '$SLUG' in isolated account $AUX_ACCOUNT_ID:"
-echo "  every RDS instance, S3 bucket, EC2 instance, and non-default Route53"
-echo "  hosted zone found in that account (it is single-tenant per run)"
+echo "  every RDS instance, S3 bucket, EC2 instance, non-default Route53"
+echo "  hosted zone, CloudFront distribution, and ACM certificate found in"
+echo "  that account (it is single-tenant per run)"
 echo "  delete IAM role $AUX_ROLE (isolated account) and $RUN_ROLE (main account)"
 echo
 
@@ -136,6 +142,41 @@ if [ -n "$ZONE_IDS" ] && [ "$ZONE_IDS" != "None" ]; then
     fi
     aws_aux_ route53 delete-hosted-zone --id "$zone_id" >/dev/null
     ok "Deleted zone $zone_id"
+  done
+else
+  ok "None found"
+fi
+
+info "CloudFront distributions"
+DIST_IDS="$(aws_aux_useast1_ cloudfront list-distributions --query 'DistributionList.Items[].Id' --output text 2>/dev/null || true)"
+if [ -n "$DIST_IDS" ] && [ "$DIST_IDS" != "None" ]; then
+  for dist_id in $DIST_IDS; do
+    DIST_CONFIG_JSON="$(aws_aux_useast1_ cloudfront get-distribution-config --id "$dist_id")"
+    ENABLED="$(printf '%s' "$DIST_CONFIG_JSON" | jq -r '.DistributionConfig.Enabled')"
+    if [ "$ENABLED" = "true" ]; then
+      info "Disabling distribution $dist_id (must be disabled before it can be deleted)"
+      ETAG="$(printf '%s' "$DIST_CONFIG_JSON" | jq -r '.ETag')"
+      DISABLED_CONFIG="$(printf '%s' "$DIST_CONFIG_JSON" | jq -c '.DistributionConfig.Enabled = false | .DistributionConfig')"
+      aws_aux_useast1_ cloudfront update-distribution --id "$dist_id" \
+        --distribution-config "$DISABLED_CONFIG" --if-match "$ETAG" >/dev/null
+      info "Waiting for $dist_id to finish deploying (can take ~15 minutes)"
+      aws_aux_useast1_ cloudfront wait distribution-deployed --id "$dist_id"
+    fi
+    DELETE_ETAG="$(aws_aux_useast1_ cloudfront get-distribution --id "$dist_id" --query 'ETag' --output text)"
+    aws_aux_useast1_ cloudfront delete-distribution --id "$dist_id" --if-match "$DELETE_ETAG" >/dev/null
+    ok "Deleted $dist_id"
+  done
+else
+  ok "None found"
+fi
+
+info "ACM certificates (us-east-1 only — see comment near aws_aux_useast1_)"
+CERT_ARNS="$(aws_aux_useast1_ acm list-certificates --query 'CertificateSummaryList[].CertificateArn' --output text 2>/dev/null || true)"
+if [ -n "$CERT_ARNS" ] && [ "$CERT_ARNS" != "None" ]; then
+  for cert_arn in $CERT_ARNS; do
+    info "Deleting certificate $cert_arn"
+    aws_aux_useast1_ acm delete-certificate --certificate-arn "$cert_arn" >/dev/null
+    ok "Deleted $cert_arn"
   done
 else
   ok "None found"
