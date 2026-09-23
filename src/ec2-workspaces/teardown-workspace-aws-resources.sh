@@ -14,7 +14,6 @@ ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m! %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE=""; ASSUME_YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
