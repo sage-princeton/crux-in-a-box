@@ -189,6 +189,12 @@ if [ -n "$POLICY_ARNS" ] && [ "$POLICY_ARNS" != "None" ]; then
     aws_aux_iam_ detach-role-policy --role-name "$AUX_ROLE" --policy-arn "$policy_arn" >/dev/null
   done
 fi
+AUX_INLINE_POLICY_NAMES="$(aws_aux_iam_ list-role-policies --role-name "$AUX_ROLE" --query 'PolicyNames' --output text 2>/dev/null || true)"
+if [ -n "$AUX_INLINE_POLICY_NAMES" ] && [ "$AUX_INLINE_POLICY_NAMES" != "None" ]; then
+  for policy_name in $AUX_INLINE_POLICY_NAMES; do
+    aws_aux_iam_ delete-role-policy --role-name "$AUX_ROLE" --policy-name "$policy_name" >/dev/null
+  done
+fi
 if aws_aux_iam_ delete-role --role-name "$AUX_ROLE" >/dev/null 2>&1; then
   ok "Deleted"
 else

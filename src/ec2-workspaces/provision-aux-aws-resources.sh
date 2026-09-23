@@ -15,6 +15,8 @@ set -euo pipefail
 # Opt in per resource type in placeholders-<slug>.txt (all default off):
 #   PROVISION_POSTGRES=1  PROVISION_S3=1  PROVISION_DNS=1  PROVISION_EC2=1
 #   PROVISION_CLOUDFRONT=1  PROVISION_ACM=1
+# Whenever any flag is on, read-only Cost Explorer access is also granted —
+# baseline, not a separate flag, so the agent can see what it's spending.
 # AUX_RESOURCE_PROFILE names the AWS CLI profile/credentials for the
 # isolated account. See README.md.
 
@@ -30,7 +32,7 @@ CONFIG_FILE=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) sed -n '4,19p' "$0"; exit 0 ;;
+    -h|--help) sed -n '4,21p' "$0"; exit 0 ;;
     -*) die "Unknown flag: $1" ;;
     *) [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
@@ -114,6 +116,7 @@ if [ "$DRY_RUN" = 1 ]; then
       sts:AssumeRole on $AUX_ROLE_ARN only
   isolated account ($AUX_ACCOUNT_ID):
     IAM role   $AUX_ROLE   trusts $RUN_ROLE_ARN only
+      ce:GetCostAndUsage / GetCostForecast / GetUsageForecast / GetDimensionValues / GetTags (baseline, not flag-gated)
     managed policies attached (only for enabled flags):
       $( [ "$FLAG_POSTGRES" = 1 ] && echo "AmazonRDSFullAccess (PROVISION_POSTGRES=1)" )
       $( [ "$FLAG_S3" = 1 ] && echo "AmazonS3FullAccess (PROVISION_S3=1)" )
@@ -179,6 +182,13 @@ else
   ok "Created role; trust policy scoped to $RUN_ROLE_ARN"
 fi
 
+# Cost visibility is baseline, not opt-in: whenever any aux resource is
+# enabled, the agent can also see what it's spending. Cost Explorer's read
+# actions don't support resource-level scoping — Resource must be "*".
+aws_aux_iam_ put-role-policy --role-name "$AUX_ROLE" --policy-name "read-cost-explorer" \
+  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ce:GetCostAndUsage","ce:GetCostForecast","ce:GetUsageForecast","ce:GetDimensionValues","ce:GetTags"],"Resource":"*"}]}' >/dev/null
+ok "Inline policy: read-only Cost Explorer access (ce:Get*) — baseline, not tied to a flag"
+
 info "Reconciling managed policy attachments to the current PROVISION_* flags"
 declare -A WANT_POLICIES=()
 [ "$FLAG_POSTGRES" = 1 ] && WANT_POLICIES[AmazonRDSFullAccess]=1
@@ -226,7 +236,7 @@ $(ok "Aux-resource access provisioned for '$SLUG'")
 
   main account role       $RUN_ROLE ($MAIN_ACCOUNT_ID)
   isolated account role   $AUX_ROLE ($AUX_ACCOUNT_ID), trusts $RUN_ROLE only
-  granted                 $( [ "$FLAG_POSTGRES" = 1 ] && printf 'postgres ' )$( [ "$FLAG_S3" = 1 ] && printf 's3 ' )$( [ "$FLAG_EC2" = 1 ] && printf 'ec2 ' )$( [ "$FLAG_DNS" = 1 ] && printf 'dns ' )$( [ "$FLAG_CLOUDFRONT" = 1 ] && printf 'cloudfront ' )$( [ "$FLAG_ACM" = 1 ] && printf 'acm ' )
+  granted                 $( [ "$FLAG_POSTGRES" = 1 ] && printf 'postgres ' )$( [ "$FLAG_S3" = 1 ] && printf 's3 ' )$( [ "$FLAG_EC2" = 1 ] && printf 'ec2 ' )$( [ "$FLAG_DNS" = 1 ] && printf 'dns ' )$( [ "$FLAG_CLOUDFRONT" = 1 ] && printf 'cloudfront ' )$( [ "$FLAG_ACM" = 1 ] && printf 'acm ' )cost-explorer-read
 
 Launch the instance with provision-workspace-aws-resources.sh — it will use
 the $RUN_ROLE instance profile since it now exists for '$SLUG'.
