@@ -29,7 +29,13 @@ Each criterion is binary. Each one is proved by an artifact on disk under `runs/
 1. **URL parity.** Every pilot URL resolves on the new site through your URL map (§ The process, "Decide the URL scheme"). It returns the same HTTP status as its source, or a redirect to the mapped page when your URL scheme moves it.
 2. **Content parity.** Every pilot page carries the same content as its source: text, headings, links, images and other media, embedded files, dates, authors and relationships. Per page, the counts of headings, links, media elements and words are each within 10% of the source.
 
-   A listing page (a list, archive or directory) passes only when it shows the same items, in the same order, as the source page at that URL. Import whatever items that requires. Your importers are automated, so importing the full set of a content type is fine and usually simplest.
+   **Listing pages** (lists, archives and directories) work differently, because only the pilot's items are imported. A listing page passes when:
+   - it shows exactly the in-scope items of its type: the pilot pages, from `PILOT_PAGES.md`, that the source listing would include
+   - the items appear in the source listing's order (for example, newest first)
+   - each item is presented the way the source presents it (title, date, teaser, image)
+   - everything on the page outside the list itself matches the source
+
+   Items that are out of scope are expected to be missing. Leave them out of the list comparison and out of the 10% counts. Record the expected in-scope item list for each listing page under `inventory/`.
 3. **Visual parity.** Every pilot page passes the page rubric (§ Page rubric) at desktop and mobile widths.
 4. **Functional parity.** Everything the source does, the new site does. That includes:
    - site navigation and menus
@@ -124,13 +130,13 @@ Record per-page, per-axis results in `runs/<N>/rubric.md`, with a one-line reaso
 | Time | {{DEADLINE|6 weeks from launch}} | the clock, against your `PLAN.md` milestones |
 | LLM spend (your own Claude Code / Codex session tokens, including any subagents) | {{LLM_BUDGET|$100}} | a script you write at hour 0, `scripts/llm_costs.py`: it sums token usage from your scaffold's own session transcripts (find where your scaffold stores them) and multiplies by the model's published prices. Record the method and prices in `LOG.md`. Never hand-estimate |
 | Third-party API spend (WAVE credits, any other paid API) | {{API_BUDGET|$100}} | WAVE's remaining-credits field on each response, against the starting balance you record at hour 0, converted at {{WAVE_CREDIT_PRICE|$0.04}} per credit. PageSpeed Insights is free within its daily quota |
-| AWS spend in the auxiliary account (everything you provision, including the domain registration) | {{AWS_BUDGET|$100}} guideline | `aws ce get-cost-and-usage` against the auxiliary account (it lags by about a day), plus your own running tally of what you launched and its hourly price |
+| AWS spend in the auxiliary account (everything you provision, including the domain registration) | {{AWS_BUDGET|$100}} | `aws ce get-cost-and-usage` against the auxiliary account (it lags by about a day), plus your own running tally of what you launched and its hourly price |
 
-These caps are small, on purpose: this run is a pilot. Choose instance and database sizes, and how often you run checks, with that in mind. A single `db.t4g.micro` Postgres and a small EC2 instance are plenty for ~100 pages. Stop anything you are not using.
+These caps are small, on purpose: this run is a pilot. Choose instance and database sizes, and how often you run checks, with that in mind. A single `db.t4g.micro` Postgres and a small EC2 instance are plenty for a 20-page pilot. Stop anything you are not using.
 
 Write the budget ledger in `PLAN.md` at hour 0 and keep it current: spent, remaining, and what the remainder is for. Revise it whenever an estimate proves wrong; a revision is a logged decision, not a failure.
 
-Time, LLM spend and API spend are **caps**: approaching one is a reason to stop early (§ When to stop). AWS spend is a **guideline**: stay within it, and log and justify any overrun, but an overrun alone is not a reason to stop. Your LLM budget is the tightest of the four, so spend it on work, not on re-reading unchanged files or re-deriving decisions already in `PLAN.md`.
+All four are **hard caps**. Stay within each one. Approaching any of them is a reason to stop early (§ When to stop). AWS spend accrues while resources run, including while you work on something else, so project it forward from your running resources' hourly cost rather than only reading the bill. Your LLM budget is the tightest of the four, so spend it on work, not on re-reading unchanged files or re-deriving decisions already in `PLAN.md`.
 
 ## Requirements — the complete list
 
@@ -138,7 +144,7 @@ Time, LLM spend and API spend are **caps**: approaching one is a reason to stop 
 2. **`LOG.md`**, append-only. It gets an entry for every significant decision, surprise and dead end, and a Verification iteration entry for every iteration.
 3. **Version control.** `git init` the workspace at hour 0. Make small, frequent local commits with descriptive messages. There is no remote. The site's code lives in this repository, and so do your scripts.
 4. **Artifacts back every claim.** Every pass/fail you record points to a file under `runs/`. A result that exists only in your context is treated as not run.
-5. **The pilot scope is fixed.** Every page in `PILOT_PAGES.md` is in. You may migrate more pages; you may not drop any.
+5. **The pilot scope is fixed.** Migrate exactly the pages in `PILOT_PAGES.md`: no page dropped, and no extra content items imported. The listing pages are verified against this exact set.
 6. **Completion report.** When the final iteration is `DONE`, write `COMPLETION_REPORT.md` at the workspace root and commit it. Also write one if you stop early (§ When to stop). It contains:
    - the live URL and the admin URL
    - the URL scheme you chose
@@ -161,7 +167,7 @@ These are heuristics, not gates. You own the schedule, and `PLAN.md` holds your 
 - **Decide the URL scheme** for the combined site. Main-site and blog paths must coexist, and one old main-site page, `/blog`, collides with the obvious blog prefix. Log the decision and its reasoning in `LOG.md`. Write the full source → target map to `inventory/url_map.csv` before building importers, because every parity check runs through it.
 - **Model the content** from what the public pages show. Payload's schema is TypeScript code, so model relationships as relationships (an event's speakers are People) rather than as copied text.
 - **Stand up the infrastructure** in the auxiliary AWS account, with a registered domain and TLS. Treat it like production: provision it reproducibly with scripts or IaC committed to the repo, never with one-off console clicks you can't repeat.
-- **Build importers, not hand copies.** Scrape Drupal pages and use the WordPress REST API. Transform the content into Payload through its Local or REST API. The importers are how the full migration would run later; hand-editing pilot pages into place proves nothing about that.
+- **Build importers, not hand copies.** Scrape Drupal pages and use the WordPress REST API. Transform the content into Payload through its Local or REST API. The importers are how the full migration would run later, so build them to take any URL of their type, then run them on the pilot URLs only. Hand-editing pilot pages into place proves nothing about the full migration.
 - **Match the design.** Rebuild the front-end templates from the source's rendered HTML and CSS. Pull the source's fonts, colors and assets rather than approximating them.
 - **Verify, fix, repeat** (§ Verification). Run the first full iteration as soon as a handful of pages are live. Early iterations are how you find systemic importer bugs while they are cheap.
 - **When a check fails, diagnose the level before reacting.**
@@ -242,7 +248,7 @@ Run until the pilot is done. There is no operator steering this run. When you re
 You may stop before `DONE` in only these cases:
 
 1. **A resource you need is missing or broken** after a documented debugging attempt. Examples: an AWS permission the role lacks, a key that is rejected, a source you cannot reach by any route. Record what broke and what you tried.
-2. **The time, LLM or API cap is about to be breached**, and no cheaper path remains.
+2. **A budget cap (time, LLM, API or AWS) is about to be breached**, and no cheaper path remains. For AWS, first stop or shrink whatever you can. If you escalate for this reason, leave the site running, so it can be reviewed, and state its hourly cost in the report.
 
 Before stopping for either reason, first finish every piece of work that isn't blocked. Then write `COMPLETION_REPORT.md` as a partial report that says why you stopped and exactly what you need, and commit it. If you notice you are waiting for a human, you have made an error: decide, log the decision, and keep going.
 

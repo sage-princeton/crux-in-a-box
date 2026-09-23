@@ -2,7 +2,7 @@
 
 How to set up, launch and watch a run of this harness.
 
-**The design in one paragraph.** A single Claude Code or Codex task, started through AgentRQ/ACP, migrates a 105-page pilot slice of the CITP main site (Drupal) and blog (WordPress) into one combined Payload CMS site. The agent provisions that site itself in an isolated AWS account, then verifies it. There is no outer loop: nothing pushes the agent forward and nothing re-verifies its work, so the task runs until the agent returns. That is why the done-definition carries so much weight in `workspace/AGENTS.md`, the agent's one standing-context file. It defines eight binary success criteria, a page rubric, and the thresholds for checks the agent must script itself. Done is valid only as a full verification iteration against the deployed site, recorded in `LOG.md` with a `DONE` verdict. The agent keeps a budget ledger in `PLAN.md` against three caps (time, LLM and API) and an AWS spend guideline.
+**The design in one paragraph.** A single Claude Code or Codex task, started through AgentRQ/ACP, migrates a 20-page pilot slice of the CITP main site (Drupal) and blog (WordPress) into one combined Payload CMS site. The agent provisions that site itself in an isolated AWS account, then verifies it. There is no outer loop: nothing pushes the agent forward and nothing re-verifies its work, so the task runs until the agent returns. That is why the done-definition carries so much weight in `workspace/AGENTS.md`, the agent's one standing-context file. It defines eight binary success criteria, a page rubric, and the thresholds for checks the agent must script itself. Done is valid only as a full verification iteration against the deployed site, recorded in `LOG.md` with a `DONE` verdict. The agent keeps a budget ledger in `PLAN.md` against four caps: time, LLM, API and AWS.
 
 ---
 
@@ -24,7 +24,7 @@ Set these keys in `placeholders-base.txt` before running `make-new-workspace.sh 
 
 Put the provider key there, plus:
 
-- `WAVE_API_KEY`: a WebAIM WAVE API key with enough credits for several iterations over 105 pages. A basic report costs 1 credit.
+- `WAVE_API_KEY`: a WebAIM WAVE API key with enough credits for several iterations over 20 pages (plus the source baselines). A basic report costs 1 credit.
 - `PAGESPEED_API_KEY`: a Google PageSpeed Insights API key.
 
 Provisioning writes both into `/etc/crux-run.env`, which is the agent process's environment. That depends on the key-passthrough change landing on main; make sure it is merged or rebased into this branch before you provision.
@@ -42,7 +42,7 @@ The harness is staged, unconfigured, at `/srv/crux-run/run-harness`. Nothing res
 | `{{DEADLINE\|6 weeks from launch}}` | `AGENTS.md`, `PLAN.md` | The time cap. Write an absolute date. |
 | `{{LLM_BUDGET\|$100}}` | `AGENTS.md`, `PLAN.md` | The agent's own Claude Code/Codex spend. |
 | `{{API_BUDGET\|$100}}` | `AGENTS.md`, `PLAN.md` | Third-party API spend (WAVE credits). |
-| `{{AWS_BUDGET\|$100}}` | `AGENTS.md`, `PLAN.md` | Spend guideline for the auxiliary account, including the domain. |
+| `{{AWS_BUDGET\|$100}}` | `AGENTS.md`, `PLAN.md` | Spend cap for the auxiliary account, including the domain. |
 | `{{ADMIN_EMAILS\|nn7887@princeton.edu, mm9934@princeton.edu}}` | `AGENTS.md` | The only accounts allowed into the Payload admin. |
 | `{{PERF_MARGIN\|10%}}` | `AGENTS.md` | How much worse than the source the Core Web Vitals may be. |
 | `{{WAVE_CREDIT_PRICE\|$0.04}}` | `AGENTS.md` | What you paid per WAVE credit, used to convert credits to dollars. |
@@ -103,5 +103,5 @@ Within the first hour you should see:
 | Numbers without judgment: checks run, results logged, nothing learned | **An "Interpretation" field** in every Verification iteration entry. The log records what the results mean, not just what they were |
 | Weak visual QA; controls that render but do nothing | **The page rubric**, with side-by-side screenshots at two widths that the agent must look at, and "renders but does nothing" named as a failure |
 | Fabricating content to fill gaps | **A red line**, a named failure mode, and content parity measured against the source |
-| Budgets unmanaged in either direction | **A four-budget ledger** in `PLAN.md` with scripted measurement where possible (`llm_costs.py`, WAVE credits, Cost Explorer). Approaching the time, LLM or API cap is one of only two legitimate reasons to stop early. AWS is a guideline, so overruns are logged and justified, not a stop |
+| Budgets unmanaged in either direction | **A four-budget ledger** in `PLAN.md` with scripted measurement where possible (`llm_costs.py`, WAVE credits, Cost Explorer). Approaching any of the four caps is one of only two legitimate reasons to stop early |
 | No outer loop to push past an early return | **Returning is framed as the end of the run**, with only two permitted early-stop reasons, each requiring all unblocked work to be done first and a partial completion report |
