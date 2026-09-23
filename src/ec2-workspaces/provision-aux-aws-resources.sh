@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Grant a CRUX run's agent scoped AWS access to provision auxiliary
-# resources (Postgres/RDS, S3, EC2, DNS) in a separate, pre-existing
-# isolated AWS account, for runs testing SaaS-to-self-hosted migration.
+# resources (Postgres/RDS, S3, EC2, DNS, CloudFront, ACM) in a separate,
+# pre-existing isolated AWS account, for runs testing SaaS-to-self-hosted
+# migration.
 # Companion to provision-workspace-aws-resources.sh; run before it so the
 # instance launch can pick up the per-workspace instance profile this
 # script creates.
@@ -13,6 +14,7 @@ set -euo pipefail
 #
 # Opt in per resource type in placeholders-<slug>.txt (all default off):
 #   PROVISION_POSTGRES=1  PROVISION_S3=1  PROVISION_DNS=1  PROVISION_EC2=1
+#   PROVISION_CLOUDFRONT=1  PROVISION_ACM=1
 # AUX_RESOURCE_PROFILE names the AWS CLI profile/credentials for the
 # isolated account. See README.md.
 
@@ -28,7 +30,7 @@ CONFIG_FILE=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) sed -n '4,17p' "$0"; exit 0 ;;
+    -h|--help) sed -n '4,19p' "$0"; exit 0 ;;
     -*) die "Unknown flag: $1" ;;
     *) [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
@@ -64,12 +66,14 @@ FLAG_POSTGRES="$(cfg PROVISION_POSTGRES)"
 FLAG_S3="$(cfg PROVISION_S3)"
 FLAG_DNS="$(cfg PROVISION_DNS)"
 FLAG_EC2="$(cfg PROVISION_EC2)"
+FLAG_CLOUDFRONT="$(cfg PROVISION_CLOUDFRONT)"
+FLAG_ACM="$(cfg PROVISION_ACM)"
 ANY_FLAG=0
-for f in "$FLAG_POSTGRES" "$FLAG_S3" "$FLAG_DNS" "$FLAG_EC2"; do
+for f in "$FLAG_POSTGRES" "$FLAG_S3" "$FLAG_DNS" "$FLAG_EC2" "$FLAG_CLOUDFRONT" "$FLAG_ACM"; do
   [ "$f" = 1 ] && ANY_FLAG=1
 done
 [ "$ANY_FLAG" = 1 ] \
-  || die "No PROVISION_* flag is set to 1 in $CONFIG_FILE. Set at least one of PROVISION_POSTGRES, PROVISION_S3, PROVISION_DNS, PROVISION_EC2 to opt in."
+  || die "No PROVISION_* flag is set to 1 in $CONFIG_FILE. Set at least one of PROVISION_POSTGRES, PROVISION_S3, PROVISION_DNS, PROVISION_EC2, PROVISION_CLOUDFRONT, PROVISION_ACM to opt in."
 
 AUX_PROFILE="$(cfg AUX_RESOURCE_PROFILE)"
 [ -n "$AUX_PROFILE" ] \
@@ -115,6 +119,8 @@ if [ "$DRY_RUN" = 1 ]; then
       $( [ "$FLAG_S3" = 1 ] && echo "AmazonS3FullAccess (PROVISION_S3=1)" )
       $( [ "$FLAG_EC2" = 1 ] && echo "AmazonEC2FullAccess (PROVISION_EC2=1)" )
       $( [ "$FLAG_DNS" = 1 ] && echo "AmazonRoute53FullAccess (PROVISION_DNS=1)" )
+      $( [ "$FLAG_CLOUDFRONT" = 1 ] && echo "CloudFrontFullAccess (PROVISION_CLOUDFRONT=1)" )
+      $( [ "$FLAG_ACM" = 1 ] && echo "AWSCertificateManagerFullAccess (PROVISION_ACM=1)" )
   config written to $CONFIG_FILE:
     AUX_RESOURCE_ACCOUNT_ID=$AUX_ACCOUNT_ID
     AUX_RESOURCE_ROLE_ARN=$AUX_ROLE_ARN
@@ -179,11 +185,13 @@ declare -A WANT_POLICIES=()
 [ "$FLAG_S3" = 1 ] && WANT_POLICIES[AmazonS3FullAccess]=1
 [ "$FLAG_EC2" = 1 ] && WANT_POLICIES[AmazonEC2FullAccess]=1
 [ "$FLAG_DNS" = 1 ] && WANT_POLICIES[AmazonRoute53FullAccess]=1
+[ "$FLAG_CLOUDFRONT" = 1 ] && WANT_POLICIES[CloudFrontFullAccess]=1
+[ "$FLAG_ACM" = 1 ] && WANT_POLICIES[AWSCertificateManagerFullAccess]=1
 
 ATTACHED="$(aws_aux_iam_ list-attached-role-policies --role-name "$AUX_ROLE" --query 'AttachedPolicies[].PolicyName' --output text)"
 for name in $ATTACHED; do
   case "$name" in
-    AmazonRDSFullAccess|AmazonS3FullAccess|AmazonEC2FullAccess|AmazonRoute53FullAccess)
+    AmazonRDSFullAccess|AmazonS3FullAccess|AmazonEC2FullAccess|AmazonRoute53FullAccess|CloudFrontFullAccess|AWSCertificateManagerFullAccess)
       if [ -z "${WANT_POLICIES[$name]:-}" ]; then
         aws_aux_iam_ detach-role-policy --role-name "$AUX_ROLE" --policy-arn "arn:aws:iam::aws:policy/$name" >/dev/null
         ok "Detached $name (no longer enabled)"
@@ -218,7 +226,7 @@ $(ok "Aux-resource access provisioned for '$SLUG'")
 
   main account role       $RUN_ROLE ($MAIN_ACCOUNT_ID)
   isolated account role   $AUX_ROLE ($AUX_ACCOUNT_ID), trusts $RUN_ROLE only
-  granted                 $( [ "$FLAG_POSTGRES" = 1 ] && printf 'postgres ' )$( [ "$FLAG_S3" = 1 ] && printf 's3 ' )$( [ "$FLAG_EC2" = 1 ] && printf 'ec2 ' )$( [ "$FLAG_DNS" = 1 ] && printf 'dns ' )
+  granted                 $( [ "$FLAG_POSTGRES" = 1 ] && printf 'postgres ' )$( [ "$FLAG_S3" = 1 ] && printf 's3 ' )$( [ "$FLAG_EC2" = 1 ] && printf 'ec2 ' )$( [ "$FLAG_DNS" = 1 ] && printf 'dns ' )$( [ "$FLAG_CLOUDFRONT" = 1 ] && printf 'cloudfront ' )$( [ "$FLAG_ACM" = 1 ] && printf 'acm ' )
 
 Launch the instance with provision-workspace-aws-resources.sh — it will use
 the $RUN_ROLE instance profile since it now exists for '$SLUG'.
