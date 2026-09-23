@@ -14,6 +14,12 @@ set -euo pipefail
 # Shared JSON: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL.
 # Upload shared credentials to /crux/system/env with --put-system-secrets.
 # Instances read them through crux-system-role.
+#
+# Optional config key ELASTIC_IP_ADDRESS reuses an existing Elastic IP (given
+# as its public IP, not its allocation id) instead of allocating one tagged to
+# this slug. Set it in CONFIG_FILE, or in make-new-workspace.sh's base config
+# so it flows through to every box built from it; that config file is the only
+# place it's set — teardown-workspace-aws-resources.sh never releases it.
 # See README.md and the example files for configuration.
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
@@ -32,7 +38,7 @@ while [ $# -gt 0 ]; do
     --put-secrets)        die "--put-secrets is gone: per-run secrets are scp'd now. Use --secrets <json> on the provision run." ;;
     --dry-run)            DRY_RUN=1; shift ;;
     --handshake)          HANDSHAKE=1; shift ;;
-    -h|--help)            sed -n '4,17p' "$0"; exit 0 ;;
+    -h|--help)            sed -n '4,23p' "$0"; exit 0 ;;
     -*)                   die "Unknown flag: $1" ;;
     *)                    [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
@@ -91,6 +97,12 @@ esac
 ROOT_IOPS="${CFG[ROOT_IOPS]:-6000}"
 ROOT_THROUGHPUT="${CFG[ROOT_THROUGHPUT]:-250}"
 KEY_NAME="${CFG[KEY_NAME]}"
+# Optional: reuse an existing Elastic IP (given as its address) instead of
+# allocating one per slug. CONFIG_FILE is the only place this is set — see
+# the header comment above; never released by teardown.
+ELASTIC_IP_ADDRESS="${CFG[ELASTIC_IP_ADDRESS]:-}"
+[ -z "$ELASTIC_IP_ADDRESS" ] || [ "$USE_ELASTIC_IP" = true ] \
+  || die "ELASTIC_IP_ADDRESS is set but USE_ELASTIC_IP=false in $CONFIG_FILE — that override can't apply without an Elastic IP."
 CODEX_MODEL="${CFG[CODEX_MODEL]:-}"
 CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]:-}"
 CODEX_VERSION="${CFG[CODEX_VERSION]:-}"
@@ -164,6 +176,29 @@ aws_ sts get-caller-identity >/dev/null 2>&1 \
   || die "Not authenticated with $CRED_DESC. $AUTH_HINT"
 ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text)"
 ok "Authenticated to account $ACCOUNT_ID in $REGION using $CRED_DESC"
+
+# ====== ELASTIC IP OVERRIDE ======
+# Resolve the override address to its allocation id up front, and fail fast
+# if it doesn't exist or is already live on another workspace's instance —
+# stealing it silently would break that box. ELASTIC_IP_OVERRIDE_ALLOC_ID is
+# reused by the ELASTIC IP section below so this lookup only happens once.
+ELASTIC_IP_OVERRIDE_ALLOC_ID=""
+if [ -n "$ELASTIC_IP_ADDRESS" ] && [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY_RUN" != 1 ]; then
+  info "Elastic IP override $ELASTIC_IP_ADDRESS"
+  EIP_JSON="$(aws_ ec2 describe-addresses --public-ips "$ELASTIC_IP_ADDRESS" \
+    --query 'Addresses[0].[AllocationId,InstanceId]' --output text 2>/dev/null || true)"
+  [ -n "$EIP_JSON" ] || die "ELASTIC_IP_ADDRESS '$ELASTIC_IP_ADDRESS' does not exist in $REGION."
+  ELASTIC_IP_OVERRIDE_ALLOC_ID="$(printf '%s' "$EIP_JSON" | awk '{print $1}')"
+  EIP_INSTANCE_ID="$(printf '%s' "$EIP_JSON" | awk '{print $2}')"
+  if [ -n "$EIP_INSTANCE_ID" ] && [ "$EIP_INSTANCE_ID" != "None" ]; then
+    # shellcheck disable=SC2016 # backtick is literal JMESPath syntax, not command substitution
+    EIP_INSTANCE_NAME="$(aws_ ec2 describe-instances --instance-ids "$EIP_INSTANCE_ID" \
+      --query 'Reservations[0].Instances[0].Tags[?Key==`Name`].Value | [0]' --output text 2>/dev/null || true)"
+    [ "$EIP_INSTANCE_NAME" = "$SLUG" ] \
+      || die "ELASTIC_IP_ADDRESS '$ELASTIC_IP_ADDRESS' is already associated with instance $EIP_INSTANCE_ID (tagged Name=${EIP_INSTANCE_NAME:-<none>}). Tear that workspace down first, or use a different address."
+  fi
+  ok "Elastic IP address $ELASTIC_IP_ADDRESS (allocation $ELASTIC_IP_OVERRIDE_ALLOC_ID) is available for $SLUG"
+fi
 
 # ====== WHERE IS THE CONTROL BOX? ======
 # Look up the controller private IP from AWS. Pattern-based ec2.internal
@@ -251,6 +286,13 @@ HARNESS_DIR="$SCRIPT_DIR/../../run-harness"
   || die "run-harness/workspace is missing from the repository checkout."
 
 if [ "$DRY_RUN" = 1 ]; then
+  if [ "$USE_ELASTIC_IP" != true ]; then
+    EIP_PLAN_LINE="  elastic ip        disabled (USE_ELASTIC_IP=false) — uses the instance's ephemeral public IP"
+  elif [ -n "$ELASTIC_IP_ADDRESS" ]; then
+    EIP_PLAN_LINE="  elastic ip        override $ELASTIC_IP_ADDRESS    associated as-is (not released on teardown)"
+  else
+    EIP_PLAN_LINE="  elastic ip        associated to $SLUG      (stable address across stop/start)"
+  fi
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
@@ -260,14 +302,15 @@ if [ "$DRY_RUN" = 1 ]; then
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
   harness           run-harness/ -> /srv/crux-run/run-harness (staged for run setup)
-  elastic ip        associated to $SLUG      (stable address across stop/start)
+$EIP_PLAN_LINE
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
                                              deleted there after configure
   dials             $CONTROL_MCP_BASE
   agent             $AGENT_PLATFORM, $MODEL, effort $EFFORT
   pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION
 teardown-workspace-aws-resources.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
-the hour, so leaking one is the easy way to pay for a box you deleted.
+the hour, so leaking one is the easy way to pay for a box you deleted. An ELASTIC_IP_ADDRESS override is
+never released by teardown, so it can be reused by the next workspace.
 Nothing billable was created.
 PLAN
   exit 0
@@ -370,23 +413,29 @@ aws_ ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 ok "Running"
 
 # ====== ELASTIC IP ======
-# Allocate a stable public IP for the SSH alias.
-if [ "$USE_ELASTIC_IP" = true ]; then
+# Allocate a stable public IP for the SSH alias, unless an existing one was
+# handed in via ELASTIC_IP_ADDRESS (resolved and validated above).
 info "Elastic IP"
-ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
-  --query 'Addresses[0].AllocationId' --output text)"
-if [ -z "$ALLOC_ID" ] || [ "$ALLOC_ID" = "None" ]; then
-  ALLOC_ID="$(aws_ ec2 allocate-address --domain vpc \
-    --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
-    --query 'AllocationId' --output text)"
-  ok "Allocated $ALLOC_ID"
-else
-  ok "Reusing $ALLOC_ID"
-fi
-aws_ ec2 associate-address --instance-id "$INSTANCE_ID" \
-  --allocation-id "$ALLOC_ID" >/dev/null
-PUBLIC_IP="$(aws_ ec2 describe-addresses --allocation-ids "$ALLOC_ID" \
-  --query 'Addresses[0].PublicIp' --output text)"
+if [ "$USE_ELASTIC_IP" = true ]; then
+  if [ -n "$ELASTIC_IP_ADDRESS" ]; then
+    ALLOC_ID="$ELASTIC_IP_OVERRIDE_ALLOC_ID"
+    ok "Using override $ELASTIC_IP_ADDRESS ($ALLOC_ID; not allocated by this script; teardown will not release it)"
+  else
+    ALLOC_ID="$(aws_ ec2 describe-addresses --filters "Name=tag:Name,Values=$SLUG" \
+      --query 'Addresses[0].AllocationId' --output text)"
+    if [ -z "$ALLOC_ID" ] || [ "$ALLOC_ID" = "None" ]; then
+      ALLOC_ID="$(aws_ ec2 allocate-address --domain vpc \
+        --tag-specifications "ResourceType=elastic-ip,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
+        --query 'AllocationId' --output text)"
+      ok "Allocated $ALLOC_ID"
+    else
+      ok "Reusing $ALLOC_ID"
+    fi
+  fi
+  aws_ ec2 associate-address --instance-id "$INSTANCE_ID" \
+    --allocation-id "$ALLOC_ID" >/dev/null
+  PUBLIC_IP="$(aws_ ec2 describe-addresses --allocation-ids "$ALLOC_ID" \
+    --query 'Addresses[0].PublicIp' --output text)"
 else
   PUBLIC_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
     --query 'Reservations[0].Instances[0].PublicIpAddress' --output text)"

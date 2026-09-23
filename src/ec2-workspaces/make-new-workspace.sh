@@ -10,6 +10,14 @@ set -euo pipefail
 # Set the platform, model, effort and version pins in the base config.
 # Supply the provider API key in the base secrets file. Omit RUN_SLUG.
 # The script writes per-workspace config and secrets using the new ID and token.
+#
+# To reuse an existing Elastic IP (e.g. one already allowlisted by a web host)
+# instead of allocating a fresh one for this slug, set ELASTIC_IP_ADDRESS in
+# BASE_CONFIG (or a dedicated --base-config file for this purpose) — it flows
+# through to the per-box config like any other base setting. See
+# provision-workspace-aws-resources.sh and teardown-workspace-aws-resources.sh,
+# which are the sole readers of that key, for the override's behavior.
+#
 # See README.md for configuration and prerequisite checks.
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
@@ -33,7 +41,7 @@ while [ $# -gt 0 ]; do
     --base-secrets) BASE_SECRETS="${2:-}"; [ -n "$BASE_SECRETS" ] || die "--base-secrets needs a file"; shift 2 ;;
     --description) DESC="${2:-}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
-    -h|--help)     sed -n '4,13p' "$0"; exit 0 ;;
+    -h|--help)     sed -n '4,21p' "$0"; exit 0 ;;
     # Report the configuration keys for unsupported model and effort flags.
     --model|--effort)
       die "$1 is no longer a flag. Set AGENT_PLATFORM and its model/effort keys in $(basename "$SCRIPT_DIR")/placeholders-base.txt instead — what a box runs as is config, so it lives with the rest of the box's config." ;;
@@ -123,6 +131,16 @@ RUN_SG_ID="$(aws_ ec2 describe-security-groups --filters "Name=group-name,Values
   || die "crux-run-sg does not exist. Run ../ec2-control/make-control-box.sh first: it creates both security groups."
 ok "Key pair, /crux/system/env, crux-system-profile and crux-run-sg all present"
 
+# ELASTIC_IP_ADDRESS is an optional key in BASE_CONFIG (not a flag here — see
+# provision-workspace-aws-resources.sh, the sole place it's actually used).
+# Validated early so a stale address fails before the workspace is minted.
+ELASTIC_IP_ADDRESS_CFG="$(cfg ELASTIC_IP_ADDRESS)"
+if [ -n "$ELASTIC_IP_ADDRESS_CFG" ]; then
+  aws_ ec2 describe-addresses --public-ips "$ELASTIC_IP_ADDRESS_CFG" >/dev/null 2>&1 \
+    || die "ELASTIC_IP_ADDRESS '$ELASTIC_IP_ADDRESS_CFG' (from $(basename "$BASE_CONFIG")) does not exist in $REGION."
+  ok "Elastic IP override $ELASTIC_IP_ADDRESS_CFG exists"
+fi
+
 EXISTING="$(aws_ ec2 describe-instances \
   --filters "Name=tag:Name,Values=$SLUG" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
   --query 'Reservations[].Instances[0].InstanceId' --output text 2>/dev/null || true)"
@@ -145,6 +163,7 @@ if [ "$DRY_RUN" = 1 ]; then
   3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS") + the minted id/token
   4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
      and stages run-harness/ at /srv/crux-run/run-harness
+$(if [ -n "$ELASTIC_IP_ADDRESS_CFG" ]; then printf '  elastic ip        %s (override, reused as-is; not released on teardown)\n' "$ELASTIC_IP_ADDRESS_CFG"; else printf '  elastic ip        allocated fresh, tagged Name=%s\n' "$SLUG"; fi)
 
 Nothing was created — not the workspace either.
 PLAN
