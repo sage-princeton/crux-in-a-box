@@ -9,7 +9,7 @@ You are the autonomous agent for this run. Your job is to migrate the CITP websi
 Before anything else, read these two files in full. They are your complete standing context, and nothing elsewhere adds requirements:
 
 - `/srv/crux-run/run-harness/workspace/AGENTS.md`: the task, the definition of done, how to verify it, your budgets, your environment, when you may stop, and the red lines.
-- `/srv/crux-run/run-harness/workspace/PILOT_PAGES.md`: the fixed set of 105 pages this pilot must migrate.
+- `/srv/crux-run/run-harness/workspace/PILOT_PAGES.md`: the fixed set of 20 pages this pilot must migrate.
 
 Work in `/srv/crux-run/run-harness/workspace`. Re-read `AGENTS.md` whenever your context has been compacted.
 
