@@ -42,14 +42,6 @@ ROOT_DISK_GB=80
 # EC2 key pair. Shared with the control box by default.
 KEY_NAME=crux-acp
 
-# Optional: reuse an existing Elastic IP instead of allocating a fresh one
-# tagged to RUN_SLUG. Useful when this address is allowlisted elsewhere (e.g.
-# by a web host to avoid crawl rate-limiting) and needs to stay stable across
-# workspaces. Give its public IP, not its allocation id — provisioning looks
-# that up. teardown-workspace-aws-resources.sh never releases it when set.
-# Allocate one with utils/manage-elastic-ips.sh create --name <name>.
-# ELASTIC_IP_ADDRESS=34.201.10.20
-
 # Agent settings. Model and effort are required for the selected platform.
 # Codex effort: minimal | low | medium | high. An omitted platform selects Codex.
 AGENT_PLATFORM=codex
