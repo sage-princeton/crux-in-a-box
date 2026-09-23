@@ -4,7 +4,9 @@ set -euo pipefail
 # Delete a run's access to the isolated aux-resources account, and
 # everything found there — RDS instances, S3 buckets, EC2 instances,
 # non-default Route53 hosted zones, CloudFront distributions, and ACM
-# certificates. The account is single-tenant at a time (see
+# certificates. Registered domain names are the one exception: Route53
+# Domains has no delete API, so those are left registered with auto-renew
+# disabled instead. The account is single-tenant at a time (see
 # docs/superpowers/specs/2026-09-20-aux-aws-resources-design.md in a
 # local checkout — the spec is not committed), so "everything found" and
 # "everything this run created" are the same set. No-ops cleanly if this
@@ -52,9 +54,10 @@ fi
 AUX_PROFILE_ARGS=(--profile "$AUX_PROFILE")
 aws_aux_()     { aws "${AUX_PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
 aws_aux_iam_() { aws "${AUX_PROFILE_ARGS[@]}" iam "$@"; }
-# CloudFront and ACM certs usable by CloudFront only ever live in us-east-1,
-# regardless of $REGION — a distribution can't reference a cert from any
-# other region, so this is the only region worth sweeping for either.
+# CloudFront/ACM-for-CloudFront and Route53 Domains are all only reachable
+# via the us-east-1 endpoint, regardless of $REGION — an ACM cert can't be
+# used by CloudFront unless it's from there, and Route53 Domains has no
+# other-region endpoint at all.
 aws_aux_useast1_() { aws "${AUX_PROFILE_ARGS[@]}" --region us-east-1 "$@"; }
 
 AUX_ACCOUNT_ID="$(aws_aux_ sts get-caller-identity --query Account --output text 2>/dev/null || true)"
@@ -78,6 +81,9 @@ echo "  every RDS instance, S3 bucket, EC2 instance, non-default Route53"
 echo "  hosted zone, CloudFront distribution, and ACM certificate found in"
 echo "  that account (it is single-tenant per run)"
 echo "  delete IAM role $AUX_ROLE (isolated account) and $RUN_ROLE (main account)"
+echo "  any Route53-registered domain name is NOT deleted — there is no"
+echo "  cancel/delete API for domain registrations. Auto-renew is disabled"
+echo "  instead; the domain stays registered (and billable) until it expires."
 echo
 
 if [ "$ASSUME_YES" != 1 ]; then
@@ -142,6 +148,24 @@ if [ -n "$ZONE_IDS" ] && [ "$ZONE_IDS" != "None" ]; then
     fi
     aws_aux_ route53 delete-hosted-zone --id "$zone_id" >/dev/null
     ok "Deleted zone $zone_id"
+  done
+else
+  ok "None found"
+fi
+
+info "Route53 registered domains"
+# Route53 Domains has no cancel/delete API — a registered domain cannot be
+# un-registered programmatically. Disable auto-renew instead (the closest
+# thing to "release" available) and warn: the domain stays registered, and
+# billable, until its current registration period expires.
+DOMAIN_NAMES="$(aws_aux_useast1_ route53domains list-domains --query 'Domains[].DomainName' --output text 2>/dev/null || true)"
+if [ -n "$DOMAIN_NAMES" ] && [ "$DOMAIN_NAMES" != "None" ]; then
+  for domain in $DOMAIN_NAMES; do
+    if aws_aux_useast1_ route53domains disable-domain-auto-renew --domain-name "$domain" >/dev/null 2>&1; then
+      warn "$domain: disabled auto-renew, but it is still registered (and billable) until it expires — Route53 Domains has no delete API"
+    else
+      warn "$domain: could not disable auto-renew — check it manually in the Route53 console. It is still registered (and billable) until it expires."
+    fi
   done
 else
   ok "None found"
