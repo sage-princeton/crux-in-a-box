@@ -323,6 +323,7 @@ fi
 [ -f "$RUN_SECRETS_FILE" ] || die "No such file: $RUN_SECRETS_FILE"
 jq -e . "$RUN_SECRETS_FILE" >/dev/null 2>&1 || die "$RUN_SECRETS_FILE is not valid JSON"
 validate_agent_key "$RUN_SECRETS_FILE"
+validate_run_api_keys "$RUN_SECRETS_FILE"
 for k in AGENTRQ_WORKSPACE_ID AGENTRQ_WORKSPACE_TOKEN; do
   v="$(jq -re --arg k "$k" '.[$k] // empty' "$RUN_SECRETS_FILE")" \
     || die "$RUN_SECRETS_FILE is missing required key: $k"

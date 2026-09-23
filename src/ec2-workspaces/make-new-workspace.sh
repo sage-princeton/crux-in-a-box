@@ -83,6 +83,7 @@ ok "Base config and secrets present; control box '$CONTROL_SLUG'"
 # Validate the selected platform before AWS calls or minting a workspace.
 load_agent_config all
 validate_agent_key "$BASE_SECRETS"
+validate_run_api_keys "$BASE_SECRETS"
 [ -d "$SCRIPT_DIR/../../run-harness/workspace" ] \
   || die "run-harness/workspace is missing from the repository checkout."
 AGENT_API_KEY="$(jq -r --arg key "$API_KEY_NAME" '.[$key]' "$BASE_SECRETS")"
@@ -211,7 +212,8 @@ ok "Wrote $(basename "$CONFIG")${MY_IP:+ (operator $MY_IP/32)}"
 info "Writing $(basename "$SECRETS")"
 umask 077
 jq -n --arg key "$API_KEY_NAME" --arg k "$AGENT_API_KEY" --arg id "$WS_ID" --arg t "$WS_TOKEN" \
-  '{($key):$k, AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t}' > "$SECRETS"
+  --argjson extra "$(run_api_keys_json "$BASE_SECRETS")" \
+  '{($key):$k, AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t} + $extra' > "$SECRETS"
 chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
