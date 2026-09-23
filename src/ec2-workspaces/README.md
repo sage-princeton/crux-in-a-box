@@ -213,6 +213,13 @@ region everything else runs in, so the agent must request ACM certs there.
 Teardown sweeps ACM and CloudFront in `us-east-1` specifically for this
 reason, not whatever region the rest of the sweep uses.
 
+Whenever at least one flag is set, the agent also gets read-only AWS Cost
+Explorer access (`ce:GetCostAndUsage`, `GetCostForecast`, `GetUsageForecast`,
+`GetDimensionValues`, `GetTags`) in the isolated account — so it can see what
+it's spending. This isn't a separate flag: it's baseline, granted or removed
+together with the role itself, not reconciled per-resource like the managed
+policies above.
+
 For the `make-new-workspace.sh` flow these flags (and `AUX_RESOURCE_PROFILE`,
 below) must go in `placeholders-base.txt`, not `placeholders-<slug>.txt` —
 the per-workspace preflight validates them before the workspace is minted,
