@@ -2,9 +2,9 @@
 set -euo pipefail
 
 # Grant a CRUX run's agent scoped AWS access to provision auxiliary
-# resources (Postgres/RDS, S3, EC2, DNS, CloudFront, ACM) in a separate,
-# pre-existing isolated AWS account, for runs testing SaaS-to-self-hosted
-# migration.
+# resources (Postgres/RDS, S3, EC2, DNS + domain registration, CloudFront,
+# ACM) in a separate, pre-existing isolated AWS account, for runs testing
+# SaaS-to-self-hosted migration.
 # Companion to provision-workspace-aws-resources.sh; run before it so the
 # instance launch can pick up the per-workspace instance profile this
 # script creates.
@@ -122,6 +122,7 @@ if [ "$DRY_RUN" = 1 ]; then
       $( [ "$FLAG_S3" = 1 ] && echo "AmazonS3FullAccess (PROVISION_S3=1)" )
       $( [ "$FLAG_EC2" = 1 ] && echo "AmazonEC2FullAccess (PROVISION_EC2=1)" )
       $( [ "$FLAG_DNS" = 1 ] && echo "AmazonRoute53FullAccess (PROVISION_DNS=1)" )
+      $( [ "$FLAG_DNS" = 1 ] && echo "AmazonRoute53DomainsFullAccess (PROVISION_DNS=1, domain registration)" )
       $( [ "$FLAG_CLOUDFRONT" = 1 ] && echo "CloudFrontFullAccess (PROVISION_CLOUDFRONT=1)" )
       $( [ "$FLAG_ACM" = 1 ] && echo "AWSCertificateManagerFullAccess (PROVISION_ACM=1)" )
   config written to $CONFIG_FILE:
@@ -195,13 +196,14 @@ declare -A WANT_POLICIES=()
 [ "$FLAG_S3" = 1 ] && WANT_POLICIES[AmazonS3FullAccess]=1
 [ "$FLAG_EC2" = 1 ] && WANT_POLICIES[AmazonEC2FullAccess]=1
 [ "$FLAG_DNS" = 1 ] && WANT_POLICIES[AmazonRoute53FullAccess]=1
+[ "$FLAG_DNS" = 1 ] && WANT_POLICIES[AmazonRoute53DomainsFullAccess]=1
 [ "$FLAG_CLOUDFRONT" = 1 ] && WANT_POLICIES[CloudFrontFullAccess]=1
 [ "$FLAG_ACM" = 1 ] && WANT_POLICIES[AWSCertificateManagerFullAccess]=1
 
 ATTACHED="$(aws_aux_iam_ list-attached-role-policies --role-name "$AUX_ROLE" --query 'AttachedPolicies[].PolicyName' --output text)"
 for name in $ATTACHED; do
   case "$name" in
-    AmazonRDSFullAccess|AmazonS3FullAccess|AmazonEC2FullAccess|AmazonRoute53FullAccess|CloudFrontFullAccess|AWSCertificateManagerFullAccess)
+    AmazonRDSFullAccess|AmazonS3FullAccess|AmazonEC2FullAccess|AmazonRoute53FullAccess|AmazonRoute53DomainsFullAccess|CloudFrontFullAccess|AWSCertificateManagerFullAccess)
       if [ -z "${WANT_POLICIES[$name]:-}" ]; then
         aws_aux_iam_ detach-role-policy --role-name "$AUX_ROLE" --policy-arn "arn:aws:iam::aws:policy/$name" >/dev/null
         ok "Detached $name (no longer enabled)"
