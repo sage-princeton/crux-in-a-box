@@ -7,7 +7,7 @@ set -euo pipefail
 # never released — it's shared across workspaces. CONFIG_FILE is the only place
 # this is read from, so it's always consistent with what provisioning used.
 #
-# Usage: ./teardown-workspace-aws-resources.sh [CONFIG_FILE] [--yes]
+# Usage: ./teardown-workspace-aws-resources.sh CONFIG_FILE [--yes]
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
@@ -23,7 +23,7 @@ while [ $# -gt 0 ]; do
     *) CONFIG_FILE="$1"; shift ;;
   esac
 done
-CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
+[ -n "$CONFIG_FILE" ] || die "Usage: $0 CONFIG_FILE [--yes]"
 [ -f "$CONFIG_FILE" ] || die "Config file not found: $CONFIG_FILE"
 
 cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1/p" "$CONFIG_FILE" | head -1; }

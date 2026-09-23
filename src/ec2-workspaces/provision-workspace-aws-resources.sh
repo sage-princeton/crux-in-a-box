@@ -4,10 +4,10 @@ set -euo pipefail
 # Provision a Codex or Claude workspace instance from the local machine.
 #
 # Usage:
-#   ./provision-workspace-aws-resources.sh --secrets <json> [CONFIG_FILE]
-#   ./provision-workspace-aws-resources.sh --put-system-secrets <json> [CONFIG_FILE]
-#   ./provision-workspace-aws-resources.sh --dry-run [CONFIG_FILE]
-#   ./provision-workspace-aws-resources.sh --handshake [CONFIG_FILE]
+#   ./provision-workspace-aws-resources.sh --secrets <json> CONFIG_FILE
+#   ./provision-workspace-aws-resources.sh --put-system-secrets <json> CONFIG_FILE
+#   ./provision-workspace-aws-resources.sh --dry-run CONFIG_FILE
+#   ./provision-workspace-aws-resources.sh --handshake CONFIG_FILE
 #
 # Per-run JSON: provider API key, AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN.
 # It is copied over SSH and deleted on the instance after configuration.
@@ -47,9 +47,8 @@ done
 # shellcheck source=src/ec2-workspaces/agent-config.sh
 source "$SCRIPT_DIR/agent-config.sh"
 
-CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
-[ -f "$CONFIG_FILE" ] \
-  || die "Config file not found: $CONFIG_FILE (copy placeholders-run.txt.example)"
+[ -n "$CONFIG_FILE" ] || die "Usage: $0 [--secrets <json>|--put-system-secrets <json>|--dry-run|--handshake] CONFIG_FILE"
+[ -f "$CONFIG_FILE" ] || die "Config file not found: $CONFIG_FILE"
 
 # ====== LOAD CONFIG ======
 declare -A CFG=()
