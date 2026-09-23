@@ -48,11 +48,13 @@ SECRETS="$(cat "$RUN_SECRETS_PATH")"
 get() { printf '%s' "$SECRETS" | jq -re --arg k "$1" '.[$k] // empty'; }
 
 validate_agent_key "$RUN_SECRETS_PATH"
+validate_run_api_keys "$RUN_SECRETS_PATH"
 AGENT_API_KEY="$(get "$API_KEY_NAME")" || die "$API_KEY_NAME missing from $RUN_SECRETS_PATH"
 WORKSPACE_ID="$(get AGENTRQ_WORKSPACE_ID)"  || die "AGENTRQ_WORKSPACE_ID missing from $RUN_SECRETS_PATH"
 WORKSPACE_TOKEN="$(get AGENTRQ_WORKSPACE_TOKEN)" || die "AGENTRQ_WORKSPACE_TOKEN missing from $RUN_SECRETS_PATH"
+RUN_API_KEYS="$(run_api_keys_json "$RUN_SECRETS_PATH")"
 rm -f "$RUN_SECRETS_PATH"
-ok "Read 3 per-run values (not echoed); deleted $RUN_SECRETS_PATH"
+ok "Read 3 per-run values plus $(printf '%s' "$RUN_API_KEYS" | jq -r 'keys | length') optional API key(s) (not echoed); deleted $RUN_SECRETS_PATH"
 
 # ====== SYSTEM-WIDE SECRETS FROM PARAMETER STORE ======
 # Shared by every run box; read via the instance's crux-system-role, whose
@@ -100,6 +102,7 @@ AGENT_ENV="$(jq -cn --arg platform "$AGENT_PLATFORM" --arg provider "$MODEL_PROV
 GW_ENV=/etc/crux-run.env
 {
   printf '%s' "$AGENT_ENV" | jq -r 'to_entries[] | .key + "=" + (.value | @json)'
+  printf '%s' "$RUN_API_KEYS" | jq -r 'to_entries[] | .key + "=" + (.value | @json)'
   printf 'PATH=%s/.local/bin:/usr/local/bin:/usr/bin:/bin\nHOME=%s\n' "$RUN_HOME" "$RUN_HOME"
   if [ "$AGENT_PLATFORM" = claude ]; then
     printf 'CLAUDE_CODE_EXECUTABLE=/usr/bin/claude\n'

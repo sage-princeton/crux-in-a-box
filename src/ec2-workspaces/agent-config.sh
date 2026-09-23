@@ -59,3 +59,23 @@ validate_agent_key() {
     (test("CHANGE|REPLACE|xxx|\\.\\.\\.") | not)
   ' "$1" >/dev/null 2>&1 || die "$API_KEY_NAME is missing, invalid, or still a placeholder in $1."
 }
+
+# Optional per-run API keys for the agent's own tools. When present in the
+# secrets JSON they travel with the workspace's secrets and land in the agent
+# process's environment; absent keys are simply skipped.
+RUN_API_KEY_NAMES="WAVE_API_KEY PAGESPEED_API_KEY"
+
+run_api_keys_json() {
+  jq -c --arg names "$RUN_API_KEY_NAMES" \
+    'with_entries(select(.key as $k | $names | split(" ") | index($k)))' "$1"
+}
+
+validate_run_api_keys() {
+  # Same shape rules as validate_agent_key, applied only to keys that are set.
+  jq -e --arg names "$RUN_API_KEY_NAMES" '
+    [to_entries[] | select(.key as $k | $names | split(" ") | index($k)) | .value
+     | type == "string" and length > 0 and
+       (test("[[:space:][:cntrl:]]") | not) and
+       (test("CHANGE|REPLACE|xxx|\\.\\.\\.") | not)] | all
+  ' "$1" >/dev/null 2>&1 || die "An optional API key ($RUN_API_KEY_NAMES) in $1 is empty, invalid, or still a placeholder."
+}
