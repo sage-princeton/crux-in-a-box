@@ -191,10 +191,10 @@ and the AgentRQ workspace, which outlives its box.
 ### Auxiliary AWS resources (opt-in, per run)
 
 Some runs need their agent to provision its own infrastructure — Postgres/RDS,
-S3, EC2, DNS, a CloudFront CDN, and ACM certs to serve it over — in a
-separate, pre-existing isolated AWS account, rather than have it handed to
-them pre-built. This is opt-in per resource type via six flags, all default
-off:
+S3, EC2, DNS (including registering a new domain name), a CloudFront CDN, and
+ACM certs to serve it over — in a separate, pre-existing isolated AWS
+account, rather than have it handed to them pre-built. This is opt-in per
+resource type via six flags, all default off:
 
 ```
 PROVISION_POSTGRES=1
@@ -205,13 +205,22 @@ PROVISION_CLOUDFRONT=1
 PROVISION_ACM=1
 ```
 
+`PROVISION_DNS` grants both `AmazonRoute53FullAccess` (hosted zones and
+records) and `AmazonRoute53DomainsFullAccess` (registering a domain name).
+**Teardown cannot un-register a domain** — Route53 Domains has no delete API
+for a registration. It disables auto-renew instead and warns; the domain
+stays registered, and billable, until its current registration period runs
+out. Everything else this feature touches is fully deleted on teardown; this
+is the one exception.
+
 `PROVISION_CLOUDFRONT` and `PROVISION_ACM` grant `CloudFrontFullAccess` and
 `AWSCertificateManagerFullAccess` respectively. They're meant to be enabled
 together for serving content over a CDN with a cert: a certificate is only
 usable by CloudFront if it was requested in `us-east-1`, regardless of which
 region everything else runs in, so the agent must request ACM certs there.
-Teardown sweeps ACM and CloudFront in `us-east-1` specifically for this
-reason, not whatever region the rest of the sweep uses.
+Teardown sweeps ACM, CloudFront, and Route53 Domains in `us-east-1`
+specifically for this reason (Route53 Domains has no other-region endpoint
+at all), not whatever region the rest of the sweep uses.
 
 Whenever at least one flag is set, the agent also gets read-only AWS Cost
 Explorer access (`ce:GetCostAndUsage`, `GetCostForecast`, `GetUsageForecast`,
@@ -247,5 +256,6 @@ Run standalone: `./provision-aux-aws-resources.sh [--dry-run] [CONFIG_FILE]`.
 
 `teardown-workspace-aws-resources.sh` calls
 `teardown-aux-aws-resources.sh` automatically, which deletes everything found
-in the isolated account (it's single-tenant per run) plus both IAM roles. A
-slug that never opted in is a no-op.
+in the isolated account (it's single-tenant per run) plus both IAM roles —
+except a registered domain name, which it can only disable auto-renew on
+(see above). A slug that never opted in is a no-op.
