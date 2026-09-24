@@ -17,6 +17,12 @@ set -euo pipefail
 #   PROVISION_CLOUDFRONT=1  PROVISION_ACM=1
 # Whenever any flag is on, read-only Cost Explorer access is also granted —
 # baseline, not a separate flag, so the agent can see what it's spending.
+# When both PROVISION_EC2 and PROVISION_S3 are set, the agent may also
+# create its own crux-app-* IAM roles/instance profiles for EC2 instances
+# it launches (e.g. so Payload's S3 storage adapter can use instance
+# credentials) — every such role is capped by a crux-app-boundary
+# permissions boundary the agent cannot alter or remove, and can only be
+# passed to EC2.
 # AUX_RESOURCE_PROFILE names the AWS CLI profile/credentials for the
 # isolated account. See README.md.
 
@@ -32,7 +38,7 @@ CONFIG_FILE=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) sed -n '4,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '4,27p' "$0"; exit 0 ;;
     -*) die "Unknown flag: $1" ;;
     *) [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
@@ -125,6 +131,8 @@ if [ "$DRY_RUN" = 1 ]; then
       $( [ "$FLAG_DNS" = 1 ] && echo "AmazonRoute53DomainsFullAccess (PROVISION_DNS=1, domain registration)" )
       $( [ "$FLAG_CLOUDFRONT" = 1 ] && echo "CloudFrontFullAccess (PROVISION_CLOUDFRONT=1)" )
       $( [ "$FLAG_ACM" = 1 ] && echo "AWSCertificateManagerFullAccess (PROVISION_ACM=1)" )
+      $( [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ] && echo "crux-app-boundary managed policy created/refreshed (caps crux-app-* roles: S3 in this account + CloudWatch Logs)" )
+      $( [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ] && echo "inline policy create-app-roles (crux-app-* roles only, always boundary-capped, pass-role to EC2 only)" )
   config written to $CONFIG_FILE:
     AUX_RESOURCE_ACCOUNT_ID=$AUX_ACCOUNT_ID
     AUX_RESOURCE_ROLE_ARN=$AUX_ROLE_ARN
@@ -190,6 +198,49 @@ aws_aux_iam_ put-role-policy --role-name "$AUX_ROLE" --policy-name "read-cost-ex
   --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ce:GetCostAndUsage","ce:GetCostForecast","ce:GetUsageForecast","ce:GetDimensionValues","ce:GetTags"],"Resource":"*"}]}' >/dev/null
 ok "Inline policy: read-only Cost Explorer access (ce:Get*) — baseline, not tied to a flag"
 
+# ====== APP ROLES (EC2 + S3 only): let the agent give its own instances an
+# IAM role, so e.g. Payload's S3 storage adapter can use instance
+# credentials, without letting it escalate to admin in the isolated
+# account. Every role it can create is named crux-app-* and permanently
+# capped by the crux-app-boundary permissions boundary below, which the
+# agent's own grant (further down) deliberately cannot attach, detach,
+# or edit — that's what makes the boundary the operator's, not the
+# agent's, to change.
+BOUNDARY_POLICY_ARN="arn:aws:iam::${AUX_ACCOUNT_ID}:policy/crux-app-boundary"
+if [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ]; then
+  info "Managed policy 'crux-app-boundary' (isolated account) — caps any crux-app-* role"
+  BOUNDARY_DOC="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AppMediaInThisAccountOnly\",\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\",\"s3:PutObjectAcl\",\"s3:ListBucket\",\"s3:GetBucketLocation\"],\"Resource\":\"*\",\"Condition\":{\"StringEquals\":{\"aws:ResourceAccount\":\"$AUX_ACCOUNT_ID\"}}},{\"Sid\":\"AppLogs\",\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogGroup\",\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":\"*\"}]}"
+  if aws_aux_iam_ get-policy --policy-arn "$BOUNDARY_POLICY_ARN" >/dev/null 2>&1; then
+    # A policy can hold at most 5 versions; prune the non-default ones before
+    # adding a new one, matching the script's rebuild-from-scratch style.
+    # shellcheck disable=SC2016 # backtick is literal JMESPath syntax, not shell expansion
+    BOUNDARY_OLD_VERSIONS="$(aws_aux_iam_ list-policy-versions --policy-arn "$BOUNDARY_POLICY_ARN" \
+      --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null || true)"
+    if [ -n "$BOUNDARY_OLD_VERSIONS" ] && [ "$BOUNDARY_OLD_VERSIONS" != "None" ]; then
+      for version_id in $BOUNDARY_OLD_VERSIONS; do
+        aws_aux_iam_ delete-policy-version --policy-arn "$BOUNDARY_POLICY_ARN" --version-id "$version_id" >/dev/null
+      done
+    fi
+    aws_aux_iam_ create-policy-version --policy-arn "$BOUNDARY_POLICY_ARN" \
+      --policy-document "$BOUNDARY_DOC" --set-as-default >/dev/null
+    ok "Updated to a new default version"
+  else
+    aws_aux_iam_ create-policy --policy-name crux-app-boundary --policy-document "$BOUNDARY_DOC" \
+      --description "Caps what any crux-app-* role the agent creates can ever do" >/dev/null
+    ok "Created"
+  fi
+
+  info "Inline policy 'create-app-roles' on $AUX_ROLE — crux-app-* only, boundary enforced, pass-role to EC2 only"
+  APP_ROLE_POLICY_DOC="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"CreateAppRolesOnlyWithBoundary\",\"Effect\":\"Allow\",\"Action\":[\"iam:CreateRole\",\"iam:PutRolePermissionsBoundary\"],\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:role/crux-app-*\",\"Condition\":{\"StringEquals\":{\"iam:PermissionsBoundary\":\"$BOUNDARY_POLICY_ARN\"}}},{\"Sid\":\"ManageAppRoles\",\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:PutRolePolicy\",\"iam:GetRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:ListRolePolicies\"],\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:role/crux-app-*\"},{\"Sid\":\"ManageAppInstanceProfiles\",\"Effect\":\"Allow\",\"Action\":[\"iam:CreateInstanceProfile\",\"iam:DeleteInstanceProfile\",\"iam:GetInstanceProfile\",\"iam:AddRoleToInstanceProfile\",\"iam:RemoveRoleFromInstanceProfile\",\"iam:TagInstanceProfile\"],\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:instance-profile/crux-app-*\"},{\"Sid\":\"PassAppRolesToEc2Only\",\"Effect\":\"Allow\",\"Action\":\"iam:PassRole\",\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:role/crux-app-*\",\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":\"ec2.amazonaws.com\"}}}]}"
+  aws_aux_iam_ put-role-policy --role-name "$AUX_ROLE" --policy-name "create-app-roles" \
+    --policy-document "$APP_ROLE_POLICY_DOC" >/dev/null
+  ok "Inline policy: create-app-roles"
+else
+  # Reconcile away: if either flag was on before and one is now off, the
+  # agent must lose the ability to create/manage crux-app-* roles.
+  aws_aux_iam_ delete-role-policy --role-name "$AUX_ROLE" --policy-name "create-app-roles" >/dev/null 2>&1 || true
+fi
+
 info "Reconciling managed policy attachments to the current PROVISION_* flags"
 declare -A WANT_POLICIES=()
 [ "$FLAG_POSTGRES" = 1 ] && WANT_POLICIES[AmazonRDSFullAccess]=1
@@ -238,7 +289,7 @@ $(ok "Aux-resource access provisioned for '$SLUG'")
 
   main account role       $RUN_ROLE ($MAIN_ACCOUNT_ID)
   isolated account role   $AUX_ROLE ($AUX_ACCOUNT_ID), trusts $RUN_ROLE only
-  granted                 $( [ "$FLAG_POSTGRES" = 1 ] && printf 'postgres ' )$( [ "$FLAG_S3" = 1 ] && printf 's3 ' )$( [ "$FLAG_EC2" = 1 ] && printf 'ec2 ' )$( [ "$FLAG_DNS" = 1 ] && printf 'dns ' )$( [ "$FLAG_CLOUDFRONT" = 1 ] && printf 'cloudfront ' )$( [ "$FLAG_ACM" = 1 ] && printf 'acm ' )cost-explorer-read
+  granted                 $( [ "$FLAG_POSTGRES" = 1 ] && printf 'postgres ' )$( [ "$FLAG_S3" = 1 ] && printf 's3 ' )$( [ "$FLAG_EC2" = 1 ] && printf 'ec2 ' )$( [ "$FLAG_DNS" = 1 ] && printf 'dns ' )$( [ "$FLAG_CLOUDFRONT" = 1 ] && printf 'cloudfront ' )$( [ "$FLAG_ACM" = 1 ] && printf 'acm ' )cost-explorer-read$( [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ] && printf ' app-roles' )
 
 Launch the instance with provision-workspace-aws-resources.sh — it will use
 the $RUN_ROLE instance profile since it now exists for '$SLUG'.

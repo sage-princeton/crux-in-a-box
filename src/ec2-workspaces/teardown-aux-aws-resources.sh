@@ -3,8 +3,10 @@ set -euo pipefail
 
 # Delete a run's access to the isolated aux-resources account, and
 # everything found there — RDS instances, S3 buckets, EC2 instances,
-# non-default Route53 hosted zones, CloudFront distributions, and ACM
-# certificates. Registered domain names are the one exception: Route53
+# non-default Route53 hosted zones, CloudFront distributions, ACM
+# certificates, and any crux-app-* IAM roles/instance profiles (plus the
+# crux-app-boundary policy that capped them) the agent created for its own
+# EC2 instances. Registered domain names are the one exception: Route53
 # Domains has no delete API, so those are left registered with auto-renew
 # disabled instead. The account is single-tenant at a time, so
 # "everything found" and "everything this run created" are the same set.
@@ -77,7 +79,8 @@ echo
 echo "About to tear down aux AWS resources for '$SLUG' in isolated account $AUX_ACCOUNT_ID:"
 echo "  every RDS instance, S3 bucket, EC2 instance, non-default Route53"
 echo "  hosted zone, CloudFront distribution, and ACM certificate found in"
-echo "  that account (it is single-tenant per run)"
+echo "  that account (it is single-tenant per run), plus any crux-app-*"
+echo "  IAM roles/instance profiles and the crux-app-boundary policy"
 echo "  delete IAM role $AUX_ROLE (isolated account) and $RUN_ROLE (main account)"
 echo "  any Route53-registered domain name is NOT deleted — there is no"
 echo "  cancel/delete API for domain registrations. Auto-renew is disabled"
@@ -200,6 +203,65 @@ if [ -n "$CERT_ARNS" ] && [ "$CERT_ARNS" != "None" ]; then
     aws_aux_useast1_ acm delete-certificate --certificate-arn "$cert_arn" >/dev/null
     ok "Deleted $cert_arn"
   done
+else
+  ok "None found"
+fi
+
+info "Agent-created app instance profiles (crux-app-*)"
+APP_PROFILE_NAMES="$(aws_aux_iam_ list-instance-profiles \
+  --query "InstanceProfiles[?starts_with(InstanceProfileName, 'crux-app-')].InstanceProfileName" \
+  --output text 2>/dev/null || true)"
+if [ -n "$APP_PROFILE_NAMES" ] && [ "$APP_PROFILE_NAMES" != "None" ]; then
+  for profile_name in $APP_PROFILE_NAMES; do
+    APP_PROFILE_ROLES="$(aws_aux_iam_ get-instance-profile --instance-profile-name "$profile_name" \
+      --query 'InstanceProfile.Roles[].RoleName' --output text 2>/dev/null || true)"
+    if [ -n "$APP_PROFILE_ROLES" ] && [ "$APP_PROFILE_ROLES" != "None" ]; then
+      for role_name in $APP_PROFILE_ROLES; do
+        aws_aux_iam_ remove-role-from-instance-profile \
+          --instance-profile-name "$profile_name" --role-name "$role_name" >/dev/null
+      done
+    fi
+    aws_aux_iam_ delete-instance-profile --instance-profile-name "$profile_name" >/dev/null
+    ok "Deleted instance profile $profile_name"
+  done
+else
+  ok "None found"
+fi
+
+info "Agent-created app roles (crux-app-*)"
+APP_ROLE_NAMES="$(aws_aux_iam_ list-roles \
+  --query "Roles[?starts_with(RoleName, 'crux-app-')].RoleName" \
+  --output text 2>/dev/null || true)"
+if [ -n "$APP_ROLE_NAMES" ] && [ "$APP_ROLE_NAMES" != "None" ]; then
+  for role_name in $APP_ROLE_NAMES; do
+    APP_ROLE_POLICY_NAMES="$(aws_aux_iam_ list-role-policies --role-name "$role_name" \
+      --query 'PolicyNames' --output text 2>/dev/null || true)"
+    if [ -n "$APP_ROLE_POLICY_NAMES" ] && [ "$APP_ROLE_POLICY_NAMES" != "None" ]; then
+      for policy_name in $APP_ROLE_POLICY_NAMES; do
+        aws_aux_iam_ delete-role-policy --role-name "$role_name" --policy-name "$policy_name" >/dev/null
+      done
+    fi
+    aws_aux_iam_ delete-role-permissions-boundary --role-name "$role_name" >/dev/null 2>&1 || true
+    aws_aux_iam_ delete-role --role-name "$role_name" >/dev/null
+    ok "Deleted role $role_name"
+  done
+else
+  ok "None found"
+fi
+
+info "Managed policy crux-app-boundary (isolated account)"
+BOUNDARY_POLICY_ARN="arn:aws:iam::${AUX_ACCOUNT_ID}:policy/crux-app-boundary"
+if aws_aux_iam_ get-policy --policy-arn "$BOUNDARY_POLICY_ARN" >/dev/null 2>&1; then
+  # shellcheck disable=SC2016 # backtick is literal JMESPath syntax, not shell expansion
+  BOUNDARY_VERSIONS="$(aws_aux_iam_ list-policy-versions --policy-arn "$BOUNDARY_POLICY_ARN" \
+    --query 'Versions[?IsDefaultVersion==`false`].VersionId' --output text 2>/dev/null || true)"
+  if [ -n "$BOUNDARY_VERSIONS" ] && [ "$BOUNDARY_VERSIONS" != "None" ]; then
+    for version_id in $BOUNDARY_VERSIONS; do
+      aws_aux_iam_ delete-policy-version --policy-arn "$BOUNDARY_POLICY_ARN" --version-id "$version_id" >/dev/null
+    done
+  fi
+  aws_aux_iam_ delete-policy --policy-arn "$BOUNDARY_POLICY_ARN" >/dev/null
+  ok "Deleted"
 else
   ok "None found"
 fi
