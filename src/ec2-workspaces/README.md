@@ -204,3 +204,90 @@ removes the ssh alias. Deliberately keeps the shared SG / key pair / IAM —
 and the AgentRQ workspace, which outlives its box. If `ELASTIC_IP_ADDRESS` was set in the
 box's config, that address is left allocated (just disassociated) so the next workspace
 can reuse it — set the same `ELASTIC_IP_ADDRESS` for that one.
+
+### Auxiliary AWS resources (opt-in, per run)
+
+Some runs need their agent to provision its own infrastructure — Postgres/RDS,
+S3, EC2, DNS (including registering a new domain name), a CloudFront CDN, and
+ACM certs to serve it over — in a separate, pre-existing isolated AWS
+account, rather than have it handed to them pre-built. This is opt-in per
+resource type via six flags, all default off:
+
+```
+PROVISION_POSTGRES=1
+PROVISION_S3=1
+PROVISION_DNS=1
+PROVISION_EC2=1
+PROVISION_CLOUDFRONT=1
+PROVISION_ACM=1
+```
+
+`PROVISION_DNS` grants both `AmazonRoute53FullAccess` (hosted zones and
+records) and `AmazonRoute53DomainsFullAccess` (registering a domain name).
+**Teardown cannot un-register a domain** — Route53 Domains has no delete API
+for a registration. It disables auto-renew instead and warns; the domain
+stays registered, and billable, until its current registration period runs
+out. Everything else this feature touches is fully deleted on teardown; this
+is the one exception.
+
+`PROVISION_CLOUDFRONT` and `PROVISION_ACM` grant `CloudFrontFullAccess` and
+`AWSCertificateManagerFullAccess` respectively. They're meant to be enabled
+together for serving content over a CDN with a cert: a certificate is only
+usable by CloudFront if it was requested in `us-east-1`, regardless of which
+region everything else runs in, so the agent must request ACM certs there.
+Teardown sweeps ACM, CloudFront, and Route53 Domains in `us-east-1`
+specifically for this reason (Route53 Domains has no other-region endpoint
+at all), not whatever region the rest of the sweep uses.
+
+When both `PROVISION_EC2` and `PROVISION_S3` are set, the agent may also give
+its own EC2 instances an IAM role — e.g. so Payload's S3 storage adapter can
+use instance credentials instead of static keys. `AmazonEC2FullAccess` alone
+doesn't include `iam:PassRole`, and granting that plus role creation
+unconditionally would let the agent attach an admin role to an instance and
+take over the account. Instead, every role the agent creates must be named
+`crux-app-*` and is permanently capped by a `crux-app-boundary` permissions
+boundary — a policy the operator owns; the agent's own IAM grant deliberately
+excludes `iam:AttachRolePolicy`, `iam:CreatePolicy*`, and
+`iam:DeleteRolePermissionsBoundary`, so it can create and configure
+`crux-app-*` roles but never loosen what they're capped to, and can only pass
+them to EC2. Teardown removes every `crux-app-*` role and instance profile,
+and the `crux-app-boundary` policy itself, before deleting the two
+feature-level IAM roles.
+
+Whenever at least one flag is set, the agent also gets read-only AWS Cost
+Explorer access (`ce:GetCostAndUsage`, `GetCostForecast`, `GetUsageForecast`,
+`GetDimensionValues`, `GetTags`) in the isolated account — so it can see what
+it's spending. This isn't a separate flag: it's baseline, granted or removed
+together with the role itself, not reconciled per-resource like the managed
+policies above.
+
+For the `make-new-workspace.sh` flow these flags (and `AUX_RESOURCE_PROFILE`,
+below) must go in `placeholders-base.txt`, not `placeholders-<slug>.txt` —
+the per-workspace preflight validates them before the workspace is minted,
+and only the base config exists at that point. **Caution:** leaving a flag
+set in the base config silently applies it to every workspace created from
+that config afterwards, and the isolated account is single-tenant — only one
+opted-in run can hold its access at a time — so unset the flags once a run's
+aux-resource work is done. These config keys are the only place any of this
+is set — there's no separate CLI flag duplicating them — so provisioning and
+teardown always agree on what's enabled.
+
+Set `AUX_RESOURCE_PROFILE` to the AWS CLI profile for the isolated account.
+`make-new-workspace.sh` calls `provision-aux-aws-resources.sh` automatically
+when any flag is set, before launching the instance — it creates a
+per-workspace IAM role (`crux-run-$SLUG`) in the main account that can assume
+a scoped role (`crux-agent-devops`) in the isolated account, and writes
+`AUX_RESOURCE_ACCOUNT_ID`/`AUX_RESOURCE_ROLE_ARN` back into the config file.
+`provision-workspace-aws-resources.sh` then passes both through to
+`configure-run.sh`, which lands them in `/etc/crux-run.env` — the agent
+process's plain environment — for the agent's scaffold to read. No other
+workspace can assume `crux-agent-devops` — only the one opted-in run's role
+is trusted.
+
+Run standalone: `./provision-aux-aws-resources.sh [--dry-run] [CONFIG_FILE]`.
+
+`teardown-workspace-aws-resources.sh` calls
+`teardown-aux-aws-resources.sh` automatically, which deletes everything found
+in the isolated account (it's single-tenant per run) plus both IAM roles —
+except a registered domain name, which it can only disable auto-renew on
+(see above). A slug that never opted in is a no-op.

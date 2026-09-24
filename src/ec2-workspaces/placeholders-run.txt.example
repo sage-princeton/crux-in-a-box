@@ -35,6 +35,24 @@ CONTROL_MCP_BASE=https://<dashed-eip>.sslip.io
 # Find yours with: curl -s https://checkip.amazonaws.com
 OPERATOR_CIDR=203.0.113.10/32
 
+# Opt in, per resource type, to grant this run's agent scoped AWS access to
+# provision that resource in a separate, pre-existing isolated AWS account
+# (self-hosting devops pilot — see docs/superpowers/specs/2026-09-20-aux-aws-resources-design.md
+# in a local checkout; the spec itself is not committed). All default off.
+# With both PROVISION_EC2 and PROVISION_S3 set, the agent may also give its
+# own EC2 instances an IAM role (crux-app-* only, capped by a
+# crux-app-boundary permissions boundary the agent cannot alter or remove).
+# AUX_RESOURCE_PROFILE names the AWS CLI profile for the isolated account.
+# provision-aux-aws-resources.sh writes AUX_RESOURCE_ACCOUNT_ID and
+# AUX_RESOURCE_ROLE_ARN below this block once it has run.
+PROVISION_POSTGRES=
+PROVISION_S3=
+PROVISION_DNS=
+PROVISION_EC2=
+PROVISION_CLOUDFRONT=
+PROVISION_ACM=
+AUX_RESOURCE_PROFILE=
+
 # EC2 instance and disk size. ROOT_IOPS and ROOT_THROUGHPUT default to 6000 and 250.
 INSTANCE_TYPE=t3.2xlarge
 ROOT_DISK_GB=80

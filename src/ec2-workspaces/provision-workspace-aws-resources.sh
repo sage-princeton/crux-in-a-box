@@ -114,6 +114,8 @@ CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
 CLAUDE_ACP_VERSION="${CFG[CLAUDE_ACP_VERSION]:-}"
 TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]:-}"
 TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]:-}"
+AUX_RESOURCE_ACCOUNT_ID="${CFG[AUX_RESOURCE_ACCOUNT_ID]:-}"
+AUX_RESOURCE_ROLE_ARN="${CFG[AUX_RESOURCE_ROLE_ARN]:-}"
 
 # Only validated, selected-platform values cross the remote shell boundary.
 if [ "$AGENT_PLATFORM" = claude ]; then
@@ -176,6 +178,18 @@ aws_ sts get-caller-identity >/dev/null 2>&1 \
   || die "Not authenticated with $CRED_DESC. $AUTH_HINT"
 ACCOUNT_ID="$(aws_ sts get-caller-identity --query Account --output text)"
 ok "Authenticated to account $ACCOUNT_ID in $REGION using $CRED_DESC"
+
+# ====== PER-WORKSPACE IAM (opt-in via provision-aux-aws-resources.sh) ======
+# If provision-aux-aws-resources.sh has run for this slug, it created a
+# per-workspace instance profile scoped to just this run's aux-resource
+# access. Runs that never opted in keep using the shared profile below.
+RUN_ROLE_NAME="crux-run-$SLUG"
+if aws_iam_ get-instance-profile --instance-profile-name "$RUN_ROLE_NAME" >/dev/null 2>&1; then
+  RUN_IAM_PROFILE="$RUN_ROLE_NAME"
+  ok "Per-workspace instance profile $RUN_ROLE_NAME exists — using it (aux AWS resources enabled)"
+else
+  RUN_IAM_PROFILE="$SYSTEM_IAM_PROFILE"
+fi
 
 # ====== ELASTIC IP OVERRIDE ======
 # Resolve the override address to its allocation id up front, and fail fast
@@ -286,6 +300,11 @@ HARNESS_DIR="$SCRIPT_DIR/../../run-harness"
   || die "run-harness/workspace is missing from the repository checkout."
 
 if [ "$DRY_RUN" = 1 ]; then
+if [ "$RUN_IAM_PROFILE" = "$SYSTEM_IAM_PROFILE" ]; then
+    PROFILE_DESC="shared; read-only on $SYSTEM_SSM_PARAM (must exist: --put-system-secrets creates it)"
+  else
+    PROFILE_DESC="per-workspace (aux AWS resources enabled)"
+  fi
   if [ "$USE_ELASTIC_IP" != true ]; then
     EIP_PLAN_LINE="  elastic ip        disabled (USE_ELASTIC_IP=false) — uses the instance's ephemeral public IP"
   elif [ -n "$ELASTIC_IP_ADDRESS" ]; then
@@ -296,8 +315,7 @@ if [ "$DRY_RUN" = 1 ]; then
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
-  instance profile  $SYSTEM_IAM_PROFILE      shared; read-only on $SYSTEM_SSM_PARAM
-                                             (must exist: --put-system-secrets creates it)
+  instance profile  $RUN_IAM_PROFILE      $PROFILE_DESC
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
@@ -371,10 +389,6 @@ RUN_SG_ID="$(aws_ ec2 describe-security-groups \
   || die "$RUN_SG does not exist. Run src/ec2-control/make-control-box.sh first: it creates both SGs, and crux-control-sg's :2026 rule references this one."
 ok "$RUN_SG_ID"
 
-# No per-box IAM: the instance boots with the shared crux-system-profile
-# (verified in preflight), whose only privilege is reading /crux/system/env.
-# Per-run secrets never touch AWS — they are scp'd below and deleted on-box.
-
 # ====== AMI ======
 info "Ubuntu 24.04 AMI"
 AMI_ID="$(aws_ ssm get-parameters \
@@ -400,7 +414,7 @@ else
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
     --security-group-ids "$RUN_SG_ID" --subnet-id "$SUBNET_ID" \
     --associate-public-ip-address \
-    --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
+    --iam-instance-profile "Name=$RUN_IAM_PROFILE" \
     --metadata-options "HttpTokens=required" \
     --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT},\"DeleteOnTermination\":true}}]" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
@@ -411,6 +425,32 @@ fi
 info "Waiting for 'running'"
 aws_ ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 ok "Running"
+
+# ====== INSTANCE PROFILE FIXUP ======
+# A fresh launch already got $RUN_IAM_PROFILE via --iam-instance-profile
+# above, so this is a no-op there. A reused/restarted instance keeps
+# whatever profile it originally launched with, so this fixes it up when
+# enabling (or disabling) aux resources and re-running against an existing
+# box. Runs only after the instance is confirmed running: EC2 rejects
+# instance-profile changes on a pending instance.
+CURRENT_PROFILE_ARN="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+  --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text 2>/dev/null || true)"
+if [[ -z "$CURRENT_PROFILE_ARN" || "$CURRENT_PROFILE_ARN" == "None" || "$CURRENT_PROFILE_ARN" != */"$RUN_IAM_PROFILE" ]]; then
+  info "Instance profile mismatch (current: ${CURRENT_PROFILE_ARN:-none}, want: $RUN_IAM_PROFILE) — fixing up"
+  CURRENT_ASSOC_ID="$(aws_ ec2 describe-iam-instance-profile-associations \
+    --filters "Name=instance-id,Values=$INSTANCE_ID" "Name=state,Values=associating,associated" \
+    --query 'IamInstanceProfileAssociations[0].AssociationId' --output text 2>/dev/null || true)"
+  if [[ -n "$CURRENT_ASSOC_ID" && "$CURRENT_ASSOC_ID" != "None" ]]; then
+    aws_ ec2 replace-iam-instance-profile-association --association-id "$CURRENT_ASSOC_ID" \
+      --iam-instance-profile "Name=$RUN_IAM_PROFILE" >/dev/null
+  else
+    aws_ ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" \
+      --iam-instance-profile "Name=$RUN_IAM_PROFILE" >/dev/null
+  fi
+  ok "Associated $RUN_IAM_PROFILE"
+else
+  ok "Instance profile already $RUN_IAM_PROFILE"
+fi
 
 # ====== ELASTIC IP ======
 # Allocate a stable public IP for the SSH alias, unless an existing one was
@@ -570,6 +610,8 @@ ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   CONTROL_MCP_BASE='$CONTROL_MCP_BASE' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
+  AUX_RESOURCE_ACCOUNT_ID='$AUX_RESOURCE_ACCOUNT_ID' \
+  AUX_RESOURCE_ROLE_ARN='$AUX_RESOURCE_ROLE_ARN' \
   /tmp/configure-run.sh"
 
 cat <<DONE
