@@ -239,6 +239,21 @@ Teardown sweeps ACM, CloudFront, and Route53 Domains in `us-east-1`
 specifically for this reason (Route53 Domains has no other-region endpoint
 at all), not whatever region the rest of the sweep uses.
 
+When both `PROVISION_EC2` and `PROVISION_S3` are set, the agent may also give
+its own EC2 instances an IAM role — e.g. so Payload's S3 storage adapter can
+use instance credentials instead of static keys. `AmazonEC2FullAccess` alone
+doesn't include `iam:PassRole`, and granting that plus role creation
+unconditionally would let the agent attach an admin role to an instance and
+take over the account. Instead, every role the agent creates must be named
+`crux-app-*` and is permanently capped by a `crux-app-boundary` permissions
+boundary — a policy the operator owns; the agent's own IAM grant deliberately
+excludes `iam:AttachRolePolicy`, `iam:CreatePolicy*`, and
+`iam:DeleteRolePermissionsBoundary`, so it can create and configure
+`crux-app-*` roles but never loosen what they're capped to, and can only pass
+them to EC2. Teardown removes every `crux-app-*` role and instance profile,
+and the `crux-app-boundary` policy itself, before deleting the two
+feature-level IAM roles.
+
 Whenever at least one flag is set, the agent also gets read-only AWS Cost
 Explorer access (`ce:GetCostAndUsage`, `GetCostForecast`, `GetUsageForecast`,
 `GetDimensionValues`, `GetTags`) in the isolated account — so it can see what
