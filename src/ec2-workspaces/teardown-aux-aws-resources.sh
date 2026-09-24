@@ -6,8 +6,8 @@ set -euo pipefail
 # non-default Route53 hosted zones, CloudFront distributions, and ACM
 # certificates. Registered domain names are the one exception: Route53
 # Domains has no delete API, so those are left registered with auto-renew
-# disabled instead. The account is single-tenant at a time, so 
-# "everything found" and "everything this run created" are the same set. 
+# disabled instead. The account is single-tenant at a time, so
+# "everything found" and "everything this run created" are the same set.
 # No-ops cleanly if this slug never had aux resources provisioned.
 #
 # Usage: ./teardown-aux-aws-resources.sh [CONFIG_FILE] [--yes]
