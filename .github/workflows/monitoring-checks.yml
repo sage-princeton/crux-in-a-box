@@ -1,0 +1,55 @@
+name: Monitoring checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitoring-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  monitoring:
+    name: Monitoring behavior and image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r src/monitoring/requirements.txt 'pytest>=8,<9' 'moto[dynamodb,s3,ec2,ssm]>=5,<6'
+      - name: Behavior and real read-only SSH boundary
+        env:
+          PYTHONPATH: src/monitoring
+        run: pytest -q src/monitoring/tests
+      - name: Build EC2 reviewer image
+        run: |
+          docker build --platform linux/amd64 -t crux-monitoring:check src/monitoring
+          docker run --rm --read-only --network none crux-monitoring:check python worker.py --help
+  terraform:
+    name: Monitoring Terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: src/monitoring/terraform
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: '1.14.8'
+          terraform_wrapper: false
+      - run: terraform fmt -check
+      - run: terraform init -backend=false -lockfile=readonly
+      - run: terraform validate
+      - run: terraform test

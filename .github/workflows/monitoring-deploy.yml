@@ -1,0 +1,18 @@
+name: Monitoring deployment stub
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prerequisites:
+    name: Deployment prerequisites (AE-232, AE-233)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 1
+    steps:
+      - name: Refuse deployment without durable state and scoped OIDC
+        run: |
+          echo '::error::Deployment is not configured. Complete AE-232 (Princeton remote state) and AE-233 (OIDC, approval environment, immutable ECR build and reviewed Terraform apply).'
+          exit 1
