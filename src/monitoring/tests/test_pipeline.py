@@ -1,3 +1,4 @@
+import hashlib
 import json
 import time
 
@@ -6,7 +7,6 @@ import httpx
 import pytest
 from moto import mock_aws
 
-from review import digest
 from worker import Runtime
 
 
@@ -67,7 +67,8 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
         assert len(manifest["artifacts"]) == 5
         for artifact in manifest["artifacts"]:
             value = runtime.read_json(artifact["key"])
-            assert artifact["sha256"] == digest(value)
+            stored = s3.get_object(Bucket="monitoring-test", Key=artifact["key"], VersionId=artifact["version_id"])["Body"].read()
+            assert artifact["sha256"] == hashlib.sha256(stored).hexdigest()
             assert artifact["version_id"]
             assert secrets["MONITORING_OPENROUTER_API_KEY"] not in json.dumps(value)
         runtime.http.close()
