@@ -5,7 +5,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends openssh-server 
     && mkdir -p /run/sshd /srv/crux-inspection/exports /etc/ssh/authorized_keys \
     && printf 'fixture evidence\n' > /srv/crux-inspection/exports/activity.txt \
     && ln -s /etc/passwd /srv/crux-inspection/exports/escape \
-    && chmod 755 /srv/crux-inspection /srv/crux-inspection/exports \
+    && chmod 755 /srv/crux-inspection \
+    && chmod 777 /srv/crux-inspection/exports \
+    && chmod 666 /srv/crux-inspection/exports/activity.txt \
     && printf '%s\n' 'Match User crux-inspect' '  ChrootDirectory /srv/crux-inspection' \
        '  ForceCommand internal-sftp -R' '  DisableForwarding yes' '  PermitTTY no' \
        '  PermitUserRC no' '  PasswordAuthentication no' '  AuthenticationMethods publickey' \

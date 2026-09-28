@@ -54,6 +54,8 @@ def test_real_sftp_read_succeeds_and_symlinks_are_rejected(server):
 
 
 def test_server_refuses_mutations_shell_and_forwarding(server):
+    # The fixture's exports are writable so denial proves sshd's -R boundary,
+    # independently of the stricter filesystem permissions required in production.
     config, private = server
     client = paramiko.SSHClient()
     # This test attacks server permissions; the production collector tests pinning.
