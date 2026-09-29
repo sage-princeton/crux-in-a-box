@@ -131,6 +131,19 @@ RUN_SG_ID="$(aws_ ec2 describe-security-groups --filters "Name=group-name,Values
   || die "crux-run-sg does not exist. Run ../ec2-control/make-control-box.sh first: it creates both security groups."
 ok "Key pair, /crux/system/env, crux-system-profile and crux-run-sg all present"
 
+# If any PROVISION_* flag is on in the base config, aux resources will be
+# provisioned before the instance launches (see step 4 below) — but that's
+# long after the workspace is minted. Validate AUX_RESOURCE_PROFILE here too,
+# so a bad/expired profile costs nothing rather than a stranded workspace.
+if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1$' "$BASE_CONFIG"; then
+  AUX_PROFILE_CFG="$(cfg AUX_RESOURCE_PROFILE)"
+  [ -n "$AUX_PROFILE_CFG" ] \
+    || die "A PROVISION_* flag is set in $(basename "$BASE_CONFIG") but AUX_RESOURCE_PROFILE is not. It must name the AWS CLI profile for the isolated account these resources are granted in."
+  aws --profile "$AUX_PROFILE_CFG" --region "$REGION" sts get-caller-identity >/dev/null 2>&1 \
+    || die "Not authenticated to the isolated account with profile '$AUX_PROFILE_CFG' (AUX_RESOURCE_PROFILE in $(basename "$BASE_CONFIG")). Run: aws sso login --sso-session <session>"
+  ok "AUX_RESOURCE_PROFILE '$AUX_PROFILE_CFG' authenticated"
+fi
+
 # ELASTIC_IP_ADDRESS is an optional key in BASE_CONFIG (not a flag here — see
 # provision-workspace-aws-resources.sh, the sole place it's actually used).
 # Validated early so a stale address fails before the workspace is minted.
@@ -161,7 +174,10 @@ if [ "$DRY_RUN" = 1 ]; then
   2. write $CONFIG           from $(basename "$BASE_CONFIG")
      platform $AGENT_PLATFORM, model $MODEL, effort $EFFORT, dialling ${MCP_BASE:-<private default>}
   3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS") + the minted id/token
-  4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
+  4. if any PROVISION_* flag is set in $(basename "$BASE_CONFIG"), run
+     provision-aux-aws-resources.sh to grant scoped isolated-account access
+     before the instance launches
+  5. run provision-workspace-aws-resources.sh, which provisions and verifies the box
      and stages run-harness/ at /srv/crux-run/run-harness
 $(if [ -n "$ELASTIC_IP_ADDRESS_CFG" ]; then printf '  elastic ip        %s (override, reused as-is; not released on teardown)\n' "$ELASTIC_IP_ADDRESS_CFG"; else printf '  elastic ip        allocated fresh, tagged Name=%s\n' "$SLUG"; fi)
 
@@ -215,7 +231,14 @@ jq -n --arg key "$API_KEY_NAME" --arg k "$AGENT_API_KEY" --arg id "$WS_ID" --arg
 chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
-# ====== 4. PROVISION ======
+# ====== 4. AUX AWS RESOURCES (opt-in) ======
+if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1$' "$CONFIG"; then
+  info "Aux AWS resource flag(s) set — granting access before instance launch"
+  "$SCRIPT_DIR/provision-aux-aws-resources.sh" "$CONFIG"
+  printf '\n'
+fi
+
+# ====== 5. PROVISION ======
 info "Handing off to provision-workspace-aws-resources.sh"
 printf '\n'
 "$SCRIPT_DIR/provision-workspace-aws-resources.sh" --secrets "$SECRETS" "$CONFIG"
