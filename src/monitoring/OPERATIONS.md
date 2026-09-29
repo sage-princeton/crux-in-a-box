@@ -112,11 +112,14 @@ remote state, OIDC, and an approval environment are configured.
    do not overwrite `/crux/system/env` or expose workload credentials to reviewers.
    Terraform references the existing parameter by ARN; it never owns the secret
    value. Importing shared values into state is intentionally unnecessary.
-3. Supply `MONITORING_LANGFUSE_*` credentials only if using Langfuse. Current public
-   docs establish project-scoped keys, not a generally available read-only key
-   creation flow. Request a dedicated credential; if the deployment supports
-   scoped keys or a read-only proxy, use that endpoint/key. The code only performs
-   GETs, but an ordinary project API key is **not** described as read-only.
+3. Supply `MONITORING_LANGFUSE_*` credentials only if using Langfuse, in the
+   dedicated monitoring secret. The accepted initial approach uses a project
+   read/write key with bounded GET-only worker code. This is read-only behavior,
+   not enforced read-only access: a compromised worker could use the key to write.
+   Prefer a separately revocable key; reusing a key couples revocation to its other
+   consumers. Do not grant the reviewer access to the shared system secret.
+   **TODO: create a way to read-only access LangFuse.** See the
+   [decision and alternatives](../../docs/research/ae-211-langfuse-access-options.md).
 4. `terraform init`, `terraform plan -out=monitoring.tfplan`, then inspect the plan:
    only new monitoring resources and its registry object should change. First
    apply with `enabled=false`, `image_digest=""` to create the ECR repository and
