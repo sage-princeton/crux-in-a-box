@@ -25,8 +25,10 @@ grading material, and recursive filesystem scans are not permitted inputs.
 Langfuse content must likewise be approved for disclosure to the reviewer provider.
 
 Each attempt stores `evidence.json`, `prompt.json`, the model's `response.json` when
-available, `model.json`, `report.json`, and
+available, `model.json`, `report.json`, a human-readable `report.md`, and
 `manifest.json` under an immutable attempt prefix in the private versioned S3 bucket.
+The Markdown report summarizes findings, possible explanations, and coverage gaps;
+it explicitly distinguishes a failed review from a review with no findings.
 The manifest records object version IDs and SHA-256 digests. The prompt is the exact
 system instruction; evidence is the exact user payload. Intermediate artifacts
 survive later review failures. Retention is 90 days. Slack receives all findings

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from worker import slack_message
+from worker import markdown_report, slack_message
 
 
 def report(**changes):
@@ -57,3 +57,13 @@ def test_review_timestamp_uses_eastern_daylight_and_standard_time():
         end = int(datetime.fromisoformat(utc).timestamp())
         message = slack_message(report(), f"REVIEW#i-0123456789abcdef0#{end}", "https://example.com")
         assert all(block["text"]["text"].endswith(expected) for block in message["blocks"])
+
+
+def test_markdown_failure_summary_is_honest_and_report_markup_is_literal():
+    text = markdown_report(report(summary="Review unavailable", review_status="failed",
+                                  coverage_gaps=["HTTP 403", "<script> [click](https://example.invalid)"]), "fixture")
+    assert "no safety verdict" in text
+    assert "Findings could not be assessed" in text
+    assert "No findings" not in text
+    assert "HTTP 403" in text
+    assert "<script>" not in text and "[click]" not in text

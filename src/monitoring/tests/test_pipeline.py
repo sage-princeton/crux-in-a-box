@@ -65,11 +65,15 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
         runtime.review(instance, end)
         assert counts == {"model": 1, "slack": 2}
         manifest = runtime.read_json(pending["artifact_prefix"] + "/manifest.json")
-        assert len(manifest["artifacts"]) == 5
+        assert len(manifest["artifacts"]) == 6
         for artifact in manifest["artifacts"]:
-            value = runtime.read_json(artifact["key"])
-            stored = s3.get_object(Bucket="monitoring-test", Key=artifact["key"], VersionId=artifact["version_id"])["Body"].read()
+            obj = s3.get_object(Bucket="monitoring-test", Key=artifact["key"], VersionId=artifact["version_id"])
+            stored = obj["Body"].read()
             assert artifact["sha256"] == hashlib.sha256(stored).hexdigest()
             assert artifact["version_id"]
-            assert secrets["MONITORING_OPENROUTER_API_KEY"] not in json.dumps(value)
+            assert secrets["MONITORING_OPENROUTER_API_KEY"] not in stored.decode()
+            if artifact["key"].endswith("report.md"):
+                assert obj["ContentType"] == "text/markdown; charset=utf-8"
+                assert stored.decode().startswith("# Monitoring review\n")
+                assert "fixture finding" in stored.decode() and "Possible explanation: a test" in stored.decode()
         runtime.http.close()

@@ -1,6 +1,8 @@
 """AWS Batch discovery and per-instance reviews; notifications originate here."""
 
 import argparse
+import hashlib
+import html
 import json
 import math
 import os
@@ -23,6 +25,36 @@ from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
 
 
 LEASE_SECONDS = 1200  # Longer than Batch's 900-second hard attempt timeout.
+
+
+def markdown_report(report, key):
+    def prose(value):
+        text = html.escape(" ".join(value.split()), quote=False)
+        return re.sub(r"([\\`*_{}\[\]#!|])", r"\\\1", text)
+
+    failed = report.get("review_status") == "failed" or (
+        "review_status" not in report and report["summary"] == "Review unavailable")
+    lines = ["# Monitoring review", ""]
+    parts = key.split("#")
+    if len(parts) == 3 and parts[0] == "REVIEW":
+        end = datetime.fromtimestamp(int(parts[2]), ZoneInfo("America/New_York"))
+        lines.extend([f"Instance: {prose(parts[1])}", "",
+                      "Review window ended: " + end.strftime("%Y-%m-%d %H:%M ET"), ""])
+    if failed:
+        lines.extend(["**Review unavailable — no safety verdict.**", ""])
+    lines.extend([prose(report["summary"]), "", "## Findings", ""])
+    for i, finding in enumerate(report["findings"], 1):
+        lines.append(f"{i}. **{prose(finding['category'])}:** {prose(finding['evidence'])} "
+                     f"({finding['severity'].capitalize()} severity, {finding['confidence']} confidence)")
+        lines.extend([f"   Possible explanation: {prose(finding['benign_explanation'])}",
+                      "   Sources: " + ", ".join(prose(s) for s in finding["source_ids"]), ""])
+    if not report["findings"]:
+        lines.extend(["Findings could not be assessed." if failed else "No findings in the available evidence.", ""])
+    lines.extend(["## Coverage gaps", ""])
+    lines.extend("- " + prose(gap) for gap in report["coverage_gaps"])
+    if not report["coverage_gaps"]:
+        lines.append("None reported; this does not establish that all activity was observed.")
+    return "\n".join(lines) + "\n"
 
 
 def slack_message(report, key, link):
@@ -173,10 +205,12 @@ class Runtime:
             raise ValueError("Stored object exceeds size limit")
         return json.loads(data)
 
-    def put(self, key, value):
-        response = self.s3.put_object(Bucket=self.bucket, Key=key, Body=encoded(value),
-                                      ContentType="application/json", ServerSideEncryption="AES256")
-        return {"key": key, "version_id": response.get("VersionId"), "sha256": digest(value)}
+    def put(self, key, value, *, markdown=False):
+        body = value.encode("utf-8") if markdown else encoded(value)
+        content_type = "text/markdown; charset=utf-8" if markdown else "application/json"
+        response = self.s3.put_object(Bucket=self.bucket, Key=key, Body=body,
+                                      ContentType=content_type, ServerSideEncryption="AES256")
+        return {"key": key, "version_id": response.get("VersionId"), "sha256": hashlib.sha256(body).hexdigest()}
 
     def secrets(self):
         result = self.ssm.get_parameter(Name=os.environ["MONITORING_SECRETS_PARAMETER"], WithDecryption=True)
@@ -338,6 +372,7 @@ class Runtime:
                 report = scrub(report, secrets.values())
                 artifacts.append(self.put(prefix + "/model.json", model_info))
                 artifacts.append(self.put(prefix + "/report.json", report))
+                artifacts.append(self.put(prefix + "/report.md", markdown_report(report, key), markdown=True))
                 self.put(prefix + "/manifest.json", {"schema_version": 1, "review_id": key,
                     "instance_id": instance_id, "created_at": iso(now), "artifacts": artifacts,
                     "deployment": os.environ.get("MONITORING_REVISION", "unknown"),
