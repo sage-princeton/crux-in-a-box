@@ -7,8 +7,9 @@ import os
 import re
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import boto3
 import httpx
@@ -24,7 +25,7 @@ from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
 LEASE_SECONDS = 1200  # Longer than Batch's 900-second hard attempt timeout.
 
 
-def slack_message(report, key, link, display_name=None):
+def slack_message(report, key, link):
     def short(value, limit):
         value = " ".join(value.split())
         return value if len(value) <= limit else value[:limit - 1] + "…"
@@ -33,44 +34,35 @@ def slack_message(report, key, link, display_name=None):
     # Old pending reports predate the explicit outcome field.
     failed = report.get("review_status") == "failed" or (
         "review_status" not in report and report["summary"] == "Review unavailable")
-    if failed:
-        outcome = "Review unavailable — no safety verdict"
-    elif findings:
-        outcome = f"{len(findings)} finding{'s' if len(findings) != 1 else ''} to review"
-    else:
-        outcome = "No findings in the available evidence"
     parts = key.split("#")
-    target = parts[1] if len(parts) == 3 and parts[0] == "REVIEW" else key
-    identity = short(display_name or target, 100)
-    context = identity
-    if len(parts) == 3 and parts[0] == "REVIEW":
-        end = int(parts[2])
-        start_text = datetime.fromtimestamp(end - 1800, timezone.utc).strftime("%b %d, %Y %H:%M")
-        end_text = datetime.fromtimestamp(end, timezone.utc).strftime("%b %d, %Y %H:%M UTC")
-        context += f"\nReview window: {start_text} – {end_text}"
-        if display_name:
-            context += f"\nInstance: {target}"
-    sections = [context, short(report["summary"], 600)]
-    for i, finding in enumerate(findings, 1):
-        sections.append(f"{i}. {short(finding['category'], 100)}\n"
-                        f"{finding['severity'].capitalize()} severity · {finding['confidence']} confidence\n"
-                        f"{short(finding['evidence'], 450)}\n"
-                        f"Possible explanation: {short(finding['benign_explanation'], 250)}")
-    if gaps:
-        sections.append(f"Limited visibility — {len(gaps)} coverage gap{'s' if len(gaps) != 1 else ''}. "
-                        "These limit what this review can conclude.")
-        # A failed review's reason must remain visible even after many source gaps.
-        shown = sorted(gaps, key=lambda gap: not gap.startswith("Reviewer failed (")) if failed else gaps
-        sections.append("\n".join("• " + short(gap, 300) for gap in shown[:5]))
-        if len(gaps) > 5:
-            sections.append(f"{len(gaps) - 5} more coverage gaps in the full report.")
+    # Findings lack verified event times; use the reviewed window's end, not delivery time.
+    stamp = (datetime.fromtimestamp(int(parts[2]), ZoneInfo("America/New_York"))
+             .strftime("%Y-%m-%d %H:%M ET") if len(parts) == 3 and parts[0] == "REVIEW"
+             else "Review time unavailable")
+    lines = []
+    if failed:
+        lines.append("Review unavailable: No safety verdict could be produced")
+    elif not findings:
+        lines.append("No findings in the available evidence")
+    for finding in findings:
+        lines.append(f"{short(finding['category'], 100)}: {short(finding['evidence'], 450)} "
+                     f"({finding['severity'].capitalize()} severity, {finding['confidence']} confidence)")
+    lines.extend("Coverage gap: " + short(gap, 300) for gap in gaps)
+    lines = [f"{i}. {line}, {stamp}" for i, line in enumerate(lines, 1)]
+    # Group lines to stay within Slack's block limits without dropping any findings or gaps.
+    chunks = []
+    for line in lines:
+        if chunks and len(chunks[-1]) + len(line) + 1 <= 3000:
+            chunks[-1] += "\n" + line
+        else:
+            chunks.append(line)
     # Model-authored prose is literal text: it cannot create Slack mentions or links.
-    blocks = [{"type": "header", "text": {"type": "plain_text", "text": "CRUX monitoring · " + outcome}}]
-    blocks.extend({"type": "section", "text": {"type": "plain_text", "text": text}}
-                  for text in sections if text)
+    blocks = [{"type": "section", "text": {"type": "plain_text", "text": chunk}} for chunk in chunks]
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text":
-        f"<{link}|Open full report and evidence> · AWS login required", "verbatim": True}})
-    return {"text": "CRUX monitoring · " + outcome, "blocks": blocks,
+        f"{len(lines) + 1}. <{link}|Full report and evidence> (AWS login required), {stamp}", "verbatim": True}})
+    outcome = "Review unavailable — no safety verdict" if failed else (
+        f"{len(findings)} findings to review" if findings else "No findings in the available evidence")
+    return {"text": f"1. {outcome}, {stamp}", "blocks": blocks,
             "unfurl_links": False, "unfurl_media": False}
 
 
@@ -289,9 +281,7 @@ class Runtime:
         if not webhook.startswith("https://hooks.slack.com/services/"):
             raise ValueError("Only Slack incoming webhooks are supported")
         link = f"https://s3.console.aws.amazon.com/s3/buckets/{self.bucket}?prefix={quote(prefix + '/', safe='')}&showversions=true"
-        parts = key.split("#")
-        target = self.config.get("targets", {}).get(parts[1], {}) if len(parts) == 3 else {}
-        payload = slack_message(scrub(report, secrets.values()), key, link, target.get("display_name"))
+        payload = slack_message(scrub(report, secrets.values()), key, link)
         response = self.http.post(webhook, json=payload)
         response.raise_for_status()
         if response.text.strip() != "ok":

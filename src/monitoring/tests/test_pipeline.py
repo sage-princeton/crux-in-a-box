@@ -45,7 +45,7 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
                     "finish_reason": "stop", "message": {"content": json.dumps(report)}}]})
             assert request.url.host == "hooks.slack.com"
             counts["slack"] += 1
-            assert "Open full report and evidence" in request.content.decode()
+            assert "Full report and evidence" in request.content.decode()
             assert "fixture finding" in request.content.decode()
             assert secrets["MONITORING_OPENROUTER_API_KEY"] not in request.content.decode()
             return httpx.Response(503 if counts["slack"] == 1 else 200, text="busy" if counts["slack"] == 1 else "ok")

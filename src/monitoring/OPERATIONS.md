@@ -30,11 +30,12 @@ available, `model.json`, `report.json`, and
 The manifest records object version IDs and SHA-256 digests. The prompt is the exact
 system instruction; evidence is the exact user payload. Intermediate artifacts
 survive later review failures. Retention is 90 days. Slack receives all findings
-without a severity threshold, with a short summary, numbered findings, possible
-benign explanations, coverage gaps, and a labeled AWS-console link to the notes.
+without a severity threshold, as a numbered list of single-line findings with
+severity/confidence, coverage gaps, and a labeled AWS-console link to the notes.
+Each line ends with the review window's end in Eastern Time (including daylight
+saving changes), not an asserted event time. Full explanations remain in S3.
 Model-authored text is redacted and rendered as literal text, never active mentions
 or links. Failed inference is labeled “Review unavailable — no safety verdict.”
-Set a target's optional `display_name` to identify it clearly in Slack.
 The link requires the reader's S3 permissions;
 it is not a public object or a bearer URL. Duplicate windows/alerts are intentional
 for this first noisy iteration. Slack acknowledgement and DynamoDB cannot form one
