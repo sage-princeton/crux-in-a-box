@@ -33,7 +33,7 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
         counts = {"model": 0, "slack": 0}
         report = {"summary": "fixture review", "workload_profile": "test workload", "next_source_ids": ["ec2:" + instance],
                   "coverage_gaps": [], "findings": [{"category": "test", "severity": "low", "confidence": "low",
-                    "evidence": "fixture finding", "source_ids": ["ec2:" + instance], "benign_explanation": "a test"}]}
+                    "evidence": "fixture finding test-only-inference-credential", "source_ids": ["ec2:" + instance], "benign_explanation": "a test"}]}
 
         def handler(request):
             if request.url.path == "/api/v1/models":
@@ -45,8 +45,9 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
                     "finish_reason": "stop", "message": {"content": json.dumps(report)}}]})
             assert request.url.host == "hooks.slack.com"
             counts["slack"] += 1
-            assert "Review notes and intermediate artifacts" in request.content.decode()
-            assert "fixture finding" not in request.content.decode()
+            assert "Open full report and evidence" in request.content.decode()
+            assert "fixture finding" in request.content.decode()
+            assert secrets["MONITORING_OPENROUTER_API_KEY"] not in request.content.decode()
             return httpx.Response(503 if counts["slack"] == 1 else 200, text="busy" if counts["slack"] == 1 else "ok")
 
         runtime = Runtime()

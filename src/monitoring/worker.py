@@ -7,6 +7,7 @@ import os
 import re
 import time
 import uuid
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 import boto3
@@ -21,6 +22,56 @@ from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
 
 
 LEASE_SECONDS = 1200  # Longer than Batch's 900-second hard attempt timeout.
+
+
+def slack_message(report, key, link, display_name=None):
+    def short(value, limit):
+        value = " ".join(value.split())
+        return value if len(value) <= limit else value[:limit - 1] + "…"
+
+    findings, gaps = report["findings"], report["coverage_gaps"]
+    # Old pending reports predate the explicit outcome field.
+    failed = report.get("review_status") == "failed" or (
+        "review_status" not in report and report["summary"] == "Review unavailable")
+    if failed:
+        outcome = "Review unavailable — no safety verdict"
+    elif findings:
+        outcome = f"{len(findings)} finding{'s' if len(findings) != 1 else ''} to review"
+    else:
+        outcome = "No findings in the available evidence"
+    parts = key.split("#")
+    target = parts[1] if len(parts) == 3 and parts[0] == "REVIEW" else key
+    identity = short(display_name or target, 100)
+    context = identity
+    if len(parts) == 3 and parts[0] == "REVIEW":
+        end = int(parts[2])
+        start_text = datetime.fromtimestamp(end - 1800, timezone.utc).strftime("%b %d, %Y %H:%M")
+        end_text = datetime.fromtimestamp(end, timezone.utc).strftime("%b %d, %Y %H:%M UTC")
+        context += f"\nReview window: {start_text} – {end_text}"
+        if display_name:
+            context += f"\nInstance: {target}"
+    sections = [context, short(report["summary"], 600)]
+    for i, finding in enumerate(findings, 1):
+        sections.append(f"{i}. {short(finding['category'], 100)}\n"
+                        f"{finding['severity'].capitalize()} severity · {finding['confidence']} confidence\n"
+                        f"{short(finding['evidence'], 450)}\n"
+                        f"Possible explanation: {short(finding['benign_explanation'], 250)}")
+    if gaps:
+        sections.append(f"Limited visibility — {len(gaps)} coverage gap{'s' if len(gaps) != 1 else ''}. "
+                        "These limit what this review can conclude.")
+        # A failed review's reason must remain visible even after many source gaps.
+        shown = sorted(gaps, key=lambda gap: not gap.startswith("Reviewer failed (")) if failed else gaps
+        sections.append("\n".join("• " + short(gap, 300) for gap in shown[:5]))
+        if len(gaps) > 5:
+            sections.append(f"{len(gaps) - 5} more coverage gaps in the full report.")
+    # Model-authored prose is literal text: it cannot create Slack mentions or links.
+    blocks = [{"type": "header", "text": {"type": "plain_text", "text": "CRUX monitoring · " + outcome}}]
+    blocks.extend({"type": "section", "text": {"type": "plain_text", "text": text}}
+                  for text in sections if text)
+    blocks.append({"type": "section", "text": {"type": "mrkdwn", "text":
+        f"<{link}|Open full report and evidence> · AWS login required", "verbatim": True}})
+    return {"text": "CRUX monitoring · " + outcome, "blocks": blocks,
+            "unfurl_links": False, "unfurl_media": False}
 
 
 def conditional_failure(error):
@@ -238,14 +289,10 @@ class Runtime:
         if not webhook.startswith("https://hooks.slack.com/services/"):
             raise ValueError("Only Slack incoming webhooks are supported")
         link = f"https://s3.console.aws.amazon.com/s3/buckets/{self.bucket}?prefix={quote(prefix + '/', safe='')}&showversions=true"
-        findings = report["findings"]
-        # No model-authored text or subject excerpts go to Slack. Each finding has
-        # an individually addressable number in the durable report.
-        lines = [f"CRUX monitoring · {key}", f"{len(findings)} findings; {len(report['coverage_gaps'])} coverage gaps."]
-        lines.extend(f"Finding {i}: severity={f['severity']}, confidence={f['confidence']}"
-                     for i, f in enumerate(findings, 1))
-        lines.append("Review notes and intermediate artifacts (AWS login required): " + link)
-        response = self.http.post(webhook, json={"text": "\n".join(lines), "unfurl_links": False, "unfurl_media": False})
+        parts = key.split("#")
+        target = self.config.get("targets", {}).get(parts[1], {}) if len(parts) == 3 else {}
+        payload = slack_message(scrub(report, secrets.values()), key, link, target.get("display_name"))
+        response = self.http.post(webhook, json=payload)
         response.raise_for_status()
         if response.text.strip() != "ok":
             raise CoverageError("Slack did not acknowledge delivery")
@@ -287,6 +334,7 @@ class Runtime:
                         artifacts.append(self.put(prefix + "/response.json", scrub(body, secrets.values())))
 
                     report, model_info = evaluate(self.http, model, secrets["MONITORING_OPENROUTER_API_KEY"], payload, record_response)
+                    report["review_status"] = "completed"
                     model_info["reserved_microusd"] = reserve
                     report["coverage_gaps"] = gaps + report["coverage_gaps"]
                 except Exception as error:
@@ -294,7 +342,7 @@ class Runtime:
                         self.state.table.update_item(Key={"pk": "HEALTH#reviewer"},
                             UpdateExpression="SET blocked=:blocked, reason=:reason",
                             ExpressionAttributeValues={":blocked": True, ":reason": failure_message(error)})
-                    report = {"summary": "Review unavailable", "workload_profile": previous.get("profile", ""),
+                    report = {"review_status": "failed", "summary": "Review unavailable", "workload_profile": previous.get("profile", ""),
                               "next_source_ids": [], "findings": [],
                               "coverage_gaps": gaps + ["Reviewer failed (" + failure_message(error) + "); no safety verdict"]}
                 report = scrub(report, secrets.values())
