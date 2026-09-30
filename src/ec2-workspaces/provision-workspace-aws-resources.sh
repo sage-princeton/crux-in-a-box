@@ -521,6 +521,7 @@ ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before lau
 # ====== INSTALL (software, bakeable) ======
 info "install-run.sh — software"
 scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
+scp -q "$SCRIPT_DIR/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
 ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
   AGENT_PLATFORM='$AGENT_PLATFORM' \
   ACP_GATEWAY_TARBALL_URL='$ACP_GATEWAY_TARBALL_URL' ACP_GATEWAY_SHA256='$ACP_GATEWAY_SHA256' \
@@ -572,6 +573,7 @@ ok "Copied (mode 600; configure-run.sh deletes it)"
 # ====== CONFIGURE (secrets, per-run) ======
 info "configure-run.sh — config and gateway"
 scp -q "$SCRIPT_DIR/configure-run.sh" "$SCRIPT_DIR/agent-config.sh" "$SLUG:/tmp/"
+scp -q "$SCRIPT_DIR/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
 if [ "$AGENT_PLATFORM" = claude ]; then
   scp -q "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" "$SLUG:/tmp/langfuse_hook.py"
 else

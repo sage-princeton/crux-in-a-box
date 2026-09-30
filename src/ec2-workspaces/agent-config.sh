@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
-# Shared preflight for both local entry points. Callers provide cfg KEY, warn and die.
-# An omitted AGENT_PLATFORM selects Codex.
+# Shared preflight for both local entry points. Callers provide cfg KEY and die.
+# An omitted AGENT_PLATFORM selects Codex. SCAFFOLD_MODULE names the box-side
+# module in scaffolds/ that installs and configures the platform's scaffold.
 load_agent_config() {
   AGENT_PLATFORM="$(cfg AGENT_PLATFORM)"
   AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
   case "$AGENT_PLATFORM" in
     codex)
       MODEL_KEY=CODEX_MODEL; EFFORT_KEY=CODEX_REASONING_EFFORT
-      API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=codex-acp
+      API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=codex-acp; SCAFFOLD_MODULE=acp
       PLATFORM_KEYS="CODEX_VERSION CODEX_ACP_VERSION TRACING_PLUGIN_VERSION TRACING_HOOK_TRUSTED_HASH"
       ;;
     claude)
       MODEL_KEY=CLAUDE_MODEL; EFFORT_KEY=CLAUDE_EFFORT
-      API_KEY_NAME=ANTHROPIC_API_KEY; ACP_COMMAND=claude-agent-acp
+      API_KEY_NAME=ANTHROPIC_API_KEY; ACP_COMMAND=claude-agent-acp; SCAFFOLD_MODULE=acp
       PLATFORM_KEYS="CLAUDE_VERSION CLAUDE_ACP_VERSION"
       ;;
     *) die "AGENT_PLATFORM must be codex|claude (got '$AGENT_PLATFORM')." ;;
@@ -29,7 +30,7 @@ load_agent_config() {
   EFFORT="$(cfg "$EFFORT_KEY")"
   local key value keys="$MODEL_KEY $EFFORT_KEY"
   if [ "${1:-}" != settings ]; then
-    keys="$keys ACP_GATEWAY_VERSION ACP_GATEWAY_TARBALL_URL ACP_GATEWAY_SHA256 $PLATFORM_KEYS"
+    keys="$keys ACP_GATEWAY_VERSION $PLATFORM_KEYS"
   fi
   for key in $keys; do
     value="$(cfg "$key")"
@@ -42,37 +43,11 @@ load_agent_config() {
     [[ "$value" =~ ^[a-zA-Z0-9._:/+@-]+(\[[a-zA-Z0-9]+\])?$ ]] \
       || die "$key contains unsupported characters."
   done
-  case "$EFFORT" in
-    none|low|medium|high|xhigh|max) ;;
-    *) die "$EFFORT_KEY must be none|low|medium|high|xhigh|max (got '$EFFORT')." ;;
-  esac
-
-  # Effort levels per supported model, recorded 2026-10-01. Neither harness
-  # rejects a level the model lacks: Codex sends model_reasoning_effort to the
-  # API as-is.
-  # - Codex: OpenAI's model docs (developers.openai.com/api/docs/models). The
-  #   pinned @openai/codex 0.154.0 catalog (`codex debug models --bundled`)
-  #   lists only gpt-6-astra; 0.160.0 lists all three, without gpt-6-luna's
-  #   `none`, and adds `ultra`, which OpenAI's docs don't list.
-  # - Claude: Anthropic's effort docs (platform.claude.com/docs/en/build-with-claude/effort);
-  #   check with GET /v1/models/{id} (capabilities.effort.<level>.supported).
-  # UPDATE THIS TABLE when changing the models used for runs or bumping
-  # CODEX_VERSION or CLAUDE_VERSION. Other models (e.g. OpenRouter IDs) only
-  # get a warning.
-  local supported
-  case "$AGENT_PLATFORM:${MODEL%%\[*}" in
-    codex:gpt-6-astra|codex:gpt-6.1-sol|\
-    claude:claude-fable-5-1|claude:claude-opus-5-5|claude:claude-sonnet-5-5)
-      supported="low medium high xhigh max" ;;
-    codex:gpt-6-luna)
-      supported="none low medium high xhigh max" ;;
-    *)
-      warn "$MODEL is not in agent-config.sh's effort table; $EFFORT_KEY=$EFFORT is unchecked for it."
-      return ;;
-  esac
-  case " $supported " in
-    *" $EFFORT "*) ;;
-    *) die "$MODEL does not support $EFFORT_KEY=$EFFORT (supported: ${supported// /|})." ;;
+  case "$AGENT_PLATFORM:$EFFORT" in
+    codex:minimal|codex:low|codex:medium|codex:high) ;;
+    claude:low|claude:medium|claude:high|claude:xhigh|claude:max) ;;
+    codex:*) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$EFFORT')." ;;
+    claude:*) die "CLAUDE_EFFORT must be low|medium|high|xhigh|max (got '$EFFORT')." ;;
   esac
 }
 
@@ -115,11 +90,13 @@ validate_run_api_keys() {
 }
 
 check_run_api_key_clashes() {
-  # $1: per-run API keys JSON; $2: the agent env JSON configure-run.sh writes.
+  # $1: per-run API keys JSON; $2: the agent env JSON configure-run.sh writes;
+  # $3: the scaffold's extra KEY=VALUE env-file lines, if any.
   # A per-run key must not override the agent env or the env file's fixed lines.
   local clash
-  clash="$(jq -rn --argjson keys "$1" --argjson env "$2" '
-    (($env | keys) + ["PATH", "HOME", "CLAUDE_CODE_EXECUTABLE"]) as $reserved
+  clash="$(jq -rn --argjson keys "$1" --argjson env "$2" --arg extra "${3:-}" '
+    (($env | keys) + ["PATH", "HOME", "CLAUDE_CODE_EXECUTABLE"]
+      + [$extra | split("\n")[] | select(length > 0) | split("=")[0]]) as $reserved
     | [$keys | keys[] | select(. as $k | $reserved | index($k))] | join(", ")')"
   [ -z "$clash" ] || die "Per-run API key(s) would override the agent environment: $clash. Remove them from the base secrets file."
 }
