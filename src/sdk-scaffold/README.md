@@ -28,14 +28,14 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 
 ## Design
 
-Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`. This first version ships one implementation of each interface, the ones the demo needs.
+Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`. The demo uses one implementation of each interface; the others show how a CRUX with different needs swaps them in (see [Adapting the demo](#adapting-the-demo)).
 
 | Responsibility | Interface (registry) | Built-in types |
 |---|---|---|
 | Agent orchestration, model configuration | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
-| Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command` |
-| Context management | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent` |
-| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `command`, `rest`, `budget_status` |
+| Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
+| Context management | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
+| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `run_shell`, `command`, `rest`, `budget_status` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
 | Observability | `Telemetry` | Langfuse, or off |
@@ -85,7 +85,7 @@ flowchart LR
 ```
 scaffold.toml            the declaration (see examples/product-change/scaffold.toml)
 PROMPT.md                first phase's prompt, sent verbatim
-prompts/*.md             later phase prompts and continue prompts
+prompts/*.md             later phase prompts, continue prompts, judge rubrics
 personas/*.md            one per agent
 scaffold_extensions.py   optional: the drop-in's own components
 workspace/               where agents work; AGENTS.md and other standing context live here
@@ -117,6 +117,40 @@ tools = ["read_file", "site_preview"]
 
 Gates, context strategies, coding agents, loops and runtimes extend the same way. [docs/extending.md](docs/extending.md) describes each extension point's contract, and when to extend one rather than add a new abstraction.
 
+## Adapting the demo
+
+A CRUX with different needs changes declarations, not code. The same drop-in could, for example:
+
+- **Judge the outcome, not just the tests.** Add an isolated `llm_judge` gate to the `implement` phase. The judge sees only its rubric, the orchestrator's final output, and the workspace files listed in `inspect`. It can write the next prompt itself.
+  ```toml
+  [[loop.phases]]
+  name = "implement"
+  gates = ["site_tests_pass", "request_met"]
+
+  [gates.request_met]
+  type = "llm_judge"
+  rubric = "prompts/judge_request.md"
+  inspect = ["REQUEST.md", "site/sitegen.py", "site/test_sitegen.py"]
+  ```
+- **Bound the context of a long run.** Send only recent history, cut at a user message so tool calls keep their results. The full history stays in the session.
+  ```toml
+  [context]
+  type = "trim_recent"
+  max_items = 300
+  ```
+  Or let the Responses API summarize older history once it grows:
+  ```toml
+  [context]
+  type = "openai_compaction"
+  trigger_items = 200
+  ```
+- **Let an agent run arbitrary commands** in the workspace, with a declared timeout:
+  ```toml
+  [tools.run_shell]
+  timeout_seconds = 300
+  ```
+- **Add something no built-in covers:** a CRUX-specific algorithm, a new gate or a new coding agent. Subclass the interface and register it in the drop-in's extension module, as the demo does for `site_preview`.
+
 ## Commands
 
 ```bash
@@ -146,7 +180,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 
 | Variable | Use |
 |---|---|
-| `OPENAI_API_KEY` | Agent and Codex model calls |
+| `OPENAI_API_KEY` | Agent, judge and Codex model calls |
 | `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The default model and effort for agents and coding agents. Overridden by `[runtime]` or by an agent's or coding agent's own settings. A run with no model for some agent or coding agent stops with a configuration error. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |

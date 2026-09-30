@@ -1,6 +1,6 @@
 # Extending `crux_scaffold`
 
-This guide is for contributors who are changing the scaffold. For terminology, the design overview and how to run a drop-in, see the [README](../README.md).
+This guide is for contributors who are changing the scaffold. For terminology, the design overview and how to run a drop-in, see the [README](../README.md). The README's [Adapting the demo](../README.md#adapting-the-demo) section shows the built-ins swapped in by configuration alone.
 
 Every pluggable part of the scaffold is a **component**: an implementation of one interface, registered under a type name and configured by a table in `scaffold.toml`. Most new behavior is a new component, or no code at all. This guide describes each extension point: its contract, what it receives, and how to test it.
 
@@ -60,7 +60,7 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 
 ## Tools (`Tool`)
 
-`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `command`, `rest`, `budget_status`.
+`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `run_shell`, `command`, `rest`, `budget_status`. `run_shell` runs any command the model asks for. `command` runs one fixed command that the drop-in declares, and takes no arguments.
 
 ```python
 class PreviewArguments(Arguments):
