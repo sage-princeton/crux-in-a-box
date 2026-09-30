@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 # Shared preflight for both local entry points. Callers provide cfg KEY and die.
-# An omitted AGENT_PLATFORM selects Codex.
+# An omitted AGENT_PLATFORM selects Codex. SCAFFOLD_MODULE names the box-side
+# module in scaffolds/ that installs and configures the platform's scaffold.
 load_agent_config() {
   AGENT_PLATFORM="$(cfg AGENT_PLATFORM)"
   AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
   case "$AGENT_PLATFORM" in
     codex)
       MODEL_KEY=CODEX_MODEL; EFFORT_KEY=CODEX_REASONING_EFFORT
-      API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=codex-acp
+      API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=codex-acp; SCAFFOLD_MODULE=acp
       PLATFORM_KEYS="CODEX_VERSION CODEX_ACP_VERSION TRACING_PLUGIN_VERSION TRACING_HOOK_TRUSTED_HASH"
       ;;
     claude)
       MODEL_KEY=CLAUDE_MODEL; EFFORT_KEY=CLAUDE_EFFORT
-      API_KEY_NAME=ANTHROPIC_API_KEY; ACP_COMMAND=claude-agent-acp
+      API_KEY_NAME=ANTHROPIC_API_KEY; ACP_COMMAND=claude-agent-acp; SCAFFOLD_MODULE=acp
       PLATFORM_KEYS="CLAUDE_VERSION CLAUDE_ACP_VERSION"
       ;;
     *) die "AGENT_PLATFORM must be codex|claude (got '$AGENT_PLATFORM')." ;;
