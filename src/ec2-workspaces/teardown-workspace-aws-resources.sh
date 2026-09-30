@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Terminate the instance for a slug, release its Elastic IP and remove its SSH alias.
-# Retain the AgentRQ workspace and shared security groups, key pair, IAM and SSM resources.
+# Retain the AgentRQ workspace (if the platform has one) and shared security groups, key pair, IAM and SSM resources.
 # If ELASTIC_IP_ADDRESS is set in CONFIG_FILE, that address is disassociated but
 # never released — it's shared across workspaces. CONFIG_FILE is the only place
 # this is read from, so it's always consistent with what provisioning used.
