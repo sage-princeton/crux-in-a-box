@@ -7,7 +7,7 @@ from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import ConfigError
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS, RunState, StateFile
-from crux_scaffold.runtimes.base import TurnOutcome
+from crux_scaffold.runtimes.base import TurnOutcome, Verdict
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.usage import Budget
 from crux_scaffold.workspace import RunContext, Workspace
@@ -127,3 +127,28 @@ def test_undefined_gates_and_duplicate_phases_are_config_errors():
     with pytest.raises(ConfigError, match="unique names"):
         LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md"},
                                                          {"name": "a", "prompt": "P.md"}]}, gates={})
+
+
+def test_an_llm_judge_writes_the_next_prompt(loop_env, tmp_path):
+    drop_in, _, _ = loop_env
+    (drop_in.root / "rubric.md").write_text("Judge it.")
+    (drop_in.workspace / "REQUEST.md").write_text("spec")
+    store = StateFile(tmp_path / "judged/state.json")
+    state = store.load()
+    slept = []
+
+    async def sleep(seconds):
+        slept.append(seconds)
+
+    ctx = RunContext(Workspace(drop_in.workspace), tmp_path / "judged", {}, state.usage, Budget(), NullTelemetry(),
+                     sleep)
+    gates = {"spec": GATES.create("spec", {"type": "command", "command": "test -s REQUEST.md"}),
+             "review": GATES.create("review", {"type": "llm_judge", "rubric": "rubric.md"})}
+    loop = LOOPS.create("loop", TWO_PHASES, gates=gates)
+    runtime = FakeRuntime([done(), done("v1"), done("v2")],
+                          [Verdict(passed=False, feedback="no tests", next_prompt="Add tests."),
+                           Verdict(passed=True, feedback="ok", next_prompt=None)])
+    assert asyncio.run(loop.run(runtime, drop_in, ctx, state, store)).status == "completed"
+    assert runtime.prompts[2] == "Add tests."
+    assert runtime.judged[0][0] == "Judge it."
+    assert slept == [7]

@@ -4,6 +4,7 @@ import json
 import pytest
 
 from crux_scaffold.errors import ConfigError
+from crux_scaffold.runtimes.base import Verdict
 
 from drop_ins import add_fake_slack, edit
 from scripted import ScriptedModel, call, say, tool_outputs
@@ -105,3 +106,15 @@ def test_mcp_server_gets_its_declared_env_but_not_the_scaffold_secrets(drop_in_d
     assert [entry["tool"] for entry in entries] == ["conversations_history", "conversations_add_message"]
     assert entries[0]["saw_openai_key"] is False
     assert entries[1]["payload"] == "Which pages?"
+
+
+def test_judge_is_an_isolated_agent_returning_a_structured_verdict(drop_in_dir, assemble):
+    verdict = Verdict(passed=False, feedback="no tests", next_prompt="Add tests.")
+    judge = ScriptedModel(say(verdict.model_dump_json()))
+    scaffold = assemble(drop_in_dir, {"judge": judge})
+    scaffold.runtime.build()
+    result = asyncio.run(scaffold.runtime.judge("request_met", "Pass if tested.", "The evidence."))
+    assert result == verdict
+    assert judge.instructions == ["Pass if tested."]
+    assert "The evidence." in str(judge.inputs[0])
+    assert scaffold.context.usage.by_source["judge:request_met"].requests == 1

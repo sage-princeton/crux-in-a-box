@@ -37,6 +37,14 @@ class TurnOutcome(BaseModel):
     completed: bool
 
 
+class Verdict(BaseModel):
+    """A judge's structured answer."""
+
+    passed: bool
+    feedback: str
+    next_prompt: str | None
+
+
 class AgentRuntime(Component):
     def __init__(self, name: str, options, *, assembly: Assembly) -> None:
         super().__init__(name, options)
@@ -52,6 +60,10 @@ class AgentRuntime(Component):
     @abstractmethod
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         """Send one prompt to the orchestrator, continuing its session. `workflow` names the turn in traces."""
+
+    @abstractmethod
+    async def judge(self, name: str, rubric: str, evidence: str) -> Verdict:
+        """Ask an isolated judge, with no tools and no session, for a verdict."""
 
     @abstractmethod
     def describe(self) -> list[str]:

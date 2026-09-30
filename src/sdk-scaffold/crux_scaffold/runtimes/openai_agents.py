@@ -31,15 +31,18 @@ from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.errors import ConfigError, ToolError
-from crux_scaffold.runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
+from crux_scaffold.runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool
 from crux_scaffold.usage import UsageLedger
+
+JUDGE = "judge"
 
 
 class OpenAIAgentsOptions(Options):
     model: str | None = None
     reasoning_effort: str | None = None
+    judge_model: str | None = None
     max_turns: int = Field(50, ge=1)
 
 
@@ -109,6 +112,12 @@ class OpenAIAgentsRuntime(AgentRuntime):
         except MaxTurnsExceeded:
             return TurnOutcome(final_output="", completed=False)
         return TurnOutcome(final_output=str(result.final_output), completed=True)
+
+    async def judge(self, name: str, rubric: str, evidence: str) -> Verdict:
+        agent = Agent(name=f"{JUDGE}:{name}", instructions=rubric, output_type=Verdict,
+                      model=self._model(JUDGE, self.options.judge_model))
+        result = await Runner.run(agent, evidence, max_turns=2, hooks=self.hooks)
+        return result.final_output
 
     def describe(self) -> list[str]:
         self.build()

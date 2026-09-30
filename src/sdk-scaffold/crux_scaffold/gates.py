@@ -1,5 +1,5 @@
 """Phase gates: checks the loop runs between iterations to decide whether a phase is done and, if not, what to
-prompt next. A gate may also write the next prompt itself."""
+prompt next. Deterministic gates run a command; judgment gates ask an isolated model the agent cannot author."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from crux_scaffold.workspace import RunContext
 
 if TYPE_CHECKING:
     from crux_scaffold.drop_in import DropInDirectory
+    from crux_scaffold.runtimes.base import AgentRuntime
 
 MAX_FEEDBACK_CHARS = 4_000
 
@@ -29,6 +30,7 @@ class GateResult(BaseModel):
 class GateContext:
     run: RunContext
     drop_in: DropInDirectory
+    runtime: AgentRuntime
     phase: str
     iteration: int
     last_output: str
@@ -64,3 +66,31 @@ class CommandGate(Gate):
         output = ctx.run.workspace.run_shell(self.options.command, self.options.timeout_seconds)
         return GateResult(gate=self.name, passed=output.startswith("exit_code=0\n"),
                           feedback=f"$ {self.options.command}\n{output[-MAX_FEEDBACK_CHARS:]}")
+
+
+class JudgeOptions(Options):
+    rubric: str
+    inspect: list[str] = []
+
+
+@GATES.register
+class LlmJudgeGate(Gate):
+    """An isolated judge model scores the iteration against a rubric file, seeing only the final output and the
+    workspace files listed in `inspect`. It may also write the next prompt."""
+
+    type_name = "llm_judge"
+    Options = JudgeOptions
+
+    async def evaluate(self, ctx: GateContext) -> GateResult:
+        verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx))
+        return GateResult(gate=self.name, **verdict.model_dump())
+
+    def evidence(self, ctx: GateContext) -> str:
+        parts = [f"# Phase `{ctx.phase}`, iteration {ctx.iteration}: the agent's final output\n\n{ctx.last_output}"]
+        for rel in self.options.inspect:
+            try:
+                content = ctx.run.workspace.read_file(rel)
+            except ValueError:
+                content = "(missing)"
+            parts.append(f"# Workspace file `{rel}`\n\n{content}")
+        return "\n\n".join(parts)
