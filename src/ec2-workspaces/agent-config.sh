@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 # Shared preflight for both local entry points. Callers provide cfg KEY and die.
-# An omitted AGENT_PLATFORM selects Codex.
+# An omitted AGENT_PLATFORM selects Codex. SCAFFOLD_MODULE names the box-side
+# module in scaffolds/ that installs and configures the platform's scaffold.
 load_agent_config() {
   AGENT_PLATFORM="$(cfg AGENT_PLATFORM)"
   AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
   case "$AGENT_PLATFORM" in
     codex)
       MODEL_KEY=CODEX_MODEL; EFFORT_KEY=CODEX_REASONING_EFFORT
-      API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=codex-acp
+      API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=codex-acp; SCAFFOLD_MODULE=acp
       PLATFORM_KEYS="CODEX_VERSION CODEX_ACP_VERSION TRACING_PLUGIN_VERSION TRACING_HOOK_TRUSTED_HASH"
       ;;
     claude)
       MODEL_KEY=CLAUDE_MODEL; EFFORT_KEY=CLAUDE_EFFORT
-      API_KEY_NAME=ANTHROPIC_API_KEY; ACP_COMMAND=claude-agent-acp
+      API_KEY_NAME=ANTHROPIC_API_KEY; ACP_COMMAND=claude-agent-acp; SCAFFOLD_MODULE=acp
       PLATFORM_KEYS="CLAUDE_VERSION CLAUDE_ACP_VERSION"
       ;;
     *) die "AGENT_PLATFORM must be codex|claude (got '$AGENT_PLATFORM')." ;;
@@ -89,11 +90,13 @@ validate_run_api_keys() {
 }
 
 check_run_api_key_clashes() {
-  # $1: per-run API keys JSON; $2: the agent env JSON configure-run.sh writes.
+  # $1: per-run API keys JSON; $2: the agent env JSON configure-run.sh writes;
+  # $3: the scaffold's extra KEY=VALUE env-file lines, if any.
   # A per-run key must not override the agent env or the env file's fixed lines.
   local clash
-  clash="$(jq -rn --argjson keys "$1" --argjson env "$2" '
-    (($env | keys) + ["PATH", "HOME", "CLAUDE_CODE_EXECUTABLE"]) as $reserved
+  clash="$(jq -rn --argjson keys "$1" --argjson env "$2" --arg extra "${3:-}" '
+    (($env | keys) + ["PATH", "HOME", "CLAUDE_CODE_EXECUTABLE"]
+      + [$extra | split("\n")[] | select(length > 0) | split("=")[0]]) as $reserved
     | [$keys | keys[] | select(. as $k | $reserved | index($k))] | join(", ")')"
   [ -z "$clash" ] || die "Per-run API key(s) would override the agent environment: $clash. Remove them from the base secrets file."
 }
