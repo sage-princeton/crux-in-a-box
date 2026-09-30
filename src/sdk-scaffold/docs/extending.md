@@ -131,7 +131,11 @@ First try adding phases, gates, continue prompts and `interval_seconds` to `phas
 
 ## Context strategies (`ContextStrategy`)
 
-`context_strategies.py`, registry `CONTEXT_STRATEGIES`. Built-in: `persistent`.
+`context_strategies.py`, registry `CONTEXT_STRATEGIES`. Built-ins:
+
+- `persistent` keeps and sends everything.
+- `trim_recent` overrides `select`. It sends only recent items, starting at a user message so that a tool call is never separated from its result.
+- `openai_compaction` overrides `session`. It wraps the default session in the Agents SDK's compaction session. Its compaction calls are not yet added to `ctx.usage`.
 
 - **`session(session_id, state_dir)`** returns the orchestrator's durable conversation store. The default is SQLite in `state_dir`, which survives restarts.
 - **`select(items)`** returns the items sent on the next model call. The runtime applies it to every model call, delegated agents included. The stored history is unchanged.
