@@ -43,32 +43,41 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
-The product-change demo in this design:
+The product-change demo in this design, as a C4 container view:
 
 ```mermaid
-C4Container
-    title crux_scaffold running the product-change demo
-    Person(operator, "Operator", "Posts the request and answers questions in Slack")
-    System_Ext(slack, "Slack", "Request channel and thread")
-    System_Ext(openai, "OpenAI API", "Agent and Codex models")
-    System_Ext(langfuse, "Langfuse", "Traces, token usage, cost")
-    Container_Boundary(box, "Run box") {
-        Container(loop, "Phased loop", "crux_scaffold", "clarify then implement; command gates; state.json")
-        Container(runtime, "Agent runtime", "OpenAI Agents SDK", "product_manager agent, toolkit, persistent session")
-        Container(codex, "Coding agent", "Codex SDK", "engineer: one Codex thread per brief")
-        Container(slackmcp, "Slack MCP server", "slack-mcp-server", "Reads the channel; posts to it only")
-        ContainerDb(dropin, "Drop-in directory", "Files", "scaffold.toml, prompts, personas, workspace/site")
-    }
-    Rel(operator, slack, "Requests, answers")
-    Rel(loop, runtime, "One prompt per iteration")
-    Rel(loop, dropin, "command gates")
-    Rel(runtime, slackmcp, "MCP tools")
-    Rel(slackmcp, slack, "Bot token")
-    Rel(runtime, codex, "engineer tool: brief")
-    Rel(codex, dropin, "Edits site/, sandboxed")
-    Rel(runtime, openai, "Model calls")
-    Rel(codex, openai, "Model calls")
-    Rel(runtime, langfuse, "OpenTelemetry spans")
+flowchart LR
+    operator["<b>Operator</b><br/>[Person]<br/>Posts the request and answers questions"]
+    slack["<b>Slack</b><br/>[External system]<br/>Request channel and thread"]
+    openai["<b>OpenAI API</b><br/>[External system]<br/>Agent and Codex models"]
+    langfuse["<b>Langfuse</b><br/>[External system]<br/>Traces, token usage, cost"]
+
+    subgraph box["Run box"]
+        loop["<b>Phased loop</b><br/>[Container: crux_scaffold]<br/>clarify, then implement;<br/>command gates; state.json"]
+        runtime["<b>Agent runtime</b><br/>[Container: OpenAI Agents SDK]<br/>product_manager agent, toolkit,<br/>persistent session"]
+        codex["<b>Coding agent</b><br/>[Container: Codex SDK]<br/>engineer: one Codex thread per brief"]
+        slackmcp["<b>Slack MCP server</b><br/>[Container: slack-mcp-server]<br/>Reads the channel; posts to it only"]
+        dropin[("<b>Drop-in directory</b><br/>[Files]<br/>scaffold.toml, prompts,<br/>personas, workspace/site")]
+    end
+
+    operator -- "Requests, answers" --> slack
+    loop -- "One prompt per iteration" --> runtime
+    loop -- "command gates" --> dropin
+    runtime -- "MCP tools" --> slackmcp
+    slackmcp -- "Bot token" --> slack
+    runtime -- "engineer tool: brief" --> codex
+    codex -- "Edits site/, sandboxed" --> dropin
+    runtime -- "Model calls" --> openai
+    codex -- "Model calls" --> openai
+    runtime -. "OpenTelemetry spans" .-> langfuse
+
+    classDef person fill:#08427b,color:#fff,stroke:#052e56
+    classDef container fill:#1168bd,color:#fff,stroke:#0b4884
+    classDef external fill:#999,color:#fff,stroke:#6b6b6b
+    class operator person
+    class loop,runtime,codex,slackmcp,dropin container
+    class slack,openai,langfuse external
+    style box fill:none,stroke:#444,stroke-dasharray:5 5
 ```
 
 ## A drop-in directory
