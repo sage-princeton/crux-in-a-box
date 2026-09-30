@@ -1,0 +1,20 @@
+[
+  {
+    "slug": "ai-policy-roundtable",
+    "title": "AI Policy Roundtable",
+    "date": "2026-10-14",
+    "summary": "Researchers and policymakers discuss recent developments in AI governance."
+  },
+  {
+    "slug": "privacy-lunch-seminar",
+    "title": "Privacy Lunch Seminar",
+    "date": "2026-09-30",
+    "summary": "A lunchtime talk on measuring online tracking."
+  },
+  {
+    "slug": "election-security-workshop",
+    "title": "Election Security Workshop",
+    "date": "2026-11-05",
+    "summary": "A hands-on workshop on auditing election technology."
+  }
+]
