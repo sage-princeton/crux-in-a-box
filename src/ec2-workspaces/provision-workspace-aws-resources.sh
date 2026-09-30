@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Provision a Codex or Claude workspace instance from the local machine.
+# Provision a run box for the configured platform from the local machine.
 #
 # Usage:
 #   ./provision-workspace-aws-resources.sh --secrets <json> [CONFIG_FILE]
@@ -9,7 +9,8 @@ set -euo pipefail
 #   ./provision-workspace-aws-resources.sh --dry-run [CONFIG_FILE]
 #   ./provision-workspace-aws-resources.sh --handshake [CONFIG_FILE]
 #
-# Per-run JSON: provider API key, AGENTRQ_WORKSPACE_ID, AGENTRQ_WORKSPACE_TOKEN.
+# Per-run JSON: provider API key, optional per-run API keys, and for platforms
+# whose scaffold needs AgentRQ, AGENTRQ_WORKSPACE_ID and AGENTRQ_WORKSPACE_TOKEN.
 # It is copied over SSH and deleted on the instance after configuration.
 # Shared JSON: LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL.
 # Upload shared credentials to /crux/system/env with --put-system-secrets.
@@ -68,8 +69,9 @@ cfg() { printf '%s' "${CFG[$1]:-}"; }
 load_agent_config all
 
 MISSING=()
-for k in AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE \
-         ROOT_DISK_GB KEY_NAME ACP_GATEWAY_VERSION; do
+REQUIRED="AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE ROOT_DISK_GB KEY_NAME"
+[ -z "$ACP_COMMAND" ] || REQUIRED="$REQUIRED ACP_GATEWAY_VERSION"
+for k in $REQUIRED; do
   [ -n "${CFG[$k]:-}" ] || MISSING+=("$k")
 done
 [ ${#MISSING[@]} -eq 0 ] || die "Missing required key(s) in $CONFIG_FILE: ${MISSING[*]}"
@@ -82,7 +84,7 @@ CONTROL_DNS="${CFG[CONTROL_PRIVATE_DNS]:-}"
 CONTROL_NAME="${CFG[CONTROL_SSH_ALIAS]:-crux-control}"
 # Require the controller HTTPS URL; its hostname must match AGENTRQ_DOMAIN.
 CONTROL_MCP_BASE="${CFG[CONTROL_MCP_BASE]:-}"
-[ -n "$CONTROL_MCP_BASE" ] \
+[ -n "$CONTROL_MCP_BASE" ] || ! scaffold_needs agentrq \
   || die "CONTROL_MCP_BASE is not set in $CONFIG_FILE. It must be the control box's public https base, e.g. https://<dashed-eip>.sslip.io — make-control-box.sh prints it."
 OPERATOR_CIDR="${CFG[OPERATOR_CIDR]}"
 INSTANCE_TYPE="${CFG[INSTANCE_TYPE]}"
@@ -107,21 +109,24 @@ CODEX_MODEL="${CFG[CODEX_MODEL]:-}"
 CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]:-}"
 CODEX_VERSION="${CFG[CODEX_VERSION]:-}"
 CODEX_ACP_VERSION="${CFG[CODEX_ACP_VERSION]:-}"
-ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]}"
+ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]:-}"
 CLAUDE_MODEL="${CFG[CLAUDE_MODEL]:-}"
 CLAUDE_EFFORT="${CFG[CLAUDE_EFFORT]:-}"
 CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
 CLAUDE_ACP_VERSION="${CFG[CLAUDE_ACP_VERSION]:-}"
 TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]:-}"
 TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]:-}"
+OPENAI_AGENTS_MODEL="${CFG[OPENAI_AGENTS_MODEL]:-}"
+OPENAI_AGENTS_REASONING_EFFORT="${CFG[OPENAI_AGENTS_REASONING_EFFORT]:-}"
 
 # Only validated, selected-platform values cross the remote shell boundary.
-if [ "$AGENT_PLATFORM" = claude ]; then
+[ "$AGENT_PLATFORM" = codex ] || {
   CODEX_MODEL=; CODEX_REASONING_EFFORT=; CODEX_VERSION=; CODEX_ACP_VERSION=
   TRACING_PLUGIN_VERSION=; TRACING_HOOK_TRUSTED_HASH=
-else
-  CLAUDE_MODEL=; CLAUDE_EFFORT=; CLAUDE_VERSION=; CLAUDE_ACP_VERSION=
-fi
+}
+[ "$AGENT_PLATFORM" = claude ] || { CLAUDE_MODEL=; CLAUDE_EFFORT=; CLAUDE_VERSION=; CLAUDE_ACP_VERSION=; }
+[ "$AGENT_PLATFORM" = openai-agents ] || { OPENAI_AGENTS_MODEL=; OPENAI_AGENTS_REASONING_EFFORT=; }
+[ -n "$ACP_COMMAND" ] || ACP_GATEWAY_VERSION=
 
 # A comma-separated list, each entry optionally CIDR=LABEL. This script does
 # not create SSH rules — make-control-box.sh owns crux-run-sg's ingress — so it
@@ -143,13 +148,15 @@ if [ -n "$CONTROL_DNS" ]; then
       die "CONTROL_PRIVATE_DNS looks public or local ('$CONTROL_DNS'). It must be the control box's PRIVATE DNS name (ip-x-x-x-x.ec2.internal) — the security group only permits the VPC path." ;;
   esac
 fi
-case "$CONTROL_MCP_BASE" in
-  http://*|https://*) ;;
-  *) die "CONTROL_MCP_BASE must start with http:// or https:// (got '$CONTROL_MCP_BASE')." ;;
-esac
-case "$CONTROL_MCP_BASE" in
-  */) die "CONTROL_MCP_BASE must not end in a slash (got '$CONTROL_MCP_BASE') — the MCP path is appended to it." ;;
-esac
+if scaffold_needs agentrq; then
+  case "$CONTROL_MCP_BASE" in
+    http://*|https://*) ;;
+    *) die "CONTROL_MCP_BASE must start with http:// or https:// (got '$CONTROL_MCP_BASE')." ;;
+  esac
+  case "$CONTROL_MCP_BASE" in
+    */) die "CONTROL_MCP_BASE must not end in a slash (got '$CONTROL_MCP_BASE') — the MCP path is appended to it." ;;
+  esac
+fi
 RUN_SG="crux-run-sg"
 SYSTEM_IAM_ROLE="crux-system-role"
 SYSTEM_IAM_PROFILE="crux-system-profile"
@@ -203,7 +210,7 @@ fi
 # ====== WHERE IS THE CONTROL BOX? ======
 # Look up the controller private IP from AWS. Pattern-based ec2.internal
 # DNS resolution can return an address with no running instance.
-if [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY_RUN" != 1 ]; then
+if [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY_RUN" != 1 ] && scaffold_needs agentrq; then
   info "Locating the control box (tag Name=$CONTROL_NAME)"
   CONTROL_INFO="$(aws_ ec2 describe-instances \
     --filters "Name=tag:Name,Values=$CONTROL_NAME" "Name=instance-state-name,Values=running" \
@@ -276,14 +283,13 @@ fi
 # ====== --handshake: prove ACP works, no AgentRQ involved ======
 # Check ACP independently of the AgentRQ network connection.
 if [ "$HANDSHAKE" = 1 ]; then
+  [ -n "$ACP_COMMAND" ] || die "--handshake checks an ACP adapter; $AGENT_PLATFORM has none. configure-run.sh probes the scaffold instead."
   info "ACP handshake against $SLUG (no AgentRQ, no workspace)"
   ssh "$SLUG" "cd /srv/crux-run && acp-gateway --agent-info -- $ACP_COMMAND" 2>&1
   exit $?
 fi
 
-HARNESS_DIR="$SCRIPT_DIR/../../run-harness"
-[ -d "$HARNESS_DIR/workspace" ] \
-  || die "run-harness/workspace is missing from the repository checkout."
+load_drop_in_path "$SCRIPT_DIR/../.."
 
 if [ "$DRY_RUN" = 1 ]; then
   if [ "$USE_ELASTIC_IP" != true ]; then
@@ -293,6 +299,12 @@ if [ "$DRY_RUN" = 1 ]; then
   else
     EIP_PLAN_LINE="  elastic ip        associated to $SLUG      (stable address across stop/start)"
   fi
+  if [ -n "$ACP_COMMAND" ]; then
+    PINS_LINE="  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION"
+  else
+    PINS_LINE="  pins              src/sdk-scaffold/requirements.txt -> /opt/crux-sdk-scaffold/.venv"
+  fi
+  DIALS_LINE="  dials             ${CONTROL_MCP_BASE:-nothing (no AgentRQ for the $SCAFFOLD_MODULE scaffold)}"
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
@@ -301,13 +313,13 @@ if [ "$DRY_RUN" = 1 ]; then
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
-  harness           run-harness/ -> /srv/crux-run/run-harness (staged for run setup)
+  harness           $DROP_IN_PATH/ -> /srv/crux-run/run-harness (staged for run setup)
 $EIP_PLAN_LINE
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
                                              deleted there after configure
-  dials             $CONTROL_MCP_BASE
+$DIALS_LINE
   agent             $AGENT_PLATFORM, $MODEL, effort $EFFORT
-  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION
+$PINS_LINE
 teardown-workspace-aws-resources.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
 the hour, so leaking one is the easy way to pay for a box you deleted. An ELASTIC_IP_ADDRESS override is
 never released by teardown, so it can be reused by the next workspace.
@@ -324,12 +336,16 @@ fi
 jq -e . "$RUN_SECRETS_FILE" >/dev/null 2>&1 || die "$RUN_SECRETS_FILE is not valid JSON"
 validate_agent_key "$RUN_SECRETS_FILE"
 validate_run_api_keys "$RUN_SECRETS_FILE"
-for k in AGENTRQ_WORKSPACE_ID AGENTRQ_WORKSPACE_TOKEN; do
-  v="$(jq -re --arg k "$k" '.[$k] // empty' "$RUN_SECRETS_FILE")" \
-    || die "$RUN_SECRETS_FILE is missing required key: $k"
-  case "$v" in *CHANGE*|*REPLACE*|*xxx*|"") die "$k still looks like a placeholder" ;; esac
-done
-ok "Per-run secrets file $RUN_SECRETS_FILE looks complete ($API_KEY_NAME and workspace credentials, not echoed)"
+if scaffold_needs agentrq; then
+  for k in AGENTRQ_WORKSPACE_ID AGENTRQ_WORKSPACE_TOKEN; do
+    v="$(jq -re --arg k "$k" '.[$k] // empty' "$RUN_SECRETS_FILE")" \
+      || die "$RUN_SECRETS_FILE is missing required key: $k"
+    case "$v" in *CHANGE*|*REPLACE*|*xxx*|"") die "$k still looks like a placeholder" ;; esac
+  done
+  ok "Per-run secrets file $RUN_SECRETS_FILE looks complete ($API_KEY_NAME and workspace credentials, not echoed)"
+else
+  ok "Per-run secrets file $RUN_SECRETS_FILE looks complete ($API_KEY_NAME, not echoed)"
+fi
 if [ "$AGENT_PLATFORM" = claude ]; then
   [ -f "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" ] \
     || die "The vendored Claude Langfuse hook is missing."
@@ -501,11 +517,18 @@ done
     $PUBLIC_IP first, so this should not happen; verify by hand with
     ssh -v $SLUG"
 
-info "Staging run-harness/ on $SLUG"
+info "Staging $DROP_IN_PATH/ on $SLUG"
 ssh "$SLUG" 'sudo install -d -o ubuntu -g ubuntu /srv/crux-run /srv/crux-run/run-harness'
-git -C "$SCRIPT_DIR/../.." archive HEAD run-harness \
+git -C "$SCRIPT_DIR/../.." archive --prefix=run-harness/ "HEAD:$DROP_IN_PATH" \
   | ssh "$SLUG" 'tar -x -C /srv/crux-run'
 ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before launch"
+
+if [ "$SCAFFOLD_MODULE" = sdk ]; then
+  info "Staging src/sdk-scaffold/ on $SLUG at /opt/crux-sdk-scaffold"
+  git -C "$SCRIPT_DIR/../.." archive --prefix=crux-sdk-scaffold/ HEAD:src/sdk-scaffold \
+    | ssh "$SLUG" 'sudo tar -x --no-same-owner -C /opt'
+  ok "Scaffold staged, root-owned so the agent cannot edit it"
+fi
 
 # ====== INSTALL (software, bakeable) ======
 info "install-run.sh — software"
@@ -522,6 +545,7 @@ ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
 # Resolve the public controller hostname to its private IP. This preserves
 # the TLS hostname and AgentRQ Host routing while using private traffic
 # covered by the security-group reference.
+if scaffold_needs agentrq; then
 MCP_HOST="$(printf '%s' "$CONTROL_MCP_BASE" | sed -E 's#^https?://##; s#[:/].*$##')"
 if [ "$MCP_HOST" != "$CONTROL_DNS" ]; then
   info "Pinning $MCP_HOST to the control box's private address on $SLUG"
@@ -548,6 +572,7 @@ else
     control box does not match the hostname in CONTROL_MCP_BASE
   - the control box's container is bound to the address you are dialling"
 fi
+fi
 
 # ====== PER-RUN SECRETS (scp, deleted on-box after configure) ======
 # The file rides the same SSH channel as the scripts. configure-run.sh reads
@@ -570,11 +595,23 @@ ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SLUG='$SLUG' AGENT_PLATFORM='$AGENT_PLATFORM' MODEL_PROVIDER='$MODEL_PROVIDER' \
   CLAUDE_MODEL='$CLAUDE_MODEL' CLAUDE_EFFORT='$CLAUDE_EFFORT' \
   CODEX_MODEL='$CODEX_MODEL' CODEX_REASONING_EFFORT='$CODEX_REASONING_EFFORT' \
+  OPENAI_AGENTS_MODEL='$OPENAI_AGENTS_MODEL' OPENAI_AGENTS_REASONING_EFFORT='$OPENAI_AGENTS_REASONING_EFFORT' \
   CONTROL_MCP_BASE='$CONTROL_MCP_BASE' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
   /tmp/configure-run.sh"
 
+if [ "$SCAFFOLD_MODULE" = sdk ]; then
+  DIALS_DONE="nothing (no AgentRQ)"
+  LOGS_CMD="ssh $SLUG 'journalctl -u crux-sdk-run -f'"
+  NEXT_STEP="Resolve the drop-in's placeholders (its OPERATOR_GUIDE.md), then start the run:
+  ssh $SLUG 'sudo systemctl start crux-sdk-run'"
+else
+  DIALS_DONE="$CONTROL_MCP_BASE"
+  LOGS_CMD="ssh $SLUG 'journalctl -u crux-acp-gateway -f'"
+  NEXT_STEP="Send the workspace a task from the AgentRQ dashboard and it should be answered
+by this box."
+fi
 cat <<DONE
 
 $(ok "Run box ready")
@@ -583,10 +620,9 @@ $(ok "Run box ready")
   ssh        ssh $SLUG
   agent      $AGENT_PLATFORM, $MODEL, effort $EFFORT
   harness    /srv/crux-run/run-harness (unconfigured scaffold)
-  dials      $CONTROL_MCP_BASE
-  logs       ssh $SLUG 'journalctl -u crux-acp-gateway -f'
+  dials      $DIALS_DONE
+  logs       $LOGS_CMD
   langfuse   environment=$SLUG
 
-Send the workspace a task from the AgentRQ dashboard and it should be answered
-by this box. Teardown: ./teardown-workspace-aws-resources.sh
+$NEXT_STEP Teardown: ./teardown-workspace-aws-resources.sh
 DONE

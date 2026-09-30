@@ -202,6 +202,43 @@ An OpenRouter preset can enforce `provider.only=["google-vertex"]` and
 `allow_fallbacks=false`; select it with `google/gemini-3.5-flash@preset/<slug>`
 as the model. The BYOK key's shared-capacity fallback setting is still required.
 
+### SDK scaffold boxes (`AGENT_PLATFORM=openai-agents`)
+
+Each platform declares a scaffold module in `scaffolds/` and the environment
+features it needs (`SCAFFOLD_MODULE`, `SCAFFOLD_NEEDS` in `agent-config.sh`).
+The laptop scripts handle the shared parts: AWS, SSH, secrets delivery, and
+staging the drop-in directory. They create an AgentRQ workspace and route to
+the control box only for platforms that need AgentRQ. On the box,
+`install-run.sh` and `configure-run.sh` do the shared setup, then call the
+module's hooks:
+
+| Module | Platforms | Needs | Box |
+|---|---|---|---|
+| `scaffolds/acp.sh` | `codex`, `claude` | `agentrq` | CLI, ACP adapter, `crux-acp-gateway.service` taking AgentRQ tasks |
+| `scaffolds/sdk.sh` | `openai-agents` | nothing | `crux_scaffold` venv at `/opt/crux-sdk-scaffold`, `crux-sdk-run.service` |
+
+For an SDK box:
+
+- **Base config:** set `AGENT_PLATFORM=openai-agents`, `OPENAI_AGENTS_MODEL`,
+  `OPENAI_AGENTS_REASONING_EFFORT`, and `DROP_IN_PATH` (e.g.
+  `src/sdk-scaffold/examples/product-change`). The drop-in must be committed,
+  because provisioning stages `HEAD`.
+- **Base secrets:** `OPENAI_API_KEY`, plus any keys the drop-in's MCP servers
+  read. For example, `SLACK_BOT_TOKEN` is in `RUN_API_KEY_NAMES`, so it reaches
+  the run's environment.
+- **Provisioning** writes `/etc/crux-run.env`, then runs `crux_scaffold probe
+  --coding-agent codex`: one traced model call and one Codex turn. It then
+  installs `crux-sdk-run.service`, but does not start it.
+- **Launching:** resolve the drop-in's placeholders on the box (see its
+  `OPERATOR_GUIDE.md`), then run `sudo systemctl start crux-sdk-run`. Watch it
+  with `journalctl -u crux-sdk-run -f`.
+- **Resuming:** loop state and sessions live in `/srv/crux-run/state`. A crash
+  restarts the unit and resumes the run. A configuration error (exit 2) or a
+  loop that stopped early (exit 3) does not restart.
+
+See [`../sdk-scaffold/README.md`](../sdk-scaffold/README.md) for the scaffold
+itself.
+
 ### Teardown a workspace
 
 This will:
