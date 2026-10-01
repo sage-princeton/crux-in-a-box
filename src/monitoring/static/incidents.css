@@ -42,6 +42,11 @@ h3 { font-size: 15px; font-weight: 600; }
 .historical-incidents > summary .meta { margin-left: 10px; }
 .table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 12px; text-align: left; }
+.instance-group table { table-layout: fixed; min-width: 960px; }
+.instance-group th:first-child { width: 38%; }
+.instance-group th:nth-child(2), .instance-group th:nth-child(3), .instance-group th:nth-child(4) { width: 11%; }
+.instance-group th:nth-child(5) { width: 8%; }
+.instance-group th:last-child { width: 21%; }
 th { font-weight: 600; color: #076d9e; background: #fbfcfd; border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
 th:last-child { border-right: none; }
 th, td { padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-align: middle; }

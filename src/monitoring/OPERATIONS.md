@@ -238,6 +238,11 @@ in `/opt/crux-incidents/start`, then restart `crux-incidents.service`. Restart
 that service after changing SAML settings so all Gunicorn workers reload them.
 No SSH ingress is required. Worker roles cannot write login or session records.
 
+Keep `Referrer-Policy: same-origin` on operator pages. `no-referrer` makes native
+form submissions send `Origin: null`, which the origin check rejects. Validate
+close, reopen and sign-out with actual browser forms; a synthetic HTTP client
+that supplies Origin explicitly does not exercise this browser behaviour.
+
 Before enabling `incident_state_enabled`, pause discovery, let existing jobs
 finish, and run `migrate_incidents.py --table <incident-table>` with the existing
 monitoring environment. It imports saved reports, preserves known resolutions,

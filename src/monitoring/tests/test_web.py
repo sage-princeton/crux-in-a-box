@@ -82,12 +82,15 @@ def test_expired_session_cannot_mutate_and_bad_saml_cannot_authenticate(client, 
     assert client.get('/', base_url='https://evil.test').status_code == 400
 
 
-def test_incident_tables_keep_distinct_instances_with_the_same_label_separate(client, store):
+@pytest.mark.parametrize('historical_state', ['terminated', 'no longer present'])
+def test_incident_tables_keep_distinct_instances_with_the_same_label_separate(client, store, historical_state):
     first = ingest(store)
+    store.put_once({'pk': 'FLEET', 'sk': 'i-test', 'instance_id': 'i-test',
+                    'slug': 'test-workload', 'state': 'running', 'review_count': 1})
     store.ingest(report(), 'REVIEW#i-second#300', 'reviews/second',
                  {'slug': 'test-workload'}, {}, {'observation:123': 'observation:123'})
     store.put_once({'pk': 'FLEET', 'sk': 'i-second', 'instance_id': 'i-second',
-                    'slug': 'test-workload', 'state': 'terminated', 'review_count': 1})
+                    'slug': 'test-workload', 'state': historical_state, 'review_count': 1})
     page = html.fromstring(client.get('/?status=all', base_url=ORIGIN).data)
     groups = page.xpath('//section[@class="instance-group"]')
     assert len(groups) == 2

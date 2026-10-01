@@ -9,11 +9,11 @@
 <nav class="filters" aria-label="Incident status">{% for value, label in [('all','All'),('open','Open'),('closed','Closed')] %}<a href="?status={{ value }}" {% if status == value %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
 <div class="table-toolbar"><h2>{{ status|capitalize if status != 'all' else 'All' }} incidents</h2><span class="meta">{{ incidents|length }} items on this page</span></div>
 {% macro instance_table(group) %}<section class="instance-group" aria-label="{{ group.label }} incidents">
-<div class="instance-heading"><h3>{{ group.label }} <span class="meta">{{ group.instance_id }}</span></h3><span class="meta">{{ group.state|capitalize }} · {{ group.incidents|length }} incidents on this page</span></div>
+<div class="instance-heading"><h3>{{ group.label }} <span class="meta">{{ group.instance_id }}</span></h3><span class="meta">{{ group.state|capitalize }} · {{ group.incidents|length }} {{ 'incident' if group.incidents|length == 1 else 'incidents' }} on this page</span></div>
 <div class="table-scroll" tabindex="0" role="region" aria-label="{{ group.label }} incident table"><table><thead><tr><th scope="col">Incident</th><th scope="col">Status</th><th scope="col">Severity</th><th scope="col">Confidence</th><th scope="col" class="numeric">Reviews</th><th scope="col">Updated</th></tr></thead>
 <tbody>{% for i in group.incidents %}<tr><td class="incident-title"><a href="{{ url_for('detail',incident_id=i.id) }}">{{ i.title }}</a><span class="cell-detail">{{ i.kind|capitalize }} · {{ i.id[:8] }}</span></td><td><span class="status {{ i.status }}">{{ i.status|capitalize }}</span></td><td>{{ i.severity|capitalize }}</td><td>{{ i.confidence|capitalize }}</td><td class="numeric">{{ i.review_count }}</td><td class="date-cell">{{ i.updated_at|stamp }}</td></tr>{% endfor %}</tbody></table></div></section>{% endmacro %}
-{% for group in groups if group.state not in ['stopped','terminated','stopping','shutting-down'] %}{{ instance_table(group) }}{% endfor %}
-{% set historical = groups|selectattr('state','in',['stopped','terminated','stopping','shutting-down'])|list %}
+{% for group in groups if group.state == 'running' %}{{ instance_table(group) }}{% endfor %}
+{% set historical = groups|rejectattr('state','equalto','running')|list %}
 {% if historical %}<details class="historical-incidents"><summary>Stopped instances and historical incidents <span class="meta">{{ historical|length }} instances</span></summary>{% for group in historical %}{{ instance_table(group) }}{% endfor %}</details>{% endif %}
 {% if not incidents %}<p class="empty">No {{ status if status != 'all' else '' }} incidents on this page. Check review coverage below.</p>{% endif %}
 {% if next_cursor %}<div class="pagination"><a class="button secondary" href="{{ url_for('index',status=status,cursor=next_cursor) }}">Next page →</a></div>{% endif %}
