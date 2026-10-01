@@ -4,10 +4,10 @@ set -euo pipefail
 # Provision a run box for the configured platform from the local machine.
 #
 # Usage:
-#   ./provision-workspace-aws-resources.sh --secrets <json> [CONFIG_FILE]
-#   ./provision-workspace-aws-resources.sh --put-system-secrets <json> [CONFIG_FILE]
-#   ./provision-workspace-aws-resources.sh --dry-run [CONFIG_FILE]
-#   ./provision-workspace-aws-resources.sh --handshake [CONFIG_FILE]
+#   ./provision-workspace-aws-resources.sh --secrets <json> CONFIG_FILE
+#   ./provision-workspace-aws-resources.sh --put-system-secrets <json> CONFIG_FILE
+#   ./provision-workspace-aws-resources.sh --dry-run CONFIG_FILE
+#   ./provision-workspace-aws-resources.sh --handshake CONFIG_FILE
 #
 # Per-run JSON: provider API key, optional per-run API keys, and for platforms
 # whose scaffold needs AgentRQ, AGENTRQ_WORKSPACE_ID and AGENTRQ_WORKSPACE_TOKEN.
@@ -48,9 +48,8 @@ done
 # shellcheck source=src/ec2-workspaces/agent-config.sh
 source "$SCRIPT_DIR/agent-config.sh"
 
-CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
-[ -f "$CONFIG_FILE" ] \
-  || die "Config file not found: $CONFIG_FILE (copy placeholders-run.txt.example)"
+[ -n "$CONFIG_FILE" ] || die "Usage: $0 [--secrets <json>|--put-system-secrets <json>|--dry-run|--handshake] CONFIG_FILE"
+[ -f "$CONFIG_FILE" ] || die "Config file not found: $CONFIG_FILE"
 
 # ====== LOAD CONFIG ======
 declare -A CFG=()
