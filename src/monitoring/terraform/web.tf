@@ -34,8 +34,12 @@ resource "aws_dynamodb_table" "incidents" {
     enabled        = true
   }
   point_in_time_recovery { enabled = true }
-  server_side_encryption { enabled = true }
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.state.arn
+  }
   deletion_protection_enabled = true
+  depends_on                  = [aws_iam_role_policy.state_encryption]
 }
 
 resource "terraform_data" "incident_activation" {
@@ -77,6 +81,7 @@ resource "aws_security_group" "web" {
   vpc_id      = local.vpc_id
 }
 resource "aws_vpc_security_group_ingress_rule" "web" {
+  description       = "Public HTTPS website and HTTP redirect/ACME validation"
   for_each          = var.web_enabled ? toset(["80", "443"]) : toset([])
   security_group_id = aws_security_group.web[0].id
   ip_protocol       = "tcp"
@@ -85,6 +90,7 @@ resource "aws_vpc_security_group_ingress_rule" "web" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 resource "aws_vpc_security_group_egress_rule" "web" {
+  description       = "AWS APIs, image pulls and ACME certificate renewal over HTTPS"
   count             = var.web_enabled ? 1 : 0
   security_group_id = aws_security_group.web[0].id
   ip_protocol       = "tcp"

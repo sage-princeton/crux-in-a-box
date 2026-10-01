@@ -1,4 +1,10 @@
 mock_provider "aws" {
+  mock_resource "aws_kms_key" {
+    defaults = { arn = "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012" }
+  }
+  mock_resource "aws_cloudwatch_log_group" {
+    defaults = { arn = "arn:aws:logs:us-east-1:123456789012:log-group:/crux/monitoring/test" }
+  }
   mock_resource "aws_iam_instance_profile" {
     defaults = { arn = "arn:aws:iam::123456789012:instance-profile/monitoring" }
   }
@@ -127,5 +133,25 @@ run "public_log_does_not_publish_evidence" {
   assert {
     condition     = aws_s3_bucket_public_access_block.evidence.block_public_acls && aws_s3_bucket_public_access_block.evidence.ignore_public_acls
     error_message = "Public ACLs must remain blocked even when the HTML is published."
+  }
+}
+
+run "existing_vpc_is_not_reconfigured" {
+  command = apply
+  variables {
+    vpc_id     = "vpc-12345678"
+    subnet_ids = ["subnet-12345678"]
+  }
+  assert {
+    condition     = length(aws_default_security_group.monitoring) == 0 && length(aws_flow_log.monitoring) == 0
+    error_message = "Existing shared VPC security groups and network logging remain under their owner's control."
+  }
+  assert {
+    condition     = aws_dynamodb_table.state.deletion_protection_enabled && aws_dynamodb_table.state.server_side_encryption[0].kms_key_arn == aws_kms_key.state.arn && aws_dynamodb_table.incidents.server_side_encryption[0].kms_key_arn == aws_kms_key.state.arn
+    error_message = "Both persistent tables must use the managed state key and protect review state from deletion."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.state_encryption["review"].policy).Statement[0].Condition.StringEquals["kms:ViaService"] == "dynamodb.us-east-1.amazonaws.com"
+    error_message = "Worker key use must be limited to DynamoDB, not arbitrary KMS decryption."
   }
 }

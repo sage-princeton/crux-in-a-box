@@ -34,10 +34,16 @@ resource "terraform_data" "configuration" {
 }
 
 resource "aws_s3_bucket" "evidence" {
+  #checkov:skip=CKV_AWS_144:Single-region monitoring evidence expires after 90 days; versioning protects against accidental overwrites.
+  #checkov:skip=CKV2_AWS_62:Evidence is consumed synchronously by the worker; no event consumer exists.
+  #checkov:skip=CKV_AWS_145:SSE-S3 preserves anonymous reads of the legacy public HTML object; all evidence remains IAM-protected.
+  #checkov:skip=CKV2_AWS_6:Public access block is attached below; only the explicitly opted-in legacy HTML object permits public reads.
   bucket        = "${var.name}-${var.account_id}-${var.region}"
   force_destroy = false
 }
 resource "aws_s3_bucket_public_access_block" "evidence" {
+  #checkov:skip=CKV_AWS_54:Opt-in legacy HTML link needs its exact-object public policy; evidence prefixes are never public.
+  #checkov:skip=CKV_AWS_56:Opt-in legacy HTML link needs anonymous reads; public ACLs remain blocked.
   bucket                  = aws_s3_bucket.evidence.id
   block_public_acls       = true
   block_public_policy     = !var.public_incident_log
@@ -69,6 +75,12 @@ resource "aws_s3_bucket_policy" "tls" {
 }
 resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
   bucket = aws_s3_bucket.evidence.id
+  rule {
+    id     = "abort-incomplete-uploads"
+    status = "Enabled"
+    filter {}
+    abort_incomplete_multipart_upload { days_after_initiation = 7 }
+  }
   rule {
     id     = "reviews-90-days"
     status = "Enabled"
@@ -117,16 +129,23 @@ resource "aws_dynamodb_table" "state" {
     enabled        = true
   }
   point_in_time_recovery { enabled = true }
-  server_side_encryption { enabled = true }
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = aws_kms_key.state.arn
+  }
+  deletion_protection_enabled = true
+  depends_on                  = [aws_iam_role_policy.state_encryption]
 }
 resource "aws_ecr_repository" "monitoring" {
+  #checkov:skip=CKV_AWS_136:ECR already encrypts at rest with AES256; changing encryption forces replacement and would delete release/rollback images.
   name                 = var.name
   image_tag_mutability = "IMMUTABLE"
   image_scanning_configuration { scan_on_push = true }
 }
 resource "aws_cloudwatch_log_group" "jobs" {
   name              = "/crux/monitoring/${var.name}"
-  retention_in_days = 30
+  retention_in_days = 365
+  kms_key_id        = aws_kms_key.logs.arn
 }
 
 resource "aws_vpc" "monitoring" {
@@ -139,8 +158,15 @@ resource "aws_internet_gateway" "monitoring" {
   count  = local.own_vpc ? 1 : 0
   vpc_id = aws_vpc.monitoring[0].id
 }
-data "aws_availability_zones" "available" { state = "available" }
+data "aws_availability_zones" "available" {
+  state = "available"
+  filter {
+    name   = "zone-name"
+    values = ["${var.region}a"]
+  }
+}
 resource "aws_subnet" "monitoring" {
+  #checkov:skip=CKV_AWS_130:Batch EC2 workers require public IPv4 for outbound HTTPS in this no-NAT VPC; their security group has no ingress.
   count                   = local.own_vpc ? 1 : 0
   vpc_id                  = aws_vpc.monitoring[0].id
   cidr_block              = "10.211.0.0/24"
@@ -166,6 +192,7 @@ resource "aws_security_group" "monitoring" {
   vpc_id      = local.vpc_id
 }
 resource "aws_vpc_security_group_egress_rule" "https" {
+  description       = "AWS APIs and approved model/evidence services over HTTPS"
   security_group_id = aws_security_group.monitoring.id
   ip_protocol       = "tcp"
   from_port         = 443
@@ -173,6 +200,7 @@ resource "aws_vpc_security_group_egress_rule" "https" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 resource "aws_vpc_security_group_egress_rule" "inspection" {
+  description       = "Read-only SFTP exports on approved target addresses"
   for_each          = toset(var.inspection_cidrs)
   security_group_id = aws_security_group.monitoring.id
   ip_protocol       = "tcp"
@@ -344,6 +372,7 @@ resource "aws_iam_role_policy" "scheduler" {
   ] })
 }
 resource "aws_scheduler_schedule" "monitoring" {
+  #checkov:skip=CKV_AWS_297:AWS-managed encryption protects this schedule; its payload contains only non-secret Batch resource names.
   count               = local.active ? 1 : 0
   name                = var.name
   group_name          = aws_scheduler_schedule_group.monitoring.name

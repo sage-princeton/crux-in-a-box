@@ -113,7 +113,10 @@
         "s3:GetObjectLockConfiguration",
         "s3:ListBucket"
       ],
-      "Resource": "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1"
+      "Resource": [
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1",
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1-access"
+      ]
     },
     {
       "Effect": "Allow",
@@ -224,6 +227,21 @@
         "ssm:GetCommandInvocation"
       ],
       "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListResourceTags"
+      ],
+      "Resource": "arn:aws:kms:us-east-1:881004720495:key/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "crux-monitoring"
+        }
+      }
     }
   ]
 }

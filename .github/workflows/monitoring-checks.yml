@@ -72,7 +72,7 @@ jobs:
   terraform:
     name: Monitoring Terraform
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: src/monitoring/terraform
@@ -88,6 +88,25 @@ jobs:
       - run: terraform init -backend=false -lockfile=readonly
       - run: terraform validate
       - run: terraform test
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install Checkov
+        run: pip install checkov==3.3.19
+      - name: Gate Terraform security
+        run: |
+          mkdir -p "$RUNNER_TEMP/checkov"
+          checkov --directory . --framework terraform --skip-download --compact \
+            --output cli --output json \
+            --output-file-path "console,$RUNNER_TEMP/checkov/results.json"
+      - name: Upload Terraform security report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitoring-terraform-security
+          path: ${{ runner.temp }}/checkov/
+          retention-days: 14
+          if-no-files-found: ignore
   deploy:
     if: github.event_name == 'workflow_dispatch' && inputs.deploy
     needs: [monitoring, terraform]

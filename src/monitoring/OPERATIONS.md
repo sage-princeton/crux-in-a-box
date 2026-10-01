@@ -86,17 +86,23 @@ using browser forms. SAML diagnostics log categories, not assertions or tokens.
 
 ## Security checks
 
-CI runs 45 Python tests, Terraform checks, Trivy 0.75.0 and Bandit 1.9.4.
+Every PR runs Python/Terraform tests, Checkov 3.3.19, Trivy 0.75.0 and Bandit 1.9.4.
 Source secrets, medium/high Bandit findings and **fixable high/critical** image
 vulnerabilities block releases. Scanner failures also fail the job. Full JSON
 reports retain all severities and unfixed findings for 14 days in
 `monitoring-security-reports` and `deployed-image-security-reports` artifacts.
-Terraform/Docker hardening findings are reported for review, not a release gate.
+Checkov findings block CI; its report is `monitoring-terraform-security` (14 days).
+Run locally: `checkov -d src/monitoring/terraform --framework terraform --skip-download`.
+Resource-local exceptions explain legacy public HTML, SSE-S3 log delivery,
+existing ECR encryption, single-region storage and the no-NAT worker subnet.
+Data/log KMS keys rotate annually and are protected from Terraform destruction.
+Job/access logs retain one year; owned VPCs also get flow logs and an empty default
+security group. Existing shared VPCs remain owner-managed. Docker hardening is advisory.
 
 The 1 October scan found no source secrets, no medium/high Bandit findings and no
 fixable high/critical image vulnerabilities after patching Debian packages and
 Flask and removing pip/ensurepip from runtime images. Eight unique high-severity
 Debian CVEs remain unfixed, plus a low Paramiko finding. Rebuild when fixes arrive;
 a passing gate does not mean vulnerability-free. Follow-ups: login rate limiting,
-HTTPS egress restrictions, audit-log retention and customer-managed-key policy.
+HTTPS egress restrictions and eventual ECR/customer-key migration.
 Install dependencies by rebuilding images, not modifying running containers.
