@@ -171,21 +171,33 @@ ok "Wrote langfuse.json (environment=$RUN_SLUG) and config.toml (model=$CODEX_MO
 
 # ====== OBSERVABILITY PLUGIN ======
 # Install the plugin package before enabling its hooks.
-# Pinned to the upstream tag for TRACING_PLUGIN_VERSION, like the codex pins in
-# install-run.sh: TRACING_HOOK_TRUSTED_HASH matches one plugin version, and an
-# unpinned marketplace installs whatever upstream last released.
+# Pinned to TRACING_PLUGIN_VERSION, like the codex pins in install-run.sh:
+# TRACING_HOOK_TRUSTED_HASH matches one plugin version. Upstream's marketplace
+# (from v0.4.0 on) names the npm package without a version, so even a tag-pinned
+# copy installs whatever upstream last published. A local marketplace with the
+# same name pins the npm version and keeps the tracing@codex-observability-plugin id.
 info "codex observability plugin @$TRACING_PLUGIN_VERSION"
-PLUGIN_SOURCE=https://github.com/langfuse/codex-observability-plugin.git
-PLUGIN_REF="v$TRACING_PLUGIN_VERSION"
+PLUGIN_PACKAGE=@langfuse/codex-observability-plugin
+PLUGIN_MARKETPLACE="$CODEX_DIR/pinned-marketplaces/codex-observability-plugin"
 PLUGIN_ENTRY="$RUN_HOME/.codex/plugins/cache/codex-observability-plugin/tracing/$TRACING_PLUGIN_VERSION/dist/index.mjs"
 
 # Check that the hook file exists; plugin status can reflect configuration only.
 if [ ! -f "$PLUGIN_ENTRY" ]; then
-  # Codex refuses to re-add a marketplace from another ref, so drop any earlier one.
+  # Codex reads a local marketplace in place, so it must outlive this script.
+  mkdir -p "$PLUGIN_MARKETPLACE/.agents/plugins"
+  jq -n --arg pkg "$PLUGIN_PACKAGE" --arg version "$TRACING_PLUGIN_VERSION" \
+    '{name: "codex-observability-plugin", interface: {displayName: "Langfuse"},
+      plugins: [{name: "tracing", category: "Coding",
+                 source: {source: "npm", package: $pkg, version: $version},
+                 policy: {installation: "AVAILABLE", authentication: "ON_INSTALL"}}]}' \
+    > "$PLUGIN_MARKETPLACE/.agents/plugins/marketplace.json"
+  chown -R "$RUN_USER:$RUN_USER" "$CODEX_DIR/pinned-marketplaces"
+
+  # Codex refuses to re-add a marketplace from another source, so drop any earlier one.
   su - "$RUN_USER" -c \
     'codex plugin marketplace remove codex-observability-plugin' >/dev/null 2>&1 || true
   su - "$RUN_USER" -c \
-    "codex plugin marketplace add $PLUGIN_SOURCE --ref $PLUGIN_REF" \
+    "codex plugin marketplace add '$PLUGIN_MARKETPLACE'" \
     >/dev/null 2>&1 || true
 
   for attempt in 1 2; do
@@ -200,10 +212,10 @@ if [ ! -f "$PLUGIN_ENTRY" ]; then
 
   [ -f "$PLUGIN_ENTRY" ] || die "The observability plugin did not unpack to $PLUGIN_ENTRY.
 Without it codex runs normally and emits NO Langfuse traces — note that
-'codex plugin list' may still say 'installed'. Check that upstream has tag
-$PLUGIN_REF (TRACING_PLUGIN_VERSION), then diagnose with:
+'codex plugin list' may still say 'installed'. Check that npm has
+$PLUGIN_PACKAGE@$TRACING_PLUGIN_VERSION (npm view $PLUGIN_PACKAGE versions), then diagnose with:
     sudo -u $RUN_USER codex plugin marketplace remove codex-observability-plugin
-    sudo -u $RUN_USER codex plugin marketplace add $PLUGIN_SOURCE --ref $PLUGIN_REF
+    sudo -u $RUN_USER codex plugin marketplace add $PLUGIN_MARKETPLACE
     sudo -u $RUN_USER codex plugin add tracing@codex-observability-plugin"
   ok "installed and unpacked"
 else
