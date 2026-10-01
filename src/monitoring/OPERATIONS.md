@@ -265,7 +265,9 @@ The GitHub environment `crux-monitoring` permits `main` and the current
 Its two variables are `MONITORING_AWS_ROLE_ARN` and
 `MONITORING_CONFIG_BUCKET`. GitHub OIDC assumes `crux-monitoring-deploy` in the
 deployment account; the trust requires audience `sts.amazonaws.com` and subject
-`repo:sage-princeton/crux-in-a-box:environment:crux-monitoring`. No long-lived AWS
+`repo:sage-princeton@292236392/crux-in-a-box@1314254060:environment:crux-monitoring`.
+The immutable owner/repository IDs must match the repository's OIDC settings.
+No long-lived AWS
 keys belong in GitHub secrets. The role's permissions are recorded in
 [`ci/deployment-policy.json`](ci/deployment-policy.json); it can administer the
 incident web host through SSM, so keep deployment access limited to operators.
