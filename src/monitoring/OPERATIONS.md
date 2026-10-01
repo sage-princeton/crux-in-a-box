@@ -2,7 +2,12 @@
 
 The reviewer runs as an unprivileged, tool-free container in AWS Batch on EC2.
 EventBridge schedules discovery every five minutes. Discovery inventories EC2
-instance IDs and states; only explicitly registered targets receive reviews.
+instance IDs and states. With `fleet` enabled, it covers the configured AWS region,
+excluding `crux-control`, its pinned instance ID, and controller-role instances.
+Running workloads receive reviews; stopped instances and Batch workers remain
+visible in inventory without generating repeated idle reviews. Explicit target
+entries can supply approved exports or a session mapping. Without `fleet`, only
+explicitly registered targets receive reviews.
 This does not install agents, enable network sensors, change security groups on
 targets, or enforce actions. Existing CloudWatch streams can supply host, Flow Log,
 and DNS evidence. Unavailable sources are coverage gaps, never a clean bill of health.
@@ -31,21 +36,33 @@ The Markdown report summarizes findings, possible explanations, and coverage gap
 it explicitly distinguishes a failed review from a review with no findings.
 The manifest records object version IDs and SHA-256 digests. The prompt is the exact
 system instruction; evidence is the exact user payload. Intermediate artifacts
-survive later review failures. Retention is 90 days. Slack receives all findings
-without a severity threshold, as a numbered list of single-line findings with
-severity/confidence, a short coverage summary, and a labeled AWS-console link to the notes.
-Each line ends with the review window's end in Eastern Time (including daylight
-saving changes), not an asserted event time. Full explanations remain in S3.
-Model-authored text is redacted and rendered as literal text, never active mentions
-or links. Failed inference produces one actionable “Monitoring paused” alert;
-its repeated source gaps remain in S3. Unchanged failures and coverage-only states
-do not send another Slack message. A changed blocker or successful recovery does.
-Ordinary successful reviews with no findings or coverage changes are silent.
-If only stale exports, empty logs, or EC2 metadata are available, inference is
-skipped and the target is marked idle, never safe. Idle is not an inference recovery.
-The link requires the reader's S3 permissions;
-it is not a public object or a bearer URL. Slack acknowledgement and DynamoDB cannot form one
-transaction: an ambiguous response can cause duplicate delivery with the same ID.
+survive later review failures. Retention is 90 days.
+
+Fleet Slack notifications contain one line per instance:
+`crux-web-pilot: 3 incidents based on 12 reviews, 1 new incident (last updated: 2026-10-01 15:30 ET)`.
+The slug comes from the EC2 Name tag; duplicate names receive an instance-ID
+suffix. Incident counts are distinct historical issues, including monitoring
+problems. Review counts include completed, unavailable, and skipped attempts;
+the HTML separates those outcomes so zero findings cannot imply a safety verdict.
+“New” means added since the last acknowledged fleet message. Counts advance once
+per review window, including on retries. The timestamp is the latest review-window
+end in Eastern Time, or the inventory observation time for an unreviewed instance.
+
+Discovery queues reviews and one fleet digest every five minutes. The digest
+summarizes the latest persisted results; jobs still running appear in a later
+digest. Unchanged health, incident counts, and inventory do not send another
+message merely because more reviews finished. A new incident, health transition,
+or inventory change sends the whole fleet snapshot. Slack text is literal and
+cannot create mentions or model-authored links. Slack acknowledgment and DynamoDB
+cannot form one transaction: an ambiguous response can still cause duplicate
+delivery. Legacy explicit-target deployments retain per-review numbered alerts.
+
+`fleet.langfuse_by_name` reads only the Langfuse environment matching a unique EC2
+Name tag, with a bounded time window and a response-side environment check. It
+never enables collection on the host. Missing or ambiguous mappings remain
+coverage gaps. When task-specific authorization is absent, that context is a
+limitation rather than evidence of wrongdoing. Stale-only evidence skips
+inference without declaring the target safe.
 
 ## Read-only access boundary
 
@@ -92,6 +109,8 @@ One on-demand table, encrypted at rest, with point-in-time recovery:
 | --- | --- | --- |
 | `REVIEW#instance-id#window-end` | Lease owner/expiry, status, S3 prefix, timestamps | A conditional update elects one active reviewer. Completed windows are not rerun. |
 | `TARGET#instance-id` | Latest workload profile, suggested source IDs, window end | Later reviews reuse context. Conditional updates prevent older windows overwriting newer profiles. |
+| `NOTICE#fleet` | Last acknowledged incident counts, health, and inventory fingerprint | One fleet digest; new counts advance only after Slack acknowledgment. |
+| `FLEET#instance-id` | Name/state, distinct review windows, completed/failed/skipped counts | Retries do not increase review totals; latest health cannot move backward. |
 | `NOTICE#instance-id` | Delivery lease, latest health fingerprint/window, last acknowledged review | Serializes notifications, suppresses repeated health-only alerts, and identifies recovery. Older windows cannot roll health state backward; actual findings still notify. |
 | `BUDGET#inference` | Reserved micro-USD | Atomic reservations bound inference across concurrent jobs and retries. Ambiguous charges are never refunded. |
 

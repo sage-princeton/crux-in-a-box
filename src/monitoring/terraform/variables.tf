@@ -11,7 +11,7 @@ variable "account_id" {
 }
 variable "name" {
   type    = string
-  default = "crux-monitoring-ae211"
+  default = "crux-monitoring"
   validation {
     condition     = can(regex("^[a-z][a-z0-9-]{2,35}$", var.name))
     error_message = "Use a short lowercase resource prefix."

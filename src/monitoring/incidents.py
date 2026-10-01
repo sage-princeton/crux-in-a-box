@@ -39,7 +39,7 @@ def incident_records(report):
                         'severity': 'high', 'confidence': 'high', 'incident_status': 'open'})
     elif status == 'idle':
         records.append({'identity': 'monitoring:idle', 'kind': 'monitoring',
-                        'title': 'No recent evidence', 'description': report['summary'],
+                        'title': 'No recent evidence', 'description': report['summary'] + '\n\n' + '\n'.join(report['coverage_gaps'])[:8000],
                         'severity': 'info', 'confidence': 'high', 'incident_status': 'open'})
     elif report['coverage_gaps']:
         records.append({'identity': 'monitoring:coverage', 'kind': 'monitoring',
@@ -97,17 +97,52 @@ class IncidentLog:
                     if old and end >= old.get('state_window', 0):
                         self.update(key, {'incident_status': 'resolved', 'state_window': end,
                                           'resolution_prefix': prefix, 'resolved_at': end})
+            key = 'FLEET#' + instance
+            old = self.state.get(key)
+            windows = set(old.get('review_windows', set()))
+            latest = int(old.get('last_review', end))
+            if str(end) not in windows and end >= latest - RETENTION_SECONDS:
+                windows = {w for w in windows if int(w) >= max(end, latest) - RETENTION_SECONDS}
+                windows.add(str(end))
+                values = {'instance_id':instance, 'review_windows':windows,
+                          'review_count':int(old.get('review_count', 0)) + 1,
+                          status + '_count':int(old.get(status + '_count', 0)) + 1}
+                if end >= latest:
+                    values.update(last_review=end, review_status=status, artifact_prefix=prefix,
+                        health_fingerprint=digest({'status':status,
+                            'reason':report.get('review_error', report['summary']) if status == 'failed' else '',
+                            'limited_coverage':bool(report['coverage_gaps']) if status == 'completed' else False}))
+                self.update(key, values)
         finally:
             self.state.save(lock, owner, {'updated_at': int(time.time())}, release=True)
 
-    def rows(self):
-        rows, args = [], {'FilterExpression': Attr('pk').begins_with('INCIDENT#'), 'ConsistentRead': True}
+    def rows(self, prefix='INCIDENT#'):
+        rows, args = [], {'FilterExpression': Attr('pk').begins_with(prefix), 'ConsistentRead': True}
         while True:
             page = self.state.table.scan(**args)
             rows.extend(page['Items'])
             if not page.get('LastEvaluatedKey'):
                 return rows
             args['ExclusiveStartKey'] = page['LastEvaluatedKey']
+
+    def sync_inventory(self, inventory):
+        now = int(time.time())
+        for instance in inventory:
+            self.update('FLEET#' + instance['instance_id'], {**instance, 'observed_at':now})
+
+    def summaries(self, inventory=None):
+        incidents = self.rows()
+        allowed = None if inventory is None else {i['instance_id'] for i in inventory}
+        result = []
+        for row in self.rows('FLEET#'):
+            iid = row['instance_id']
+            if allowed is not None and iid not in allowed:
+                continue
+            result.append({**row, 'slug':row.get('slug', iid),
+                'incident_count':sum(r['instance_id'] == iid for r in incidents),
+                'review_count':int(row.get('review_count', 0)),
+                'last_updated':int(row.get('last_review', row.get('observed_at', 0)))})
+        return result
 
     def resolve(self, instance, identity, when, prefix, note):
         owner, lock = str(uuid.uuid4()), 'INCIDENT_LOCK#' + instance
@@ -122,12 +157,14 @@ class IncidentLog:
         finally:
             self.state.save(lock, owner, {'updated_at': int(time.time())}, release=True)
 
-    def publish(self):
+    def publish(self, summaries=None):
         owner, key = str(uuid.uuid4()), 'INCIDENT_LOCK#html'
         if not self.state.claim_notice(key, owner, int(time.time())):
             raise CoverageError('Incident HTML is being published; retry saved report')
         try:
-            body = render_html(self.rows(), self.bucket).encode('utf-8')
+            if callable(summaries):
+                summaries = summaries()
+            body = render_html(self.rows(), self.bucket, summaries if summaries is not None else self.summaries()).encode('utf-8')
             result = self.s3.put_object(Bucket=self.bucket, Key='reviews/incidents/index.html', Body=body,
                 ContentType='text/html; charset=utf-8', ServerSideEncryption='AES256', CacheControl='no-cache')
             return {'key': 'reviews/incidents/index.html', 'version_id': result.get('VersionId'),
@@ -136,13 +173,28 @@ class IncidentLog:
             self.state.save(key, owner, {'updated_at': int(time.time())}, release=True)
 
 
-def render_html(rows, bucket):
+def render_html(rows, bucket, summaries=()):
     def escape(value):
         return html.escape(str(value), quote=True)
 
     def stamp(value):
         return datetime.fromtimestamp(int(value), ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M ET')
 
+    names = {r['instance_id']:r['slug'] for r in summaries}
+    fleet_body = []
+    for item in sorted(summaries, key=lambda r:r['slug']):
+        health = {'completed':'Reviewed', 'failed':'Review unavailable', 'idle':'No recent evidence'}.get(item.get('review_status'), 'Not reviewed')
+        if item.get('batch'):
+            health = 'Monitoring worker; inventory only'
+        detail = (f"{int(item.get('completed_count', 0))} completed · {int(item.get('failed_count', 0))} unavailable · "
+                  f"{int(item.get('idle_count', 0))} skipped")
+        fleet_body.append(f'''<tr><td><a href="#incidents" data-instance="{escape(item['instance_id'])}">{escape(item['slug'])}</a>
+<small>{escape(item['instance_id'])}</small></td><td>{escape(item.get('state', 'unknown'))}<small>{health}</small></td>
+<td>{int(item['incident_count'])}</td><td>{int(item['review_count'])}<small>{detail}</small></td>
+<td class="time">{stamp(item['last_updated'])}</td></tr>''')
+    fleet_section = ('''<h2>Instances</h2><p>Reviews include completed, unavailable, and skipped attempts. A zero incident count does not establish safety.</p>
+<div class="table-wrap"><table><thead><tr><th>Instance</th><th>State / coverage</th><th>Incidents</th><th>Reviews</th><th>Last updated</th></tr></thead><tbody>'''
+        + ''.join(fleet_body) + '</tbody></table></div>' if summaries else '')
     body = []
     for row in sorted(rows, key=lambda row: int(row['last_seen']), reverse=True):
         link = ('https://s3.console.aws.amazon.com/s3/buckets/' + quote(bucket, safe='') +
@@ -155,7 +207,7 @@ def render_html(rows, bucket):
 <small>{'Agent finding' if row['kind'] == 'finding' else 'Monitoring problem'}</small></td>
 <td><details><summary>{escape(row['title'])}</summary><p>{escape(row['description'])}</p>{resolution}
 <a href="{escape(link)}" target="_blank" rel="noopener noreferrer">Open report and evidence ↗</a></details>
-<small>{escape(row['instance_id'])} · {escape(row['severity'])} severity · {escape(row['confidence'])} confidence</small></td>
+<small>{escape(names.get(row['instance_id'], row['instance_id']))} · {escape(row['instance_id'])} · {escape(row['severity'])} severity · {escape(row['confidence'])} confidence</small></td>
 <td class="time">{stamp(row['first_seen'])}</td><td class="time">{stamp(row['last_seen'])}</td>
 <td class="count">{int(row['occurrences'])}</td></tr>''')
     generated = datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M ET')
@@ -182,14 +234,15 @@ a{color:var(--accent);text-underline-offset:3px;font-size:13px}:focus-visible{ou
 </style></head><body><main><header><div class="eyebrow">CRUX / MONITORING</div><h1>Incident log</h1>
 <p>One row per distinct issue. Repeated reports update its count. Agent findings are observations to investigate, not confirmed wrongdoing.</p></header>
 <div class="metrics"><span><strong>''' + str(len(rows)) + '''</strong> distinct incidents</span><span><strong>''' + str(observations) + '''</strong> report observations grouped</span></div>
-<div class="toolbar"><label class="search">Search incidents<input id="search" type="search" placeholder="Description or instance ID"></label>
+''' + fleet_section + '''<h2 id="incidents">Incidents</h2><div class="toolbar"><label class="search">Search incidents<input id="search" type="search" placeholder="Description or instance ID"></label>
 <label>Type<select id="kind"><option value="">All incidents</option><option value="finding">Agent findings</option><option value="monitoring">Monitoring problems</option></select></label>
 <label>Status<select id="status"><option value="">All statuses</option><option value="open">Open</option><option value="resolved">Resolved</option><option value="observed">Observed findings</option></select></label>
 <output id="result" aria-live="polite"></output></div><div class="table-wrap"><table><thead><tr><th>Status / type</th><th>Incident</th><th>First seen</th><th>Last seen</th><th>Seen in reviews</th></tr></thead><tbody>
 ''' + '\n'.join(body) + '''</tbody></table><div id="empty" hidden>No incidents match these filters.</div></div>
 <footer>Snapshot: ''' + generated + '''. Times are review-window ends in Eastern Time. Expand an incident for details; evidence links require AWS access. This file works offline.</footer>
 </main><script>
-const rows=[...document.querySelectorAll('tbody tr')],search=document.querySelector('#search'),kind=document.querySelector('#kind'),status=document.querySelector('#status');
+const rows=[...document.querySelectorAll('tr[data-kind]')],search=document.querySelector('#search'),kind=document.querySelector('#kind'),status=document.querySelector('#status');
 function filter(){let count=0;const query=search.value.toLowerCase();for(const row of rows){row.hidden=!row.textContent.toLowerCase().includes(query)||(kind.value&&row.dataset.kind!==kind.value)||(status.value&&row.dataset.status!==status.value);if(!row.hidden)count++;}document.querySelector('#result').textContent=count+' shown';document.querySelector('#empty').hidden=count!==0;}
 for(const input of [search,kind,status])input.addEventListener('input',filter);filter();
+for(const link of document.querySelectorAll('[data-instance]'))link.addEventListener('click',()=>{search.value=link.dataset.instance;kind.value='';status.value='';filter();});
 </script></body></html>'''

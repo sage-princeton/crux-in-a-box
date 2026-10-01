@@ -254,7 +254,7 @@ resource "aws_batch_compute_environment" "monitoring" {
       launch_template_id = aws_launch_template.batch.id
       version            = tostring(aws_launch_template.batch.latest_version)
     }
-    tags = { Name = var.name, Project = "crux-monitoring", Issue = "AE-211" }
+    tags = { Name = "crux-monitor-worker", Project = "crux-monitoring" }
   }
   depends_on = [aws_iam_role_policy_attachment.ecs_instance]
 }

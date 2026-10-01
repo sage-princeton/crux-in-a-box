@@ -30,6 +30,12 @@ def test_incident_archive_deduplicates_replays_counts_windows_and_preserves_reco
         log.record(failed, 'REVIEW#i-test#1200', 'reviews/late')
         assert log.rows()[0]['incident_status'] == 'resolved'
         assert log.rows()[0]['occurrences'] == 4
+        summary = log.summaries()[0]
+        assert summary['review_count'] == 5
+        assert summary['completed_count'] == 1 and summary['failed_count'] == 4
+        assert summary['incident_count'] == 1 and summary['last_updated'] == 1500
+        log.record(failed, 'REVIEW#i-test#1200', 'reviews/late')
+        assert log.summaries()[0]['review_count'] == 5
         artifact = log.publish()
         obj = s3.get_object(Bucket='incident-history', Key=artifact['key'], VersionId=artifact['version_id'])
         body = obj['Body'].read()

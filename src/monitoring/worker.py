@@ -20,6 +20,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from incidents import IncidentLog
+from fleet import deliver_summary, inventory_targets
 from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
                     collect_logs, collect_sftp, digest, encoded, evaluate, get_json,
                     https_url, iso, scrub, select_reviewer)
@@ -157,8 +158,12 @@ def failure_message(error):
 def validate_registry(config):
     if not isinstance(config.get("expires_at"), int) or config["expires_at"] <= 0:
         raise ValueError("Registry requires a finite expiry epoch")
-    if not isinstance(config.get("targets"), dict) or not 1 <= len(config["targets"]) <= 20:
-        raise ValueError("Register between one and twenty explicit targets")
+    if not isinstance(config.get("targets"), dict) or not 0 <= len(config["targets"]) <= 200:
+        raise ValueError("Register at most 200 explicit targets")
+    if not config["targets"] and not config.get("fleet"):
+        raise ValueError("Register targets or enable fleet discovery")
+    if config.get("fleet") and 'crux-control' not in config['fleet'].get('exclude_names', []):
+        raise ValueError("Fleet discovery must exclude crux-control")
     if not config.get("reviewer_models") or not 0 < config.get("inference_budget_usd", 0) <= 500:
         raise ValueError("Reviewer models and a bounded inference budget are required")
     for instance_id, target in config["targets"].items():
@@ -282,6 +287,22 @@ class Runtime:
         if now >= self.config["expires_at"]:
             return
         end = now // 300 * 300
+        if self.config.get("fleet"):
+            targets, inventory = inventory_targets(self.ec2, self.config)
+            self.put(f"inventory/{end}.json", {"at":iso(now), "instances":inventory})
+            for instance_id, target in targets.items():
+                if target['instance_state'] == 'running' and not target['service_worker']:
+                    self.submit(instance_id, end)
+            for item in self.state.pending():
+                if item.get("attempts", 0) >= 5 or item.get("lease_until", 0) >= now or not item["pk"].startswith("REVIEW#"):
+                    continue
+                _, instance_id, window = item['pk'].split('#')
+                if instance_id in targets:
+                    self.submit(instance_id, int(window))
+            self.batch.submit_job(jobName=f"fleet-summary-{end}", jobQueue=os.environ['MONITORING_QUEUE'],
+                jobDefinition=os.environ['MONITORING_REVIEW_JOB'],
+                containerOverrides={'command':['python','worker.py','digest']})
+            return
         inventory = []
         for page in self.ec2.get_paginator("describe_instances").paginate(Filters=[
                 {"Name": "instance-state-name", "Values": ["running", "stopped"]}]):
@@ -415,7 +436,10 @@ class Runtime:
         now = int(time.time())
         if now >= self.config["expires_at"]:
             return
-        target = self.config["targets"][instance_id]
+        targets, inventory = inventory_targets(self.ec2, self.config)
+        if instance_id not in targets:
+            return
+        target = targets[instance_id]
         key, owner = f"REVIEW#{instance_id}#{end}", str(uuid.uuid4())
         if end > now or end % 300:
             raise ValueError("Review end must be a completed five-minute boundary")
@@ -485,19 +509,32 @@ class Runtime:
                         if not conditional_failure(error):
                             raise
             log = IncidentLog(self.state, self.s3, self.bucket)
+            if inventory:
+                log.sync_inventory([i for i in inventory if i['instance_id'] == instance_id])
             log.record(report, key, prefix)
-            log.publish()
-            delivery = self.deliver(report, key, prefix, secrets)
+            log.publish((lambda: log.summaries(inventory)) if inventory else None)
+            delivery = "fleet_digest" if self.config.get('fleet') else self.deliver(report, key, prefix, secrets)
             self.state.save(key, owner, {"status": "done", "notification": delivery, "updated_at": int(time.time()),
                                         "expires_at": now + 90 * 86400}, release=True)
         except Exception:
             self.state.save(key, owner, {"updated_at": int(time.time())}, release=True)
             raise
 
+    def fleet_digest(self, force=False):
+        if int(time.time()) >= self.config['expires_at']:
+            return
+        _, inventory = inventory_targets(self.ec2, self.config)
+        log = IncidentLog(self.state, self.s3, self.bucket)
+        log.sync_inventory(inventory)
+        summaries = lambda: log.summaries(inventory)
+        artifact = log.publish(summaries)
+        delivery = deliver_summary(self, summaries, force=force)
+        return {'notification':delivery, 'html':artifact, 'instances':len(inventory)}
+
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=["discover", "review", "preflight"])
+    parser.add_argument("mode", choices=["discover", "review", "digest", "preflight"])
     parser.add_argument("instance_id", nargs="?")
     parser.add_argument("end", nargs="?", type=int)
     args = parser.parse_args()
@@ -505,6 +542,8 @@ def main():
     try:
         if args.mode == "discover":
             runtime.discover()
+        elif args.mode == "digest":
+            runtime.fleet_digest()
         elif args.mode == "review":
             if not args.instance_id or not args.end:
                 parser.error("review requires instance_id and window end epoch")
@@ -514,7 +553,7 @@ def main():
             runtime.ec2.describe_instances(MaxResults=5)
             secrets = runtime.secrets()
             required = {"MONITORING_OPENROUTER_API_KEY", "MONITORING_SLACK_WEBHOOK_URL"}
-            if any(t.get("langfuse") for t in runtime.config["targets"].values()):
+            if runtime.config.get('fleet', {}).get('langfuse_by_name') or any(t.get("langfuse") for t in runtime.config["targets"].values()):
                 required.update({"MONITORING_LANGFUSE_BASE_URL", "MONITORING_LANGFUSE_PUBLIC_KEY", "MONITORING_LANGFUSE_SECRET_KEY"})
             if not all(secrets.get(k) for k in required):
                 raise ValueError("Missing required monitoring credentials")

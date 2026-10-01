@@ -95,20 +95,26 @@ def get_json(client, url, max_bytes=MAX_EVIDENCE_BYTES, **kwargs):
 
 
 def collect_langfuse(client, config, secrets, start, end):
-    if not config.get("session_id"):
+    if not (config.get("session_id") or config.get("environment")):
         raise CoverageError("No trusted Langfuse session mapping")
     url = https_url(secrets["MONITORING_LANGFUSE_BASE_URL"]) + "/api/public/v2/observations"
     params = {
-        "sessionId": config["session_id"], "fromStartTime": iso(start), "toStartTime": iso(end),
+        "fromStartTime": iso(start), "toStartTime": iso(end),
         "fields": "core,basic,io,metadata,model,trace_context", "limit": 50,
     }
+    if config.get("session_id"):
+        params["sessionId"] = config["session_id"]
+    else:
+        params["environment"] = [config["environment"]]
     auth = (secrets["MONITORING_LANGFUSE_PUBLIC_KEY"], secrets["MONITORING_LANGFUSE_SECRET_KEY"])
     result, cursors = [], set()
     for _ in range(MAX_PAGES):
         page = get_json(client, url, params=params, auth=auth)
         for item in page["data"]:
-            if item.get("sessionId") != config["session_id"]:
+            if config.get("session_id") and item.get("sessionId") != config["session_id"]:
                 raise CoverageError("Langfuse returned an unexpected session")
+            if config.get("environment") and item.get("environment") != config["environment"]:
+                raise CoverageError("Langfuse returned an unexpected instance environment")
             result.append({"id": "observation:" + item["id"], "kind": "langfuse", "data": item})
         if len(encoded(result)) > MAX_EVIDENCE_BYTES:
             raise CoverageError("Langfuse window exceeds evidence limit; narrow the window")

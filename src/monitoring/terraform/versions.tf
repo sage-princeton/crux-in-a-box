@@ -12,6 +12,6 @@ provider "aws" {
   region              = var.region
   allowed_account_ids = [var.account_id]
   default_tags {
-    tags = { Project = "crux-monitoring", Issue = "AE-211", Environment = var.name }
+    tags = { Project = "crux-monitoring", Environment = var.name }
   }
 }
