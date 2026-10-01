@@ -294,7 +294,7 @@ process's plain environment — for the agent's scaffold to read. No other
 workspace can assume `crux-agent-devops` — only the one opted-in run's role
 is trusted.
 
-Run standalone: `./provision-aux-aws-resources.sh [--dry-run] [CONFIG_FILE]`.
+Run standalone: `./provision-aux-aws-resources.sh [--dry-run] CONFIG_FILE`.
 
 `teardown-workspace-aws-resources.sh` calls
 `teardown-aux-aws-resources.sh` automatically, which deletes everything found
