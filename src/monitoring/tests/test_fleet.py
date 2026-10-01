@@ -68,14 +68,14 @@ def test_fleet_summary_acknowledges_new_incidents_only_after_success():
                 deliver_summary(runtime, [row])
             assert 'acknowledged' not in runtime.state.get('NOTICE#fleet')
             assert deliver_summary(runtime, [row, {**row, 'instance_id':'i-stopped', 'slug':'stopped-workload', 'state':'stopped'}]) == 'sent'
-            assert attempts[1]['text'].splitlines()[0] == '• crux-web-pilot: 2 incidents based on 3 reviews, *2 NEW incidents :warning:* (last updated: 2026-09-28 20:15 ET)'
+            assert attempts[1]['text'].splitlines()[0] == '• crux-web-pilot: 2 incidents based on 3 reviews, *2 new incidents :warning:* (last updated: 2026-09-28 20:15 ET)'
             assert attempts[1]['text'].endswith('|Open the public incident log>')
             assert 'stopped-workload' not in attempts[1]['text']
             assert attempts[1]['blocks'][0]['text']['type'] == 'mrkdwn'
             assert deliver_summary(runtime, [{**row, 'review_count':4, 'last_updated':1790641200}]) == 'suppressed'
             changed = {**row, 'incident_count':3, 'review_count':5}
             assert deliver_summary(runtime, [changed]) == 'sent'
-            assert '3 incidents based on 5 reviews, *1 NEW incident :warning:* (' in attempts[-1]['text']
+            assert '3 incidents based on 5 reviews, *1 new incident :warning:* (' in attempts[-1]['text']
             assert deliver_summary(runtime, [changed]) == 'suppressed'
 
 

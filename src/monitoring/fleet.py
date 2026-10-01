@@ -58,7 +58,7 @@ def summary_lines(summaries, acknowledged):
         new = max(0, count - int(acknowledged.get(iid, {}).get('incidents', 0)))
         stamp = datetime.fromtimestamp(int(row['last_updated']), ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M ET')
         slug = re.sub(r'[^a-z0-9-]+', '-', row['slug'].lower()).strip('-')
-        new_label = f"{new} NEW incident{'s' if new != 1 else ''}"
+        new_label = f"{new} new incident{'s' if new != 1 else ''}"
         if new:
             new_label = f"*{new_label} :warning:*"
         lines.append(f"• {slug}: {count} incidents based on {int(row['review_count'])} reviews, "

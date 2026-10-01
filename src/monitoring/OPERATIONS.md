@@ -41,7 +41,7 @@ system instruction; evidence is the exact user payload. Intermediate artifacts
 survive later review failures. Retention is 90 days.
 
 Fleet Slack notifications contain one bullet per running instance, with the new
-incident count in bold: `• crux-web-pilot: 3 incidents based on 12 reviews, *1 NEW incident :warning:* (last updated: 2026-10-01 15:30 ET)`.
+incident count in bold: `• crux-web-pilot: 3 incidents based on 12 reviews, *1 new incident :warning:* (last updated: 2026-10-01 15:30 ET)`.
 When public HTML is enabled, the message ends with “Open the public incident log.”
 Zero new incidents use plain text without the warning emoji.
 The slug comes from the EC2 Name tag; duplicate names receive an instance-ID
