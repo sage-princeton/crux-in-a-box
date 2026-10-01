@@ -1,0 +1,30 @@
+{
+  "plugin_version": "0.4.0",
+  "notes": [
+    "What @langfuse/codex-observability-plugin 0.4.0 exports for the rollout fixtures, observed against a local OTLP collector.",
+    "Each key is a behavior the tests check; a new plugin version needs every value re-derived, not copied."
+  ],
+  "names": {
+    "turn": "Codex Turn",
+    "subagent_turn": "Codex Subagent Turn",
+    "generation": "LLM",
+    "subagent_generation": "LLM Subagent"
+  },
+  "tool_spans": "one_per_tool_call_named_as_called",
+  "generations": "one_per_model_step",
+  "generation_timing": "first_message_or_tool_call_to_first_tool_call",
+  "tool_timing": "call_to_output",
+  "subagents": "nested_in_parent_turn",
+  "turns_between_thread_events": "no_phantom_turns",
+  "interrupted_turn": {
+    "uploaded_on_next_stop": true,
+    "level": "WARNING",
+    "status_message": "Turn interrupted by user",
+    "aborted_metadata": "true"
+  },
+  "goal_continuation": "own_trace_with_internal_prompt_as_input",
+  "in_progress_turn_without_stop_turn_id": "not_uploaded",
+  "stop_before_task_complete": "uploaded_once",
+  "reupload_after_lost_sidecar": "same_trace_and_span_ids",
+  "pilot_sized_hook_seconds_max": 30
+}

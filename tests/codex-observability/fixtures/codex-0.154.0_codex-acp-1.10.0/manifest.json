@@ -1,0 +1,11 @@
+{
+  "codex_version": "0.154.0",
+  "codex_acp_version": "1.10.0",
+  "codex_acp_codex_range": "^0.153.3",
+  "bundled_codex_version": "0.153.4",
+  "notes": [
+    "CODEX_VERSION (0.154.0) runs only the provisioning HOOK-PROBE; agent turns run on the codex that codex-acp CODEX_ACP_VERSION installs.",
+    "codex-acp 1.10.0 depends on @openai/codex ^0.153.3 and ships no shrinkwrap, so boxes get the newest 0.153.x at install time: 0.153.4 for crux-web-pilot.",
+    "rollouts.py reproduces the line kinds, order and payload keys of the 0.153.4 rollouts from crux-web-pilot (structure only, via rollout_shape.py); all values are synthetic."
+  ]
+}
