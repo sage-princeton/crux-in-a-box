@@ -12,14 +12,13 @@ set -euo pipefail
 # "everything found" and "everything this run created" are the same set.
 # No-ops cleanly if this slug never had aux resources provisioned.
 #
-# Usage: ./teardown-aux-aws-resources.sh [CONFIG_FILE] [--yes]
+# Usage: ./teardown-aux-aws-resources.sh CONFIG_FILE [--yes]
 
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m! %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE=""; ASSUME_YES=0
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -28,7 +27,7 @@ while [ $# -gt 0 ]; do
     *) CONFIG_FILE="$1"; shift ;;
   esac
 done
-CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
+[ -n "$CONFIG_FILE" ] || die "Usage: $0 CONFIG_FILE [--yes]"
 [ -f "$CONFIG_FILE" ] || die "Config file not found: $CONFIG_FILE"
 
 cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1/p" "$CONFIG_FILE" | head -1; }

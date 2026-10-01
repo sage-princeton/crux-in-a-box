@@ -10,7 +10,7 @@ set -euo pipefail
 # script creates.
 #
 # Usage:
-#   ./provision-aux-aws-resources.sh [--dry-run] [CONFIG_FILE]
+#   ./provision-aux-aws-resources.sh [--dry-run] CONFIG_FILE
 #
 # Opt in per resource type in placeholders-<slug>.txt (all default off):
 #   PROVISION_POSTGRES=1  PROVISION_S3=1  PROVISION_DNS=1  PROVISION_EC2=1
@@ -31,8 +31,6 @@ ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m! %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 # ====== PARSE ARGS ======
 CONFIG_FILE=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
@@ -43,7 +41,7 @@ while [ $# -gt 0 ]; do
     *) [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
 done
-CONFIG_FILE="${CONFIG_FILE:-$SCRIPT_DIR/placeholders-run.txt}"
+[ -n "$CONFIG_FILE" ] || die "Usage: $0 [--dry-run] CONFIG_FILE"
 [ -f "$CONFIG_FILE" ] || die "Config file not found: $CONFIG_FILE"
 
 # ====== LOAD CONFIG ======
