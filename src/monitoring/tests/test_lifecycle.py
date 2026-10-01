@@ -85,3 +85,11 @@ def test_expired_sessions_and_private_rows_never_enter_incident_listing(store):
     store.put_once({'pk': 'SESSION#private', 'sk': 'STATE', 'expires_at': int(time.time()) - 1})
     rows, _ = store.page('INCIDENTS')
     assert len(rows) == 1 and rows[0]['pk'] == 'INCIDENTS'
+
+
+def test_legacy_failed_review_retains_failure_without_explicit_status(store):
+    report = {'summary': 'Review unavailable', 'findings': [], 'coverage_gaps': ['Private failure']}
+    ids = store.ingest(report, 'REVIEW#i-test#300', 'reviews/legacy', {}, {}, {})
+    incident = store.incident(ids[0])
+    assert incident['detector_id'] == 'monitoring:unavailable'
+    assert store.get('REVIEW#REVIEW#i-test#300', 'STATE')['review_status'] == 'failed'

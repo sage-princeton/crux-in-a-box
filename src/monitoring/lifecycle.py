@@ -114,10 +114,11 @@ class IncidentStore:
         _, instance, window = review_id.split('#')
         end = int(window)
         workload = target.get('workload_id', instance)
+        status = report.get('review_status', 'failed' if report['summary'] == 'Review unavailable' else 'completed')
         review = {'pk': 'REVIEW#' + review_id, 'sk': 'STATE', 'review_id': review_id,
                   'instance_id': instance, 'workload_id': workload, 'window_end': end,
                   'window_start': end - 1800, 'artifact_prefix': prefix, 'provenance': provenance,
-                  'review_status': report.get('review_status', 'completed')}
+                  'review_status': status}
         self.put_once(review)
         findings = []
         for finding in report['findings']:
@@ -131,7 +132,6 @@ class IncidentStore:
             elif anchor not in anchors or anchors[anchor] not in finding['source_ids']:
                 raise ValueError('Finding anchor is not in its cited evidence')
             findings.append((detector, anchor, finding))
-        status = report.get('review_status', 'completed')
         health = ('unavailable' if status == 'failed' else 'idle' if status == 'idle'
                   else 'coverage' if report['coverage_gaps'] else None)
         if health:
