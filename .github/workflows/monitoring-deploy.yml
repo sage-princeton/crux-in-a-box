@@ -1,18 +1,43 @@
-name: Monitoring deployment stub
+name: Monitoring deployment
 
 on:
-  workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
+  id-token: write
+
+concurrency:
+  group: crux-monitoring-deployment
+  cancel-in-progress: false
 
 jobs:
-  prerequisites:
-    name: Deployment prerequisites (AE-232, AE-233)
+  deploy:
+    name: Deploy monitoring and incident website
     runs-on: ubuntu-24.04
-    timeout-minutes: 1
+    environment: crux-monitoring
+    timeout-minutes: 25
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+      MONITORING_CONFIG_BUCKET: ${{ vars.MONITORING_CONFIG_BUCKET }}
     steps:
-      - name: Refuse deployment without durable state and scoped OIDC
-        run: |
-          echo '::error::Deployment is not configured. Complete AE-232 (Princeton remote state) and AE-233 (OIDC, approval environment, immutable ECR build and reviewed Terraform apply).'
-          exit 1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: '1.14.8'
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@cabfdba3510de1431bac9dba27511d97497fc100 # v5
+        with:
+          role-to-assume: ${{ vars.MONITORING_AWS_ROLE_ARN }}
+          aws-region: us-east-1
+          allowed-account-ids: '881004720495'
+          role-session-name: monitoring-${{ github.run_id }}
+      - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
+      - run: pip install -r src/monitoring/requirements.txt
+      - name: Build immutable images, apply shared state, and verify HTTPS
+        run: python src/monitoring/ci/deploy.py

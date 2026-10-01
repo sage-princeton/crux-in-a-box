@@ -182,7 +182,7 @@ remote state, OIDC, and an approval environment are configured.
    consumers. Do not grant the reviewer access to the shared system secret.
    **TODO: create a way to read-only access LangFuse.** See the
    [decision and alternatives](../../docs/research/ae-211-langfuse-access-options.md).
-4. `terraform init`, `terraform plan -out=monitoring.tfplan`, then inspect the plan:
+4. `terraform init -backend-config=backend.hcl`, `terraform plan -out=monitoring.tfplan`, then inspect the plan:
    only new monitoring resources and its registry object should change. First
    apply with `enabled=false`, `image_digest=""` to create the ECR repository and
    monitoring infrastructure (compute minimum is zero).
@@ -252,3 +252,43 @@ Close/reopen changes use conditional version checks and an atomic audit event.
 Repeated reviews preserve manual status. Reopening changes the open count but
 not the cumulative discovery count. Incidents and audit records have no TTL;
 the existing S3 evidence retention still applies.
+
+## Deployment pipeline and credentials
+
+Run **Monitoring checks** with `deploy=true` on an allowed branch to deploy the
+tested commit. Pull requests run the same behavior, image, and Terraform checks
+without AWS credentials. Deployment is explicit; merging alone does not deploy.
+Deployments are serialized and are not cancelled when another run is requested.
+
+The GitHub environment `crux-monitoring` permits `main` and the current
+`ae-211-ec2-monitoring` review branch. Remove the review branch when it is retired.
+Its two variables are `MONITORING_AWS_ROLE_ARN` and
+`MONITORING_CONFIG_BUCKET`. GitHub OIDC assumes `crux-monitoring-deploy` in the
+deployment account; the trust requires audience `sts.amazonaws.com` and subject
+`repo:sage-princeton/crux-in-a-box:environment:crux-monitoring`. No long-lived AWS
+keys belong in GitHub secrets. The role's permissions are recorded in
+[`ci/deployment-policy.json`](ci/deployment-policy.json); it can administer the
+incident web host through SSM, so keep deployment access limited to operators.
+
+Runtime secrets stay in `/crux/monitoring/env` and `/crux/monitoring/web` as SSM
+SecureStrings. The worker and web instance roles read their respective parameters
+at runtime. CI does not retrieve their values. Changing web authentication
+configuration requires restarting `crux-incidents.service`; redeploying also
+reloads it. Worker jobs load the monitoring parameter when they start.
+
+Terraform state uses the versioned, private state-account bucket and KMS key in
+[`terraform/backend.hcl`](terraform/backend.hcl), with S3 lockfiles. The backend
+role trusts the exact deployment role and the current CRUX administrator role.
+If Identity Center recreates that administrator role, update the trust explicitly.
+Never initialize this deployment against a new empty state or copy an old local
+state over the shared state.
+
+Non-secret deployment inputs live at `config/deployment.json` and
+`config/registry.json` in the monitoring bucket. CI builds commit-tagged immutable
+images, plans against the locked shared state, and permits only updates to the
+existing release resources. Creation, replacement, or unrelated infrastructure
+changes require an operator-reviewed apply. It then updates the web host's boot
+script through SSM, restarts the service, and checks the public HTTPS revision.
+A failed health check fails the deployment; it does not automatically revert
+incident data. Redeploy a previously validated compatible commit for rollback.
+The registry and schedule retain their explicit expiry; CI does not extend it.
