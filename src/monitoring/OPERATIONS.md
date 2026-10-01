@@ -220,7 +220,9 @@ The `/crux/monitoring/web` SecureString contains JSON with `origin`, `bucket`,
 and `idp` (`entityId`, `singleSignOnService.url`, and `x509cert`). Register the
 site as an Identity Center custom SAML application: audience `/auth/metadata`,
 ACS `/auth/callback`, and start URL `/auth/login`, all under that HTTPS origin.
-Map Subject to `${user:email}` with format `emailAddress` and assign only
+Map Subject to `${user:email}` with format `emailAddress`. Also map `email` to
+`${user:email}` with format `basic`: with only Subject mapped, AWS emits an empty
+`AttributeStatement`, which fails strict SAML schema validation. Assign only
 operators to the application. Load IdP metadata from that completed application;
 different applications have different issuer URLs and certificates. AWS controls
 the sign-in method and MFA policy. The app accepts signed, requested assertions; portal launches must go
