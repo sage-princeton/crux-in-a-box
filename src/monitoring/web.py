@@ -36,7 +36,8 @@ def create_app(store=None, settings=None):
     def headers(response):
         response.headers.update({
             'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
-            'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
+            # Native same-origin form POSTs need a non-null Origin header.
+            'Referrer-Policy': 'same-origin', 'X-Frame-Options': 'DENY',
             'Strict-Transport-Security': 'max-age=31536000',
             'Content-Security-Policy': "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
         })
@@ -64,8 +65,17 @@ def create_app(store=None, settings=None):
         items, next_cursor = store.page('INCIDENTS', status=None if status == 'all' else status, cursor=cursor)
         fleet = [{k: row[k] for k in ('instance_id', 'slug', 'state', 'review_count', 'review_status', 'last_review') if k in row}
                  for row in store.all('FLEET')]
+        fleet_by_instance = {row['instance_id']: row for row in fleet}
+        groups = {}
+        for item in items:
+            instance = item['instance_id']
+            row = fleet_by_instance.get(instance, {})
+            group = groups.setdefault(instance, {'instance_id': instance, 'label': item['workload_label'],
+                'state': row.get('state', 'unknown'), 'incidents': []})
+            group['incidents'].append(public_incident(item))
         return render_template('index.html', incidents=[public_incident(i) for i in items],
-                               status=status, next_cursor=next_cursor, fleet=fleet)
+                               status=status, next_cursor=next_cursor, fleet=fleet,
+                               groups=sorted(groups.values(), key=lambda group: (group['label'].casefold(), group['instance_id'])))
 
     @app.get('/incidents/<uuid:incident_id>')
     def detail(incident_id):

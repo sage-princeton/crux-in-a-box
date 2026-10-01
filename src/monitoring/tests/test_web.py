@@ -2,10 +2,11 @@ import secrets
 import time
 
 import pytest
+from lxml import html
 
 from lifecycle import public_incident
 from review import digest
-from test_lifecycle import ingest, store
+from test_lifecycle import ingest, report, store
 from web import create_app
 from web_auth import SESSION_COOKIE
 
@@ -44,6 +45,7 @@ def test_public_open_and_closed_pages_exclude_evidence_notes_and_actors(client, 
         assert 'PRIVATE_' not in body and 'reviews/test' not in body and 'observation:123' not in body
         assert 'name="version"' not in body
         assert response.headers['Cache-Control'] == 'no-store'
+        assert response.headers['Referrer-Policy'] == 'same-origin'
     assert 'Unexpected upload destination' not in client.get('/', base_url=ORIGIN).get_data(as_text=True)
 
 
@@ -55,6 +57,8 @@ def test_auth_csrf_origin_stale_write_close_reopen_and_logout(client, store):
     csrf = authorize(client, store)
     assert client.post(path, data=data, base_url=ORIGIN, headers={'Origin': ORIGIN}).status_code == 403
     data['csrf'] = csrf
+    for origin in ('null', ''):
+        assert client.post(path, data=data, base_url=ORIGIN, headers={'Origin': origin}).status_code == 403
     assert client.post(path, data=data, base_url=ORIGIN, headers={'Origin': 'https://evil.test'}).status_code == 403
     assert client.post(path, data=data, base_url=ORIGIN, headers={'Origin': ORIGIN}).status_code == 303
     assert store.incident(item['id'])['status'] == 'closed'
@@ -76,3 +80,18 @@ def test_expired_session_cannot_mutate_and_bad_saml_cannot_authenticate(client, 
                        headers={'Origin': ORIGIN}).status_code == 401
     assert client.post('/auth/callback', base_url=ORIGIN, data={'SAMLResponse': 'fake', 'RelayState': 'fake'}).status_code == 403
     assert client.get('/', base_url='https://evil.test').status_code == 400
+
+
+def test_incident_tables_keep_distinct_instances_with_the_same_label_separate(client, store):
+    first = ingest(store)
+    store.ingest(report(), 'REVIEW#i-second#300', 'reviews/second',
+                 {'slug': 'test-workload'}, {}, {'observation:123': 'observation:123'})
+    store.put_once({'pk': 'FLEET', 'sk': 'i-second', 'instance_id': 'i-second',
+                    'slug': 'test-workload', 'state': 'terminated', 'review_count': 1})
+    page = html.fromstring(client.get('/?status=all', base_url=ORIGIN).data)
+    groups = page.xpath('//section[@class="instance-group"]')
+    assert len(groups) == 2
+    assert 'i-test' in groups[0].xpath('.//h3')[0].text_content()
+    assert groups[0].xpath('.//tbody//a/@href') == ['/incidents/' + first['id']]
+    assert 'i-second' in groups[1].xpath('.//h3')[0].text_content()
+    assert groups[1].xpath('ancestor::details[not(@open)]')

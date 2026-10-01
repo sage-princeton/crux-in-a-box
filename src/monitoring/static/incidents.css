@@ -35,6 +35,11 @@ h3 { font-size: 15px; font-weight: 600; }
 .filters [aria-current] { background: var(--surface); color: var(--ink); box-shadow: inset 0 3px var(--primary); margin-bottom: -1px; border-bottom: 1px solid var(--surface); }
 .table-toolbar { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; gap: 16px; }
 .table-toolbar h2 { font-size: 14px; margin: 0; }
+.instance-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; padding: 16px 18px; border-top: 1px solid var(--line); background: #f5f7fa; }
+.instance-heading h3 { margin: 0; }
+.instance-heading h3 .meta { margin-left: 10px; font-weight: 400; }
+.historical-incidents > summary { padding: 16px 18px; }
+.historical-incidents > summary .meta { margin-left: 10px; }
 .table-scroll { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 12px; text-align: left; }
 th { font-weight: 600; color: #076d9e; background: #fbfcfd; border-top: 1px solid var(--line); border-right: 1px solid var(--line); }
@@ -43,7 +48,7 @@ th, td { padding: 10px 16px; border-bottom: 1px solid var(--line); vertical-alig
 tbody tr:last-child td { border-bottom: none; }
 tbody tr { transition: background-color .12s; }
 tbody tr:hover { background: #f5faff; }
-.incident-title { min-width: 240px; width: 30%; }
+.incident-title { min-width: 240px; width: 38%; }
 .incident-title > a { font-size: 13px; }
 .cell-detail { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; }
 .date-cell { white-space: nowrap; font-variant-numeric: tabular-nums; }
@@ -86,3 +91,4 @@ footer { font-size: 12px; padding-top: 16px; padding-bottom: 28px; }
 @media (max-width: 1000px) { .overview { gap: 14px; } .summary-card { padding: 18px; } .metric-pair { gap: 12px; } .metric-pair > div + div { padding-left: 12px; } .facts { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 700px) { header, main, footer { padding-left: 18px; padding-right: 18px; } .brand span { display: none; } .overview { grid-template-columns: 1fr; } .page-heading > .meta { display: none; } .summary-card { padding: 20px; } .card-description { margin: 14px 0 18px; } .section-heading, .workloads li { display: block; } .workloads span { display: block; text-align: left; margin-top: 4px; } .panel { padding: 20px; } .facts { gap: 18px; } .filters { padding-left: 0; } .filters a { flex: 1; text-align: center; padding: 12px; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; } }
+@media (max-width: 700px) { .instance-heading { display: block; } .instance-heading h3 .meta { display: block; margin-left: 0; } }
