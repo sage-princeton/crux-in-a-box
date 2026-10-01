@@ -79,18 +79,27 @@ def install_auth(app, store, settings):
         nonce = request.cookies.get(LOGIN_COOKIE, '')
         relay = request.form.get('RelayState', '')
         if not nonce or len(nonce) > 200 or not secrets.compare_digest(nonce, relay):
+            app.logger.warning('SAML denied: browser binding; cookie_present=%s relay_present=%s', bool(nonce), bool(relay))
             abort(403, 'Sign-in expired. Start sign-in again.')
         key = {'pk': 'LOGIN#' + digest(nonce), 'sk': 'STATE'}
         pending = store.get(**key)
         now = int(time.time())
         if not pending or pending['expires_at'] <= now:
+            app.logger.warning('SAML denied: login request missing or expired')
             abort(403, 'Sign-in expired. Start sign-in again.')
         auth = saml()
         try:
             auth.process_response(request_id=pending['request_id'])
-        except Exception:
+        except Exception as error:
+            app.logger.warning('SAML denied: processing exception %s', type(error).__name__)
             abort(403, 'Unable to verify sign-in.')
         if auth.get_errors() or not auth.is_authenticated() or not auth.get_nameid():
+            # Classify library diagnostics without logging assertions, tokens, or identity values.
+            reason = (auth.get_last_error_reason() or '').lower()
+            categories = [name for name in ('signature', 'signed', 'schema', 'audience', 'recipient', 'destination',
+                          'inresponseto', 'expired', 'notonorafter', 'issuer', 'nameid', 'status',
+                          'subjectconfirmation', 'attribute', 'condition') if name in reason]
+            app.logger.warning('SAML denied: validation errors=%s categories=%s', auth.get_errors(), categories)
             abort(403, 'Unable to verify sign-in.')
         token = secrets.token_urlsafe(32)
         expires = min(now + 3600, int(auth.get_session_expiration() or now + 3600))

@@ -15,7 +15,7 @@ aws ecr get-login-password --region ${region} | docker login --username AWS --pa
 docker pull ${repository}@${image}
 docker rm -f crux-incidents 2>/dev/null || true
 docker run -d --name crux-incidents --restart unless-stopped --network host --read-only --tmpfs /tmp:size=64m \
-  --log-opt max-size=10m --log-opt max-file=3 \
+  --log-driver journald --log-opt tag=crux-incidents \
   -e AWS_DEFAULT_REGION=${region} -e MONITORING_INCIDENT_TABLE=${table} \
   -e MONITORING_WEB_PARAMETER=/crux/monitoring/web -e MONITORING_REVISION=${revision} \
   ${repository}@${image}

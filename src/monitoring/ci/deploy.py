@@ -67,6 +67,7 @@ p=Path('/opt/crux-incidents/start')
 s=p.read_text()
 s=re.sub(r'[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9-]+@sha256:[a-f0-9]{64}', image, s)
 s=re.sub(r'MONITORING_REVISION=[a-f0-9]+', 'MONITORING_REVISION='+revision, s)
+s=s.replace('--log-opt max-size=10m --log-opt max-file=3', '--log-driver journald --log-opt tag=crux-incidents', 1)
 p.write_text(s)
 """
     command = 'set -eu\npython3 - <<\'PY\'\n' + script + '\nPY\nsystemctl restart crux-incidents.service'
