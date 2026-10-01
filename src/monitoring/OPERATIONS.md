@@ -272,6 +272,20 @@ the existing S3 evidence retention still applies.
 
 ## Deployment pipeline and credentials
 
+Monitoring CI runs Trivy 0.75.0 on both built images and scans source secrets and
+Terraform/Docker configuration. Fixable high/critical image vulnerabilities,
+source secrets and medium/high Bandit findings block deployment. Full JSON reports
+retain lower-severity and unfixed vulnerabilities; infrastructure misconfigurations
+are reported for review rather than automatically waived or changed. Reports are
+available as `monitoring-security-reports` for 14 days. Deployment rescans the
+exact ECR digests before Terraform apply and uploads
+`deployed-image-security-reports`, including when a scan fails.
+The [security review](../../docs/research/2026-10-01-incident-app-security-review.md)
+records fixes, remaining CVEs and hardening follow-ups. Runtime images apply
+Debian package updates during builds and omit pip/ensurepip after installing
+dependencies; install packages by rebuilding the image, not modifying a running
+container.
+
 Run **Monitoring checks** with `deploy=true` on an allowed branch to deploy the
 tested commit. Pull requests run the same behavior, image, and Terraform checks
 without AWS credentials. Deployment is explicit; merging alone does not deploy.
