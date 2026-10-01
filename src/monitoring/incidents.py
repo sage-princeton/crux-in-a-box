@@ -125,8 +125,13 @@ class IncidentLog:
                 return rows
             args['ExclusiveStartKey'] = page['LastEvaluatedKey']
 
-    def sync_inventory(self, inventory):
+    def sync_inventory(self, inventory, complete=False):
         now = int(time.time())
+        if complete:
+            present = {i['instance_id'] for i in inventory}
+            for row in self.rows('FLEET#'):
+                if row['instance_id'] not in present:
+                    self.update(row['pk'], {'state':'no longer present'})
         for instance in inventory:
             self.update('FLEET#' + instance['instance_id'], {**instance, 'observed_at':now})
 
@@ -173,28 +178,40 @@ class IncidentLog:
             self.state.save(key, owner, {'updated_at': int(time.time())}, release=True)
 
 
-def render_html(rows, bucket, summaries=()):
+def render_html(rows, bucket, summaries=None):
     def escape(value):
         return html.escape(str(value), quote=True)
 
     def stamp(value):
         return datetime.fromtimestamp(int(value), ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M ET')
 
+    summaries = summaries or []
     names = {r['instance_id']:r['slug'] for r in summaries}
-    fleet_body = []
+    active_body, stopped_body = [], []
     for item in sorted(summaries, key=lambda r:r['slug']):
         health = {'completed':'Reviewed', 'failed':'Review unavailable', 'idle':'No recent evidence'}.get(item.get('review_status'), 'Not reviewed')
         if item.get('batch'):
             health = 'Monitoring worker; inventory only'
         detail = (f"{int(item.get('completed_count', 0))} completed · {int(item.get('failed_count', 0))} unavailable · "
                   f"{int(item.get('idle_count', 0))} skipped")
+        fleet_body = active_body if item.get('state') == 'running' else stopped_body
         fleet_body.append(f'''<tr><td><a href="#incidents" data-instance="{escape(item['instance_id'])}">{escape(item['slug'])}</a>
 <small>{escape(item['instance_id'])}</small></td><td>{escape(item.get('state', 'unknown'))}<small>{health}</small></td>
 <td>{int(item['incident_count'])}</td><td>{int(item['review_count'])}<small>{detail}</small></td>
 <td class="time">{stamp(item['last_updated'])}</td></tr>''')
-    fleet_section = ('''<h2>Instances</h2><p>Reviews include completed, unavailable, and skipped attempts. A zero incident count does not establish safety.</p>
-<div class="table-wrap"><table><thead><tr><th>Instance</th><th>State / coverage</th><th>Incidents</th><th>Reviews</th><th>Last updated</th></tr></thead><tbody>'''
-        + ''.join(fleet_body) + '</tbody></table></div>' if summaries else '')
+    def fleet_table(items):
+        return ('<div class="table-wrap"><table><thead><tr><th>Instance</th><th>State / coverage</th>'
+                '<th>Incidents</th><th>Reviews</th><th>Last updated</th></tr></thead><tbody>'
+                + ''.join(items) + '</tbody></table></div>')
+
+    fleet_section = ''
+    if summaries:
+        fleet_section = ('<h2>Running instances</h2><p>Reviews include completed, unavailable, and skipped attempts. '
+                         'A zero incident count does not establish safety.</p>'
+                         + (fleet_table(active_body) if active_body else '<p>No running instances.</p>'))
+        if stopped_body:
+            fleet_section += ('<details id="stopped-instances"><summary>Stopped instances and history ('
+                              + str(len(stopped_body)) + ')</summary>' + fleet_table(stopped_body) + '</details>')
     body = []
     for row in sorted(rows, key=lambda row: int(row['last_seen']), reverse=True):
         link = ('https://s3.console.aws.amazon.com/s3/buckets/' + quote(bucket, safe='') +

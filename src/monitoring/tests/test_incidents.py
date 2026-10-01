@@ -36,6 +36,10 @@ def test_incident_archive_deduplicates_replays_counts_windows_and_preserves_reco
         assert summary['incident_count'] == 1 and summary['last_updated'] == 1500
         log.record(failed, 'REVIEW#i-test#1200', 'reviews/late')
         assert log.summaries()[0]['review_count'] == 5
+        log.sync_inventory([{'instance_id':'i-test','slug':'old-instance','state':'running'}])
+        log.sync_inventory([], complete=True)
+        assert log.summaries()[0]['state'] == 'no longer present'
+        assert log.summaries()[0]['review_count'] == 5
         artifact = log.publish()
         obj = s3.get_object(Bucket='incident-history', Key=artifact['key'], VersionId=artifact['version_id'])
         body = obj['Body'].read()
@@ -54,6 +58,15 @@ def test_html_escapes_incident_content():
     assert 'https://s3.console.aws.amazon.com/' in page
     assert 'onclick=' not in page
     assert '<input id="search"' in page and 'data-kind="finding"' in page
+    summaries = [{'instance_id':'i-test', 'slug':'old-instance', 'state':'stopped',
+                  'incident_count':1, 'review_count':2, 'last_updated':600},
+                 {'instance_id':'i-live', 'slug':'live-instance', 'state':'running',
+                  'incident_count':0, 'review_count':0, 'last_updated':600}]
+    page = render_html([row], 'incident-history', summaries)
+    active, historical = page.split('<details id="stopped-instances">')
+    assert 'live-instance' in active and 'old-instance' not in active
+    assert 'Stopped instances and history (1)' in historical and 'old-instance' in historical
+    assert 'data-kind="finding"' in historical
 
 
 def test_finding_identity_groups_repeats_without_merging_different_evidence():

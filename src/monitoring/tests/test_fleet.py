@@ -23,15 +23,18 @@ def test_fleet_excludes_controller_even_with_override_and_disambiguates_names():
         first = instance('duplicate')
         second = instance('duplicate')
         worker = instance('crux-monitor-worker', [{'Key':'AWSBatchServiceTag','Value':'batch'}])
+        stopped = instance('stopped-workload')
+        ec2.stop_instances(InstanceIds=[stopped])
         config = {'fleet':{'exclude_names':['crux-control'], 'langfuse_by_name':True},
                   'targets':{control:{'authorization':'explicit override'}}}
         targets, inventory = inventory_targets(ec2, config)
         assert control not in targets and renamed not in targets
+        assert targets[stopped]['instance_state'] == 'stopped'
         assert targets[web]['langfuse'] == {'environment':'crux-web-pilot'}
         assert 'langfuse' not in targets[first] and 'langfuse' not in targets[second]
         assert targets[first]['slug'] != targets[second]['slug']
         assert targets[worker]['service_worker'] and 'langfuse' not in targets[worker]
-        assert len(inventory) == 4
+        assert len(inventory) == 5
 
 
 def test_environment_filter_is_bounded_and_rejects_other_instances():
@@ -59,17 +62,20 @@ def test_fleet_summary_acknowledges_new_incidents_only_after_success():
             return httpx.Response(503 if len(attempts) == 1 else 200, text='busy' if len(attempts) == 1 else 'ok')
         with httpx.Client(transport=httpx.MockTransport(handler)) as client:
             runtime = SimpleNamespace(state=State(table), http=client,
+                public_incident_log_url="https://incident-history.s3.us-east-1.amazonaws.com/reviews/incidents/index.html",
                 secrets=lambda:{'MONITORING_SLACK_WEBHOOK_URL':'https://hooks.slack.com/services/test/fixture/only'})
             with pytest.raises(httpx.HTTPStatusError):
                 deliver_summary(runtime, [row])
             assert 'acknowledged' not in runtime.state.get('NOTICE#fleet')
-            assert deliver_summary(runtime, [row]) == 'sent'
-            assert attempts[1]['text'] == 'crux-web-pilot: 2 incidents based on 3 reviews, 2 new incidents (last updated: 2026-09-28 20:15 ET)'
-            assert attempts[1]['blocks'][0]['text']['type'] == 'plain_text'
+            assert deliver_summary(runtime, [row, {**row, 'instance_id':'i-stopped', 'slug':'stopped-workload', 'state':'stopped'}]) == 'sent'
+            assert attempts[1]['text'].splitlines()[0] == '• crux-web-pilot: 2 incidents based on 3 reviews, *2 NEW incidents :warning:* (last updated: 2026-09-28 20:15 ET)'
+            assert attempts[1]['text'].endswith('|Open the public incident log>')
+            assert 'stopped-workload' not in attempts[1]['text']
+            assert attempts[1]['blocks'][0]['text']['type'] == 'mrkdwn'
             assert deliver_summary(runtime, [{**row, 'review_count':4, 'last_updated':1790641200}]) == 'suppressed'
             changed = {**row, 'incident_count':3, 'review_count':5}
             assert deliver_summary(runtime, [changed]) == 'sent'
-            assert '3 incidents based on 5 reviews, 1 new incident (' in attempts[-1]['text']
+            assert '3 incidents based on 5 reviews, *1 NEW incident :warning:* (' in attempts[-1]['text']
             assert deliver_summary(runtime, [changed]) == 'suppressed'
 
 

@@ -10,7 +10,8 @@ locals {
     { name = "MONITORING_BUCKET", value = aws_s3_bucket.evidence.id },
     { name = "MONITORING_TABLE", value = aws_dynamodb_table.state.name },
     { name = "MONITORING_SECRETS_PARAMETER", value = local.parameter_name },
-    { name = "MONITORING_REVISION", value = var.revision }
+    { name = "MONITORING_REVISION", value = var.revision },
+    { name = "MONITORING_PUBLIC_LOG_URL", value = var.public_incident_log ? "https://${aws_s3_bucket.evidence.bucket_regional_domain_name}/reviews/incidents/index.html" : "" }
   ]
 }
 

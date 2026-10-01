@@ -57,8 +57,9 @@ def summary_lines(summaries, acknowledged):
         count = int(row['incident_count'])
         new = max(0, count - int(acknowledged.get(iid, {}).get('incidents', 0)))
         stamp = datetime.fromtimestamp(int(row['last_updated']), ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M ET')
-        lines.append(f"{row['slug']}: {count} incidents based on {int(row['review_count'])} reviews, "
-                     f"{new} new incident{'s' if new != 1 else ''} (last updated: {stamp})")
+        slug = re.sub(r'[^a-z0-9-]+', '-', row['slug'].lower()).strip('-')
+        lines.append(f"• {slug}: {count} incidents based on {int(row['review_count'])} reviews, "
+                     f"*{new} NEW incident{'s' if new != 1 else ''} :warning:* (last updated: {stamp})")
     return lines
 
 
@@ -69,6 +70,7 @@ def deliver_summary(runtime, summaries, force=False):
     try:
         if callable(summaries):
             summaries = summaries()
+        summaries = [row for row in summaries if row.get('state') == 'running']
         previous = runtime.state.get(key)
         acknowledged = previous.get('acknowledged', {})
         snapshot = {r['instance_id']:{'incidents':int(r['incident_count']),
@@ -86,6 +88,8 @@ def deliver_summary(runtime, summaries, force=False):
         if not lines:
             runtime.state.save(key, owner, {'updated_at':int(time.time())}, release=True)
             return 'suppressed'
+        if runtime.public_incident_log_url:
+            lines.append(f'<{runtime.public_incident_log_url}|Open the public incident log>')
         chunks = []
         for line in lines:
             if chunks and len(chunks[-1]) + len(line) + 1 <= 3000:
@@ -93,12 +97,12 @@ def deliver_summary(runtime, summaries, force=False):
             else:
                 chunks.append(line)
         response = runtime.http.post(webhook, json={'text':'\n'.join(lines),
-            'blocks':[{'type':'section','text':{'type':'plain_text','text':chunk}} for chunk in chunks],
+            'blocks':[{'type':'section','text':{'type':'mrkdwn','text':chunk,'verbatim':True}} for chunk in chunks],
             'unfurl_links':False, 'unfurl_media':False})
         response.raise_for_status()
         if response.text.strip() != 'ok':
             raise CoverageError('Slack did not acknowledge delivery')
-        runtime.state.save(key, owner, {'fingerprint':fingerprint, 'acknowledged':snapshot,
+        runtime.state.save(key, owner, {'fingerprint':fingerprint, 'acknowledged':{**acknowledged, **snapshot},
                                        'updated_at':int(time.time())}, release=True)
         return 'sent'
     except Exception:

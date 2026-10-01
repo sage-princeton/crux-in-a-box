@@ -253,6 +253,7 @@ class Runtime:
         self.logs = boto3.client("logs", config=sdk)
         self.ssm = boto3.client("ssm", config=sdk)
         self.bucket = os.environ["MONITORING_BUCKET"]
+        self.public_incident_log_url = os.environ.get("MONITORING_PUBLIC_LOG_URL", "")
         self.state = State(boto3.resource("dynamodb", config=sdk).Table(os.environ["MONITORING_TABLE"]))
         self.config = self.read_json("config/registry.json")
         validate_registry(self.config)
@@ -517,7 +518,7 @@ class Runtime:
             if inventory:
                 log.sync_inventory([i for i in inventory if i['instance_id'] == instance_id])
             log.record(report, key, prefix)
-            log.publish((lambda: log.summaries(inventory)) if inventory else None)
+            log.publish()
             delivery = "fleet_digest" if self.config.get('fleet') else self.deliver(report, key, prefix, secrets)
             self.state.save(key, owner, {"status": "done", "notification": delivery, "updated_at": int(time.time()),
                                         "expires_at": now + 90 * 86400}, release=True)
@@ -530,9 +531,9 @@ class Runtime:
             return
         _, inventory = inventory_targets(self.ec2, self.config)
         log = IncidentLog(self.state, self.s3, self.bucket)
-        log.sync_inventory(inventory)
+        log.sync_inventory(inventory, complete=True)
         summaries = lambda: log.summaries(inventory)
-        artifact = log.publish(summaries)
+        artifact = log.publish()
         delivery = deliver_summary(self, summaries, force=force)
         return {'notification':delivery, 'html':artifact, 'instances':len(inventory)}
 

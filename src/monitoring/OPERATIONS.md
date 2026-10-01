@@ -2,10 +2,11 @@
 
 The reviewer runs as an unprivileged, tool-free container in AWS Batch on EC2.
 EventBridge schedules discovery every five minutes. Discovery inventories EC2
-instance IDs and states. With `fleet` enabled, it covers the configured AWS region,
+instance IDs and states. With `fleet` enabled, it inventories nonterminated instances in the configured AWS region,
 excluding `crux-control`, its pinned instance ID, and controller-role instances.
-Running workloads receive reviews; stopped instances and Batch workers remain
-visible in inventory without generating repeated idle reviews. Explicit target
+Running workloads receive reviews; Batch workers remain visible as inventory only.
+Slack includes only running instances. The HTML retains all incident history and
+groups stopped and historical instances under a collapsed disclosure. Explicit target
 entries can supply approved exports or a session mapping. Without `fleet`, only
 explicitly registered targets receive reviews.
 This does not install agents, enable network sensors, change security groups on
@@ -38,8 +39,9 @@ The manifest records object version IDs and SHA-256 digests. The prompt is the e
 system instruction; evidence is the exact user payload. Intermediate artifacts
 survive later review failures. Retention is 90 days.
 
-Fleet Slack notifications contain one line per instance:
-`crux-web-pilot: 3 incidents based on 12 reviews, 1 new incident (last updated: 2026-10-01 15:30 ET)`.
+Fleet Slack notifications contain one bullet per running instance, with the new
+incident count in bold: `• crux-web-pilot: 3 incidents based on 12 reviews, *1 NEW incident :warning:* (last updated: 2026-10-01 15:30 ET)`.
+When public HTML is enabled, the message ends with “Open the public incident log.”
 The slug comes from the EC2 Name tag; duplicate names receive an instance-ID
 suffix. Incident counts are distinct historical issues, including monitoring
 problems. Review counts include completed, unavailable, and skipped attempts;
@@ -52,8 +54,8 @@ Discovery queues reviews and one fleet digest every five minutes. The digest
 summarizes the latest persisted results; jobs still running appear in a later
 digest. Unchanged health, incident counts, and inventory do not send another
 message merely because more reviews finished. A new incident, health transition,
-or inventory change sends the whole fleet snapshot. Slack text is literal and
-cannot create mentions or model-authored links. Slack acknowledgment and DynamoDB
+or running inventory change sends the active fleet snapshot. Slack formatting uses
+only sanitized instance slugs, counts, timestamps, and the configured log URL. Slack acknowledgment and DynamoDB
 cannot form one transaction: an ambiguous response can still cause duplicate
 delivery. Legacy explicit-target deployments retain per-review numbered alerts.
 
