@@ -108,6 +108,9 @@
         "s3:GetBucket*",
         "s3:GetEncryptionConfiguration",
         "s3:GetLifecycleConfiguration",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetObjectLockConfiguration",
         "s3:ListBucket"
       ],
       "Resource": "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1"
