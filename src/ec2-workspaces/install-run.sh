@@ -29,6 +29,37 @@ apt-get update -qq
 apt-get install -y -qq curl unzip jq git ca-certificates >/dev/null
 ok "apt packages in"
 
+# ====== NEEDRESTART ======
+# Unattended security upgrades stay on, and needrestart still restarts every
+# other service they touch. The gateway is the exception: every process the
+# agent launches runs inside its unit, so almost any library update flags it,
+# and a restart kills the run mid-turn. The gateway does not resume the
+# in-flight task afterwards, so the run is silently orphaned.
+info "needrestart: exclude crux-acp-gateway from automatic restarts"
+NR_DROPIN=/etc/needrestart/conf.d/crux.conf
+install -d -m 755 "$(dirname "$NR_DROPIN")"
+cat > "$NR_DROPIN" <<'PERL'
+$nrconf{override_rc}{qr(^crux-acp-gateway\.service$)} = 0;
+PERL
+chmod 644 "$NR_DROPIN"
+if [ -f /etc/needrestart/needrestart.conf ]; then
+  # Evaluate the config the way needrestart does, so a later snippet that
+  # replaces override_rc wholesale fails here rather than mid-run.
+  perl -e '
+    our %nrconf = (verbosity => 1, override_rc => {});
+    our $LOGPREF = "[main]";
+    my $conf = shift;
+    eval do { local $/; open my $fh, "<", $conf or die "$conf: $!\n"; <$fh> };
+    die "Error parsing $conf: $@" if $@;
+    my @hits = grep { "crux-acp-gateway.service" =~ /$_/ } keys %{$nrconf{override_rc}};
+    exit((@hits && !grep { $nrconf{override_rc}{$_} } @hits) ? 0 : 1);
+  ' /etc/needrestart/needrestart.conf \
+    || die "needrestart would still restart crux-acp-gateway.service. Check $NR_DROPIN and the other snippets in /etc/needrestart/conf.d/."
+  ok "needrestart will defer crux-acp-gateway restarts ($NR_DROPIN)"
+else
+  ok "needrestart not installed; $NR_DROPIN is in place if it arrives later"
+fi
+
 # ====== AWS CLI v2 ======
 # Install AWS CLI v2 from the official archive.
 info "AWS CLI v2"

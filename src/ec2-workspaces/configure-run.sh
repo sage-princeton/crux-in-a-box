@@ -333,6 +333,11 @@ ok "Claude answered and the standalone Stop hook processed its transcript"
 fi
 
 # ====== GATEWAY SERVICE ======
+# install-run.sh excludes the gateway from needrestart. A box provisioned
+# before that would let an unattended upgrade restart it mid-run.
+[ -f /etc/needrestart/conf.d/crux.conf ] \
+  || die "/etc/needrestart/conf.d/crux.conf is missing, so unattended upgrades can restart the gateway mid-run. Re-run install-run.sh; gateway was not started."
+
 # Run the gateway as a service with automatic restart.
 info "Installing crux-acp-gateway.service"
 cat > /etc/systemd/system/crux-acp-gateway.service <<UNIT
