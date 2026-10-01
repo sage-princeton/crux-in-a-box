@@ -60,22 +60,40 @@ validate_agent_key() {
   ' "$1" >/dev/null 2>&1 || die "$API_KEY_NAME is missing, invalid, or still a placeholder in $1."
 }
 
-# Optional per-run API keys for the agent's own tools. When present in the
-# secrets JSON they travel with the workspace's secrets and land in the agent
-# process's environment; absent keys are simply skipped.
-RUN_API_KEY_NAMES="WAVE_API_KEY PAGESPEED_API_KEY"
+# Any key in the secrets JSON other than a provider key or an AgentRQ
+# credential is a per-run API key for the agent's own tools: it travels with
+# the workspace's secrets and lands in the agent process's environment.
+# Provider keys and AgentRQ credentials have their own paths, so an unselected
+# provider key or the AgentRQ token never reaches the agent.
+PROVIDER_KEY_NAMES="OPENAI_API_KEY ANTHROPIC_API_KEY OPENROUTER_API_KEY"
 
 run_api_keys_json() {
-  jq -c --arg names "$RUN_API_KEY_NAMES" \
-    'with_entries(select(.key as $k | $names | split(" ") | index($k)))' "$1"
+  jq -c --arg reserved "$PROVIDER_KEY_NAMES" '
+    with_entries(select(.key as $k |
+      ($reserved | split(" ") | index($k) | not) and ($k | startswith("AGENTRQ_") | not)))
+  ' "$1"
 }
 
 validate_run_api_keys() {
-  # Same shape rules as validate_agent_key, applied only to keys that are set.
-  jq -e --arg names "$RUN_API_KEY_NAMES" '
-    [to_entries[] | select(.key as $k | $names | split(" ") | index($k)) | .value
-     | type == "string" and length > 0 and
-       (test("[[:space:][:cntrl:]]") | not) and
-       (test("CHANGE|REPLACE|xxx|\\.\\.\\.") | not)] | all
-  ' "$1" >/dev/null 2>&1 || die "An optional API key ($RUN_API_KEY_NAMES) in $1 is empty, invalid, or still a placeholder."
+  # Names become env-file lines; values follow validate_agent_key's rules.
+  # Report rejected names only, never values.
+  local keys bad
+  keys="$(run_api_keys_json "$1" 2>/dev/null)" || die "$1 is not a valid JSON object."
+  bad="$(printf '%s' "$keys" | jq -r '
+    [to_entries[] | select(
+      (.key | test("^[A-Z_][A-Z0-9_]*$") | not) or
+      (.value | type != "string" or length == 0 or
+        test("[[:space:][:cntrl:]]") or test("CHANGE|REPLACE|xxx|\\.\\.\\.")))
+     | .key | @json] | join(", ")')"
+  [ -z "$bad" ] || die "Per-run API key(s) in $1 have an invalid name (want UPPER_SNAKE_CASE) or an empty, invalid, or placeholder value: $bad"
+}
+
+check_run_api_key_clashes() {
+  # $1: per-run API keys JSON; $2: the agent env JSON configure-run.sh writes.
+  # A per-run key must not override the agent env or the env file's fixed lines.
+  local clash
+  clash="$(jq -rn --argjson keys "$1" --argjson env "$2" '
+    (($env | keys) + ["PATH", "HOME", "CLAUDE_CODE_EXECUTABLE"]) as $reserved
+    | [$keys | keys[] | select(. as $k | $reserved | index($k))] | join(", ")')"
+  [ -z "$clash" ] || die "Per-run API key(s) would override the agent environment: $clash. Remove them from the base secrets file."
 }

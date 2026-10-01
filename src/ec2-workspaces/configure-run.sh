@@ -54,7 +54,7 @@ WORKSPACE_ID="$(get AGENTRQ_WORKSPACE_ID)"  || die "AGENTRQ_WORKSPACE_ID missing
 WORKSPACE_TOKEN="$(get AGENTRQ_WORKSPACE_TOKEN)" || die "AGENTRQ_WORKSPACE_TOKEN missing from $RUN_SECRETS_PATH"
 RUN_API_KEYS="$(run_api_keys_json "$RUN_SECRETS_PATH")"
 rm -f "$RUN_SECRETS_PATH"
-ok "Read 3 per-run values plus $(printf '%s' "$RUN_API_KEYS" | jq -r 'keys | length') optional API key(s) (not echoed); deleted $RUN_SECRETS_PATH"
+ok "Read 3 per-run values plus per-run API keys [$(printf '%s' "$RUN_API_KEYS" | jq -r 'keys | join(", ")')] (values not echoed); deleted $RUN_SECRETS_PATH"
 
 # ====== SYSTEM-WIDE SECRETS FROM PARAMETER STORE ======
 # Shared by every run box; read via the instance's crux-system-role, whose
@@ -99,6 +99,7 @@ AGENT_ENV="$(jq -cn --arg platform "$AGENT_PLATFORM" --arg provider "$MODEL_PROV
     ANTHROPIC_DEFAULT_HAIKU_MODEL: $model,
     CLAUDE_CODE_SUBAGENT_MODEL: $model
   } else {($name): $key} end')"
+check_run_api_key_clashes "$RUN_API_KEYS" "$AGENT_ENV"
 GW_ENV=/etc/crux-run.env
 {
   printf '%s' "$AGENT_ENV" | jq -r 'to_entries[] | .key + "=" + (.value | @json)'
