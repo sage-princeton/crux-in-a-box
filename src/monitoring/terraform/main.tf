@@ -348,7 +348,9 @@ resource "aws_scheduler_schedule" "monitoring" {
   group_name          = aws_scheduler_schedule_group.monitoring.name
   state               = var.enabled ? "ENABLED" : "DISABLED"
   schedule_expression = "rate(5 minutes)"
-  end_date            = var.schedule_end
+  # Without an explicit start, AWS uses now and rejects updates after the end date.
+  start_date = var.enabled ? null : timeadd(var.schedule_end, "-1h")
+  end_date   = var.schedule_end
   flexible_time_window { mode = "OFF" }
   target {
     arn      = "arn:aws:scheduler:::aws-sdk:batch:submitJob"

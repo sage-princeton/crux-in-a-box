@@ -38,6 +38,10 @@ run "immutable_workers_remain_disabled" {
     error_message = "Adding an image must not implicitly activate monitoring."
   }
   assert {
+    condition     = timecmp(aws_scheduler_schedule.monitoring[0].start_date, aws_scheduler_schedule.monitoring[0].end_date) < 0
+    error_message = "A disabled schedule needs an explicit start before its end so expired runs remain updateable."
+  }
+  assert {
     condition     = jsondecode(aws_batch_job_definition.review[0].container_properties).readonlyRootFilesystem
     error_message = "Reviewer container root must be read-only."
   }
