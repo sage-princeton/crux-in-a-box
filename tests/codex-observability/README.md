@@ -24,7 +24,7 @@ The pins are read from `src/ec2-workspaces/placeholders-base.txt.example`. When 
 | `test_subagent_threads_are_nested_in_the_spawning_turn` | `spawn_agent` subagents never uploaded |
 | `test_thread_events_between_turns_do_not_create_turns` | empty phantom turns from `thread_settings_applied` |
 | `test_interrupted_turn_is_uploaded_and_flagged_on_the_next_stop` | the stop-then-message sequence used to flush the pilot's long turn |
-| `test_goal_continuation_turn_is_traced_as_its_own_turn` | the turn Codex starts itself for an active goal |
+| `test_goal_continuation_turns_are_each_traced_once_as_their_own_turn` | the chain of turns Codex starts itself for an active goal, with a Stop after each |
 | `test_hook_run_mid_turn_uploads_nothing` | whether running the hook on a timer could show a long turn live |
 | `test_stop_before_task_complete_uploads_the_turn_once` | duplicate traces of one turn |
 | `test_reupload_after_lost_sidecar_reuses_trace_and_span_ids` | duplicate traces of one turn |

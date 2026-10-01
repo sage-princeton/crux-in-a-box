@@ -180,12 +180,12 @@ class Rollout:
                                  "turn_id": self.turns[-1].turn_id, "started_at_ms": now - 5,
                                  "completed_at_ms": now, "item": {"id": _id("item", len(self.lines)), **item}})
 
-    def _message(self, role: str, text: str, phase: str | None = None) -> datetime:
+    def _message(self, role: str, text: str, phase: str | None = None, kind: str | None = None) -> datetime:
         part = "output_text" if role == "assistant" else "input_text"
         payload = {"type": "message", "role": role, "id": _id("msg", self.thread_id, len(self.lines)),
                    "content": [{"type": part, "text": text}],
                    "internal_chat_message_metadata_passthrough": self._meta(
-                       {"content_item_kinds": [part], "create_time": self.t.timestamp()})}
+                       {"content_item_kinds": [kind or part], "create_time": self.t.timestamp()})}
         if phase:
             payload["phase"] = phase
         return self._line("response_item", payload)
@@ -198,6 +198,18 @@ class Rollout:
                                                      "reasoning_effort": "high", "reasoning_summary": "auto"}})
 
     def begin_turn(self, prompt: str) -> TurnTruth:
+        """A turn a client started with a user message."""
+        return self._begin(prompt, internal=False)
+
+    def begin_goal_turn(self) -> TurnTruth:
+        """The turn the goal extension starts once the thread is idle with an active goal.
+
+        Codex submits the goal prompt as an internal-context response item, not user
+        input, so the turn has no UserMessage item (codex-rs ext/goal continue_if_idle).
+        """
+        return self._begin(GOAL_PROMPT, internal=True)
+
+    def _begin(self, prompt: str, internal: bool) -> TurnTruth:
         first = not self.turns
         turn = TurnTruth(_id("turn", self.thread_id, len(self.turns)), self.thread_id, prompt)
         self.turns.append(turn)
@@ -209,8 +221,11 @@ class Rollout:
             self._message("user", "<environment_context>\n  <cwd>/srv/fixture</cwd>\n</environment_context>")
             self._line("world_state", {"full": True, "state": {"model": MODEL, "environments": {"timezone": "UTC"}}})
         self._turn_context()
-        self._message("user", prompt)
-        self._item({"type": "UserMessage", "content": [{"type": "text", "text": prompt, "text_elements": []}]})
+        if internal:
+            self._message("user", prompt, kind="goal.internal_context")
+        else:
+            self._message("user", prompt)
+            self._item({"type": "UserMessage", "content": [{"type": "text", "text": prompt, "text_elements": []}]})
         self.tick(1.0)
         return turn
 
@@ -444,14 +459,15 @@ def interrupted() -> Scenario:
 
 
 def goal_continuation() -> Scenario:
-    """A completed turn followed at once by the turn Codex starts itself to pursue an active goal."""
+    """A turn that sets a goal, then a chain of turns Codex starts itself, each the moment the last ends."""
     main = Rollout(_id("thread", "goal"))
-    main.begin_turn("[Response to task 0wsTask05] action=text: say exactly: OK")
-    main.step([create_goal("Finish the migration")])
-    main.finish_turn("OK")
-    main.begin_turn(GOAL_PROMPT)
-    _work(main, 3)
-    main.finish_turn("Goal work checkpoint.")
+    main.begin_turn("[Response to task 0wsTask05] action=text: report the time in Tokyo every minute for 3 minutes")
+    main.step([create_goal("Report the time in Tokyo every minute for 3 minutes")])
+    main.finish_turn("Goal set.")
+    for n in range(3):
+        main.begin_goal_turn()
+        _work(main, 2)
+        main.finish_turn(f"Report {n + 1}: 04:2{n} JST.")
     return Scenario("goal_continuation", main, [])
 
 
