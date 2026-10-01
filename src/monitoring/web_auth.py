@@ -23,10 +23,13 @@ def install_auth(app, store, settings):
     saml_settings = {
         'strict': True, 'debug': False,
         'sp': {'entityId': origin + '/auth/metadata',
+               'NameIDFormat': 'urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress',
                'assertionConsumerService': {'url': origin + '/auth/callback',
                    'binding': 'urn:oasis:names:tc:SAML:2.0:bindings:HTTP-POST'}},
         'idp': settings.get('idp', {}),
         'security': {'wantAssertionsSigned': True, 'wantNameId': True,
+                     # Identity Center owns the authentication method, including MFA.
+                     'requestedAuthnContext': False,
                      'wantAttributeStatement': False,
                      'rejectUnsolicitedResponsesWithInResponseTo': True,
                      'rejectDeprecatedAlgorithm': True},

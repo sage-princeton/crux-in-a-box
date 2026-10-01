@@ -1,4 +1,6 @@
 import base64
+import zlib
+from urllib.parse import parse_qs, urlsplit
 from datetime import datetime, timedelta, timezone
 
 from cryptography import x509
@@ -31,6 +33,11 @@ def test_real_signed_saml_login_rejects_tampering_and_replay(store):
     client = create_app(store, settings).test_client()
     response = client.get('/auth/login', base_url=ORIGIN)
     assert response.status_code == 302 and response.location.startswith('https://idp.example.test/login?')
+    request_xml = etree.fromstring(zlib.decompress(base64.b64decode(
+        parse_qs(urlsplit(response.location).query)['SAMLRequest'][0]), -15))
+    namespace = {'p': 'urn:oasis:names:tc:SAML:2.0:protocol'}
+    assert request_xml.find('p:NameIDPolicy', namespace).get('Format').endswith(':emailAddress')
+    assert request_xml.find('p:RequestedAuthnContext', namespace) is None
     nonce = client.get_cookie(LOGIN_COOKIE, domain='incidents.example.test').value
     pending = store.get('LOGIN#' + digest(nonce), 'STATE')
     rid = pending['request_id']
