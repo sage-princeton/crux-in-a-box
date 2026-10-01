@@ -68,6 +68,25 @@ class ListFiles(Tool):
         return ctx.workspace.list_files(args.path)
 
 
+class ShellArguments(Arguments):
+    command: str = Field(description="A bash command line, run from the workspace root.")
+
+
+class ShellOptions(Options):
+    timeout_seconds: float = 600
+
+
+@TOOLS.register
+class RunShell(Tool):
+    type_name = "run_shell"
+    description = "Run a bash command in the workspace root. Returns the exit code and combined output."
+    Arguments = ShellArguments
+    Options = ShellOptions
+
+    async def invoke(self, ctx: RunContext, args: ShellArguments) -> str:
+        return ctx.workspace.run_shell(args.command, self.options.timeout_seconds)
+
+
 class CommandOptions(Options):
     command: str
     description: str
