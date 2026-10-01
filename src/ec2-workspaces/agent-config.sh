@@ -42,11 +42,9 @@ load_agent_config() {
     [[ "$value" =~ ^[a-zA-Z0-9._:/+@-]+(\[[a-zA-Z0-9]+\])?$ ]] \
       || die "$key contains unsupported characters."
   done
-  case "$AGENT_PLATFORM:$EFFORT" in
-    codex:minimal|codex:low|codex:medium|codex:high) ;;
-    claude:low|claude:medium|claude:high|claude:xhigh|claude:max) ;;
-    codex:*) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$EFFORT')." ;;
-    claude:*) die "CLAUDE_EFFORT must be low|medium|high|xhigh|max (got '$EFFORT')." ;;
+  case "$EFFORT" in
+    low|medium|high|xhigh|max) ;;
+    *) die "$EFFORT_KEY must be low|medium|high|xhigh|max (got '$EFFORT')." ;;
   esac
 }
 

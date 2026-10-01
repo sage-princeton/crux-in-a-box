@@ -35,7 +35,8 @@ KEY_NAME=crux-acp
 ELASTIC_IP_ADDRESS=34.201.10.20
 
 # Agent settings. Model and effort are required for the selected platform.
-# Codex effort: minimal | low | medium | high. An omitted platform selects Codex.
+# Codex effort: low | medium | high | xhigh | max. An omitted platform selects Codex.
+# Model support for effort levels varies; Codex sends the value to the model as-is.
 AGENT_PLATFORM=codex
 
 # Optional gateway: direct (default) | openrouter. OpenRouter requires an
