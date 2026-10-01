@@ -137,6 +137,15 @@ python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |
 
+## On a run box
+
+Set `AGENT_PLATFORM=openai-agents` and `DROP_IN_PATH=<drop-in directory>` in the workspace base config; see [`../ec2-workspaces/README.md`](../ec2-workspaces/README.md). Provisioning does four things, and creates no AgentRQ workspace:
+
+1. It stages this directory, root-owned, at `/opt/crux-sdk-scaffold`, and the drop-in at `/srv/crux-run/run-harness`.
+2. It writes the environment above to `/etc/crux-run.env`.
+3. It runs `probe --coding-agent codex`.
+4. It installs `crux-sdk-run.service`, but does not start it.
+
 ## Development
 
 ```bash

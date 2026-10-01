@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Create an AgentRQ workspace and provision its EC2 instance.
+# Provision a run box for the configured platform. Platforms whose scaffold
+# needs AgentRQ (codex, claude) also get an AgentRQ workspace, created first.
 #
 # Usage: ./make-new-workspace.sh <slug> [--description TEXT] [--dry-run]
 #          [--base-config FILE] [--base-secrets FILE]
@@ -84,8 +85,7 @@ ok "Base config and secrets present; control box '$CONTROL_SLUG'"
 load_agent_config all
 validate_agent_key "$BASE_SECRETS"
 validate_run_api_keys "$BASE_SECRETS"
-[ -d "$SCRIPT_DIR/../../run-harness/workspace" ] \
-  || die "run-harness/workspace is missing from the repository checkout."
+load_drop_in_path "$SCRIPT_DIR/../.."
 AGENT_API_KEY="$(jq -r --arg key "$API_KEY_NAME" '.[$key]' "$BASE_SECRETS")"
 if [ "$AGENT_PLATFORM" = claude ]; then
   [ -f "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" ] \
@@ -150,23 +150,25 @@ if [ -n "$EXISTING" ] && [ "$EXISTING" != "None" ]; then
 fi
 
 # Last of the pre-mint checks: the box we are about to ask for a workspace.
-ssh -o ConnectTimeout=10 -o BatchMode=yes "$CONTROL_SLUG" true 2>/dev/null \
-  || die "Cannot ssh to '$CONTROL_SLUG'. The workspace is minted over that connection, so this must work first. Check ~/.ssh/config and that the control box is running."
-ok "Control box '$CONTROL_SLUG' reachable over ssh"
+if scaffold_needs agentrq; then
+  ssh -o ConnectTimeout=10 -o BatchMode=yes "$CONTROL_SLUG" true 2>/dev/null \
+    || die "Cannot ssh to '$CONTROL_SLUG'. The workspace is minted over that connection, so this must work first. Check ~/.ssh/config and that the control box is running."
+  ok "Control box '$CONTROL_SLUG' reachable over ssh"
+fi
 
 if [ "$DRY_RUN" = 1 ]; then
   cat <<PLAN
 
 [dry-run] Would, for slug '$SLUG':
-  1. create AgentRQ workspace '$SLUG' on $CONTROL_SLUG (workingDirectory /srv/crux-run)
+$(if scaffold_needs agentrq; then printf '  1. create AgentRQ workspace %s on %s (workingDirectory /srv/crux-run)\n' "'$SLUG'" "$CONTROL_SLUG"; else printf '  1. create no AgentRQ workspace (the %s scaffold does not use one)\n' "$SCAFFOLD_MODULE"; fi)
   2. write $CONFIG           from $(basename "$BASE_CONFIG")
-     platform $AGENT_PLATFORM, model $MODEL, effort $EFFORT, dialling ${MCP_BASE:-<private default>}
-  3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS") + the minted id/token
+     platform $AGENT_PLATFORM, model $MODEL, effort $EFFORT$(if scaffold_needs agentrq; then printf ', dialling %s' "${MCP_BASE:-<private default>}"; fi)
+  3. write $SECRETS   $API_KEY_NAME from $(basename "$BASE_SECRETS")$(if scaffold_needs agentrq; then printf ' + the minted id/token'; fi)
   4. run provision-workspace-aws-resources.sh, which provisions and verifies the box
-     and stages run-harness/ at /srv/crux-run/run-harness
+     and stages $DROP_IN_PATH/ at /srv/crux-run/run-harness
 $(if [ -n "$ELASTIC_IP_ADDRESS_CFG" ]; then printf '  elastic ip        %s (override, reused as-is; not released on teardown)\n' "$ELASTIC_IP_ADDRESS_CFG"; else printf '  elastic ip        allocated fresh, tagged Name=%s\n' "$SLUG"; fi)
 
-Nothing was created — not the workspace either.
+Nothing was created$(if scaffold_needs agentrq; then printf ' — not the workspace either'; fi).
 PLAN
   exit 0
 fi
@@ -174,6 +176,8 @@ fi
 # ====== 1. WORKSPACE ======
 # Named after the slug so the dashboard, the EC2 tag, the ssh alias and the
 # Langfuse environment are all the same string.
+WS_ID=""
+if scaffold_needs agentrq; then
 info "Creating workspace '$SLUG' on $CONTROL_SLUG"
 WS_JSON="$("$CONTROL_DIR/bootstrap-workspace.sh" "$CONTROL_SLUG" "$SLUG" \
   "${DESC:-run box $SLUG}")" \
@@ -188,6 +192,7 @@ cleanup_note() {
   warn "Re-running needs a new slug, or delete that workspace in the dashboard first."
 }
 trap 'cleanup_note' ERR
+fi
 
 # ====== 2. PER-BOX CONFIG ======
 info "Writing $(basename "$CONFIG")"
@@ -211,9 +216,9 @@ ok "Wrote $(basename "$CONFIG")${MY_IP:+ (operator $MY_IP/32)}"
 # ====== 3. PER-BOX SECRETS ======
 info "Writing $(basename "$SECRETS")"
 umask 077
-jq -n --arg key "$API_KEY_NAME" --arg k "$AGENT_API_KEY" --arg id "$WS_ID" --arg t "$WS_TOKEN" \
+jq -n --arg key "$API_KEY_NAME" --arg k "$AGENT_API_KEY" --arg id "$WS_ID" --arg t "${WS_TOKEN:-}" \
   --argjson extra "$(run_api_keys_json "$BASE_SECRETS")" \
-  '{($key):$k, AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t} + $extra' > "$SECRETS"
+  '{($key):$k} + (if $id == "" then {} else {AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t} end) + $extra' > "$SECRETS"
 chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
@@ -225,9 +230,9 @@ printf '\n'
 trap - ERR
 cat <<DONE
 
-$(ok "'$SLUG' is up and attached to its own workspace")
+$(if [ -n "$WS_ID" ]; then ok "'$SLUG' is up and attached to its own workspace"; else ok "'$SLUG' is up"; fi)
 
-  workspace  $WS_ID   (named '$SLUG' in the dashboard)
+$(if [ -n "$WS_ID" ]; then printf '  workspace  %s   (named %s in the dashboard)\n' "$WS_ID" "'$SLUG'"; fi)
   agent      $AGENT_PLATFORM, $MODEL, effort $EFFORT
   config     $(basename "$CONFIG")
   secrets    $(basename "$SECRETS")
