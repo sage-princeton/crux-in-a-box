@@ -80,8 +80,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
 resource "aws_s3_object" "registry" {
   bucket       = aws_s3_bucket.evidence.id
   key          = "config/registry.json"
-  source       = var.registry_file
-  source_hash  = filemd5(var.registry_file)
+  content      = file(var.registry_file)
   content_type = "application/json"
   depends_on   = [aws_s3_bucket_versioning.evidence]
 }

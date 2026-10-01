@@ -220,8 +220,10 @@ The `/crux/monitoring/web` SecureString contains JSON with `origin`, `bucket`,
 and `idp` (`entityId`, `singleSignOnService.url`, and `x509cert`). Register the
 site as an Identity Center custom SAML application: audience `/auth/metadata`,
 ACS `/auth/callback`, and start URL `/auth/login`, all under that HTTPS origin.
-Map Subject to a stable named user identifier and assign only operators to the
-application. It accepts signed, requested assertions; portal launches must go
+Map Subject to `${user:email}` with format `emailAddress` and assign only
+operators to the application. Load IdP metadata from that completed application;
+different applications have different issuer URLs and certificates. AWS controls
+the sign-in method and MFA policy. The app accepts signed, requested assertions; portal launches must go
 through the start URL. There is no shared password or access-key login form.
 Without IdP configuration, public pages work and sign-in returns unavailable.
 Sessions expire after at most one hour; removing an assignment prevents new

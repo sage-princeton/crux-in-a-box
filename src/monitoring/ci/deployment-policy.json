@@ -118,7 +118,8 @@
     {
       "Effect": "Allow",
       "Action": [
-        "s3:GetObject"
+        "s3:GetObject",
+        "s3:GetObjectTagging"
       ],
       "Resource": [
         "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/config/registry.json",

@@ -54,8 +54,9 @@ def main():
     allowed = {'aws_batch_job_definition.discover[0]', 'aws_batch_job_definition.review[0]',
                'aws_iam_role_policy.scheduler[0]', 'aws_iam_role_policy.submit[0]',
                'aws_scheduler_schedule.monitoring[0]', 'aws_instance.web[0]'}
-    if any(r['address'] not in allowed or r['change']['actions'] != ['update'] for r in changes):
-        raise RuntimeError('Infrastructure changes need a separately reviewed operator apply; CI refuses this plan.')
+    rejected = [r['address'] for r in changes if r['address'] not in allowed or r['change']['actions'] != ['update']]
+    if rejected:
+        raise RuntimeError('Infrastructure changes need an operator apply: ' + ', '.join(rejected))
     run('terraform', 'apply', '-input=false', '-auto-approve', 'deploy.tfplan', cwd=terraform)
     outputs = {k: v['value'] for k, v in json.loads(run('terraform', 'output', '-json', cwd=terraform, capture=True)).items()}
     image = repository + '@' + config['web_image_digest']
@@ -70,8 +71,16 @@ p.write_text(s)
 """
     command = 'set -eu\npython3 - <<\'PY\'\n' + script + '\nPY\nsystemctl restart crux-incidents.service'
     ssm = boto3.client('ssm')
-    result = ssm.send_command(InstanceIds=[outputs['incident_web_instance']], DocumentName='AWS-RunShellScript',
-        Parameters={'commands': [command]}, TimeoutSeconds=600, Comment='Deploy CRUX incident web ' + revision)
+    # Updating EC2 user-data can reboot the host before its SSM agent reconnects.
+    for attempt in range(24):
+        try:
+            result = ssm.send_command(InstanceIds=[outputs['incident_web_instance']], DocumentName='AWS-RunShellScript',
+                Parameters={'commands': [command]}, TimeoutSeconds=600, Comment='Deploy CRUX incident web ' + revision)
+            break
+        except ssm.exceptions.InvalidInstanceId:
+            time.sleep(5)
+    else:
+        raise RuntimeError('Web host did not reconnect to SSM after apply')
     command_id = result['Command']['CommandId']
     deadline = time.monotonic() + 600
     while time.monotonic() < deadline:
