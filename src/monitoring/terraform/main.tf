@@ -38,9 +38,9 @@ resource "aws_s3_bucket" "evidence" {
 resource "aws_s3_bucket_public_access_block" "evidence" {
   bucket                  = aws_s3_bucket.evidence.id
   block_public_acls       = true
-  block_public_policy     = true
+  block_public_policy     = !var.public_incident_log
   ignore_public_acls      = true
-  restrict_public_buckets = true
+  restrict_public_buckets = !var.public_incident_log
 }
 resource "aws_s3_bucket_versioning" "evidence" {
   bucket = aws_s3_bucket.evidence.id
@@ -54,11 +54,16 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "evidence" {
 }
 resource "aws_s3_bucket_policy" "tls" {
   bucket = aws_s3_bucket.evidence.id
-  policy = jsonencode({ Version = "2012-10-17", Statement = [{
+  policy = jsonencode({ Version = "2012-10-17", Statement = concat([{
     Effect    = "Deny", Principal = "*", Action = "s3:*",
     Resource  = [aws_s3_bucket.evidence.arn, "${aws_s3_bucket.evidence.arn}/*"],
     Condition = { Bool = { "aws:SecureTransport" = "false" } }
-  }] })
+    }], var.public_incident_log ? [{
+    Sid      = "PublicIncidentLog"
+    Effect   = "Allow", Principal = "*", Action = "s3:GetObject",
+    Resource = "${aws_s3_bucket.evidence.arn}/reviews/incidents/index.html"
+  }] : []) })
+  depends_on = [aws_s3_bucket_public_access_block.evidence]
 }
 resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
   bucket = aws_s3_bucket.evidence.id

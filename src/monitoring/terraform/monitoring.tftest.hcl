@@ -75,3 +75,22 @@ run "activation_requires_image_and_registry" {
   variables { enabled = true }
   expect_failures = [terraform_data.configuration]
 }
+
+run "public_log_does_not_publish_evidence" {
+  command = apply
+  variables { public_incident_log = true }
+  assert {
+    condition = [for statement in jsondecode(aws_s3_bucket_policy.tls.policy).Statement : statement if statement.Effect == "Allow"] == [{
+      Sid       = "PublicIncidentLog"
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = "s3:GetObject"
+      Resource  = "${aws_s3_bucket.evidence.arn}/reviews/incidents/index.html"
+    }]
+    error_message = "Anonymous access must permit only the current incident HTML, never reports, versions, or bucket listing."
+  }
+  assert {
+    condition     = aws_s3_bucket_public_access_block.evidence.block_public_acls && aws_s3_bucket_public_access_block.evidence.ignore_public_acls
+    error_message = "Public ACLs must remain blocked even when the HTML is published."
+  }
+}

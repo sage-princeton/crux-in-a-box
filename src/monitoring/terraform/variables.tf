@@ -72,3 +72,8 @@ variable "schedule_end" {
   type        = string
   description = "UTC RFC3339 scheduler end time; match registry expires_at."
 }
+variable "public_incident_log" {
+  type        = bool
+  default     = false
+  description = "Allow anonymous HTTPS reads of the incident HTML only; reports and evidence remain private."
+}

@@ -115,8 +115,11 @@ from suppressed notifications; `done` means processing is finished in either cas
 
 ## Incident history
 
-The private incident log is `reviews/incidents/index.html` in the artifact bucket.
-Download it and open the file in a browser; search, filters, and expanded details
+The incident log is `reviews/incidents/index.html` in the artifact bucket.
+It is private by default. Setting `public_incident_log=true` publishes only this
+HTML file over HTTPS; its incident summaries become public, while full reports,
+evidence, object versions, and bucket listing remain private. Terraform outputs
+the public URL. Download it and open the file in a browser; search, filters, and expanded details
 work offline. Evidence links require AWS access. Every saved review updates this
 snapshot, including reviews whose Slack notification was suppressed.
 
