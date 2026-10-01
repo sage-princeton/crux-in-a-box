@@ -42,6 +42,33 @@ jobs:
           docker run --rm --read-only --network none crux-monitoring:check python worker.py --help
           docker build --platform linux/amd64 -f src/monitoring/Dockerfile.web -t crux-incidents:check src/monitoring
           docker run --rm --read-only --network none crux-incidents:check python -c 'from web import create_app'
+      - name: Install Trivy
+        id: trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.75.0
+      - name: Scan Python source and configuration
+        run: |
+          mkdir -p "$RUNNER_TEMP/security"
+          pip install bandit==1.9.4
+          bandit -r src/monitoring -x src/monitoring/tests --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
+          bandit -r src/monitoring -x src/monitoring/tests -ll
+          trivy fs --scanners misconfig,secret --skip-dirs src/monitoring/tests --format json --output "$RUNNER_TEMP/security/source.json" src/monitoring
+          trivy fs --scanners secret --skip-dirs src/monitoring/tests --exit-code 1 src/monitoring
+      - name: Scan worker image
+        if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
+        run: bash src/monitoring/ci/scan-image.sh crux-monitoring:check "$RUNNER_TEMP/security/worker.json"
+      - name: Scan incident web image
+        if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
+        run: bash src/monitoring/ci/scan-image.sh crux-incidents:check "$RUNNER_TEMP/security/web.json"
+      - name: Upload security reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitoring-security-reports
+          path: ${{ runner.temp }}/security/
+          retention-days: 14
+          if-no-files-found: ignore
   terraform:
     name: Monitoring Terraform
     runs-on: ubuntu-24.04

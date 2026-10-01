@@ -39,6 +39,10 @@ def main():
             run('docker', 'push', repository + ':' + tag)
             detail = ecr.describe_images(repositoryName=config['name'], imageIds=[{'imageTag': tag}])['imageDetails'][0]
         config['web_image_digest' if kind == 'web' else 'image_digest'] = detail['imageDigest']
+        # Scan the exact published digest, including previously built images,
+        # before any Terraform apply or live service update.
+        run('bash', str(ROOT / 'ci/scan-image.sh'), repository + '@' + detail['imageDigest'],
+            str(Path(os.environ['RUNNER_TEMP']) / 'security' / (kind + '.json')))
     config['revision'] = revision
     registry = Path(os.environ['RUNNER_TEMP']) / 'monitoring-registry.json'
     s3.download_file(bucket, 'config/registry.json', str(registry))
@@ -111,7 +115,8 @@ p.write_text(s)
             raise RuntimeError('Public web health did not confirm the deployed commit')
         response = client.get(outputs['incident_web_url'] + '/?status=all')
         response.raise_for_status()
-        assert 'Incident log' in response.text
+        if 'Incident log' not in response.text:
+            raise RuntimeError('Public incident page did not contain the expected content')
     config['registry_file'] = 'registry.json'
     s3.put_object(Bucket=bucket, Key='config/deployment.json', Body=json.dumps(config).encode(),
                   ContentType='application/json', ServerSideEncryption='AES256')

@@ -39,5 +39,17 @@ jobs:
           role-session-name: monitoring-${{ github.run_id }}
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
       - run: pip install -r src/monitoring/requirements.txt
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.75.0
       - name: Build immutable images, apply shared state, and verify HTTPS
         run: python src/monitoring/ci/deploy.py
+      - name: Upload deployment security reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: deployed-image-security-reports
+          path: ${{ runner.temp }}/security/
+          retention-days: 14
+          if-no-files-found: ignore
