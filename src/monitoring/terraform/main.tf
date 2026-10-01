@@ -205,7 +205,7 @@ resource "aws_iam_role_policy" "job" {
     { Effect = "Allow", Action = ["ec2:DescribeInstances"], Resource = "*" },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/config/registry.json" },
     { Effect = "Allow", Action = ["s3:PutObject", "s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/${each.key == "discover" ? "inventory" : "reviews"}/*" },
-    { Effect = "Allow", Action = each.key == "discover" ? ["dynamodb:Query"] : ["dynamodb:GetItem", "dynamodb:UpdateItem"],
+    { Effect = "Allow", Action = each.key == "discover" ? ["dynamodb:Query"] : ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Scan"],
     Resource = [aws_dynamodb_table.state.arn, "${aws_dynamodb_table.state.arn}/index/*"] }
     ], each.key == "review" ? [
     { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = var.secrets_parameter_arn }

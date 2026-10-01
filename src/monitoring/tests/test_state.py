@@ -4,7 +4,7 @@ from botocore.exceptions import ClientError
 from moto import mock_aws
 
 from review import CoverageError
-from worker import LEASE_SECONDS, State
+from worker import LEASE_SECONDS, Runtime, State
 
 
 @pytest.fixture
@@ -54,3 +54,51 @@ def test_window_stops_retrying_after_five_claimed_attempts(state):
         assert state.claim(key, str(attempt), 1000 + attempt)
         state.save(key, str(attempt), {"updated_at": 1000 + attempt}, release=True)
     assert not state.claim(key, "sixth", 2000)
+
+
+def test_notice_transitions_suppress_unchanged_failures_but_keep_recovery_and_findings(state):
+    runtime = Runtime.__new__(Runtime)
+    runtime.state = state
+    delivered = []
+    runtime.notify = lambda report, *args: delivered.append(report)
+    failed = {"review_status": "failed", "review_error": "Workspace budget exhausted",
+              "summary": "Review unavailable", "findings": [], "coverage_gaps": ["Old export"]}
+    def send(report, window):
+        return runtime.deliver(report, f"REVIEW#i-test#{window}", "reviews/test", {})
+    assert send(failed, 300) == "sent"
+    assert send({**failed, "coverage_gaps": ["Old export", "No new traces"]}, 600) == "suppressed"
+    assert send({**failed, "review_error": "Key revoked"}, 900) == "sent"
+    idle = {**failed, "review_status": "idle", "review_error": "", "summary": "No recent evidence"}
+    assert send(idle, 1200) == "sent"
+    assert not delivered[-1]["notification_recovery"]
+    assert send(idle, 1500) == "suppressed"
+    healthy = {"review_status": "completed", "summary": "Reviewed", "findings": [], "coverage_gaps": []}
+    assert send(healthy, 1800) == "sent"
+    assert delivered[-1]["notification_recovery"] is True
+    assert send(healthy, 2100) == "suppressed"
+    assert send(failed, 300) == "suppressed"  # Late failure cannot undo recovery.
+    finding = {**healthy, "findings": [{"severity": "info"}]}
+    assert send(finding, 2400) == "sent"
+    assert send(finding, 2400) == "suppressed"  # Retry after recorded Slack acknowledgment.
+    assert send(finding, 2700) == "sent"  # Never severity-filter real findings.
+
+
+def test_notice_contention_and_failed_webhook_remain_retryable(state):
+    runtime = Runtime.__new__(Runtime)
+    runtime.state = state
+    report = {"review_status": "failed", "summary": "Review unavailable", "review_error": "Budget exhausted",
+              "findings": [], "coverage_gaps": []}
+    import time
+    assert state.claim_notice("NOTICE#i-test", "other", int(time.time()))
+    with pytest.raises(CoverageError, match="in progress"):
+        runtime.deliver(report, "REVIEW#i-test#300", "reviews/test", {})
+    state.save("NOTICE#i-test", "other", {"updated_at": 1}, release=True)
+    def unavailable(*args):
+        raise CoverageError("Webhook rejected delivery")
+    runtime.notify = unavailable
+    with pytest.raises(CoverageError, match="Webhook"):
+        runtime.deliver(report, "REVIEW#i-test#300", "reviews/test", {})
+    assert "fingerprint" not in state.get("NOTICE#i-test")
+    assert "lease_owner" not in state.get("NOTICE#i-test")
+    runtime.notify = lambda *args: None
+    assert runtime.deliver(report, "REVIEW#i-test#300", "reviews/test", {}) == "sent"

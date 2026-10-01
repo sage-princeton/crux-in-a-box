@@ -33,14 +33,18 @@ The manifest records object version IDs and SHA-256 digests. The prompt is the e
 system instruction; evidence is the exact user payload. Intermediate artifacts
 survive later review failures. Retention is 90 days. Slack receives all findings
 without a severity threshold, as a numbered list of single-line findings with
-severity/confidence, coverage gaps, and a labeled AWS-console link to the notes.
+severity/confidence, a short coverage summary, and a labeled AWS-console link to the notes.
 Each line ends with the review window's end in Eastern Time (including daylight
 saving changes), not an asserted event time. Full explanations remain in S3.
 Model-authored text is redacted and rendered as literal text, never active mentions
-or links. Failed inference is labeled “Review unavailable — no safety verdict.”
+or links. Failed inference produces one actionable “Monitoring paused” alert;
+its repeated source gaps remain in S3. Unchanged failures and coverage-only states
+do not send another Slack message. A changed blocker or successful recovery does.
+Ordinary successful reviews with no findings or coverage changes are silent.
+If only stale exports, empty logs, or EC2 metadata are available, inference is
+skipped and the target is marked idle, never safe. Idle is not an inference recovery.
 The link requires the reader's S3 permissions;
-it is not a public object or a bearer URL. Duplicate windows/alerts are intentional
-for this first noisy iteration. Slack acknowledgement and DynamoDB cannot form one
+it is not a public object or a bearer URL. Slack acknowledgement and DynamoDB cannot form one
 transaction: an ambiguous response can cause duplicate delivery with the same ID.
 
 ## Read-only access boundary
@@ -88,6 +92,7 @@ One on-demand table, encrypted at rest, with point-in-time recovery:
 | --- | --- | --- |
 | `REVIEW#instance-id#window-end` | Lease owner/expiry, status, S3 prefix, timestamps | A conditional update elects one active reviewer. Completed windows are not rerun. |
 | `TARGET#instance-id` | Latest workload profile, suggested source IDs, window end | Later reviews reuse context. Conditional updates prevent older windows overwriting newer profiles. |
+| `NOTICE#instance-id` | Delivery lease, latest health fingerprint/window, last acknowledged review | Serializes notifications, suppresses repeated health-only alerts, and identifies recovery. Older windows cannot roll health state backward; actual findings still notify. |
 | `BUDGET#inference` | Reserved micro-USD | Atomic reservations bound inference across concurrent jobs and retries. Ambiguous charges are never refunded. |
 
 The `status-updated` index lets discovery find unfinished reviews. It is eventually
@@ -100,8 +105,29 @@ Large evidence and reports stay in S3 to avoid DynamoDB's item-size limit.
 Five claimed attempts exhaust a window's automatic retries; the last Batch failure
 is retained in the operations queue. Inference authentication/billing failures
 (HTTP 401/402/403) set `HEALTH#reviewer.blocked`. Repair credentials/billing and
-remove that health row as an operator to resume inference. Other reviews continue
-to report the coverage gap without sending additional paid model requests.
+remove that health row as an operator to resume inference. OpenRouter workspace
+budgets are separate from the API key limit: a valid key with remaining allowance
+can still receive HTTP 403 when its workspace budget is exhausted. Provider error
+diagnostics are redacted and saved as `error.json`; the actionable reason is retained
+in the health row. Other reviews retain evidence and reports without additional
+paid model requests or repeated alerts. `REVIEW.notification` distinguishes sent
+from suppressed notifications; `done` means processing is finished in either case.
+
+## Incident history
+
+The private incident log is `reviews/incidents/index.html` in the artifact bucket.
+Download it and open the file in a browser; search, filters, and expanded details
+work offline. Evidence links require AWS access. Every saved review updates this
+snapshot, including reviews whose Slack notification was suppressed.
+
+One row groups the same finding category, evidence text, and source IDs for a
+target; changed evidence remains separate. Monitoring outages, inactivity, and
+coverage limitations each have one row per target. Rows retain first/last seen and
+the number of distinct review windows. Replaying a window does not increase its
+count. Import history oldest first; arrivals more than 90 days behind an incident's
+latest observation are ignored to bound replay state. Aggregate incident rows do
+not expire. Only monitoring health is resolved automatically; absence in a later
+review does not establish that an agent finding was fixed.
 
 ## Deployment
 

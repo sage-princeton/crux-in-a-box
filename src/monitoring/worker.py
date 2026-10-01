@@ -19,6 +19,7 @@ from boto3.dynamodb.conditions import Key
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from incidents import IncidentLog
 from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
                     collect_logs, collect_sftp, digest, encoded, evaluate, get_json,
                     https_url, iso, scrub, select_reviewer)
@@ -27,13 +28,48 @@ from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
 LEASE_SECONDS = 1200  # Longer than Batch's 900-second hard attempt timeout.
 
 
+def review_failed(report):
+    return report.get("review_status") == "failed" or (
+        "review_status" not in report and report["summary"] == "Review unavailable")
+
+
+def review_reason(report):
+    return report.get("review_error") or next(
+        (gap for gap in report["coverage_gaps"] if gap.startswith("Reviewer failed (")),
+        "Inference is unavailable; inspect the saved report.")
+
+
+def inference_error(error, secrets):
+    details = {"type": type(error).__name__}
+    reason = failure_message(error)
+    if isinstance(error, httpx.HTTPStatusError) and error.request.url.host == "openrouter.ai":
+        status = error.response.status_code
+        details.update(endpoint=error.request.url.path, http_status=status)
+        try:
+            message = error.response.json().get("error", {}).get("message", "")
+            details["provider_message"] = str(message)[:1000]
+        except (ValueError, AttributeError, httpx.ResponseNotRead):
+            message = ""
+        budget = re.fullmatch(r"Workspace (daily|weekly|monthly|lifetime) budget of (\$[\d,.]+) exceeded\. Contact your org admin\.", str(message))
+        if budget:
+            reason = f"OpenRouter workspace {budget[1]} budget ({budget[2]}) exhausted. Ask the workspace admin to increase it, then reset monitoring."
+        else:
+            reason = f"OpenRouter {error.request.url.path} returned HTTP {status}. Inspect error.json before resetting monitoring."
+    return scrub(reason, secrets.values()), scrub(details, secrets.values())
+
+
+def fresh_evidence(sources, start):
+    return any((s["kind"] == "langfuse" or
+                (s["kind"] == "cloudwatch" and bool(s["data"])) or
+                (s["kind"] == "sftp" and s.get("mtime", 0) >= start)) for s in sources)
+
+
 def markdown_report(report, key):
     def prose(value):
         text = html.escape(" ".join(value.split()), quote=False)
         return re.sub(r"([\\`*_{}\[\]#!|])", r"\\\1", text)
 
-    failed = report.get("review_status") == "failed" or (
-        "review_status" not in report and report["summary"] == "Review unavailable")
+    failed = review_failed(report)
     lines = ["# Monitoring review", ""]
     parts = key.split("#")
     if len(parts) == 3 and parts[0] == "REVIEW":
@@ -41,7 +77,9 @@ def markdown_report(report, key):
         lines.extend([f"Instance: {prose(parts[1])}", "",
                       "Review window ended: " + end.strftime("%Y-%m-%d %H:%M ET"), ""])
     if failed:
-        lines.extend(["**Review unavailable — no safety verdict.**", ""])
+        lines.extend(["**Review unavailable — no safety verdict.**", "", prose(review_reason(report)), ""])
+    elif report.get("review_status") == "idle":
+        lines.extend(["**Review skipped — no recent evidence, no safety verdict.**", ""])
     lines.extend([prose(report["summary"]), "", "## Findings", ""])
     for i, finding in enumerate(report["findings"], 1):
         lines.append(f"{i}. **{prose(finding['category'])}:** {prose(finding['evidence'])} "
@@ -49,7 +87,8 @@ def markdown_report(report, key):
         lines.extend([f"   Possible explanation: {prose(finding['benign_explanation'])}",
                       "   Sources: " + ", ".join(prose(s) for s in finding["source_ids"]), ""])
     if not report["findings"]:
-        lines.extend(["Findings could not be assessed." if failed else "No findings in the available evidence.", ""])
+        lines.extend(["Findings could not be assessed." if failed or report.get("review_status") == "idle"
+                      else "No findings in the available evidence.", ""])
     lines.extend(["## Coverage gaps", ""])
     lines.extend("- " + prose(gap) for gap in report["coverage_gaps"])
     if not report["coverage_gaps"]:
@@ -64,8 +103,7 @@ def slack_message(report, key, link):
 
     findings, gaps = report["findings"], report["coverage_gaps"]
     # Old pending reports predate the explicit outcome field.
-    failed = report.get("review_status") == "failed" or (
-        "review_status" not in report and report["summary"] == "Review unavailable")
+    failed = review_failed(report)
     parts = key.split("#")
     # Findings lack verified event times; use the reviewed window's end, not delivery time.
     stamp = (datetime.fromtimestamp(int(parts[2]), ZoneInfo("America/New_York"))
@@ -73,13 +111,18 @@ def slack_message(report, key, link):
              else "Review time unavailable")
     lines = []
     if failed:
-        lines.append("Review unavailable: No safety verdict could be produced")
-    elif not findings:
+        lines.append("Monitoring paused: " + short(review_reason(report), 600) + " No safety verdict.")
+    elif report.get("review_status") == "idle":
+        lines.append("No recent evidence: Review skipped; no safety verdict. Refresh the approved sources or retire this target.")
+    elif report.get("notification_recovery"):
+        lines.append("Monitoring recovered: AI reviews are running again.")
+    elif not findings and not gaps:
         lines.append("No findings in the available evidence")
     for finding in findings:
         lines.append(f"{short(finding['category'], 100)}: {short(finding['evidence'], 450)} "
                      f"({finding['severity'].capitalize()} severity, {finding['confidence']} confidence)")
-    lines.extend("Coverage gap: " + short(gap, 300) for gap in gaps)
+    if gaps and not failed and report.get("review_status") != "idle":
+        lines.append(f"Limited visibility: {len(gaps)} coverage gaps. " + short(gaps[0], 240) + " Full details are in the report.")
     lines = [f"{i}. {line}, {stamp}" for i, line in enumerate(lines, 1)]
     # Group lines to stay within Slack's block limits without dropping any findings or gaps.
     chunks = []
@@ -91,8 +134,9 @@ def slack_message(report, key, link):
     # Model-authored prose is literal text: it cannot create Slack mentions or links.
     blocks = [{"type": "section", "text": {"type": "plain_text", "text": chunk}} for chunk in chunks]
     blocks.append({"type": "section", "text": {"type": "mrkdwn", "text":
-        f"{len(lines) + 1}. <{link}|Full report and evidence> (AWS login required), {stamp}", "verbatim": True}})
+        f"\n{len(lines) + 1}. <{link}|Full report and evidence> (AWS login required), {stamp}", "verbatim": True}})
     outcome = "Review unavailable — no safety verdict" if failed else (
+        "No recent evidence — no safety verdict" if report.get("review_status") == "idle" else
         f"{len(findings)} findings to review" if findings else "No findings in the available evidence")
     return {"text": f"1. {outcome}, {stamp}", "blocks": blocks,
             "unfurl_links": False, "unfurl_media": False}
@@ -181,6 +225,18 @@ class State:
                 if not page.get("LastEvaluatedKey"):
                     break
                 args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
+
+    def claim_notice(self, key, owner, now):
+        try:
+            self.table.update_item(Key={"pk": key},
+                UpdateExpression="SET lease_owner=:owner, lease_until=:until",
+                ConditionExpression="attribute_not_exists(lease_until) OR lease_until < :now",
+                ExpressionAttributeValues={":owner": owner, ":until": now + LEASE_SECONDS, ":now": now})
+        except ClientError as error:
+            if conditional_failure(error):
+                return False
+            raise
+        return True
 
 
 class Runtime:
@@ -294,7 +350,7 @@ class Runtime:
     def reserve_inference(self, model, payload):
         blocked = self.state.get("HEALTH#reviewer")
         if blocked.get("blocked"):
-            raise CoverageError("Reviewer credentials/billing are blocked; operator reset required")
+            raise CoverageError(blocked.get("reason", "Reviewer credentials/billing are blocked; operator reset required"))
         models = get_json(self.http, "https://openrouter.ai/api/v1/models", max_bytes=8 * 1024 * 1024)["data"]
         price = next(m["pricing"] for m in models if m["id"] == model)
         input_price, output_price = float(price["prompt"]), float(price["completion"])
@@ -320,6 +376,40 @@ class Runtime:
         response.raise_for_status()
         if response.text.strip() != "ok":
             raise CoverageError("Slack did not acknowledge delivery")
+
+    def deliver(self, report, key, prefix, secrets):
+        _, instance_id, window = key.split("#")
+        end, owner = int(window), str(uuid.uuid4())
+        notice_key = "NOTICE#" + instance_id
+        if not self.state.claim_notice(notice_key, owner, int(time.time())):
+            raise CoverageError("Another notification for this target is in progress; retry saved report")
+        try:
+            previous = self.state.get(notice_key)
+            failed = review_failed(report)
+            status = "failed" if failed else report.get("review_status", "completed")
+            fingerprint = digest({"status": status, "reason": review_reason(report) if failed else "",
+                                  "gaps": [] if failed else sorted(set(report["coverage_gaps"]))})
+            current = end >= previous.get("window_end", 0)
+            recovery = current and previous.get("failed", False) and status == "completed"
+            changed = fingerprint != previous.get("fingerprint")
+            send = bool(report["findings"]) or (current and (recovery or (
+                changed and (failed or status == "idle" or bool(report["coverage_gaps"])))))
+            # An acknowledgment recorded before a crash must not be sent again on retry.
+            if previous.get("delivered_review") == key:
+                send = False
+            if send:
+                self.notify({**report, "notification_recovery": recovery}, key, prefix, secrets)
+            values = {"updated_at": int(time.time())}
+            if current:
+                values.update(fingerprint=fingerprint, window_end=end,
+                              failed=failed or (previous.get("failed", False) and status != "completed"))
+            if send:
+                values["delivered_review"] = key
+            self.state.save(notice_key, owner, values, release=True)
+            return "sent" if send else "suppressed"
+        except Exception:
+            self.state.save(notice_key, owner, {"updated_at": int(time.time())}, release=True)
+            raise
 
     def review(self, instance_id, end):
         now = int(time.time())
@@ -352,23 +442,30 @@ class Runtime:
                              self.put(prefix + "/prompt.json", {"system": PROMPT, "sha256": digest(PROMPT)})]
                 model_info = {}
                 try:
-                    model = select_reviewer(self.config["reviewer_models"], sources, target.get("subject_families", []))
-                    reserve = self.reserve_inference(model, payload)
-                    def record_response(body):
-                        artifacts.append(self.put(prefix + "/response.json", scrub(body, secrets.values())))
+                    if not fresh_evidence(sources, start) and not self.state.get("HEALTH#reviewer").get("blocked"):
+                        report = {"review_status": "idle", "summary": "No recent evidence; review skipped without inference.",
+                                  "workload_profile": previous.get("profile", ""), "next_source_ids": [],
+                                  "findings": [], "coverage_gaps": gaps}
+                    else:
+                        model = select_reviewer(self.config["reviewer_models"], sources, target.get("subject_families", []))
+                        reserve = self.reserve_inference(model, payload)
+                        def record_response(body):
+                            artifacts.append(self.put(prefix + "/response.json", scrub(body, secrets.values())))
 
-                    report, model_info = evaluate(self.http, model, secrets["MONITORING_OPENROUTER_API_KEY"], payload, record_response)
-                    report["review_status"] = "completed"
-                    model_info["reserved_microusd"] = reserve
-                    report["coverage_gaps"] = gaps + report["coverage_gaps"]
+                        report, model_info = evaluate(self.http, model, secrets["MONITORING_OPENROUTER_API_KEY"], payload, record_response)
+                        report["review_status"] = "completed"
+                        model_info["reserved_microusd"] = reserve
+                        report["coverage_gaps"] = gaps + report["coverage_gaps"]
                 except Exception as error:
-                    if isinstance(error, httpx.HTTPStatusError) and error.response.status_code in (401, 402, 403):
+                    reason, details = inference_error(error, secrets)
+                    artifacts.append(self.put(prefix + "/error.json", details))
+                    if isinstance(error, httpx.HTTPStatusError) and error.request.url.host == "openrouter.ai" and error.response.status_code in (401, 402, 403):
                         self.state.table.update_item(Key={"pk": "HEALTH#reviewer"},
                             UpdateExpression="SET blocked=:blocked, reason=:reason",
-                            ExpressionAttributeValues={":blocked": True, ":reason": failure_message(error)})
-                    report = {"review_status": "failed", "summary": "Review unavailable", "workload_profile": previous.get("profile", ""),
+                            ExpressionAttributeValues={":blocked": True, ":reason": reason})
+                    report = {"review_status": "failed", "review_error": reason, "summary": "Review unavailable", "workload_profile": previous.get("profile", ""),
                               "next_source_ids": [], "findings": [],
-                              "coverage_gaps": gaps + ["Reviewer failed (" + failure_message(error) + "); no safety verdict"]}
+                              "coverage_gaps": gaps + ["Reviewer failed (" + reason + "); no safety verdict"]}
                 report = scrub(report, secrets.values())
                 artifacts.append(self.put(prefix + "/model.json", model_info))
                 artifacts.append(self.put(prefix + "/report.json", report))
@@ -378,7 +475,7 @@ class Runtime:
                     "deployment": os.environ.get("MONITORING_REVISION", "unknown"),
                     "registry_sha256": digest(self.config), "coverage_gaps": report["coverage_gaps"]})
                 self.state.save(key, owner, {"status": "pending_notification", "artifact_prefix": prefix, "updated_at": now})
-                if report["workload_profile"]:
+                if report.get("review_status") == "completed" and report["workload_profile"]:
                     try:
                         self.state.table.update_item(Key={"pk": "TARGET#" + instance_id},
                             UpdateExpression="SET profile=:p, next_source_ids=:focus, window_end=:end",
@@ -387,8 +484,11 @@ class Runtime:
                     except ClientError as error:
                         if not conditional_failure(error):
                             raise
-            self.notify(report, key, prefix, secrets)
-            self.state.save(key, owner, {"status": "done", "updated_at": int(time.time()),
+            log = IncidentLog(self.state, self.s3, self.bucket)
+            log.record(report, key, prefix)
+            log.publish()
+            delivery = self.deliver(report, key, prefix, secrets)
+            self.state.save(key, owner, {"status": "done", "notification": delivery, "updated_at": int(time.time()),
                                         "expires_at": now + 90 * 86400}, release=True)
         except Exception:
             self.state.save(key, owner, {"updated_at": int(time.time())}, release=True)

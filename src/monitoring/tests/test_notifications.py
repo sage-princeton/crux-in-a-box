@@ -1,6 +1,8 @@
 from datetime import datetime
 
-from worker import markdown_report, slack_message
+from worker import fresh_evidence, inference_error, markdown_report, slack_message
+
+import httpx
 
 
 def report(**changes):
@@ -19,7 +21,7 @@ def test_findings_are_readable_and_model_text_cannot_create_slack_mentions():
     assert all(b["type"] == "section" for b in message["blocks"])
     assert "quoted example" not in str(message)
     assert all(b["text"]["type"] == "plain_text" for b in message["blocks"][:-1])
-    assert texts[-1].startswith("2. <") and "|Full report and evidence>" in texts[-1]
+    assert texts[-1].startswith("\n2. <") and "|Full report and evidence>" in texts[-1]
 
 
 def test_failed_review_is_not_presented_as_zero_findings_even_on_old_pending_reports():
@@ -31,12 +33,12 @@ def test_failed_review_is_not_presented_as_zero_findings_even_on_old_pending_rep
         assert "0 findings" not in str(message)
         assert "HTTP 403" in str(message)
         text = "\n".join(b["text"]["text"] for b in message["blocks"])
-        assert text.startswith("1. Review unavailable: No safety verdict could be produced,")
-        assert "10. Coverage gap: Reviewer failed (HTTP 403); no safety verdict," in text
-        assert "11. <" in text
+        assert text.startswith("1. Monitoring paused:")
+        assert "Missing source" not in text
+        assert "\n2. <" in text
     completed = slack_message(report(coverage_gaps=["No host telemetry"]), "fixture", "https://example.com")
     assert "No findings in the available evidence" in completed["text"]
-    assert "2. Coverage gap: No host telemetry" in str(completed)
+    assert "1. Limited visibility: 1 coverage gaps. No host telemetry" in str(completed)
 
 
 def test_all_findings_survive_maximum_report_sizes_within_slack_limits():
@@ -46,8 +48,8 @@ def test_all_findings_survive_maximum_report_sizes_within_slack_limits():
                                    coverage_gaps=["x" * 4000] * 35), "fixture", "https://example.com")
     assert len(message["blocks"]) <= 50
     assert all(len(b["text"]["text"]) <= 3000 for b in message["blocks"])
-    lines = [line for block in message["blocks"] for line in block["text"]["text"].splitlines()]
-    assert len(lines) == 66
+    lines = [line for block in message["blocks"] for line in block["text"]["text"].splitlines() if line]
+    assert len(lines) == 32
     assert all(line.startswith(f"{i}. ") for i, line in enumerate(lines, 1))
 
 
@@ -67,3 +69,26 @@ def test_markdown_failure_summary_is_honest_and_report_markup_is_literal():
     assert "No findings" not in text
     assert "HTTP 403" in text
     assert "<script>" not in text and "[click]" not in text
+
+
+def test_workspace_budget_failure_preserves_diagnostics_and_actionable_reason():
+    request = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions")
+    response = httpx.Response(403, request=request, json={"error": {
+        "message": "Workspace lifetime budget of $0.10 exceeded. Contact your org admin.",
+        "metadata": {"flagged_input": "must not be copied"}}})
+    error = httpx.HTTPStatusError("rejected", request=request, response=response)
+    reason, details = inference_error(error, {})
+    assert "$0.10" in reason and "workspace admin" in reason
+    assert details["endpoint"] == "/api/v1/chat/completions"
+    assert "must not be copied" not in str(details)
+    response._content = b'{"error":{"message":"test-secret-value"}}'
+    _, details = inference_error(error, {"secret": "test-secret-value"})
+    assert details["provider_message"] == "[REDACTED]"
+
+
+def test_stale_exports_and_empty_logs_do_not_trigger_inference():
+    old = [{"kind": "ec2", "data": {"state": "running"}},
+           {"kind": "sftp", "mtime": 1, "data": "old export"}, {"kind": "cloudwatch", "data": []}]
+    assert not fresh_evidence(old, 100)
+    assert fresh_evidence(old + [{"kind": "sftp", "mtime": 100, "data": "new export"}], 100)
+    assert fresh_evidence(old + [{"kind": "langfuse", "data": {}}], 100)

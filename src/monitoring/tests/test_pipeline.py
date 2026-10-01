@@ -23,9 +23,16 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}])
         instance = boto3.client("ec2").run_instances(ImageId="ami-12345678", MinCount=1, MaxCount=1)["Instances"][0]["InstanceId"]
+        end = int(time.time()) // 300 * 300
+        logs = boto3.client("logs")
+        logs.create_log_group(logGroupName="approved-evidence")
+        logs.create_log_stream(logGroupName="approved-evidence", logStreamName="activity")
+        logs.put_log_events(logGroupName="approved-evidence", logStreamName="activity",
+                            logEvents=[{"timestamp": (end - 1) * 1000, "message": "fixture activity"}])
         registry = {"expires_at": int(time.time()) + 3600, "inference_budget_usd": 1,
                     "reviewer_models": ["google/gemini-example"], "targets": {instance: {
-                        "authorization": "Inspect the fixture only", "subject_families": ["openai"]}}}
+                        "authorization": "Inspect the fixture only", "subject_families": ["openai"],
+                        "logs": [{"group": "approved-evidence", "streams": ["activity"]}]}}}
         s3.put_object(Bucket="monitoring-test", Key="config/registry.json", Body=json.dumps(registry))
         secrets = {"MONITORING_OPENROUTER_API_KEY": "test-only-inference-credential",
                    "MONITORING_SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/test/fixture/only"}
@@ -59,6 +66,8 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
         key = f"REVIEW#{instance}#{end}"
         pending = runtime.state.get(key)
         assert pending["status"] == "pending_notification"
+        history = s3.get_object(Bucket="monitoring-test", Key="reviews/incidents/index.html")["Body"].read()
+        assert b"fixture finding" in history
         runtime.review(instance, end)
         assert runtime.state.get(key)["status"] == "done"
         assert counts == {"model": 1, "slack": 2}
