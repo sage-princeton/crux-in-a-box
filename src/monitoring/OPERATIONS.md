@@ -231,6 +231,14 @@ Without IdP configuration, public pages work and sign-in returns unavailable.
 Sessions expire after at most one hour; removing an assignment prevents new
 sessions. Delete the user's `SESSION#` records for immediate session revocation.
 
+The deployed **CRUX incident management** application is assigned to the
+**All HAL** Identity Center group. Andrew's membership was verified before his
+individual application assignment was removed. Manage operator access through
+that group; all assigned members can view private incident details and change
+incident status. Raw S3 evidence additionally requires AWS permissions.
+The deployment account `881004720495` is named
+**CRUX - Operations and Experiments** (formerly **CRUX #2 Testing**).
+
 Build the web image with `Dockerfile.web`. Terraform user-data bootstraps a new
 host; changing its image variable does not restart an existing instance.
 For updates, use SSM on the web host to update the immutable image and revision

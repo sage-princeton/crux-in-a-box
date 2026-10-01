@@ -48,12 +48,12 @@ The release pipeline builds immutable worker and web images, applies the shared 
 
 | Component | Responsibility | Location |
 | --- | --- | --- |
-| AWS Batch monitoring workers | Read approved evidence, create reviews and observations, publish the fleet digest | CRUX account `881004720495`, `us-east-1` |
+| AWS Batch monitoring workers | Read approved evidence, create reviews and observations, publish the fleet digest | CRUX - Operations and Experiments account `881004720495`, `us-east-1` |
 | Incident web EC2 | Public HTML, SAML callback, authenticated status changes | `crux-incident-web`, `i-02d24c35065046688` |
 | Incident DynamoDB table | Incident state, review/observation records, audit history and expiring login/session records | `crux-monitoring-ae211-incidents` |
 | Monitoring DynamoDB table | Existing scheduling, leases, inference reservations and delivery checkpoints | `crux-monitoring-ae211` |
 | Evidence S3 bucket | Private reports, Markdown summaries, evidence and non-secret deployment inputs | `crux-monitoring-ae211-881004720495-us-east-1` |
-| AWS Identity Center | Operator identity and application assignment | Organization account `805370850700`; Andrew assigned |
+| AWS Identity Center | Operator identity and application assignment | Organization account `805370850700`; All HAL group assigned, Andrew inherits access through membership |
 | Terraform backend | Versioned infrastructure state and deployment locking | State account `869937524494`, `crux/monitoring/terraform.tfstate` |
 | GitHub environment | Restricted OIDC deployment identity and release coordination | `crux-monitoring` |
 
