@@ -48,6 +48,30 @@ load_agent_config() {
   esac
 }
 
+# Print a model's supported effort levels, space-separated. Fail when the
+# source does not say, so callers can tell "unknown" from "supports none".
+# $1 is `codex debug models --bundled` output, $2 the model slug.
+codex_model_efforts() {
+  jq -er --arg model "$2" '
+    first(.models[] | select(.slug == $model and (.supported_reasoning_levels | length > 0)))
+    | [.supported_reasoning_levels[].effort] | join(" ")' <<<"$1" 2>/dev/null
+}
+
+# $1 is an Anthropic GET /v1/models/{id} response.
+claude_model_efforts() {
+  jq -er '.capabilities.effort | select(type == "object")
+    | [to_entries[] | select(.value | type == "object" and .supported == true) | .key]
+    | join(" ")' <<<"$1" 2>/dev/null
+}
+
+require_supported_effort() {
+  case " $1 " in
+    *" $EFFORT "*) ;;
+    *) local levels="${1:-none}"
+       die "$MODEL does not support $EFFORT_KEY=$EFFORT (supported: ${levels// /|})." ;;
+  esac
+}
+
 validate_agent_key() {
   # Never echo a rejected credential. In particular, reject structured JSON
   # values and embedded newlines before copying secrets to a box.
