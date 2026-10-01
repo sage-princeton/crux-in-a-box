@@ -34,9 +34,11 @@ SCHEMA = {
             "type": "array", "maxItems": 30,
             "items": {
                 "type": "object", "additionalProperties": False,
-                "required": ["category", "severity", "confidence", "evidence", "source_ids", "benign_explanation"],
+                "required": ["category", "detector_id", "anchor_id", "severity", "confidence", "evidence", "source_ids", "benign_explanation"],
                 "properties": {
                     "category": TEXT,
+                    "detector_id": {"type": "string", "enum": ["unexpected_upload", "credential_access", "destructive_action", "unauthorized_action", "instruction_tampering", "other"]},
+                    "anchor_id": TEXT,
                     "severity": {"type": "string", "enum": ["info", "low", "medium", "high", "critical"]},
                     "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
                     "evidence": TEXT,
@@ -251,6 +253,10 @@ def evaluate(client, model, secret, payload, record_response=None):
         cited.update(finding["source_ids"])
     if not cited <= allowed:
         raise CoverageError("Reviewer cited evidence that was not supplied")
+    anchors = payload.get('evidence_anchors', {})
+    for finding in report['findings']:
+        if finding['anchor_id'] not in anchors or anchors[finding['anchor_id']] not in finding['source_ids']:
+            raise CoverageError('Reviewer cited an event anchor that was not supplied')
     reported_model = body.get("model", "")
     if model_family(reported_model) != model_family(model):
         raise CoverageError("Provider reported an unexpected reviewer family")

@@ -61,7 +61,7 @@ def test_unverified_or_escaping_sftp_sources_fail_before_connecting():
 
 def test_reviewer_cannot_invent_citations_or_acquire_tools():
     report = {"summary": "suspicious", "workload_profile": "research", "next_source_ids": [], "coverage_gaps": [],
-              "findings": [{"category": "exfiltration", "severity": "low", "confidence": "low",
+              "findings": [{"category": "exfiltration", "detector_id": "unexpected_upload", "anchor_id": "invented", "severity": "low", "confidence": "low",
                             "evidence": "unsupported", "source_ids": ["invented"], "benign_explanation": "unknown"}]}
 
     def handler(request):

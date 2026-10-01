@@ -1,0 +1,15 @@
+{% extends 'base.html' %}{% block content %}
+<p class="eyebrow">Monitoring / activity &amp; follow-up</p><h1>Incident log</h1>
+<p class="lede">Review findings, follow their history, and see what still needs attention.</p>
+<nav class="filters" aria-label="Incident status">{% for value, label in [('open','Open'),('closed','Closed'),('all','All incidents')] %}<a href="?status={{ value }}" {% if status == value %}aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
+<div class="incident-list">{% for i in incidents %}
+<article><div><span class="status {{ i.status }}">{{ i.status }}</span><span class="meta">{{ i.workload_label }} · {{ i.kind }}</span></div>
+<h2><a href="{{ url_for('detail',incident_id=i.id) }}">{{ i.title }}</a></h2><p>{{ i.summary }}</p>
+<p class="meta">{{ i.severity|capitalize }} severity · {{ i.confidence }} confidence · {{ i.review_count }} reviews · Updated {{ i.updated_at|stamp }}</p></article>
+{% else %}<p class="empty">No {{ status if status != 'all' else '' }} incidents on this page. This is not a safety verdict; check review coverage below.</p>{% endfor %}</div>
+{% if next_cursor %}<a class="button secondary" href="{{ url_for('index',status=status,cursor=next_cursor) }}">Next page →</a>{% endif %}
+<section class="coverage"><h2>Workload coverage</h2><p class="meta">Incident status and monitoring health are tracked separately.</p>
+{% macro workload(row) %}<li><strong>{{ row.slug }}</strong><span>{{ row.get('review_status','Not reviewed') }}{% if row.get('last_review') %} · {{ row.last_review|stamp }}{% endif %}</span></li>{% endmacro %}
+<ul class="workloads">{% for row in fleet if row.state == 'running' %}{{ workload(row) }}{% else %}<li>No running workloads registered.</li>{% endfor %}</ul>
+<details><summary>Stopped instances and history</summary><ul class="workloads">{% for row in fleet if row.state != 'running' %}{{ workload(row) }}{% else %}<li>No stopped workloads registered.</li>{% endfor %}</ul></details></section>
+{% endblock %}

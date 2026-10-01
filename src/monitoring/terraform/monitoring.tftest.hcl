@@ -26,6 +26,37 @@ mock_provider "aws" {
   mock_data "aws_availability_zones" {
     defaults = { names = ["us-east-1a"] }
   }
+  mock_data "aws_ami" {
+    defaults = { id = "ami-12345678" }
+  }
+  mock_resource "aws_eip" {
+    defaults = { public_ip = "192.0.2.10" }
+  }
+}
+
+run "web_service_and_operator_state_are_separate_from_workers" {
+  command = apply
+  variables {
+    web_enabled            = true
+    web_image_digest       = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    incident_state_enabled = true
+  }
+  assert {
+    condition     = aws_instance.web[0].tags.Name == "crux-incident-web" && aws_instance.web[0].metadata_options[0].http_tokens == "required"
+    error_message = "The web service must be separate and require IMDSv2."
+  }
+  assert {
+    condition     = toset([for rule in aws_vpc_security_group_ingress_rule.web : rule.from_port]) == toset([80, 443])
+    error_message = "Only web traffic may enter the public host; no SSH whitelist."
+  }
+  assert {
+    condition     = aws_dynamodb_table.incidents.deletion_protection_enabled && aws_dynamodb_table.incidents.range_key == "sk"
+    error_message = "Incident state must have durable keyed history and deletion protection."
+  }
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.incident_ingestion.policy, "SESSION#") && !strcontains(aws_iam_role_policy.incident_ingestion.policy, "LOGIN#")
+    error_message = "Monitoring workers must not mint operator sessions."
+  }
 }
 
 run "immutable_workers_remain_disabled" {

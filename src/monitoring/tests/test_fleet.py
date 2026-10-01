@@ -77,6 +77,13 @@ def test_fleet_summary_acknowledges_new_incidents_only_after_success():
             assert deliver_summary(runtime, [changed]) == 'sent'
             assert '3 incidents based on 5 reviews, *1 new incident :warning:* (' in attempts[-1]['text']
             assert deliver_summary(runtime, [changed]) == 'suppressed'
+            closed = {**changed, 'total_incident_count': 3, 'incident_count': 2}
+            assert deliver_summary(runtime, [closed]) == 'sent'
+            assert '2 open incidents' in attempts[-1]['text'] and '0 new incidents' in attempts[-1]['text']
+            reopened = {**closed, 'incident_count': 3}
+            assert deliver_summary(runtime, [reopened]) == 'sent'
+            assert '3 open incidents' in attempts[-1]['text'] and '0 new incidents' in attempts[-1]['text']
+            assert ':warning:' not in attempts[-1]['text']
 
 
 def test_oversized_langfuse_io_falls_back_to_bounded_metadata_with_explicit_gap():

@@ -1,6 +1,15 @@
 *
 !Dockerfile
+!Dockerfile.web
 !requirements.txt
+!web-requirements.txt
+!lifecycle.py
+!web.py
+!web_auth.py
+!templates/
+!templates/**
+!static/
+!static/**
 !review.py
 !worker.py
 !incidents.py

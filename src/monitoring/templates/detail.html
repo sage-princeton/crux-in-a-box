@@ -1,0 +1,14 @@
+{% extends 'base.html' %}{% block title %}{{ incident.title }}{% endblock %}{% block content %}
+<a class="back" href="/">← All incidents</a><p class="eyebrow">{{ incident.workload_label }} · {{ incident.id }}</p>
+<h1>{{ incident.title }}</h1><p class="lede">{{ incident.summary }}</p><span class="status {{ incident.status }}">{{ incident.status }}</span>
+<dl class="facts"><div><dt>Severity / confidence</dt><dd>{{ incident.severity|capitalize }} / {{ incident.confidence }}</dd></div><div><dt>First observed</dt><dd>{{ incident.first_seen|stamp }}</dd></div><div><dt>Last observed</dt><dd>{{ incident.last_seen|stamp }}</dd></div><div><dt>Supporting reviews</dt><dd>{{ incident.review_count }}</dd></div></dl>
+{% if private %}<section class="manage"><h2>{{ 'Close incident' if incident.status == 'open' else 'Reopen incident' }}</h2>
+<p>{{ 'Repeated observations will preserve this closure.' if incident.status == 'open' else 'Reopening keeps this incident’s identity and does not count as a new discovery.' }}</p>
+<form action="{{ url_for('transition',incident_id=incident.id) }}" method="post"><input type="hidden" name="csrf" value="{{ g.csrf }}"><input type="hidden" name="version" value="{{ private.version }}"><input type="hidden" name="status" value="{{ 'closed' if incident.status == 'open' else 'open' }}">
+<label for="note">Operator note <span class="meta">Optional · private</span></label><textarea id="note" name="note" maxlength="4000" rows="3"></textarea><button>{{ 'Close incident' if incident.status == 'open' else 'Reopen incident' }}</button></form></section>
+{% else %}<p><a href="/auth/login">Sign in with AWS</a> to close or reopen this incident and inspect private evidence.</p>{% endif %}
+<section><h2>Status history</h2><ol class="history">{% for e in events %}<li><strong>{{ 'Closed' if e.status == 'closed' else 'Reopened' }}</strong> · {{ e.at|stamp }}{% if private %}<p class="meta">{{ e.actor.id }}</p>{% if e.note %}<p class="private-note">{{ e.note }}</p>{% endif %}{% endif %}</li>{% else %}<li>No operator status changes.</li>{% endfor %}</ol>
+{% if event_cursor %}<a href="{{ url_for('detail',incident_id=incident.id,events=event_cursor) }}">More status history →</a>{% endif %}</section>
+{% if private %}<section><h2>Private observations</h2>{% for o in observations %}<article><h3>Review {{ o.at|stamp }}</h3><p class="private-note">{{ o.finding.get('evidence','Historical evidence') }}</p><p class="meta">Detector: {{ private.detector_id }} · Model: {{ o.provenance.get('reported_model','Not recorded') }} · Prompt: {{ o.provenance.get('prompt_sha256','Not recorded') }}</p><a href="{{ o.evidence_url }}" rel="noreferrer">Open evidence in AWS</a></article>{% endfor %}
+{% if observation_cursor %}<a href="{{ url_for('detail',incident_id=incident.id,observations=observation_cursor) }}">More observations →</a>{% endif %}</section>{% endif %}
+{% endblock %}

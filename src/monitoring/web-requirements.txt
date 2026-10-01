@@ -1,0 +1,4 @@
+-r requirements.txt
+Flask==3.1.2
+gunicorn==23.0.0
+python3-saml==1.16.0

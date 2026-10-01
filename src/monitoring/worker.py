@@ -20,6 +20,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from incidents import IncidentLog
+from lifecycle import IncidentStore, evidence_anchors
 from fleet import deliver_summary, inventory_targets
 from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
                     collect_logs, collect_sftp, digest, encoded, evaluate, get_json,
@@ -255,6 +256,8 @@ class Runtime:
         self.bucket = os.environ["MONITORING_BUCKET"]
         self.public_incident_log_url = os.environ.get("MONITORING_PUBLIC_LOG_URL", "")
         self.state = State(boto3.resource("dynamodb", config=sdk).Table(os.environ["MONITORING_TABLE"]))
+        self.incident_store = (IncidentStore(boto3.resource('dynamodb', config=sdk).Table(os.environ['MONITORING_INCIDENT_TABLE']))
+                               if os.environ.get('MONITORING_INCIDENT_TABLE') else None)
         self.config = self.read_json("config/registry.json")
         validate_registry(self.config)
         self.http = httpx.Client(timeout=httpx.Timeout(180, connect=10), follow_redirects=False)
@@ -464,6 +467,7 @@ class Runtime:
                 payload = {"authorization": target["authorization"], "window": {"start": iso(start), "end": iso(end)},
                            "previous_profile": previous.get("profile", ""), "sources": sources,
                            "previous_focus": previous.get("next_source_ids", []), "coverage_gaps": gaps}
+                payload['evidence_anchors'] = evidence_anchors(sources)
                 payload = scrub(payload, secrets.values())
                 artifacts = [self.put(prefix + "/evidence.json", payload),
                              self.put(prefix + "/prompt.json", {"system": PROMPT, "sha256": digest(PROMPT)})]
@@ -518,7 +522,15 @@ class Runtime:
             if inventory:
                 log.sync_inventory([i for i in inventory if i['instance_id'] == instance_id])
             log.record(report, key, prefix)
-            log.publish()
+            if self.incident_store:
+                payload = self.read_json(prefix + '/evidence.json')
+                provenance = {**self.read_json(prefix + '/model.json'),
+                              'prompt_sha256': self.read_json(prefix + '/prompt.json')['sha256'],
+                              'detector_version': '1', 'deployment': os.environ.get('MONITORING_REVISION', 'unknown')}
+                self.incident_store.ingest(report, key, prefix, target, provenance,
+                                           payload.get('evidence_anchors', evidence_anchors(payload['sources'])))
+            else:
+                log.publish()
             delivery = "fleet_digest" if self.config.get('fleet') else self.deliver(report, key, prefix, secrets)
             self.state.save(key, owner, {"status": "done", "notification": delivery, "updated_at": int(time.time()),
                                         "expires_at": now + 90 * 86400}, release=True)
@@ -533,7 +545,14 @@ class Runtime:
         log = IncidentLog(self.state, self.s3, self.bucket, self.config.get('fleet', {}).get('exclude_names', []))
         log.sync_inventory(inventory, complete=True)
         summaries = lambda: log.summaries(inventory)
-        artifact = log.publish()
+        if self.incident_store:
+            fleet = log.summaries()
+            for row in fleet:
+                self.incident_store.table.put_item(Item={**row, 'pk': 'FLEET', 'sk': row['instance_id']})
+            summaries = lambda: self.incident_store.summaries(log.summaries(inventory))
+            artifact = {'url': self.public_incident_log_url}
+        else:
+            artifact = log.publish()
         delivery = deliver_summary(self, summaries, force=force)
         return {'notification':delivery, 'html':artifact, 'instances':len(inventory)}
 

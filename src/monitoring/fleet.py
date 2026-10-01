@@ -29,7 +29,7 @@ def inventory_targets(ec2, config):
                 tags = {tag['Key']:tag['Value'] for tag in instance.get('Tags', [])}
                 name = tags.get('Name', instance['InstanceId'])
                 if (name in fleet['exclude_names'] or instance['InstanceId'] in fleet.get('exclude_instance_ids', [])
-                        or tags.get('CruxRole') == 'control'):
+                        or tags.get('CruxRole') in ('control', 'monitoring-web')):
                     continue
                 instances.append({'instance_id':instance['InstanceId'], 'name':name,
                                   'state':instance['State']['Name'], 'batch': 'AWSBatchServiceTag' in tags})
@@ -55,13 +55,15 @@ def summary_lines(summaries, acknowledged):
     for row in sorted(summaries, key=lambda r:r['slug']):
         iid = row['instance_id']
         count = int(row['incident_count'])
-        new = max(0, count - int(acknowledged.get(iid, {}).get('incidents', 0)))
+        new = max(0, int(row.get('total_incident_count', count))
+                  - int(acknowledged.get(iid, {}).get('total_incidents', acknowledged.get(iid, {}).get('incidents', 0))))
         stamp = datetime.fromtimestamp(int(row['last_updated']), ZoneInfo('America/New_York')).strftime('%Y-%m-%d %H:%M ET')
         slug = re.sub(r'[^a-z0-9-]+', '-', row['slug'].lower()).strip('-')
         new_label = f"{new} new incident{'s' if new != 1 else ''}"
         if new:
             new_label = f"*{new_label} :warning:*"
-        lines.append(f"• {slug}: {count} incidents based on {int(row['review_count'])} reviews, "
+        label = 'open incidents' if 'total_incident_count' in row else 'incidents'
+        lines.append(f"• {slug}: {count} {label} based on {int(row['review_count'])} reviews, "
                      f"{new_label} (last updated: {stamp})")
     return lines
 
@@ -77,6 +79,7 @@ def deliver_summary(runtime, summaries, force=False):
         previous = runtime.state.get(key)
         acknowledged = previous.get('acknowledged', {})
         snapshot = {r['instance_id']:{'incidents':int(r['incident_count']),
+                    'total_incidents':int(r.get('total_incident_count', r['incident_count'])),
                     'health':r.get('health_fingerprint', ''), 'state':r.get('state', ''), 'slug':r['slug']}
                     for r in summaries}
         fingerprint = digest(snapshot)

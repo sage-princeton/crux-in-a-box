@@ -31,3 +31,11 @@ Return only the JSON object required by the response schema. Keep the workload
 profile under 4,000 characters. Use only source IDs present in the input for
 findings and next_source_ids. The summary should help a human decide what to
 inspect; the human, not you, decides whether and how to intervene.
+
+For each finding, select the most specific detector_id from the schema and
+one primary anchor_id from evidence_anchors. This is the source event that
+establishes the finding; include its source ID in source_ids. Keep the detector
+and primary event consistent when the same activity appears in overlapping
+review windows. Do not create multiple findings for the same detector and event.
+Use other only when no named detector fits. These structured fields identify
+the incident independently of how you phrase its explanation.

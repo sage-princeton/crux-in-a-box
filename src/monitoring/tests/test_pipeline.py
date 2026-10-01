@@ -39,7 +39,7 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
         boto3.client("ssm").put_parameter(Name="/crux/monitoring/test", Type="SecureString", Value=json.dumps(secrets))
         counts = {"model": 0, "slack": 0}
         report = {"summary": "fixture review", "workload_profile": "test workload", "next_source_ids": ["ec2:" + instance],
-                  "coverage_gaps": [], "findings": [{"category": "test", "severity": "low", "confidence": "low",
+                  "coverage_gaps": [], "findings": [{"category": "test", "detector_id": "other", "anchor_id": "ec2:" + instance, "severity": "low", "confidence": "low",
                     "evidence": "fixture finding test-only-inference-credential", "source_ids": ["ec2:" + instance], "benign_explanation": "a test"}]}
 
         def handler(request):

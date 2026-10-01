@@ -208,3 +208,47 @@ the stack does not silently install a second notification service.
 Useful source contracts: [OpenSSH read-only SFTP](https://man.openbsd.org/sftp-server.8),
 [DynamoDB TTL](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/TTL.html),
 [Langfuse Public API](https://langfuse.com/docs/api-and-data-platform/features/public-api).
+# Stateful incident website
+
+The Flask/Jinja site runs on a separate `crux-incident-web` EC2 with Caddy and
+Gunicorn. Public pages expose a fixed summary allowlist; raw findings, evidence
+references, operator identities, and notes require sign-in. S3 evidence still
+uses the viewer's AWS access. Open/closed state does not indicate review health.
+
+Set `web_enabled` and an immutable `web_image_digest` to provision the site.
+The `/crux/monitoring/web` SecureString contains JSON with `origin`, `bucket`,
+and `idp` (`entityId`, `singleSignOnService.url`, and `x509cert`). Register the
+site as an Identity Center custom SAML application: audience `/auth/metadata`,
+ACS `/auth/callback`, and start URL `/auth/login`, all under that HTTPS origin.
+Map Subject to a stable named user identifier and assign only operators to the
+application. It accepts signed, requested assertions; portal launches must go
+through the start URL. There is no shared password or access-key login form.
+Without IdP configuration, public pages work and sign-in returns unavailable.
+Sessions expire after at most one hour; removing an assignment prevents new
+sessions. Delete the user's `SESSION#` records for immediate session revocation.
+
+Build the web image with `Dockerfile.web`. Terraform user-data bootstraps a new
+host; changing its image variable does not restart an existing instance.
+For updates, use SSM on the web host to update the immutable image and revision
+in `/opt/crux-incidents/start`, then restart `crux-incidents.service`. Restart
+that service after changing SAML settings so all Gunicorn workers reload them.
+No SSH ingress is required. Worker roles cannot write login or session records.
+
+Before enabling `incident_state_enabled`, pause discovery, let existing jobs
+finish, and run `migrate_incidents.py --table <incident-table>` with the existing
+monitoring environment. It imports saved reports, preserves known resolutions,
+and seeds Slack's cumulative count baseline. Re-running the import preserves
+operator changes. Then deploy the new worker image, enable stateful ingestion,
+and resume discovery. The old public S3 HTML becomes a link to the live site.
+Do not roll back to a worker that publishes raw findings into that public HTML.
+
+Incident correlation version 1 uses workload ID (EC2 ID unless explicitly
+configured), a fixed detector ID, and one primary source event: Langfuse
+observation ID, CloudWatch event ID, or SFTP path plus content digest. A changed
+file snapshot is a distinct source revision. Historical reports without a
+unique primary event retain a legacy source-set anchor, rather than guessing
+which event caused the finding. Original wording remains in private observations.
+Close/reopen changes use conditional version checks and an atomic audit event.
+Repeated reviews preserve manual status. Reopening changes the open count but
+not the cumulative discovery count. Incidents and audit records have no TTL;
+the existing S3 evidence retention still applies.
