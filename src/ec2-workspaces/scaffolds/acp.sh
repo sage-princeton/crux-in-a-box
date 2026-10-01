@@ -190,13 +190,21 @@ ok "Wrote langfuse.json (environment=$RUN_SLUG) and config.toml (model=$CODEX_MO
 
 # ====== OBSERVABILITY PLUGIN ======
 # Install the plugin package before enabling its hooks.
-info "codex observability plugin"
-PLUGIN_ENTRY="$RUN_HOME/.codex/plugins/cache/codex-observability-plugin/tracing/0.3.0/dist/index.mjs"
+# Pinned to the upstream tag for TRACING_PLUGIN_VERSION, like the codex pins in
+# install-run.sh: TRACING_HOOK_TRUSTED_HASH matches one plugin version, and an
+# unpinned marketplace installs whatever upstream last released.
+info "codex observability plugin @$TRACING_PLUGIN_VERSION"
+PLUGIN_SOURCE=https://github.com/langfuse/codex-observability-plugin.git
+PLUGIN_REF="v$TRACING_PLUGIN_VERSION"
+PLUGIN_ENTRY="$RUN_HOME/.codex/plugins/cache/codex-observability-plugin/tracing/$TRACING_PLUGIN_VERSION/dist/index.mjs"
 
 # Check that the hook file exists; plugin status can reflect configuration only.
 if [ ! -f "$PLUGIN_ENTRY" ]; then
+  # Codex refuses to re-add a marketplace from another ref, so drop any earlier one.
   su - "$RUN_USER" -c \
-    'codex plugin marketplace add https://github.com/langfuse/codex-observability-plugin.git' \
+    'codex plugin marketplace remove codex-observability-plugin' >/dev/null 2>&1 || true
+  su - "$RUN_USER" -c \
+    "codex plugin marketplace add $PLUGIN_SOURCE --ref $PLUGIN_REF" \
     >/dev/null 2>&1 || true
 
   for attempt in 1 2; do
@@ -211,8 +219,10 @@ if [ ! -f "$PLUGIN_ENTRY" ]; then
 
   [ -f "$PLUGIN_ENTRY" ] || die "The observability plugin did not unpack to $PLUGIN_ENTRY.
 Without it codex runs normally and emits NO Langfuse traces — note that
-'codex plugin list' may still say 'installed'. Diagnose with:
-    sudo -u $RUN_USER codex plugin remove tracing@codex-observability-plugin
+'codex plugin list' may still say 'installed'. Check that upstream has tag
+$PLUGIN_REF (TRACING_PLUGIN_VERSION), then diagnose with:
+    sudo -u $RUN_USER codex plugin marketplace remove codex-observability-plugin
+    sudo -u $RUN_USER codex plugin marketplace add $PLUGIN_SOURCE --ref $PLUGIN_REF
     sudo -u $RUN_USER codex plugin add tracing@codex-observability-plugin"
   ok "installed and unpacked"
 else
