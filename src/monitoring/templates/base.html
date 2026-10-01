@@ -3,5 +3,5 @@
 <title>{% block title %}Incident log{% endblock %} · CRUX</title><link rel="stylesheet" href="{{ url_for('static', filename='incidents.css') }}"></head>
 <body><header><a class="brand" href="/">CRUX <span> / incident log</span></a><nav aria-label="Account">
 {% if g.actor %}<form action="/auth/logout" method="post"><input type="hidden" name="csrf" value="{{ g.csrf }}"><button class="text-button">Sign out</button></form>
-{% else %}<a href="/auth/login">Sign in with AWS</a>{% endif %}</nav></header>
+{% else %}<a class="button" href="/auth/login">Sign in with AWS</a>{% endif %}</nav></header>
 <main>{% block content %}{% endblock %}</main><footer>Public incident summaries · Evidence and operator notes require authorized access.</footer></body></html>
