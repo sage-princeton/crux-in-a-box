@@ -80,8 +80,9 @@ CODEX_VERSION=0.154.0
 CODEX_ACP_VERSION=1.10.0
 ACP_GATEWAY_VERSION=0.2.17
 
-# Codex tracing plugin and Stop-hook trust hash.
-# When changing the plugin version, accept its hook interactively and copy
-# trusted_hash from ~/.codex/config.toml. Provisioning checks that the hook runs.
+# Codex tracing plugin and Stop-hook trust hash. Provisioning installs upstream
+# tag v$TRACING_PLUGIN_VERSION. When changing the plugin version, accept its hook
+# interactively and copy trusted_hash from ~/.codex/config.toml. Provisioning
+# checks that the hook runs.
 TRACING_PLUGIN_VERSION=0.3.0
 TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74
