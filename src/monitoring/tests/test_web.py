@@ -8,7 +8,7 @@ from lifecycle import public_incident
 from review import digest
 from test_lifecycle import ingest, report, store
 from web import create_app
-from web_auth import SESSION_COOKIE
+from web_auth import LOGIN_COOKIE, SESSION_COOKIE
 
 
 ORIGIN = 'https://incidents.example.test'
@@ -80,6 +80,19 @@ def test_expired_session_cannot_mutate_and_bad_saml_cannot_authenticate(client, 
                        headers={'Origin': ORIGIN}).status_code == 401
     assert client.post('/auth/callback', base_url=ORIGIN, data={'SAMLResponse': 'fake', 'RelayState': 'fake'}).status_code == 403
     assert client.get('/', base_url='https://evil.test').status_code == 400
+
+
+def test_malformed_security_tokens_are_rejected_without_server_errors(client, store):
+    item = ingest(store)
+    authorize(client, store)
+    response = client.post('/incidents/' + item['id'] + '/status', base_url=ORIGIN,
+        data={'version': item['version'], 'status': 'closed', 'csrf': 'invalid-\u2603'},
+        headers={'Origin': ORIGIN})
+    assert response.status_code == 403
+    assert store.incident(item['id'])['status'] == 'open'
+    client.set_cookie(LOGIN_COOKIE, 'ascii-login-nonce', domain='incidents.example.test')
+    assert client.post('/auth/callback', base_url=ORIGIN,
+        data={'RelayState': 'invalid-\u2603', 'SAMLResponse': 'invalid'}).status_code == 403
 
 
 @pytest.mark.parametrize('historical_state', ['terminated', 'no longer present'])

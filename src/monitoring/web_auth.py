@@ -78,7 +78,9 @@ def install_auth(app, store, settings):
             abort(503, 'AWS sign-in is awaiting Identity Center configuration.')
         nonce = request.cookies.get(LOGIN_COOKIE, '')
         relay = request.form.get('RelayState', '')
-        if not nonce or len(nonce) > 200 or not secrets.compare_digest(nonce, relay):
+        if (not nonce or len(nonce) > 200 or len(relay) > 200
+                or not nonce.isascii() or not relay.isascii()
+                or not secrets.compare_digest(nonce, relay)):
             app.logger.warning('SAML denied: browser binding; cookie_present=%s relay_present=%s', bool(nonce), bool(relay))
             abort(403, 'Sign-in expired. Start sign-in again.')
         key = {'pk': 'LOGIN#' + digest(nonce), 'sk': 'STATE'}
@@ -139,5 +141,5 @@ def require_operator(origin):
     if request.headers.get('Origin') != origin:
         abort(403, 'Request origin does not match this site.')
     token = request.form.get('csrf', '')
-    if not token or not secrets.compare_digest(token, g.csrf):
+    if not token or len(token) > 200 or not token.isascii() or not secrets.compare_digest(token, g.csrf):
         abort(403, 'Form expired. Reload the page and try again.')
