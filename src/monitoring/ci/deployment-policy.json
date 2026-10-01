@@ -40,7 +40,9 @@
     {
       "Effect": "Allow",
       "Action": [
-        "batch:RegisterJobDefinition"
+        "batch:RegisterJobDefinition",
+        "batch:DeregisterJobDefinition",
+        "batch:TagResource"
       ],
       "Resource": [
         "arn:aws:batch:us-east-1:881004720495:job-definition/crux-monitoring-ae211-review*",
