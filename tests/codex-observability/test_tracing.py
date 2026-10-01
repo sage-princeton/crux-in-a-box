@@ -150,18 +150,34 @@ def test_interrupted_turn_is_uploaded_and_flagged_on_the_next_stop(traced, expec
     assert second.level == "DEFAULT" and second.output == short.final_text
 
 
-def test_goal_continuation_turn_is_traced_as_its_own_turn(traced, expect, rollouts):
+def test_goal_continuation_turns_are_each_traced_once_as_their_own_turn(rollouts, stop_hook, tmp_path, expect):
+    """Codex fires Stop at the end of each turn, before its task_complete lands, then starts the next goal turn."""
     behavior(expect, "goal_continuation", "own_trace_with_internal_prompt_as_input")
-    scenario, spans, _ = traced("goal_continuation")
-    first, goal = roots_in_order(spans)
-    assert first.input == scenario.turns[0].prompt
-    assert goal.name == expect["names"]["turn"] and goal.input == rollouts.GOAL_PROMPT
-    assert goal.output == scenario.turns[1].final_text
+    behavior(expect, "stop_before_task_complete", "uploaded_once")
+    scenario = rollouts.goal_continuation()
+    sessions = tmp_path / "sessions"
+    with Collector() as collector:
+        for turn, end in zip(scenario.turns, _task_complete_indexes(scenario.main), strict=True):
+            stop_hook(scenario.main.write(sessions, upto=end), collector, turn)
+    roots = roots_in_order(collector.spans)
+    assert [r.input for r in roots] == [t.prompt for t in scenario.turns]
+    assert all(r.input == rollouts.GOAL_PROMPT for r in roots[1:])
+    assert [r.output for r in roots] == [t.final_text for t in scenario.turns]
+    assert {r.name for r in roots} == {expect["names"]["turn"]}
+    assert [r.export for r in roots] == list(range(1, len(scenario.turns) + 1)), \
+        "each Stop should upload exactly the turn that stopped"
+    for root, turn in zip(roots, scenario.turns):
+        tools = [s.name for s in collector.spans if s.trace_id == root.trace_id and s.type == "tool"]
+        assert collections.Counter(tools) == collections.Counter(turn.tool_names)
+
+
+def _task_complete_indexes(rollout) -> list[int]:
+    return [i for i, line in enumerate(rollout.lines)
+            if line["type"] == "event_msg" and line["payload"]["type"] == "task_complete"]
 
 
 def _task_complete_index(rollout) -> int:
-    return next(i for i, line in enumerate(rollout.lines)
-                if line["type"] == "event_msg" and line["payload"]["type"] == "task_complete")
+    return _task_complete_indexes(rollout)[0]
 
 
 def test_hook_run_mid_turn_uploads_nothing(rollouts, stop_hook, tmp_path, expect):
