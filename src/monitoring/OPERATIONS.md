@@ -3,8 +3,9 @@
 The reviewer runs as an unprivileged, tool-free container in AWS Batch on EC2.
 EventBridge schedules discovery every five minutes. Discovery inventories EC2
 instance IDs and states. With `fleet` enabled, it inventories nonterminated instances in the configured AWS region,
-excluding `crux-control`, its pinned instance ID, and controller-role instances.
-Running workloads receive reviews; Batch workers remain visible as inventory only.
+excluding configured names such as `crux-control` and `crux-monitor-worker`, the
+pinned controller instance ID, and controller-role instances. Configured name
+exclusions also apply to historical instance lists. Running workloads receive reviews.
 Slack includes only running instances. The HTML retains all incident history and
 groups stopped and historical instances under a collapsed disclosure. Explicit target
 entries can supply approved exports or a session mapping. Without `fleet`, only

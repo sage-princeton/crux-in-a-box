@@ -40,7 +40,10 @@ def test_incident_archive_deduplicates_replays_counts_windows_and_preserves_reco
         log.sync_inventory([], complete=True)
         assert log.summaries()[0]['state'] == 'no longer present'
         assert log.summaries()[0]['review_count'] == 5
-        artifact = log.publish()
+        log.sync_inventory([{'instance_id':'i-worker','name':'crux-monitor-worker','state':'stopped'}])
+        filtered = IncidentLog(log.state, s3, log.bucket, ['crux-monitor-worker'])
+        assert [r['instance_id'] for r in filtered.summaries()] == ['i-test']
+        artifact = filtered.publish()
         obj = s3.get_object(Bucket='incident-history', Key=artifact['key'], VersionId=artifact['version_id'])
         body = obj['Body'].read()
         assert hashlib.sha256(body).hexdigest() == artifact['sha256']

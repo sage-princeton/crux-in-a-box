@@ -49,8 +49,9 @@ def incident_records(report):
 
 
 class IncidentLog:
-    def __init__(self, state, s3, bucket):
+    def __init__(self, state, s3, bucket, excluded_names=()):
         self.state, self.s3, self.bucket = state, s3, bucket
+        self.excluded_names = set(excluded_names)
 
     @staticmethod
     def key(instance, identity):
@@ -141,6 +142,8 @@ class IncidentLog:
         result = []
         for row in self.rows('FLEET#'):
             iid = row['instance_id']
+            if row.get('name') in self.excluded_names:
+                continue
             if allowed is not None and iid not in allowed:
                 continue
             result.append({**row, 'slug':row.get('slug', iid),

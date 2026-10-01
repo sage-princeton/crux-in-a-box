@@ -514,7 +514,7 @@ class Runtime:
                     except ClientError as error:
                         if not conditional_failure(error):
                             raise
-            log = IncidentLog(self.state, self.s3, self.bucket)
+            log = IncidentLog(self.state, self.s3, self.bucket, self.config.get('fleet', {}).get('exclude_names', []))
             if inventory:
                 log.sync_inventory([i for i in inventory if i['instance_id'] == instance_id])
             log.record(report, key, prefix)
@@ -530,7 +530,7 @@ class Runtime:
         if int(time.time()) >= self.config['expires_at']:
             return
         _, inventory = inventory_targets(self.ec2, self.config)
-        log = IncidentLog(self.state, self.s3, self.bucket)
+        log = IncidentLog(self.state, self.s3, self.bucket, self.config.get('fleet', {}).get('exclude_names', []))
         log.sync_inventory(inventory, complete=True)
         summaries = lambda: log.summaries(inventory)
         artifact = log.publish()

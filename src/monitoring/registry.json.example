@@ -25,7 +25,8 @@
   },
   "fleet": {
     "exclude_names": [
-      "crux-control"
+      "crux-control",
+      "crux-monitor-worker"
     ],
     "exclude_instance_ids": [],
     "langfuse_by_name": true

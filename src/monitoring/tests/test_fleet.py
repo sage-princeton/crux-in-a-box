@@ -25,7 +25,7 @@ def test_fleet_excludes_controller_even_with_override_and_disambiguates_names():
         worker = instance('crux-monitor-worker', [{'Key':'AWSBatchServiceTag','Value':'batch'}])
         stopped = instance('stopped-workload')
         ec2.stop_instances(InstanceIds=[stopped])
-        config = {'fleet':{'exclude_names':['crux-control'], 'langfuse_by_name':True},
+        config = {'fleet':{'exclude_names':['crux-control','crux-monitor-worker'], 'langfuse_by_name':True},
                   'targets':{control:{'authorization':'explicit override'}}}
         targets, inventory = inventory_targets(ec2, config)
         assert control not in targets and renamed not in targets
@@ -33,8 +33,8 @@ def test_fleet_excludes_controller_even_with_override_and_disambiguates_names():
         assert targets[web]['langfuse'] == {'environment':'crux-web-pilot'}
         assert 'langfuse' not in targets[first] and 'langfuse' not in targets[second]
         assert targets[first]['slug'] != targets[second]['slug']
-        assert targets[worker]['service_worker'] and 'langfuse' not in targets[worker]
-        assert len(inventory) == 5
+        assert worker not in targets
+        assert len(inventory) == 4
 
 
 def test_environment_filter_is_bounded_and_rejects_other_instances():
