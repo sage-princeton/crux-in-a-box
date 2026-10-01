@@ -29,6 +29,21 @@ apt-get update -qq
 apt-get install -y -qq curl unzip jq git ca-certificates >/dev/null
 ok "apt packages in"
 
+# ====== NEEDRESTART ======
+# Unattended security upgrades stay on, and needrestart still restarts every
+# other service they touch. The gateway is the exception: every process the
+# agent launches runs inside its unit, so almost any library update flags it,
+# and a restart kills the run mid-turn. The gateway does not resume the
+# in-flight task afterwards, so the run is silently orphaned.
+info "needrestart: exclude crux-acp-gateway from automatic restarts"
+NR_DROPIN=/etc/needrestart/conf.d/crux.conf
+install -d -m 755 "$(dirname "$NR_DROPIN")"
+cat > "$NR_DROPIN" <<'PERL'
+$nrconf{override_rc}{qr(^crux-acp-gateway\.service$)} = 0;
+PERL
+chmod 644 "$NR_DROPIN"
+ok "Wrote $NR_DROPIN"
+
 # ====== AWS CLI v2 ======
 # Install AWS CLI v2 from the official archive.
 info "AWS CLI v2"
