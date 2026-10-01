@@ -71,3 +71,23 @@ def test_fleet_summary_acknowledges_new_incidents_only_after_success():
             assert deliver_summary(runtime, [changed]) == 'sent'
             assert '3 incidents based on 5 reviews, 1 new incident (' in attempts[-1]['text']
             assert deliver_summary(runtime, [changed]) == 'suppressed'
+
+
+def test_oversized_langfuse_io_falls_back_to_bounded_metadata_with_explicit_gap():
+    from review import MAX_EVIDENCE_BYTES
+    fields = []
+    def handler(request):
+        fields.append(request.url.params['fields'])
+        assert request.url.params['environment'] == 'ae239-test'
+        data = {'id':'1','environment':'ae239-test','model':'gpt-example'}
+        if 'io' in request.url.params['fields'].split(','):
+            data['input'] = 'x' * MAX_EVIDENCE_BYTES
+        return httpx.Response(200, json={'data':[data]})
+    secrets = {'MONITORING_LANGFUSE_BASE_URL':'https://langfuse.example',
+               'MONITORING_LANGFUSE_PUBLIC_KEY':'public', 'MONITORING_LANGFUSE_SECRET_KEY':'private'}
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        sources = collect_langfuse(client, {'environment':'ae239-test'}, secrets, 0, 300)
+    assert len(fields) == 2
+    assert 'io' not in fields[-1].split(',')
+    assert sources[0]['truncated'] and 'content-level review is incomplete' in sources[0]['coverage_gap']
+    assert 'input' not in sources[0]['data']

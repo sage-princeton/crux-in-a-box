@@ -53,6 +53,10 @@ class CoverageError(Exception):
     pass
 
 
+class EvidenceLimitError(CoverageError):
+    pass
+
+
 def encoded(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode()
 
@@ -90,7 +94,7 @@ def get_json(client, url, max_bytes=MAX_EVIDENCE_BYTES, **kwargs):
         for chunk in response.iter_bytes():
             chunks.extend(chunk)
             if len(chunks) > max_bytes:
-                raise CoverageError("API response exceeds evidence limit")
+                raise EvidenceLimitError("API response exceeds evidence limit")
         return json.loads(chunks)
 
 
@@ -109,13 +113,22 @@ def collect_langfuse(client, config, secrets, start, end):
     auth = (secrets["MONITORING_LANGFUSE_PUBLIC_KEY"], secrets["MONITORING_LANGFUSE_SECRET_KEY"])
     result, cursors = [], set()
     for _ in range(MAX_PAGES):
-        page = get_json(client, url, params=params, auth=auth)
+        try:
+            page = get_json(client, url, params=params, auth=auth)
+        except EvidenceLimitError:
+            if 'io' not in params['fields'].split(','):
+                raise
+            params['fields'] = 'core,basic,metadata,model,trace_context'
+            page = get_json(client, url, params=params, auth=auth)
         for item in page["data"]:
             if config.get("session_id") and item.get("sessionId") != config["session_id"]:
                 raise CoverageError("Langfuse returned an unexpected session")
             if config.get("environment") and item.get("environment") != config["environment"]:
                 raise CoverageError("Langfuse returned an unexpected instance environment")
-            result.append({"id": "observation:" + item["id"], "kind": "langfuse", "data": item})
+            source = {"id": "observation:" + item["id"], "kind": "langfuse", "data": item}
+            if 'io' not in params['fields'].split(','):
+                source.update(truncated=True, coverage_gap='Langfuse inputs/outputs were omitted because the full page exceeded the evidence limit; content-level review is incomplete.')
+            result.append(source)
         if len(encoded(result)) > MAX_EVIDENCE_BYTES:
             raise CoverageError("Langfuse window exceeds evidence limit; narrow the window")
         cursor = page.get("meta", {}).get("cursor")

@@ -60,7 +60,10 @@ delivery. Legacy explicit-target deployments retain per-review numbered alerts.
 `fleet.langfuse_by_name` reads only the Langfuse environment matching a unique EC2
 Name tag, with a bounded time window and a response-side environment check. It
 never enables collection on the host. Missing or ambiguous mappings remain
-coverage gaps. When task-specific authorization is absent, that context is a
+coverage gaps. An oversized Langfuse page is retried without inputs/outputs; the
+saved sources and report explicitly mark content-level review incomplete. If even
+bounded collection fails, the review is unavailable, not idle.
+When task-specific authorization is absent, that context is a
 limitation rather than evidence of wrongdoing. Stale-only evidence skips
 inference without declaring the target safe.
 

@@ -363,7 +363,9 @@ class Runtime:
                 gaps.append(name + ": collection failed (" + failure_message(error) + ")")
         for source in sources:
             if source.get("truncated"):
-                gaps.append(source["id"] + ": export exceeds 64 KiB; only its prefix was read")
+                gap = source.get('coverage_gap', source["id"] + ": export exceeds 64 KiB; only its prefix was read")
+                if gap not in gaps:
+                    gaps.append(gap)
             if source.get("mtime", end) < start:
                 gaps.append(source["id"] + ": exported file predates the review window")
         return scrub(sources, secrets.values()), gaps
@@ -467,6 +469,9 @@ class Runtime:
                 model_info = {}
                 try:
                     if not fresh_evidence(sources, start) and not self.state.get("HEALTH#reviewer").get("blocked"):
+                        failures = [gap for gap in gaps if ': collection failed (' in gap]
+                        if failures:
+                            raise CoverageError('Evidence collection unavailable: ' + '; '.join(failures))
                         report = {"review_status": "idle", "summary": "No recent evidence; review skipped without inference.",
                                   "workload_profile": previous.get("profile", ""), "next_source_ids": [],
                                   "findings": [], "coverage_gaps": gaps}
