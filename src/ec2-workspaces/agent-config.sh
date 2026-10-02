@@ -43,34 +43,29 @@ load_agent_config() {
       || die "$key contains unsupported characters."
   done
   case "$EFFORT" in
-    low|medium|high|xhigh|max) ;;
-    *) die "$EFFORT_KEY must be low|medium|high|xhigh|max (got '$EFFORT')." ;;
+    none|low|medium|high|xhigh|max) ;;
+    *) die "$EFFORT_KEY must be none|low|medium|high|xhigh|max (got '$EFFORT')." ;;
   esac
 
-  # Effort levels per model, recorded 2026-10-01. Neither harness rejects a
-  # level the model lacks: Codex sends model_reasoning_effort to the API as-is.
-  # - Codex: supported_reasoning_levels from `codex debug models --bundled` in
-  #   @openai/codex 0.154.0 (CODEX_VERSION). It also lists `ultra` for some
-  #   models; OpenAI's model docs don't, so it stays out of the list above.
-  # - Claude: Anthropic's model docs; check with GET /v1/models/{id}
-  #   (capabilities.effort.<level>.supported).
-  # UPDATE THIS TABLE when bumping CODEX_VERSION or CLAUDE_VERSION, or when
-  # running a model it doesn't list. Unlisted models (e.g. OpenRouter IDs) are
-  # only held to the list above.
+  # Effort levels per supported model, recorded 2026-10-01. Neither harness
+  # rejects a level the model lacks: Codex sends model_reasoning_effort to the
+  # API as-is.
+  # - Codex: OpenAI's model docs (developers.openai.com/api/docs/models). The
+  #   pinned @openai/codex 0.154.0 catalog (`codex debug models --bundled`)
+  #   lists only gpt-6-astra; 0.160.0 lists all three, without gpt-6-luna's
+  #   `none`, and adds `ultra`, which OpenAI's docs don't list.
+  # - Claude: Anthropic's effort docs (platform.claude.com/docs/en/build-with-claude/effort);
+  #   check with GET /v1/models/{id} (capabilities.effort.<level>.supported).
+  # UPDATE THIS TABLE when changing the models used for runs or bumping
+  # CODEX_VERSION or CLAUDE_VERSION. Other models (e.g. OpenRouter IDs) only
+  # get a warning.
   local supported
   case "$AGENT_PLATFORM:${MODEL%%\[*}" in
-    codex:gpt-6-astra|codex:gpt-5.6-sol|codex:gpt-5.6-terra|codex:gpt-5.6-luna|\
-    codex:gpt-daybreak-blue-latest|codex:gpt-daybreak-red-latest|\
-    claude:claude-fable-5-1|claude:claude-mythos-5-1|claude:claude-fable-5|\
-    claude:claude-opus-5-5|claude:claude-opus-5|claude:claude-opus-4-8|\
-    claude:claude-opus-4-7|claude:claude-sonnet-5)
+    codex:gpt-6-astra|codex:gpt-6.1-sol|\
+    claude:claude-fable-5-1|claude:claude-opus-5-5|claude:claude-sonnet-5-5)
       supported="low medium high xhigh max" ;;
-    codex:gpt-5.5|codex:gpt-5.4|codex:gpt-5.4-mini|codex:gpt-5.2)
-      supported="low medium high xhigh" ;;
-    claude:claude-opus-4-6|claude:claude-sonnet-4-6)
-      supported="low medium high max" ;;
-    claude:claude-opus-4-5)
-      supported="low medium high" ;;
+    codex:gpt-6-luna)
+      supported="none low medium high xhigh max" ;;
     *)
       warn "$MODEL is not in agent-config.sh's effort table; $EFFORT_KEY=$EFFORT is unchecked for it."
       return ;;
