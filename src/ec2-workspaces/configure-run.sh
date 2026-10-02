@@ -9,8 +9,10 @@ set -euo pipefail
 # Required environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
 # RUN_SLUG, CONTROL_MCP_BASE and the selected platform's model and effort.
 # AGENT_PLATFORM defaults to codex; Codex also requires its tracing pin and hash.
+# Optional CODEX_TRACE_MODE: stop-hook (default, the tracing plugin's Stop hook)
+# or live (codex-live-trace.py streams each observation as it completes).
 # Place agent-config.sh beside this script; Codex also requires
-# codex-flush-turns.py, and Claude requires langfuse_hook.py.
+# codex-flush-turns.py and codex-live-trace.py, and Claude requires langfuse_hook.py.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
@@ -26,6 +28,12 @@ load_agent_config settings
 if [ "$AGENT_PLATFORM" = codex ]; then
   : "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
   [ -f "$SCRIPT_DIR/codex-flush-turns.py" ] || die "codex-flush-turns.py was not copied alongside configure-run.sh."
+  CODEX_TRACE_MODE="${CODEX_TRACE_MODE:-stop-hook}"
+  case "$CODEX_TRACE_MODE" in
+    stop-hook) ;;
+    live) [ -f "$SCRIPT_DIR/codex-live-trace.py" ] || die "codex-live-trace.py was not copied alongside configure-run.sh." ;;
+    *) die "CODEX_TRACE_MODE must be stop-hook|live (got '$CODEX_TRACE_MODE')." ;;
+  esac
   command -v python3 >/dev/null 2>&1 || die "python3 is not on PATH; the gateway's trace flush needs it."
 else
   [ -f "$SCRIPT_DIR/langfuse_hook.py" ] || die "Claude Langfuse hook was not copied alongside configure-run.sh."
@@ -146,7 +154,7 @@ model_provider = "${MODEL_PROVIDER/direct/openai}"
 hooks = true
 
 [plugins."tracing@codex-observability-plugin"]
-enabled = true
+enabled = $([ "$CODEX_TRACE_MODE" = live ] && echo false || echo true)
 
 # Pin trusted_hash to authorize the Stop hook on unattended instances.
 [hooks.state."tracing@codex-observability-plugin:hooks/hooks.json:stop:0:0"]
@@ -236,6 +244,19 @@ install -d -m 755 /usr/local/lib/crux
 FLUSH_SCRIPT=/usr/local/lib/crux/codex-flush-turns.py
 install -m 755 "$SCRIPT_DIR/codex-flush-turns.py" "$FLUSH_SCRIPT"
 FLUSH="/usr/bin/python3 $FLUSH_SCRIPT --plugin $PLUGIN_ENTRY"
+GATEWAY_START_FLUSH="$FLUSH --reason gateway-start"
+GATEWAY_STOP_FLUSH="$FLUSH --reason gateway-stop"
+
+# Live mode replaces the plugin's Stop hook with a service that sends each
+# observation once it is complete, so a running turn shows up within a pass.
+# The gateway unit then ends a killed turn through the same exporter.
+if [ "$CODEX_TRACE_MODE" = live ]; then
+  LIVE_SCRIPT=/usr/local/lib/crux/codex-live-trace.py
+  install -m 755 "$SCRIPT_DIR/codex-live-trace.py" "$LIVE_SCRIPT"
+  LIVE="/usr/bin/python3 $LIVE_SCRIPT"
+  GATEWAY_START_FLUSH="$LIVE --once --finalize"
+  GATEWAY_STOP_FLUSH="$LIVE --once --finalize"
+fi
 
 # ====== CODEX LOGIN ======
 if [ "$MODEL_PROVIDER" = direct ]; then
@@ -255,8 +276,9 @@ ok "$(su "$RUN_USER" -c 'codex login status' 2>&1 | tail -1)"
 fi
 
 # ====== PROVE THE HOOK ACTUALLY FIRES ======
-# Run a paid Codex probe and require a Stop-hook event.
-info "Verifying the Stop hook fires (one real codex turn)"
+# Run a paid Codex probe and require its turn to be traced: a Stop-hook event,
+# or in live mode an export by the live exporter.
+info "Verifying tracing with one real codex turn ($CODEX_TRACE_MODE)"
 HOOK_STATUS=0
 HOOK_OUT="$(su "$RUN_USER" -c \
   "cd '$WORK_DIR' && \
@@ -267,7 +289,15 @@ if [ "$HOOK_STATUS" != 0 ]; then
   die "Codex probe failed (exit $HOOK_STATUS). Inspect $PROBE_LOG with sudo for the provider error; gateway was not started."
 fi
 
-if printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
+if [ "$CODEX_TRACE_MODE" = live ]; then
+  LIVE_OUT="$(su - "$RUN_USER" -c "$LIVE --once" 2>&1)" \
+    || die "The live trace exporter could not send the probe's turn to Langfuse:
+$LIVE_OUT"
+  printf '%s' "$LIVE_OUT" | grep -qE 'sent [1-9][0-9]* observations' \
+    || die "The live trace exporter found nothing to send for the probe's turn under $CODEX_DIR/sessions:
+$LIVE_OUT"
+  ok "Live exporter sent the probe's turn — traces will reach Langfuse as environment=$RUN_SLUG"
+elif printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
   ok "Stop hook fired — traces will reach Langfuse as environment=$RUN_SLUG"
 else
   printf '\n%s\n' "$HOOK_OUT" | tail -20
@@ -281,6 +311,7 @@ Compare against a machine where tracing works:
 fi
 
 # The flush must parse the rollout this codex just wrote; --check uploads nothing.
+if [ "$CODEX_TRACE_MODE" = stop-hook ]; then
 info "Verifying the gateway's trace flush reads this codex's rollouts"
 FLUSH_OUT="$(su - "$RUN_USER" -c "$FLUSH --reason provision-check --check" 2>&1)" \
   || die "The trace flush failed, so turns killed with the gateway will not reach Langfuse:
@@ -289,6 +320,7 @@ printf '%s' "$FLUSH_OUT" | grep -qE 'checked [1-9][0-9]* rollouts' \
   || die "The trace flush found none of the probe's rollouts under $CODEX_DIR/sessions:
 $FLUSH_OUT"
 ok "$(printf '%s' "$FLUSH_OUT" | tail -1)"
+fi
 
 else
 # ====== CLAUDE CONFIG AND STANDALONE TRACING ======
@@ -369,8 +401,8 @@ fi
 # from failing the unit.
 FLUSH_UNIT=""
 if [ "$AGENT_PLATFORM" = codex ]; then
-  FLUSH_UNIT="ExecStartPre=-$FLUSH --reason gateway-start
-ExecStopPost=-$FLUSH --reason gateway-stop"
+  FLUSH_UNIT="ExecStartPre=-$GATEWAY_START_FLUSH
+ExecStopPost=-$GATEWAY_STOP_FLUSH"
 fi
 info "Installing crux-acp-gateway.service"
 cat > /etc/systemd/system/crux-acp-gateway.service <<UNIT
@@ -395,9 +427,39 @@ StandardError=journal
 WantedBy=multi-user.target
 UNIT
 
+if [ "$AGENT_PLATFORM" = codex ] && [ "$CODEX_TRACE_MODE" = live ]; then
+  info "Installing crux-codex-live-trace.service"
+  cat > /etc/systemd/system/crux-codex-live-trace.service <<UNIT
+[Unit]
+Description=CRUX live Codex traces -> Langfuse
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=${RUN_USER}
+Environment=HOME=${RUN_HOME}
+ExecStart=$LIVE --interval 30
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+else
+  systemctl disable --now crux-codex-live-trace >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/crux-codex-live-trace.service
+fi
+
 systemctl daemon-reload
 systemctl enable crux-acp-gateway >/dev/null
 systemctl restart crux-acp-gateway
+if [ -f /etc/systemd/system/crux-codex-live-trace.service ]; then
+  systemctl enable crux-codex-live-trace >/dev/null
+  systemctl restart crux-codex-live-trace
+fi
 ok "Service enabled and started"
 
 # ====== HEALTH ======
@@ -411,3 +473,10 @@ if [ "$STATE" != "active" ]; then
   die "Gateway is '$STATE', not active. Logs above."
 fi
 ok "Gateway active (restart count $(systemctl show -p NRestarts --value crux-acp-gateway))"
+if [ -f /etc/systemd/system/crux-codex-live-trace.service ]; then
+  [ "$(systemctl is-active crux-codex-live-trace || true)" = active ] || {
+    journalctl -u crux-codex-live-trace -n 30 --no-pager || true
+    die "crux-codex-live-trace is not active, so running turns will not reach Langfuse. Logs above."
+  }
+  ok "Live trace exporter active"
+fi
