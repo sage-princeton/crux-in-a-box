@@ -55,27 +55,6 @@ WORKSPACE_TOKEN="$(get AGENTRQ_WORKSPACE_TOKEN)" || die "AGENTRQ_WORKSPACE_TOKEN
 rm -f "$RUN_SECRETS_PATH"
 ok "Read 3 per-run values (not echoed); deleted $RUN_SECRETS_PATH"
 
-# ====== MODEL EFFORT SUPPORT ======
-# Support varies by model. Codex sends the configured effort as-is, so check
-# it against the pinned catalog (or the Anthropic Models API) before the probe.
-info "Checking $MODEL supports $EFFORT_KEY=$EFFORT"
-LEVELS_KNOWN=0
-if [ "$MODEL_PROVIDER" = direct ] && [ "$AGENT_PLATFORM" = codex ]; then
-  CATALOG="$(su "$RUN_USER" -c "cd '$RUN_HOME' && codex debug models --bundled")" \
-    || die "Could not read the pinned Codex model catalog (codex debug models --bundled)."
-  if LEVELS="$(codex_model_efforts "$CATALOG" "$MODEL")"; then LEVELS_KNOWN=1; fi
-elif [ "$MODEL_PROVIDER" = direct ]; then
-  MODEL_INFO="$(printf 'x-api-key: %s\n' "$AGENT_API_KEY" | curl -sS --max-time 30 -H @- \
-    -H 'anthropic-version: 2023-06-01' "https://api.anthropic.com/v1/models/$MODEL" || true)"
-  if LEVELS="$(claude_model_efforts "$MODEL_INFO")"; then LEVELS_KNOWN=1; fi
-fi
-if [ "$LEVELS_KNOWN" = 1 ]; then
-  require_supported_effort "$LEVELS"
-  ok "$MODEL supports $EFFORT_KEY=$EFFORT"
-else
-  warn "Could not look up the effort levels $MODEL supports; the probe still runs at $EFFORT_KEY=$EFFORT."
-fi
-
 # ====== SYSTEM-WIDE SECRETS FROM PARAMETER STORE ======
 # Shared by every run box; read via the instance's crux-system-role, whose
 # only privilege is GetParameter on this one path.
