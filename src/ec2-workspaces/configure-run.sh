@@ -9,8 +9,9 @@ set -euo pipefail
 # Required environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
 # RUN_SLUG, CONTROL_MCP_BASE and the selected platform's model and effort.
 # AGENT_PLATFORM defaults to codex; Codex also requires its tracing pin and hash.
+# Optional CODEX_TURN_NUDGE_MINUTES (default 0, off) enables the turn-length nudge.
 # Place agent-config.sh beside this script; Codex also requires
-# codex-flush-turns.py, and Claude requires langfuse_hook.py.
+# codex-flush-turns.py and codex-turn-nudge.py, and Claude requires langfuse_hook.py.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
@@ -26,6 +27,10 @@ load_agent_config settings
 if [ "$AGENT_PLATFORM" = codex ]; then
   : "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
   [ -f "$SCRIPT_DIR/codex-flush-turns.py" ] || die "codex-flush-turns.py was not copied alongside configure-run.sh."
+  CODEX_TURN_NUDGE_MINUTES="${CODEX_TURN_NUDGE_MINUTES:-0}"
+  [[ "$CODEX_TURN_NUDGE_MINUTES" =~ ^[0-9]+$ ]] || die "CODEX_TURN_NUDGE_MINUTES must be a whole number of minutes (got '$CODEX_TURN_NUDGE_MINUTES')."
+  [ "$CODEX_TURN_NUDGE_MINUTES" = 0 ] || [ -f "$SCRIPT_DIR/codex-turn-nudge.py" ] \
+    || die "codex-turn-nudge.py was not copied alongside configure-run.sh."
   command -v python3 >/dev/null 2>&1 || die "python3 is not on PATH; the gateway's trace flush needs it."
 else
   [ -f "$SCRIPT_DIR/langfuse_hook.py" ] || die "Claude Langfuse hook was not copied alongside configure-run.sh."
@@ -237,6 +242,33 @@ FLUSH_SCRIPT=/usr/local/lib/crux/codex-flush-turns.py
 install -m 755 "$SCRIPT_DIR/codex-flush-turns.py" "$FLUSH_SCRIPT"
 FLUSH="/usr/bin/python3 $FLUSH_SCRIPT --plugin $PLUGIN_ENTRY"
 
+# ====== TURN-LENGTH NUDGE (EXPERIMENTAL) ======
+# Codex has no turn-length limit, so a long turn stays out of Langfuse until it
+# ends. This PostToolUse hook asks a main-thread turn past the limit to end when
+# a goal will resume it. Hooks in the system config are managed: Codex trusts
+# them without a trusted_hash, and the agent's user cannot edit them.
+SYSTEM_CODEX_CONFIG=/etc/codex/config.toml
+SYSTEM_CODEX_MARKER="# Managed by crux configure-run.sh"
+if [ "$CODEX_TURN_NUDGE_MINUTES" != 0 ]; then
+  info "turn-length nudge after $CODEX_TURN_NUDGE_MINUTES minutes"
+  NUDGE_SCRIPT=/usr/local/lib/crux/codex-turn-nudge.py
+  install -m 755 "$SCRIPT_DIR/codex-turn-nudge.py" "$NUDGE_SCRIPT"
+  install -d -m 755 /etc/codex
+  install -m 644 /dev/null "$SYSTEM_CODEX_CONFIG"
+  cat > "$SYSTEM_CODEX_CONFIG" <<TOML
+$SYSTEM_CODEX_MARKER
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "/usr/bin/python3 $NUDGE_SCRIPT --minutes $CODEX_TURN_NUDGE_MINUTES"
+timeout = 10
+TOML
+  ok "Wrote $SYSTEM_CODEX_CONFIG"
+elif [ -f "$SYSTEM_CODEX_CONFIG" ] && head -1 "$SYSTEM_CODEX_CONFIG" | grep -qxF "$SYSTEM_CODEX_MARKER"; then
+  rm -f "$SYSTEM_CODEX_CONFIG"
+  ok "turn-length nudge off; removed $SYSTEM_CODEX_CONFIG"
+fi
+
 # ====== CODEX LOGIN ======
 if [ "$MODEL_PROVIDER" = direct ]; then
 # Run Codex login to write the API key to ~/.codex/auth.json.
@@ -255,12 +287,16 @@ ok "$(su "$RUN_USER" -c 'codex login status' 2>&1 | tail -1)"
 fi
 
 # ====== PROVE THE HOOK ACTUALLY FIRES ======
-# Run a paid Codex probe and require a Stop-hook event.
+# Run a paid Codex probe and require a Stop-hook event. With the nudge on, the
+# probe also runs one tool call so its PostToolUse hook fires.
 info "Verifying the Stop hook fires (one real codex turn)"
+PROBE_PROMPT='Say exactly: HOOK-PROBE'
+[ "$CODEX_TURN_NUDGE_MINUTES" = 0 ] \
+  || PROBE_PROMPT='Run the shell command echo HOOK-PROBE once, then say exactly: HOOK-PROBE'
 HOOK_STATUS=0
 HOOK_OUT="$(su "$RUN_USER" -c \
   "cd '$WORK_DIR' && \
-   timeout 180 codex exec --skip-git-repo-check 'Say exactly: HOOK-PROBE' </dev/null 2>&1")" || HOOK_STATUS=$?
+   timeout 180 codex exec --skip-git-repo-check '$PROBE_PROMPT' </dev/null 2>&1")" || HOOK_STATUS=$?
 if [ "$HOOK_STATUS" != 0 ]; then
   install -m 600 /dev/null "$PROBE_LOG"
   printf '%s\n' "$HOOK_OUT" > "$PROBE_LOG"
@@ -278,6 +314,17 @@ Almost always one of:
   - the plugin did not unpack to $PLUGIN_ENTRY
 Compare against a machine where tracing works:
     grep -A3 'hooks.state' ~/.codex/config.toml"
+fi
+
+if [ "$CODEX_TURN_NUDGE_MINUTES" != 0 ]; then
+  if printf '%s' "$HOOK_OUT" | grep -q 'hook: PostToolUse Completed'; then
+    ok "Turn-length nudge hook ran on the probe's tool call"
+  else
+    printf '\n%s\n' "$HOOK_OUT" | tail -20
+    die "The probe never completed the turn-length nudge's PostToolUse hook. Check that
+$SYSTEM_CODEX_CONFIG is readable by $RUN_USER and that the probe ran a tool call
+(output above), or set CODEX_TURN_NUDGE_MINUTES=0 to provision without the nudge."
+  fi
 fi
 
 # The flush must parse the rollout this codex just wrote; --check uploads nothing.

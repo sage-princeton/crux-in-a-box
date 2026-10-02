@@ -67,5 +67,11 @@ ACP_GATEWAY_VERSION=0.2.17
 TRACING_PLUGIN_VERSION=0.4.0
 TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74
 
+# Optional, Codex only, experimental: once a main-thread turn has run this many
+# minutes, a PostToolUse hook asks the agent to end the turn if the thread has an
+# active goal; Codex's goal extension then starts the next turn, so each turn
+# reaches Langfuse when it ends. Repeats every interval. 0 (the default) disables it.
+CODEX_TURN_NUDGE_MINUTES=0
+
 # The control box's ssh alias, used to mint workspaces.
 CONTROL_SSH_ALIAS=crux-control

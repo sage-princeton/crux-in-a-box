@@ -11,6 +11,7 @@ These tests check what the Codex Langfuse plugin (`@langfuse/codex-observability
 | `test_version_pins.py` | | fails when a pin, or the codex that codex-acp installs, moves past the fixtures or expectations |
 | `test_tracing.py` | | one test per pilot failure mode |
 | `test_flush.py` | | the gateway unit's flush of turns that never reached `Stop` (`src/ec2-workspaces/codex-flush-turns.py`) |
+| `test_turn_nudge.py` | the codex pins | the `PostToolUse` hook that nudges a long turn to end (`src/ec2-workspaces/codex-turn-nudge.py`), checked against the `hook-schemas/` copied from that codex's `codex-rs/hooks/schema/generated/` |
 | `rollout_shape.py` | | reduces rollouts to structure only, for re-recording fixtures from a run box |
 
 The pins are read from `src/ec2-workspaces/placeholders-base.txt.example`. When the fixture directory or expectations file named by the current pins doesn't exist, the run stops before any test with a banner naming the pin that changed.
@@ -61,7 +62,7 @@ codex-acp depends on `@openai/codex` by range and ships no shrinkwrap. A newer c
    ```bash
    ssh <box> 'python3 - ~/.codex/sessions/<yyyy>/<mm>/<dd>/*.jsonl' < tests/codex-observability/rollout_shape.py > shape-box.txt
    ```
-3. Copy the current fixture directory to `fixtures/codex-<CODEX_VERSION>_codex-acp-<CODEX_ACP_VERSION>/`. Update `manifest.json`, including the codex range and the codex version it installs.
+3. Copy the current fixture directory to `fixtures/codex-<CODEX_VERSION>_codex-acp-<CODEX_ACP_VERSION>/`. Update `manifest.json`, including the codex range and the codex version it installs. Replace `hook-schemas/` with the `post-tool-use.command.*.schema.json` files from that codex version's `codex-rs/hooks/schema/generated/`.
 4. Compare `shape-box.txt` against the shape of the new fixtures and change `rollouts.py` until line kinds, order and payload keys match.
    ```bash
    python3 tests/codex-observability/fixtures/<dir>/rollouts.py /tmp/fx
