@@ -231,8 +231,10 @@ fi
 
 # Codex fires Stop only when a turn ends, so a turn whose gateway is killed is
 # never uploaded. The gateway unit runs this flush around every stop and start.
+# The run user executes it; umask 077 would make a new directory root-only.
+install -d -m 755 /usr/local/lib/crux
 FLUSH_SCRIPT=/usr/local/lib/crux/codex-flush-turns.py
-install -D -m 755 "$SCRIPT_DIR/codex-flush-turns.py" "$FLUSH_SCRIPT"
+install -m 755 "$SCRIPT_DIR/codex-flush-turns.py" "$FLUSH_SCRIPT"
 FLUSH="/usr/bin/python3 $FLUSH_SCRIPT --plugin $PLUGIN_ENTRY"
 
 # ====== CODEX LOGIN ======
