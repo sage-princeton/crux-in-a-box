@@ -4,7 +4,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from lifecycle import Conflict, IncidentStore, evidence_anchors, public_incident
+from lifecycle import Conflict, IncidentStore, evidence_anchors, public_incident, sftp_anchor_positions
 
 
 @pytest.fixture
@@ -112,6 +112,8 @@ def test_export_append_preserves_closed_incident_and_new_event_is_distinct(store
     source['data'] += '{"id":"two","action":"read"}\n'
     after = evidence_anchors([source])
     assert set(before) < set(after)
+    assert dict(sftp_anchor_positions(source))[anchor] == 1
+    assert dict(sftp_anchor_positions(source))[(set(after) - set(before)).pop()] == 2
     store.ingest(finding(anchor), 'REVIEW#i-test#600', 'reviews/2', {}, {}, after)
     assert len(list(store.all('INCIDENTS'))) == 1
     assert store.incident(item['id'])['status'] == 'closed'

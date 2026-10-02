@@ -41,6 +41,33 @@ def public_incident(item):
     return {key: item[key] for key in PUBLIC_FIELDS if key in item}
 
 
+def sftp_anchor_positions(source):
+    """Map stable event anchors to 1-based JSON record / text line positions."""
+    # Exports are JSON/JSONL records or complete text lines. Appending
+    # another event must not change any existing event's identity.
+    data = source['data']
+    try:
+        records = json.loads(data)
+    except (ValueError, TypeError):
+        records = data.splitlines()
+        if source.get('truncated') and records and not data.endswith('\n'):
+            records = records[:-1]
+    if not isinstance(records, list):
+        records = [records]
+    for position, record in enumerate(records, 1):
+        if isinstance(record, str):
+            if not record.strip():
+                continue
+            try:
+                record = json.loads(record)
+            except ValueError:
+                pass
+        identity = record
+        if isinstance(record, dict):
+            identity = next(({key: record[key]} for key in ('event_id', 'eventId', 'id') if record.get(key)), record)
+        yield source['id'] + '@' + digest(identity), position
+
+
 def evidence_anchors(sources):
     """Event identity uses source records, never reviewer prose or review time."""
     result = {}
@@ -50,29 +77,7 @@ def evidence_anchors(sources):
             for event in source['data']:
                 result['event:' + event['eventId']] = sid
         elif source.get('kind') == 'sftp':
-            # Exports are JSON/JSONL records or complete text lines. Appending
-            # another event must not change any existing event's identity.
-            data = source['data']
-            try:
-                records = json.loads(data)
-            except (ValueError, TypeError):
-                records = data.splitlines()
-                if source.get('truncated') and records and not data.endswith('\n'):
-                    records = records[:-1]
-            if not isinstance(records, list):
-                records = [records]
-            for record in records:
-                if isinstance(record, str):
-                    if not record.strip():
-                        continue
-                    try:
-                        record = json.loads(record)
-                    except ValueError:
-                        pass
-                identity = record
-                if isinstance(record, dict):
-                    identity = next(({key: record[key]} for key in ('event_id', 'eventId', 'id') if record.get(key)), record)
-                result[sid + '@' + digest(identity)] = sid
+            result.update({anchor: sid for anchor, _ in sftp_anchor_positions(source)})
         else:
             result[sid] = sid
     return result

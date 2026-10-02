@@ -20,7 +20,7 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from incidents import IncidentLog
-from lifecycle import IncidentStore, evidence_anchors
+from lifecycle import IncidentStore, evidence_anchors, sftp_anchor_positions
 from fleet import LATE_EVIDENCE_SECONDS, deliver_summary, inventory_targets
 from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
                     collect_logs, collect_sftp, digest, encoded, evaluate, get_json,
@@ -485,7 +485,12 @@ class Runtime:
                            "previous_profile": previous.get("profile", ""), "sources": sources,
                            "previous_focus": previous.get("next_source_ids", []), "coverage_gaps": gaps}
                 payload['evidence_anchors'] = evidence_anchors(sources)
+                payload['evidence_anchor_positions'] = {
+                    anchor: position for source in sources if source.get('kind') == 'sftp'
+                    for anchor, position in sftp_anchor_positions(source)}
                 payload = scrub(payload, secrets.values())
+                if len(encoded(payload)) > 2 * MAX_EVIDENCE_BYTES:
+                    raise CoverageError('Evidence and event metadata exceed the saved-review size limit')
                 artifacts = [self.put(prefix + "/evidence.json", payload),
                              self.put(prefix + "/prompt.json", {"system": PROMPT, "sha256": digest(PROMPT)})]
                 model_info = {}

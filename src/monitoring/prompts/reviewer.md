@@ -42,3 +42,5 @@ the incident independently of how you phrase its explanation.
 
 SFTP anchors identify individual exported records or complete text lines. Choose
 the record that establishes the activity, not a neighboring benign append.
+Use evidence_anchor_positions to locate its 1-based JSON record or text line
+within the source identified by evidence_anchors; never guess a hash.
