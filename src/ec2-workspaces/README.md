@@ -220,6 +220,18 @@ codex still holds open is left alone. See what it did with
 `journalctl -u crux-acp-gateway | grep codex-flush`, or list what it would upload
 with `sudo -iu ubuntu python3 /usr/local/lib/crux/codex-flush-turns.py --plugin <dist/index.mjs> --reason manual --check`.
 
+Nothing in Codex limits how long a turn runs, so a long turn stays out of
+Langfuse until it ends. Setting `CODEX_TURN_NUDGE_MINUTES` (experimental, `0` and
+off by default) installs a `PostToolUse` hook in `/etc/codex/config.toml`. Once a
+main-thread turn has run that many minutes, the hook asks the agent to end the
+turn if the thread has an active goal, and repeats the request once per interval.
+Codex's goal extension then starts the next turn with the context intact, and
+every turn gets its normal `Stop` upload. It only shortens turns when the run has
+an active goal (the agent sets one with `create_goal`), and the agent decides
+whether to follow it. Subagent turns are never nudged. Hooks in the system config
+are trusted without a `trusted_hash`, and the run user cannot edit them.
+Provisioning checks that the hook runs on the probe's tool call.
+
 ### Teardown a workspace
 
 This will:

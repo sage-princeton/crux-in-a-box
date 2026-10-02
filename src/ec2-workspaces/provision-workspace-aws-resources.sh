@@ -113,11 +113,14 @@ CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
 CLAUDE_ACP_VERSION="${CFG[CLAUDE_ACP_VERSION]:-}"
 TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]:-}"
 TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]:-}"
+CODEX_TURN_NUDGE_MINUTES="${CFG[CODEX_TURN_NUDGE_MINUTES]:-0}"
+[[ "$CODEX_TURN_NUDGE_MINUTES" =~ ^[0-9]+$ ]] \
+  || die "CODEX_TURN_NUDGE_MINUTES must be a whole number of minutes, 0 to disable (got '$CODEX_TURN_NUDGE_MINUTES')."
 
 # Only validated, selected-platform values cross the remote shell boundary.
 if [ "$AGENT_PLATFORM" = claude ]; then
   CODEX_MODEL=; CODEX_REASONING_EFFORT=; CODEX_VERSION=; CODEX_ACP_VERSION=
-  TRACING_PLUGIN_VERSION=; TRACING_HOOK_TRUSTED_HASH=
+  TRACING_PLUGIN_VERSION=; TRACING_HOOK_TRUSTED_HASH=; CODEX_TURN_NUDGE_MINUTES=0
 else
   CLAUDE_MODEL=; CLAUDE_EFFORT=; CLAUDE_VERSION=; CLAUDE_ACP_VERSION=
 fi
@@ -562,7 +565,7 @@ scp -q "$SCRIPT_DIR/configure-run.sh" "$SCRIPT_DIR/agent-config.sh" "$SLUG:/tmp/
 if [ "$AGENT_PLATFORM" = claude ]; then
   scp -q "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" "$SLUG:/tmp/langfuse_hook.py"
 else
-  scp -q "$SCRIPT_DIR/codex-flush-turns.py" "$SLUG:/tmp/"
+  scp -q "$SCRIPT_DIR/codex-flush-turns.py" "$SCRIPT_DIR/codex-turn-nudge.py" "$SLUG:/tmp/"
 fi
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
@@ -572,6 +575,7 @@ ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   CONTROL_MCP_BASE='$CONTROL_MCP_BASE' \
   TRACING_PLUGIN_VERSION='$TRACING_PLUGIN_VERSION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
+  CODEX_TURN_NUDGE_MINUTES='$CODEX_TURN_NUDGE_MINUTES' \
   /tmp/configure-run.sh"
 
 cat <<DONE
