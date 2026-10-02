@@ -220,6 +220,24 @@ codex still holds open is left alone. See what it did with
 `journalctl -u crux-acp-gateway | grep codex-flush`, or list what it would upload
 with `sudo -iu ubuntu python3 /usr/local/lib/crux/codex-flush-turns.py --plugin <dist/index.mjs> --reason manual --check`.
 
+`CODEX_TRACE_MODE=live` (experimental) shows a turn in Langfuse while it runs.
+Langfuse v4 never updates an observation it has stored, so instead of the
+plugin's `Stop` hook a service, `crux-codex-live-trace`, reads the rollouts every
+30s and sends each observation once, as soon as it is complete:
+
+- a `Codex Turn started` event with the turn's input, when the prompt is written
+- an `LLM` generation per model response, with its tool calls and token usage
+- a tool span per call, once its output is written
+- the `Codex Turn` root, with the input and output, when the turn ends
+
+Ids come from the thread, turn and call, so children point at their root before
+it arrives and nothing is sent twice. Until the root arrives, the turn shows in
+the trace detail, session and observations views, not in lists built from root
+observations. Subagent turns nest under the turn that was running when they
+started. In this mode the gateway unit runs `codex-live-trace.py --once
+--finalize` instead of the plugin flush, which ends a killed turn with a
+`WARNING` root. Follow it with `journalctl -u crux-codex-live-trace`.
+
 ### Teardown a workspace
 
 This will:
