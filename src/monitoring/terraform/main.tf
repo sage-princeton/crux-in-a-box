@@ -239,10 +239,14 @@ resource "aws_iam_role_policy" "job" {
     { Effect = "Allow", Action = ["ec2:DescribeInstances"], Resource = "*" },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/config/registry.json" },
     { Effect = "Allow", Action = ["s3:PutObject", "s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/${each.key == "discover" ? "inventory" : "reviews"}/*" },
-    { Effect = "Allow", Action = each.key == "discover" ? ["dynamodb:Query"] : ["dynamodb:GetItem", "dynamodb:UpdateItem", "dynamodb:Scan"],
+    { Effect = "Allow", Action = each.key == "discover" ? ["dynamodb:Query"] : concat(["dynamodb:GetItem", "dynamodb:UpdateItem"], var.incident_state_enabled ? [] : ["dynamodb:Scan"]),
     Resource = [aws_dynamodb_table.state.arn, "${aws_dynamodb_table.state.arn}/index/*"] }
-    ], each.key == "review" ? [
-    { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = var.secrets_parameter_arn }
+    ], each.key == "discover" ? [
+    { Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.state.arn,
+    Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["REVIEW#*"] } } }
+    ] : [], each.key == "review" ? [
+    { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = var.secrets_parameter_arn },
+    { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/inventory/targets.json" }
     ] : [], each.key == "review" && var.secrets_kms_key_arn != "" ? [
     { Effect = "Allow", Action = ["kms:Decrypt"], Resource = var.secrets_kms_key_arn,
     Condition = { StringEquals = { "kms:ViaService" = "ssm.${var.region}.amazonaws.com", "kms:EncryptionContext:PARAMETER_ARN" = var.secrets_parameter_arn } } }
@@ -332,7 +336,7 @@ resource "aws_iam_role_policy" "submit" {
   count = local.active ? 1 : 0
   role  = aws_iam_role.job["discover"].id
   policy = jsonencode({ Version = "2012-10-17", Statement = [{ Effect = "Allow", Action = "batch:SubmitJob",
-  Resource = [aws_batch_job_queue.monitoring.arn, aws_batch_job_definition.review[0].arn] }] })
+  Resource = [aws_batch_job_queue.monitoring.arn, "arn:aws:batch:${var.region}:${var.account_id}:job-definition/${var.name}-review:*"] }] })
 }
 resource "aws_sqs_queue" "operations" {
   name                      = "${var.name}-operations"
@@ -367,7 +371,7 @@ resource "aws_iam_role_policy" "scheduler" {
   count = local.active ? 1 : 0
   role  = aws_iam_role.scheduler.id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
-    { Effect = "Allow", Action = "batch:SubmitJob", Resource = [aws_batch_job_queue.monitoring.arn, aws_batch_job_definition.discover[0].arn] },
+    { Effect = "Allow", Action = "batch:SubmitJob", Resource = [aws_batch_job_queue.monitoring.arn, "arn:aws:batch:${var.region}:${var.account_id}:job-definition/${var.name}-discover:*"] },
     { Effect = "Allow", Action = "sqs:SendMessage", Resource = aws_sqs_queue.operations.arn }
   ] })
 }

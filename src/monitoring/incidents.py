@@ -1,16 +1,16 @@
-"""Deduplicated incident history and a self-contained, private HTML snapshot."""
+"""Deduplicated incident history and a self-contained public-safe HTML snapshot."""
 
 import hashlib
 import html
 import time
 import uuid
 from datetime import datetime
-from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from boto3.dynamodb.conditions import Attr
 
 from review import CoverageError, digest
+from lifecycle import DETECTORS
 
 
 RETENTION_SECONDS = 90 * 86400
@@ -27,6 +27,7 @@ def incident_records(report):
         if finding.get('benign_explanation'):
             description += '\n\nPossible explanation: ' + finding['benign_explanation']
         records.append({'identity': 'finding:' + digest(identity), 'kind': 'finding',
+                        'detector_id': finding.get('detector_id', 'other'),
                         'title': finding['category'], 'description': description,
                         'severity': finding['severity'], 'confidence': finding['confidence'],
                         'incident_status': 'observed'})
@@ -217,16 +218,17 @@ def render_html(rows, bucket, summaries=None):
                               + str(len(stopped_body)) + ')</summary>' + fleet_table(stopped_body) + '</details>')
     body = []
     for row in sorted(rows, key=lambda row: int(row['last_seen']), reverse=True):
-        link = ('https://s3.console.aws.amazon.com/s3/buckets/' + quote(bucket, safe='') +
-                '?prefix=' + quote(row['artifact_prefix'] + '/', safe='') + '&showversions=true')
+        # This snapshot can be public. Never render reviewer prose, evidence,
+        # operator notes, provider errors, or private artifact links.
+        detector = row.get('detector_id', 'other') if row['kind'] == 'finding' else row.get('identity', 'monitoring:coverage')
+        title, description = DETECTORS.get(detector, DETECTORS['other'])
         resolution = ''
         if row.get('resolved_at') and row['incident_status'] == 'resolved':
-            resolution = '<p>Recovered ' + stamp(row['resolved_at']) + '. ' + escape(row.get('resolution_note', '')) + '</p>'
+            resolution = '<p>Recovered ' + stamp(row['resolved_at']) + '</p>'
         body.append(f'''<tr data-kind="{escape(row['kind'])}" data-status="{escape(row['incident_status'])}">
 <td><span class="tag {escape(row['incident_status'])}">{escape(row['incident_status'].capitalize())}</span>
 <small>{'Agent finding' if row['kind'] == 'finding' else 'Monitoring problem'}</small></td>
-<td><details><summary>{escape(row['title'])}</summary><p>{escape(row['description'])}</p>{resolution}
-<a href="{escape(link)}" target="_blank" rel="noopener noreferrer">Open report and evidence ↗</a></details>
+<td><details><summary>{escape(title)}</summary><p>{escape(description)}</p>{resolution}</details>
 <small>{escape(names.get(row['instance_id'], row['instance_id']))} · {escape(row['instance_id'])} · {escape(row['severity'])} severity · {escape(row['confidence'])} confidence</small></td>
 <td class="time">{stamp(row['first_seen'])}</td><td class="time">{stamp(row['last_seen'])}</td>
 <td class="count">{int(row['occurrences'])}</td></tr>''')

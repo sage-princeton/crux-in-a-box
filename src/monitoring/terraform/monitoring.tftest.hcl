@@ -43,6 +43,7 @@ mock_provider "aws" {
 run "web_service_and_operator_state_are_separate_from_workers" {
   command = apply
   variables {
+    proxy_image_digest     = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
     web_enabled            = true
     web_image_digest       = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
     incident_state_enabled = true
@@ -63,6 +64,10 @@ run "web_service_and_operator_state_are_separate_from_workers" {
     condition     = !strcontains(aws_iam_role_policy.incident_ingestion.policy, "SESSION#") && !strcontains(aws_iam_role_policy.incident_ingestion.policy, "LOGIN#")
     error_message = "Monitoring workers must not mint operator sessions."
   }
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.job["review"].policy, "dynamodb:Scan")
+    error_message = "Stateful workers must use keyed queries rather than legacy table scans."
+  }
 }
 
 run "immutable_workers_remain_disabled" {
@@ -81,6 +86,10 @@ run "immutable_workers_remain_disabled" {
   assert {
     condition     = jsondecode(aws_batch_job_definition.review[0].container_properties).readonlyRootFilesystem
     error_message = "Reviewer container root must be read-only."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.submit[0].policy).Statement[0].Resource[1] == "arn:aws:batch:${var.region}:${var.account_id}:job-definition/${var.name}-review:*"
+    error_message = "New releases must work without CI mutating IAM; submission stays limited to the named reviewer definition."
   }
 }
 

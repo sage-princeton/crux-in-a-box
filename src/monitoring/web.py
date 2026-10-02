@@ -1,5 +1,6 @@
 """Public incident pages and authenticated operator actions."""
 
+import base64
 import json
 import os
 from datetime import datetime
@@ -62,9 +63,30 @@ def create_app(store=None, settings=None):
         cursor = request.args.get('cursor')
         if cursor and len(cursor) > 200:
             abort(400)
-        items, next_cursor = store.page('INCIDENTS', status=None if status == 'all' else status, cursor=cursor)
         fleet = [{k: row[k] for k in ('instance_id', 'slug', 'state', 'review_count', 'review_status', 'last_review') if k in row}
                  for row in store.all('FLEET')]
+        fleet.sort(key=lambda row: (row.get('state') != 'running', row['slug'].casefold(), row['instance_id']))
+        items, next_cursor, start_instance, start_id = [], None, None, None
+        if cursor:
+            try:
+                start_instance, start_id = json.loads(base64.urlsafe_b64decode(cursor).decode())
+                if not isinstance(start_instance, str) or not isinstance(start_id, (str, type(None))):
+                    raise ValueError()
+            except (ValueError, TypeError, UnicodeError):
+                abort(400, 'Invalid page cursor.')
+            if start_instance not in {row['instance_id'] for row in fleet}:
+                abort(400, 'Workload changed; return to the first page.')
+        for row in fleet:
+            if start_instance and row['instance_id'] != start_instance:
+                continue
+            page, _ = store.instance_page(row['instance_id'], None if status == 'all' else status,
+                                          start_id, limit=51 - len(items))
+            items.extend(page)
+            start_instance, start_id = None, None
+            if len(items) == 51:
+                next_cursor = base64.urlsafe_b64encode(json.dumps([items[49]['instance_id'], items[49]['id']]).encode()).decode()
+                items = items[:50]
+                break
         fleet_by_instance = {row['instance_id']: row for row in fleet}
         groups = {}
         for item in items:

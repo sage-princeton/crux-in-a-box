@@ -8,14 +8,19 @@ import pytest
 from moto import mock_aws
 
 from worker import Runtime
+from test_lifecycle import store
+from review import CoverageError
 
 
-def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypatch):
+@pytest.mark.parametrize('stateful', [False, True])
+def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, stateful):
     with mock_aws():
         monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
         monkeypatch.setenv("MONITORING_BUCKET", "monitoring-test")
         monkeypatch.setenv("MONITORING_TABLE", "monitoring-test")
         monkeypatch.setenv("MONITORING_SECRETS_PARAMETER", "/crux/monitoring/test")
+        if stateful:
+            monkeypatch.setenv('MONITORING_INCIDENT_TABLE', store.table.name)
         s3 = boto3.client("s3")
         s3.create_bucket(Bucket="monitoring-test")
         s3.put_bucket_versioning(Bucket="monitoring-test", VersioningConfiguration={"Status": "Enabled"})
@@ -33,6 +38,8 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
                     "reviewer_models": ["google/gemini-example"], "targets": {instance: {
                         "authorization": "Inspect the fixture only", "subject_families": ["openai"],
                         "logs": [{"group": "approved-evidence", "streams": ["activity"]}]}}}
+        if stateful:
+            registry['fleet'] = {'exclude_names': ['crux-control'], 'langfuse_by_name': False}
         s3.put_object(Bucket="monitoring-test", Key="config/registry.json", Body=json.dumps(registry))
         secrets = {"MONITORING_OPENROUTER_API_KEY": "test-only-inference-credential",
                    "MONITORING_SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/test/fixture/only"}
@@ -61,18 +68,35 @@ def test_slack_retry_uses_durable_evidence_without_repeating_inference(monkeypat
         runtime.http.close()
         runtime.http = httpx.Client(transport=httpx.MockTransport(handler))
         end = int(time.time()) // 300 * 300
-        with pytest.raises(httpx.HTTPStatusError):
+        if stateful:
+            original_ingest = runtime.incident_store.ingest
+            def fail_ingestion(*args, **kwargs):
+                raise CoverageError('temporary storage failure')
+            monkeypatch.setattr(runtime.incident_store, 'ingest', fail_ingestion)
+            runtime.inventory(refresh=True)
+        with pytest.raises(CoverageError if stateful else httpx.HTTPStatusError):
             runtime.review(instance, end)
         key = f"REVIEW#{instance}#{end}"
         pending = runtime.state.get(key)
         assert pending["status"] == "pending_notification"
-        history = s3.get_object(Bucket="monitoring-test", Key="reviews/incidents/index.html")["Body"].read()
-        assert b"fixture finding" in history
+        if stateful:
+            monkeypatch.setattr(runtime.incident_store, 'ingest', original_ingest)
+            boto3.client('ec2').terminate_instances(InstanceIds=[instance])
+            s3.put_object(Bucket='monitoring-test', Key='inventory/targets.json', Body='{}')
+            registry['targets'] = {}
+            runtime.config['targets'] = {}
+        else:
+            history = s3.get_object(Bucket="monitoring-test", Key="reviews/incidents/index.html")["Body"].read()
+            assert b"fixture finding" not in history
+            assert b"Activity requires review" in history
         runtime.review(instance, end)
         assert runtime.state.get(key)["status"] == "done"
-        assert counts == {"model": 1, "slack": 2}
+        assert counts == {"model": 1, "slack": 0 if stateful else 2}
         runtime.review(instance, end)
-        assert counts == {"model": 1, "slack": 2}
+        assert counts == {"model": 1, "slack": 0 if stateful else 2}
+        if stateful:
+            assert runtime.incident_store.get('FLEET', instance)['review_count'] == 1
+            assert 'Contents' not in s3.list_objects_v2(Bucket='monitoring-test', Prefix='reviews/incidents/')
         manifest = runtime.read_json(pending["artifact_prefix"] + "/manifest.json")
         assert len(manifest["artifacts"]) == 6
         for artifact in manifest["artifacts"]:

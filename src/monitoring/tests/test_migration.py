@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import boto3
 
 from incidents import IncidentLog
-from migrate_incidents import migrate
+from migrate_incidents import historical_finding, migrate
 from test_lifecycle import store
 from worker import State
 
@@ -28,7 +28,7 @@ def test_historical_import_is_idempotent_private_and_preserves_manual_closure(st
                       prefix + '/evidence.json': {'sources': [{'id': 'observation:123', 'kind': 'langfuse', 'data': {}}]},
                       prefix + '/model.json': {'reported_model': 'fixture-model', 'usage': {'cost': 0.001}},
                       prefix + '/prompt.json': {'sha256': 'fixture-prompt'}})
-    runtime = SimpleNamespace(state=state, s3=None, bucket='evidence', config={}, read_json=saved.__getitem__)
+    runtime = SimpleNamespace(state=state, s3=None, bucket='evidence', config={'targets': {'i-test': {'workload_id': 'stable-workload'}}}, read_json=saved.__getitem__)
     assert migrate(runtime, store)['incidents'] == 1
     item = list(store.all('INCIDENTS'))[0]
     assert item['review_count'] == 2
@@ -37,3 +37,11 @@ def test_historical_import_is_idempotent_private_and_preserves_manual_closure(st
     assert migrate(runtime, store)['incidents'] == 1
     assert store.incident(item['id'])['status'] == 'closed'
     assert store.incident(item['id'])['review_count'] == 2
+
+    anchors = {'observation:123': 'observation:123'}
+    live = {**report, 'findings': [historical_finding(f, anchors) for f in report['findings']]}
+    store.ingest(live, 'REVIEW#i-test#900', 'reviews/live', {'workload_id': 'stable-workload'}, {}, anchors)
+    assert len(list(store.all('INCIDENTS'))) == 1
+    assert store.incident(item['id'])['workload_id'] == 'stable-workload'
+    assert store.incident(item['id'])['status'] == 'closed'
+    assert store.incident(item['id'])['review_count'] == 3

@@ -37,9 +37,9 @@ assumes `crux-monitoring-deploy`; no static AWS keys are needed. Environment
 variables are `MONITORING_AWS_ROLE_ARN` and `MONITORING_CONFIG_BUCKET`.
 
 CI builds immutable images, scans their exact ECR digests, applies locked shared
-Terraform state, updates the web boot script through SSM, and verifies the public
+Terraform state, reconciles the complete app/proxy configuration through SSM, and verifies the public
 HTTPS revision. Releases may briefly restart the host. CI rejects infrastructure
-creation, replacement and unrelated changes; those need a reviewed operator apply.
+creation, replacement, IAM policy edits and unrelated changes; those need a reviewed operator apply.
 Never apply stale local tfvars or overwrite shared state with a local copy.
 
 Deployment inputs are `config/deployment.json` and `config/registry.json` in S3.
@@ -59,7 +59,8 @@ not automatically reverted. Do not restore legacy workers that publish raw findi
   fail before setting `boundary_verified=true`. Never expose research home directories.
 - Langfuse currently uses a read/write key with GET-only worker behavior; this is
   **not enforced read-only access**. TODO: provide read-only Langfuse credentials.
-- Discovery runs every five minutes. Unchanged fleet digests are suppressed;
+- Discovery runs every five minutes. Retired fleet targets get 30 minutes for late
+  evidence; queued/retrying windows retain their approved source mapping. Unchanged fleet digests are suppressed;
   ambiguous Slack delivery can still duplicate a message. Inspect Batch failures,
   the operations queue and CloudWatch alarms when reviews stop.
 - Authentication/billing errors set `HEALTH#reviewer.blocked`. Fix credentials or
@@ -67,6 +68,9 @@ not automatically reverted. Do not restore legacy workers that publish raw findi
   provider workspace limits both matter; inference limits do not cap AWS costs.
 - The current schedule expires **2026-10-02 19:33:56 UTC**. Registry expiry also
   stops work; CI does not extend either. Evidence is retained for 90 days.
+
+SFTP exports use JSON/JSONL records (prefer stable event IDs) or complete text lines;
+appending records preserves existing incident identities.
 
 Incident IDs use workload, detector and source-event identity. Repeated reviews
 preserve manual closure; reopening is not a new discovery. Status changes and
@@ -86,7 +90,8 @@ using browser forms. SAML diagnostics log categories, not assertions or tokens.
 
 ## Security checks
 
-Every PR runs Python/Terraform tests, Checkov 3.3.19, Trivy 0.75.0 and Bandit 1.9.4.
+Every PR builds and scans the worker, web app and patched Caddy proxy, and runs
+Python/Terraform tests, Checkov 3.3.19, Trivy 0.75.0 and Bandit 1.9.4.
 Source secrets, medium/high Bandit findings and **fixable high/critical** image
 vulnerabilities block releases. Scanner failures also fail the job. Full JSON
 reports retain all severities and unfixed findings for 14 days in

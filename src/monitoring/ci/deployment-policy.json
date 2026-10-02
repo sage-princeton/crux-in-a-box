@@ -76,16 +76,6 @@
     {
       "Effect": "Allow",
       "Action": [
-        "iam:PutRolePolicy"
-      ],
-      "Resource": [
-        "arn:aws:iam::881004720495:role/crux-monitoring-ae211-discover",
-        "arn:aws:iam::881004720495:role/crux-monitoring-ae211-scheduler"
-      ]
-    },
-    {
-      "Effect": "Allow",
-      "Action": [
         "iam:PassRole"
       ],
       "Resource": [

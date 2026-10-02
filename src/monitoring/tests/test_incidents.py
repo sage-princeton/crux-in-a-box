@@ -57,8 +57,9 @@ def test_html_escapes_incident_content():
            'instance_id':'i-test','severity':'low','confidence':'medium','occurrences':2,
            'first_seen':300,'last_seen':600,'artifact_prefix':'reviews/safe'}
     page = render_html([row], 'incident-history')
-    assert malicious not in page and '&lt;script&gt;' in page
-    assert 'https://s3.console.aws.amazon.com/' in page
+    assert malicious not in page and '&lt;script&gt;' not in page
+    assert 'Activity requires review' in page
+    assert 'https://s3.console.aws.amazon.com/' not in page
     assert 'onclick=' not in page
     assert '<input id="search"' in page and 'data-kind="finding"' in page
     summaries = [{'instance_id':'i-test', 'slug':'old-instance', 'state':'stopped',

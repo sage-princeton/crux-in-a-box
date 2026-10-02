@@ -5,6 +5,7 @@ from moto import mock_aws
 
 from review import CoverageError
 from worker import LEASE_SECONDS, Runtime, State
+from types import SimpleNamespace
 
 
 @pytest.fixture
@@ -36,6 +37,34 @@ def test_delivery_retry_keeps_saved_artifact_reference(state):
     item = state.get(key)
     assert item["status"] == "pending_notification"
     assert item["artifact_prefix"] == "reviews/saved"
+
+
+def test_discovery_persists_target_before_queue_and_retries_absent_workload(state, monkeypatch):
+    runtime = Runtime.__new__(Runtime)
+    runtime.state = state
+    runtime.config = {'expires_at': 9999, 'fleet': {'exclude_names': ['crux-control']}}
+    target = {'authorization': 'approved', 'langfuse': {'environment': 'experiment'}, 'service_worker': False}
+    monkeypatch.setenv('MONITORING_QUEUE', 'queue')
+    monkeypatch.setenv('MONITORING_REVIEW_JOB', 'review')
+    monkeypatch.setattr('worker.time.time', lambda: 600)
+    commands = []
+    def submit(**kwargs):
+        command = kwargs['containerOverrides']['command']
+        if command[2] == 'review':
+            assert state.get(f'REVIEW#{command[3]}#{command[4]}')['target'] == target
+        commands.append(command)
+    runtime.batch = SimpleNamespace(submit_job=submit)
+    runtime.put = lambda *args: None
+    runtime.inventory = lambda **kwargs: ({'i-example': target}, [], set())
+    # Simulate the index immediately exposing the newly created pending row.
+    state.pending = lambda: [state.get('REVIEW#i-example#600')]
+    runtime.discover()
+    assert sum(c[2] == 'review' for c in commands) == 1
+    commands.clear()
+    monkeypatch.setattr('worker.time.time', lambda: 900)
+    runtime.inventory = lambda **kwargs: ({}, [], set())
+    runtime.discover()
+    assert ['python', 'worker.py', 'review', 'i-example', '600'] in commands
 
 
 def test_budget_reservations_stop_at_limit(state):

@@ -39,3 +39,6 @@ and primary event consistent when the same activity appears in overlapping
 review windows. Do not create multiple findings for the same detector and event.
 Use other only when no named detector fits. These structured fields identify
 the incident independently of how you phrase its explanation.
+
+SFTP anchors identify individual exported records or complete text lines. Choose
+the record that establishes the activity, not a neighboring benign append.

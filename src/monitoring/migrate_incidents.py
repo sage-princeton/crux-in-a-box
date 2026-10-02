@@ -34,6 +34,7 @@ def historical_finding(finding, anchors):
 def migrate(runtime, store):
     log = IncidentLog(runtime.state, runtime.s3, runtime.bucket, runtime.config.get('fleet', {}).get('exclude_names', []))
     fleet = {r['instance_id']: r for r in log.summaries()}
+    store.sync_fleet(list(fleet.values()))
     legacy = {r['pk']: r for r in log.rows()}
     reviews = [r for r in log.rows('REVIEW#') if r.get('artifact_prefix')]
     count = 0
@@ -50,7 +51,8 @@ def migrate(runtime, store):
         provenance = {**runtime.read_json(prefix + '/model.json'),
                       'prompt_sha256': runtime.read_json(prefix + '/prompt.json')['sha256'],
                       'detector_version': 'legacy-import-1', 'historical_import': True}
-        ids = store.ingest(report, row['pk'], prefix, fleet[instance], provenance, anchors)
+        target = {**fleet[instance], **runtime.config.get('targets', {}).get(instance, {})}
+        ids = store.ingest(report, row['pk'], prefix, target, provenance, anchors)
         records, _ = incident_records(original)
         for record, incident_id in zip(records, ids, strict=True):
             legacy_key = log.key(instance, record['identity'])
@@ -67,8 +69,6 @@ def migrate(runtime, store):
             store.transition(incident_id, item['version'], 'closed', {'id': 'historical-import', 'issuer': 'system'},
                              'Preserved resolved status from the previous incident log.')
         store.put_once({'pk': 'MIGRATION', 'sk': incident_id})
-    for row in fleet.values():
-        store.table.put_item(Item={**row, 'pk': 'FLEET', 'sk': row['instance_id']})
     # Seed cumulative counts so migrating history is not announced as new discoveries.
     if not store.get('MIGRATION', 'DIGEST_BASELINE'):
         owner = str(uuid.uuid4())

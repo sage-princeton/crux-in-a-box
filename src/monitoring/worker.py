@@ -21,7 +21,7 @@ from botocore.exceptions import ClientError
 
 from incidents import IncidentLog
 from lifecycle import IncidentStore, evidence_anchors
-from fleet import deliver_summary, inventory_targets
+from fleet import LATE_EVIDENCE_SECONDS, deliver_summary, inventory_targets
 from review import (CoverageError, MAX_EVIDENCE_BYTES, PROMPT, collect_langfuse,
                     collect_logs, collect_sftp, digest, encoded, evaluate, get_json,
                     https_url, iso, scrub, select_reviewer)
@@ -281,7 +281,14 @@ class Runtime:
         result = self.ssm.get_parameter(Name=os.environ["MONITORING_SECRETS_PARAMETER"], WithDecryption=True)
         return json.loads(result["Parameter"]["Value"])
 
-    def submit(self, instance_id, end):
+    def submit(self, instance_id, end, target=None):
+        if target:
+            # Persist approval before queuing: a long queue or termination must
+            # not remove the source mapping needed to finish this window.
+            self.state.table.update_item(Key={'pk': f'REVIEW#{instance_id}#{end}'},
+                UpdateExpression='SET target=if_not_exists(target,:target), #status=if_not_exists(#status,:status), updated_at=if_not_exists(updated_at,:end), expires_at=if_not_exists(expires_at,:ttl)',
+                ExpressionAttributeNames={'#status': 'status'},
+                ExpressionAttributeValues={':target': target, ':status': 'processing', ':end': end, ':ttl': end + 90 * 86400})
         return self.batch.submit_job(jobName=f"review-{instance_id}-{end}",
             jobQueue=os.environ["MONITORING_QUEUE"], jobDefinition=os.environ["MONITORING_REVIEW_JOB"],
             containerOverrides={"command": ["python", "worker.py", "review", instance_id, str(end)]})
@@ -292,17 +299,19 @@ class Runtime:
             return
         end = now // 300 * 300
         if self.config.get("fleet"):
-            targets, inventory = inventory_targets(self.ec2, self.config)
+            targets, inventory, _ = self.inventory(refresh=True)
             self.put(f"inventory/{end}.json", {"at":iso(now), "instances":inventory})
+            submitted = set()
             for instance_id, target in targets.items():
-                if target['instance_state'] == 'running' and not target['service_worker']:
-                    self.submit(instance_id, end)
+                if not target['service_worker'] and now <= target.get('retired_at', now) + LATE_EVIDENCE_SECONDS:
+                    self.submit(instance_id, end, target)
+                    submitted.add(f"REVIEW#{instance_id}#{end}")
             for item in self.state.pending():
-                if item.get("attempts", 0) >= 5 or item.get("lease_until", 0) >= now or not item["pk"].startswith("REVIEW#"):
+                if item["pk"] in submitted or item.get("attempts", 0) >= 5 or item.get("lease_until", 0) >= now or not item["pk"].startswith("REVIEW#"):
                     continue
                 _, instance_id, window = item['pk'].split('#')
-                if instance_id in targets:
-                    self.submit(instance_id, int(window))
+                if instance_id in targets or item.get('target') or item.get('artifact_prefix'):
+                    self.submit(instance_id, int(window), item.get('target') or targets.get(instance_id))
             self.batch.submit_job(jobName=f"fleet-summary-{end}", jobQueue=os.environ['MONITORING_QUEUE'],
                 jobDefinition=os.environ['MONITORING_REVIEW_JOB'],
                 containerOverrides={'command':['python','worker.py','digest']})
@@ -319,7 +328,7 @@ class Runtime:
         # Keep collecting late traces after termination until the operator retires
         # the registry entry; EC2's running-instance inventory is not a checkpoint.
         for instance_id in self.config["targets"]:
-            self.submit(instance_id, end)
+            self.submit(instance_id, end, self.config['targets'][instance_id])
         # The index may lag: the worker's conditional claim is authoritative.
         for item in self.state.pending():
             if item.get("attempts", 0) >= 5 or item.get("lease_until", 0) >= now or not item["pk"].startswith("REVIEW#"):
@@ -442,11 +451,18 @@ class Runtime:
         now = int(time.time())
         if now >= self.config["expires_at"]:
             return
-        targets, inventory = inventory_targets(self.ec2, self.config)
-        if instance_id not in targets:
-            return
-        target = targets[instance_id]
+        targets, inventory, excluded = self.inventory()
         key, owner = f"REVIEW#{instance_id}#{end}", str(uuid.uuid4())
+        pending = self.state.get(key)
+        target = targets.get(instance_id) or pending.get('target')
+        if target is None and pending.get('artifact_prefix'):
+            target = self.config['targets'].get(instance_id)
+        fleet = self.config.get('fleet', {})
+        if (target is None or instance_id in excluded or instance_id in fleet.get('exclude_instance_ids', [])
+                or target.get('name') in fleet.get('exclude_names', [])):
+            return
+        if not pending and now > target.get('retired_at', now) + LATE_EVIDENCE_SECONDS:
+            return
         if end > now or end % 300:
             raise ValueError("Review end must be a completed five-minute boundary")
         if not self.state.claim(key, owner, now):
@@ -454,10 +470,11 @@ class Runtime:
             if existing.get("attempts", 0) >= 5 and existing.get("status") != "done":
                 raise CoverageError("Review retries exhausted; inspect the saved state and artifacts")
             return
-        secrets = self.secrets()
         item = self.state.get(key)
         prefix = item.get("artifact_prefix", f"reviews/{instance_id}/{end}/{owner}")
         try:
+            self.state.save(key, owner, {'target': target, 'updated_at': now})
+            secrets = self.secrets()
             if item.get("status") == "pending_notification":
                 report = self.read_json(prefix + "/report.json")
             else:
@@ -518,10 +535,6 @@ class Runtime:
                     except ClientError as error:
                         if not conditional_failure(error):
                             raise
-            log = IncidentLog(self.state, self.s3, self.bucket, self.config.get('fleet', {}).get('exclude_names', []))
-            if inventory:
-                log.sync_inventory([i for i in inventory if i['instance_id'] == instance_id])
-            log.record(report, key, prefix)
             if self.incident_store:
                 payload = self.read_json(prefix + '/evidence.json')
                 provenance = {**self.read_json(prefix + '/model.json'),
@@ -530,6 +543,10 @@ class Runtime:
                 self.incident_store.ingest(report, key, prefix, target, provenance,
                                            payload.get('evidence_anchors', evidence_anchors(payload['sources'])))
             else:
+                log = IncidentLog(self.state, self.s3, self.bucket, self.config.get('fleet', {}).get('exclude_names', []))
+                if inventory:
+                    log.sync_inventory([i for i in inventory if i['instance_id'] == instance_id])
+                log.record(report, key, prefix)
                 log.publish()
             delivery = "fleet_digest" if self.config.get('fleet') else self.deliver(report, key, prefix, secrets)
             self.state.save(key, owner, {"status": "done", "notification": delivery, "updated_at": int(time.time()),
@@ -542,19 +559,30 @@ class Runtime:
         if int(time.time()) >= self.config['expires_at']:
             return
         _, inventory = inventory_targets(self.ec2, self.config)
-        log = IncidentLog(self.state, self.s3, self.bucket, self.config.get('fleet', {}).get('exclude_names', []))
-        log.sync_inventory(inventory, complete=True)
-        summaries = lambda: log.summaries(inventory)
         if self.incident_store:
-            fleet = log.summaries()
-            for row in fleet:
-                self.incident_store.table.put_item(Item={**row, 'pk': 'FLEET', 'sk': row['instance_id']})
-            summaries = lambda: self.incident_store.summaries(log.summaries(inventory))
+            self.incident_store.sync_fleet(inventory, complete=True)
+            summaries = lambda: self.incident_store.summaries(list(self.incident_store.all('FLEET')))
             artifact = {'url': self.public_incident_log_url}
         else:
+            log = IncidentLog(self.state, self.s3, self.bucket, self.config.get('fleet', {}).get('exclude_names', []))
+            log.sync_inventory(inventory, complete=True)
+            summaries = lambda: log.summaries(inventory)
             artifact = log.publish()
         delivery = deliver_summary(self, summaries, force=force)
         return {'notification':delivery, 'html':artifact, 'instances':len(inventory)}
+
+    def inventory(self, refresh=False):
+        previous, excluded = {}, set()
+        if self.config.get('fleet'):
+            try:
+                previous = self.read_json('inventory/targets.json')
+            except ClientError as error:
+                if error.response['Error']['Code'] != 'NoSuchKey':
+                    raise
+        targets, inventory = inventory_targets(self.ec2, self.config, previous, excluded=excluded)
+        if refresh and self.config.get('fleet'):
+            self.put('inventory/targets.json', targets)
+        return targets, inventory, excluded
 
 
 def main():

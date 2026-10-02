@@ -1,5 +1,6 @@
 """Durable incident identities, observations, and conditional operator transitions."""
 
+import json
 import time
 import uuid
 
@@ -49,7 +50,29 @@ def evidence_anchors(sources):
             for event in source['data']:
                 result['event:' + event['eventId']] = sid
         elif source.get('kind') == 'sftp':
-            result[sid + '@' + digest(source['data'])] = sid
+            # Exports are JSON/JSONL records or complete text lines. Appending
+            # another event must not change any existing event's identity.
+            data = source['data']
+            try:
+                records = json.loads(data)
+            except (ValueError, TypeError):
+                records = data.splitlines()
+                if source.get('truncated') and records and not data.endswith('\n'):
+                    records = records[:-1]
+            if not isinstance(records, list):
+                records = [records]
+            for record in records:
+                if isinstance(record, str):
+                    if not record.strip():
+                        continue
+                    try:
+                        record = json.loads(record)
+                    except ValueError:
+                        pass
+                identity = record
+                if isinstance(record, dict):
+                    identity = next(({key: record[key]} for key in ('event_id', 'eventId', 'id') if record.get(key)), record)
+                result[sid + '@' + digest(identity)] = sid
         else:
             result[sid] = sid
     return result
@@ -84,6 +107,74 @@ class IncidentStore:
             yield from rows
             if not cursor:
                 break
+
+    def instance_page(self, instance, status=None, cursor=None, limit=50):
+        """Fill a filtered page from the sparse incident index, not review history."""
+        rows, start = [], cursor
+        while len(rows) < limit:
+            args = {'IndexName': 'instance-incidents',
+                    'KeyConditionExpression': Key('instance_id').eq(instance), 'Limit': limit - len(rows)}
+            if status:
+                args['FilterExpression'] = Attr('status').eq(status)
+            if start:
+                args['ExclusiveStartKey'] = {'pk': 'INCIDENTS', 'sk': start, 'id': start, 'instance_id': instance}
+            page = self.table.query(**args)
+            rows.extend(page['Items'])
+            start = page.get('LastEvaluatedKey', {}).get('id')
+            if not start:
+                break
+        return rows, start
+
+    def sync_fleet(self, inventory, complete=False):
+        now = int(time.time())
+        if complete:
+            present = {row['instance_id'] for row in inventory}
+            inventory = inventory + [{**row, 'state': 'no longer present'} for row in self.all('FLEET')
+                                     if row['instance_id'] not in present]
+        for row in inventory:
+            fields = {k: row[k] for k in ('instance_id', 'slug', 'name', 'state') if k in row}
+            fields.setdefault('slug', row['instance_id'])
+            fields.update(observed_at=now)
+            names = {'#f' + str(n): key for n, key in enumerate(fields)}
+            values = {':f' + str(n): value for n, value in enumerate(fields.values())}
+            values.update({':count': row.get('review_count', 0), ':last': row.get('last_review', now)})
+            update = 'SET ' + ', '.join(key + '=:f' + key[2:] for key in names)
+            update += ', review_count=if_not_exists(review_count,:count), last_updated=if_not_exists(last_updated,:last)'
+            for field in ('last_review', 'review_status', 'health_fingerprint'):
+                if field in row:
+                    values[':' + field] = row[field]
+                    update += f', {field}=if_not_exists({field},:{field})'
+            # Remove the large legacy deduplication set even on existing rows.
+            self.table.update_item(Key={'pk': 'FLEET', 'sk': row['instance_id']},
+                UpdateExpression=update + ' REMOVE review_windows',
+                ExpressionAttributeNames=names, ExpressionAttributeValues=values)
+
+    def record_review(self, review, report, target):
+        """Count a completed ingestion once, including reports with no findings."""
+        instance, end = review['instance_id'], review['window_end']
+        try:
+            self.transaction([{'Update': {'TableName': self.table.name,
+                'Key': {'pk': review['pk'], 'sk': 'STATE'},
+                'UpdateExpression': 'SET counted = :yes', 'ConditionExpression': 'attribute_not_exists(counted)',
+                'ExpressionAttributeValues': {':yes': True}}}, {'Update': {
+                'TableName': self.table.name, 'Key': {'pk': 'FLEET', 'sk': instance},
+                'UpdateExpression': 'SET instance_id=:iid, slug=if_not_exists(slug,:slug), #state=if_not_exists(#state,:state) ADD review_count :one',
+                'ExpressionAttributeNames': {'#state': 'state'},
+                'ExpressionAttributeValues': {':iid': instance, ':slug': target.get('slug', instance),
+                    ':state': target.get('instance_state', 'unknown'), ':one': 1}}}])
+        except ClientError as error:
+            if not conditional(error):
+                raise
+        try:
+            self.table.update_item(Key={'pk': 'FLEET', 'sk': instance},
+                UpdateExpression='SET last_review=:end, last_updated=:end, review_status=:status, health_fingerprint=:health REMOVE review_windows',
+                ConditionExpression='attribute_not_exists(last_review) OR last_review <= :end',
+                ExpressionAttributeValues={':end': end, ':status': review['review_status'], ':health': digest({
+                    'status': review['review_status'], 'reason': report.get('review_error', '') if review['review_status'] == 'failed' else '',
+                    'limited_coverage': bool(report['coverage_gaps'])})})
+        except ClientError as error:
+            if not conditional(error):
+                raise
 
     def put_once(self, item):
         try:
@@ -174,6 +265,8 @@ class IncidentStore:
                 except ClientError as error:
                     if not conditional(error) or attempt == 5:
                         raise
+        if not provenance.get('historical_import'):
+            self.record_review(review, report, target)
         return incident_ids
 
     def transition(self, incident_id, expected_version, status, actor, note=''):
@@ -205,5 +298,5 @@ class IncidentStore:
             related = [i for i in incidents if i['instance_id'] == row['instance_id']]
             row.update(incident_count=sum(i['status'] == 'open' for i in related),
                        total_incident_count=len(related),
-                       last_updated=max([row['last_updated']] + [int(i['updated_at']) for i in related]))
+                       last_updated=max([int(row.get('last_updated', row.get('last_review', 0)))] + [int(i['updated_at']) for i in related]))
         return fleet

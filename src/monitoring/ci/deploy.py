@@ -30,7 +30,7 @@ def main():
         raise ValueError('Complete the initial migration before using CI deployment')
     repository = account + '.dkr.ecr.' + config['region'] + '.amazonaws.com/' + config['name']
     ecr = boto3.client('ecr')
-    for kind, dockerfile in [('worker', 'Dockerfile'), ('web', 'Dockerfile.web')]:
+    for kind, dockerfile in [('worker', 'Dockerfile'), ('web', 'Dockerfile.web'), ('proxy', 'Dockerfile.proxy')]:
         tag = kind + '-' + revision
         try:
             detail = ecr.describe_images(repositoryName=config['name'], imageIds=[{'imageTag': tag}])['imageDetails'][0]
@@ -38,7 +38,7 @@ def main():
             run('docker', 'build', '--platform', 'linux/amd64', '-f', dockerfile, '-t', repository + ':' + tag, '.')
             run('docker', 'push', repository + ':' + tag)
             detail = ecr.describe_images(repositoryName=config['name'], imageIds=[{'imageTag': tag}])['imageDetails'][0]
-        config['web_image_digest' if kind == 'web' else 'image_digest'] = detail['imageDigest']
+        config[{'worker': 'image_digest', 'web': 'web_image_digest', 'proxy': 'proxy_image_digest'}[kind]] = detail['imageDigest']
         # Scan the exact published digest, including previously built images,
         # before any Terraform apply or live service update.
         run('bash', str(ROOT / 'ci/scan-image.sh'), repository + '@' + detail['imageDigest'],
@@ -56,25 +56,15 @@ def main():
     changes = [r for r in plan.get('resource_changes', []) if r['change']['actions'] != ['no-op']]
     # Ordinary releases may update only these existing application resources.
     allowed = {'aws_batch_job_definition.discover[0]', 'aws_batch_job_definition.review[0]',
-               'aws_iam_role_policy.scheduler[0]', 'aws_iam_role_policy.submit[0]',
                'aws_scheduler_schedule.monitoring[0]', 'aws_instance.web[0]'}
     rejected = [r['address'] for r in changes if r['address'] not in allowed or r['change']['actions'] != ['update']]
     if rejected:
         raise RuntimeError('Infrastructure changes need an operator apply: ' + ', '.join(rejected))
     run('terraform', 'apply', '-input=false', '-auto-approve', 'deploy.tfplan', cwd=terraform)
     outputs = {k: v['value'] for k, v in json.loads(run('terraform', 'output', '-json', cwd=terraform, capture=True)).items()}
-    image = repository + '@' + config['web_image_digest']
-    # Update the boot script as well as the container so a reboot preserves this release.
-    script = f'image = {image!r}\nrevision = {revision!r}\n' + """from pathlib import Path
-import re
-p=Path('/opt/crux-incidents/start')
-s=p.read_text()
-s=re.sub(r'[0-9]{12}\\.dkr\\.ecr\\.[a-z0-9-]+\\.amazonaws\\.com/[a-z0-9-]+@sha256:[a-f0-9]{64}', image, s)
-s=re.sub(r'MONITORING_REVISION=[a-f0-9]+', 'MONITORING_REVISION='+revision, s)
-s=s.replace('--log-opt max-size=10m --log-opt max-file=3', '--log-driver journald --log-opt tag=crux-incidents', 1)
-p.write_text(s)
-"""
-    command = 'set -eu\npython3 - <<\'PY\'\n' + script + '\nPY\nsystemctl restart crux-incidents.service'
+    # Bootstrap and subsequent releases execute the same complete Terraform-rendered
+    # configuration, including Caddy, environment, boot script and systemd unit.
+    command = outputs['incident_web_configuration']
     ssm = boto3.client('ssm')
     # Updating EC2 user-data can reboot the host before its SSM agent reconnects.
     for attempt in range(24):

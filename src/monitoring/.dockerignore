@@ -1,6 +1,10 @@
 *
 !Dockerfile
 !Dockerfile.web
+!Dockerfile.proxy
+!ci/
+!ci/caddy/
+!ci/caddy/**
 !requirements.txt
 !web-requirements.txt
 !lifecycle.py

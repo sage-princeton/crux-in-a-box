@@ -13,7 +13,10 @@ def store():
         table = boto3.resource('dynamodb', region_name='us-east-1').create_table(
             TableName='incidents', BillingMode='PAY_PER_REQUEST',
             KeySchema=[{'AttributeName': 'pk', 'KeyType': 'HASH'}, {'AttributeName': 'sk', 'KeyType': 'RANGE'}],
-            AttributeDefinitions=[{'AttributeName': k, 'AttributeType': 'S'} for k in ('pk', 'sk')])
+            AttributeDefinitions=[{'AttributeName': k, 'AttributeType': 'S'} for k in ('pk', 'sk', 'instance_id', 'id')],
+            GlobalSecondaryIndexes=[{'IndexName': 'instance-incidents',
+                'KeySchema': [{'AttributeName': 'instance_id', 'KeyType': 'HASH'}, {'AttributeName': 'id', 'KeyType': 'RANGE'}],
+                'Projection': {'ProjectionType': 'ALL'}}])
         yield IncidentStore(table)
 
 
@@ -93,3 +96,45 @@ def test_legacy_failed_review_retains_failure_without_explicit_status(store):
     incident = store.incident(ids[0])
     assert incident['detector_id'] == 'monitoring:unavailable'
     assert store.get('REVIEW#REVIEW#i-test#300', 'STATE')['review_status'] == 'failed'
+
+
+def test_export_append_preserves_closed_incident_and_new_event_is_distinct(store):
+    source = {'id': 'file:/exports/events', 'kind': 'sftp', 'data': '{"id":"one","action":"upload"}\n'}
+    before = evidence_anchors([source])
+    anchor = next(iter(before))
+    def finding(event):
+        result = report(anchor=event)
+        result['findings'][0]['source_ids'] = [source['id']]
+        return result
+    store.ingest(finding(anchor), 'REVIEW#i-test#300', 'reviews/1', {}, {}, before)
+    item = list(store.all('INCIDENTS'))[0]
+    store.transition(item['id'], item['version'], 'closed', {'id': 'operator'})
+    source['data'] += '{"id":"two","action":"read"}\n'
+    after = evidence_anchors([source])
+    assert set(before) < set(after)
+    store.ingest(finding(anchor), 'REVIEW#i-test#600', 'reviews/2', {}, {}, after)
+    assert len(list(store.all('INCIDENTS'))) == 1
+    assert store.incident(item['id'])['status'] == 'closed'
+    new_anchor = (set(after) - set(before)).pop()
+    store.ingest(finding(new_anchor), 'REVIEW#i-test#900', 'reviews/3', {}, {}, after)
+    assert len(list(store.all('INCIDENTS'))) == 2
+    source['data'] = '{"id":"one","action":"rephrased"}\npartial'
+    source['truncated'] = True
+    assert evidence_anchors([source]) == before
+
+
+def test_compact_fleet_counts_retries_once_and_preserves_latest_review(store, monkeypatch):
+    store.put_once({'pk': 'FLEET', 'sk': 'i-test', 'instance_id': 'i-test',
+                    'slug': 'test', 'state': 'running', 'review_count': 100,
+                    'review_windows': {'old-' + str(n) for n in range(100)}})
+    store.sync_fleet([{'instance_id': 'i-test', 'slug': 'test', 'state': 'running'}])
+    ingest(store, 900)
+    ingest(store, 900)
+    ingest(store, 300)
+    row = store.get('FLEET', 'i-test')
+    assert row['review_count'] == 102 and row['last_review'] == 900
+    assert 'review_windows' not in row
+    monkeypatch.setattr(store.table, 'scan', lambda **kwargs: pytest.fail('History table scan'))
+    assert store.summaries(list(store.all('FLEET')))[0]['incident_count'] == 1
+    store.sync_fleet([], complete=True)
+    assert store.get('FLEET', 'i-test')['state'] == 'no longer present'

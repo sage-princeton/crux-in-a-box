@@ -11,6 +11,29 @@ from review import CoverageError, collect_langfuse
 from worker import State
 
 
+def test_retired_targets_keep_mapping_for_late_evidence_and_honor_exclusions():
+    with mock_aws():
+        ec2 = boto3.client('ec2', region_name='us-east-1')
+        iid = ec2.run_instances(ImageId='ami-12345678', MinCount=1, MaxCount=1,
+            TagSpecifications=[{'ResourceType': 'instance', 'Tags': [{'Key': 'Name', 'Value': 'experiment'}]}])['Instances'][0]['InstanceId']
+        config = {'fleet': {'exclude_names': [], 'langfuse_by_name': True}, 'targets': {}}
+        running, _ = inventory_targets(ec2, config, now=300)
+        ec2.stop_instances(InstanceIds=[iid])
+        stopped, _ = inventory_targets(ec2, config, running, now=600)
+        later, _ = inventory_targets(ec2, config, stopped, now=3000)
+        assert later[iid]['retired_at'] == 600
+        ec2.start_instances(InstanceIds=[iid])
+        running, _ = inventory_targets(ec2, config, later, now=3300)
+        assert 'retired_at' not in running[iid]
+        ec2.terminate_instances(InstanceIds=[iid])
+        retired, _ = inventory_targets(ec2, config, running, now=3600)
+        assert retired[iid]['langfuse'] == {'environment': 'experiment'}
+        assert retired[iid]['instance_state'] == 'no longer present'
+        assert iid not in inventory_targets(ec2, config, retired, now=5500)[0]
+        config['fleet']['exclude_instance_ids'] = [iid]
+        assert iid not in inventory_targets(ec2, config, retired, now=3900)[0]
+
+
 def test_fleet_excludes_controller_even_with_override_and_disambiguates_names():
     with mock_aws():
         ec2 = boto3.client('ec2', region_name='us-east-1')

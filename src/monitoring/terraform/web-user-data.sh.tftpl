@@ -2,39 +2,4 @@
 set -euo pipefail
 dnf install -y docker
 systemctl enable --now docker
-mkdir -p /opt/crux-incidents/caddy-data /opt/crux-incidents/caddy-config
-cat > /opt/crux-incidents/Caddyfile <<'CADDY'
-${origin} {
-    reverse_proxy 127.0.0.1:8080
-}
-CADDY
-cat > /opt/crux-incidents/start <<'START'
-#!/bin/bash
-set -euo pipefail
-aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${repository}
-docker pull ${repository}@${image}
-docker rm -f crux-incidents 2>/dev/null || true
-docker run -d --name crux-incidents --restart unless-stopped --network host --read-only --tmpfs /tmp:size=64m \
-  --log-driver journald --log-opt tag=crux-incidents \
-  -e AWS_DEFAULT_REGION=${region} -e MONITORING_INCIDENT_TABLE=${table} \
-  -e MONITORING_WEB_PARAMETER=/crux/monitoring/web -e MONITORING_REVISION=${revision} \
-  ${repository}@${image}
-docker inspect crux-incident-proxy >/dev/null 2>&1 || docker run -d --name crux-incident-proxy \
-  --restart unless-stopped --network host --log-opt max-size=10m --log-opt max-file=3 \
-  -v /opt/crux-incidents/Caddyfile:/etc/caddy/Caddyfile:ro \
-  -v /opt/crux-incidents/caddy-data:/data -v /opt/crux-incidents/caddy-config:/config caddy:2.10.2
-START
-chmod 700 /opt/crux-incidents/start
-cat > /etc/systemd/system/crux-incidents.service <<'UNIT'
-[Unit]
-After=docker.service network-online.target
-Requires=docker.service
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/opt/crux-incidents/start
-[Install]
-WantedBy=multi-user.target
-UNIT
-systemctl daemon-reload
-systemctl enable --now crux-incidents
+${service_configuration}

@@ -34,6 +34,34 @@ def authorize(client, store, expires=None):
     return csrf
 
 
+def test_filtered_pages_are_full_and_running_instances_precede_history(client, store):
+    # Closed records sort first within the index; they must not consume the page.
+    prototype = ingest(store)
+    store.table.delete_item(Key={'pk': 'INCIDENTS', 'sk': prototype['id']})
+    for instance, slug, state in [('i-test', 'z-running', 'running'), ('i-old', 'a-history', 'stopped')]:
+        store.sync_fleet([{'instance_id': instance, 'slug': slug, 'state': state}])
+        for n in range(110):
+            iid = f'{instance}-{n:04d}'
+            store.table.put_item(Item={**prototype, 'pk': 'INCIDENTS', 'sk': iid, 'id': iid,
+                'instance_id': instance, 'workload_label': slug, 'status': 'closed' if n < 55 else 'open'})
+    path, pages = '/', []
+    while path:
+        response = client.get(path, base_url=ORIGIN)
+        assert response.status_code == 200
+        document = html.fromstring(response.data)
+        links = document.xpath('//td[contains(@class,"incident-title")]/a/@href')
+        assert links
+        pages.append(links)
+        next_links = document.xpath('//div[@class="pagination"]/a/@href')
+        path = next_links[0] if next_links else None
+    assert [len(page) for page in pages] == [50, 50, 10]
+    links = sum(pages, [])
+    assert len(set(links)) == 110
+    assert all('/i-test-' in link for link in links[:55])
+    assert all('/i-old-' in link for link in links[55:])
+    assert client.get('/?cursor=invalid', base_url=ORIGIN).status_code == 400
+
+
 def test_public_open_and_closed_pages_exclude_evidence_notes_and_actors(client, store):
     item = ingest(store, text='PRIVATE_TRANSCRIPT_MARKER<script>bad()</script>')
     store.transition(item['id'], item['version'], 'closed', {'id': 'PRIVATE_ACTOR'}, 'PRIVATE_NOTE')
@@ -98,12 +126,12 @@ def test_malformed_security_tokens_are_rejected_without_server_errors(client, st
 @pytest.mark.parametrize('historical_state', ['terminated', 'no longer present'])
 def test_incident_tables_keep_distinct_instances_with_the_same_label_separate(client, store, historical_state):
     first = ingest(store)
-    store.put_once({'pk': 'FLEET', 'sk': 'i-test', 'instance_id': 'i-test',
-                    'slug': 'test-workload', 'state': 'running', 'review_count': 1})
+    store.sync_fleet([{'instance_id': 'i-test',
+                    'slug': 'test-workload', 'state': 'running', 'review_count': 1}])
     store.ingest(report(), 'REVIEW#i-second#300', 'reviews/second',
                  {'slug': 'test-workload'}, {}, {'observation:123': 'observation:123'})
-    store.put_once({'pk': 'FLEET', 'sk': 'i-second', 'instance_id': 'i-second',
-                    'slug': 'test-workload', 'state': historical_state, 'review_count': 1})
+    store.sync_fleet([{'instance_id': 'i-second',
+                    'slug': 'test-workload', 'state': historical_state, 'review_count': 1}])
     page = html.fromstring(client.get('/?status=all', base_url=ORIGIN).data)
     groups = page.xpath('//section[@class="instance-group"]')
     assert len(groups) == 2

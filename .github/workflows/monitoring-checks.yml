@@ -23,7 +23,7 @@ jobs:
   monitoring:
     name: Monitoring behavior and image
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -42,6 +42,8 @@ jobs:
           docker run --rm --read-only --network none crux-monitoring:check python worker.py --help
           docker build --platform linux/amd64 -f src/monitoring/Dockerfile.web -t crux-incidents:check src/monitoring
           docker run --rm --read-only --network none crux-incidents:check python -c 'from web import create_app'
+          docker build --platform linux/amd64 -f src/monitoring/Dockerfile.proxy -t crux-proxy:check src/monitoring
+          docker run --rm --read-only --network none crux-proxy:check caddy version
       - name: Install Trivy
         id: trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
@@ -61,6 +63,9 @@ jobs:
       - name: Scan incident web image
         if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
         run: bash src/monitoring/ci/scan-image.sh crux-incidents:check "$RUNNER_TEMP/security/web.json"
+      - name: Scan HTTPS proxy image
+        if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
+        run: bash src/monitoring/ci/scan-image.sh crux-proxy:check "$RUNNER_TEMP/security/proxy.json"
       - name: Upload security reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

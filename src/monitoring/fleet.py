@@ -15,12 +15,15 @@ DEFAULT_AUTHORIZATION = (
     'Task-specific permitted actions and destinations have not been supplied. Treat missing authorization context '
     'as a coverage limitation, not proof of wrongdoing. Never execute commands or change the workload.'
 )
+LATE_EVIDENCE_SECONDS = 1800
 
 
-def inventory_targets(ec2, config):
+def inventory_targets(ec2, config, previous=None, now=None, excluded=None):
     fleet = config.get('fleet')
     if not fleet:
         return config['targets'], []
+    previous, now = previous or {}, int(time.time()) if now is None else now
+    excluded = excluded if excluded is not None else set()
     instances = []
     for page in ec2.get_paginator('describe_instances').paginate(Filters=[
             {'Name':'instance-state-name','Values':['pending','running','stopping','stopped']} ]):
@@ -30,6 +33,7 @@ def inventory_targets(ec2, config):
                 name = tags.get('Name', instance['InstanceId'])
                 if (name in fleet['exclude_names'] or instance['InstanceId'] in fleet.get('exclude_instance_ids', [])
                         or tags.get('CruxRole') in ('control', 'monitoring-web')):
+                    excluded.add(instance['InstanceId'])
                     continue
                 instances.append({'instance_id':instance['InstanceId'], 'name':name,
                                   'state':instance['State']['Name'], 'batch': 'AWSBatchServiceTag' in tags})
@@ -46,7 +50,16 @@ def inventory_targets(ec2, config):
             target['langfuse'] = {'environment':name}
         target.update(config['targets'].get(iid, {}))
         target.update(name=name, slug=instance['slug'], instance_state=instance['state'], service_worker=instance['batch'])
+        if instance['state'] != 'running':
+            target['retired_at'] = previous.get(iid, {}).get('retired_at', now)
         targets[iid] = target
+    for iid, target in previous.items():
+        if (iid in targets or iid in excluded or iid in fleet.get('exclude_instance_ids', [])
+                or target.get('name') in fleet['exclude_names'] or target.get('service_worker')):
+            continue
+        retired_at = target.get('retired_at', now)
+        if now <= retired_at + LATE_EVIDENCE_SECONDS:
+            targets[iid] = {**target, 'instance_state': 'no longer present', 'retired_at': retired_at}
     return targets, instances
 
 

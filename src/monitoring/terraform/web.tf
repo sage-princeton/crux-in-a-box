@@ -10,6 +10,14 @@ variable "web_image_digest" {
     error_message = "Supply an immutable web image digest."
   }
 }
+variable "proxy_image_digest" {
+  type    = string
+  default = ""
+  validation {
+    condition     = var.proxy_image_digest == "" || can(regex("^sha256:[a-f0-9]{64}$", var.proxy_image_digest))
+    error_message = "Supply an immutable scanned proxy image digest."
+  }
+}
 variable "incident_state_enabled" {
   type        = bool
   default     = false
@@ -28,6 +36,26 @@ resource "aws_dynamodb_table" "incidents" {
   attribute {
     name = "sk"
     type = "S"
+  }
+  attribute {
+    name = "instance_id"
+    type = "S"
+  }
+  attribute {
+    name = "id"
+    type = "S"
+  }
+  global_secondary_index {
+    name            = "instance-incidents"
+    projection_type = "ALL"
+    key_schema {
+      attribute_name = "instance_id"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "id"
+      key_type       = "RANGE"
+    }
   }
   ttl {
     attribute_name = "expires_at"
@@ -61,6 +89,11 @@ resource "aws_s3_object" "legacy_incident_link" {
 }
 
 locals {
+  web_service_configuration = var.web_enabled ? templatefile("${path.module}/web-service.sh.tftpl", {
+    region = var.region, repository = aws_ecr_repository.monitoring.repository_url,
+    image  = var.web_image_digest, proxy_image = var.proxy_image_digest,
+    table  = aws_dynamodb_table.incidents.name, origin = local.web_origin, revision = var.revision
+  }) : ""
   web_origin = var.web_enabled ? "https://${replace(aws_eip.web[0].public_ip, ".", "-")}.sslip.io" : ""
 }
 
@@ -122,7 +155,7 @@ resource "aws_iam_role_policy" "web" {
     { Effect = "Allow", Action = ["ecr:GetAuthorizationToken"], Resource = "*" },
     { Effect = "Allow", Action = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"], Resource = aws_ecr_repository.monitoring.arn },
     { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:${var.region}:${var.account_id}:parameter/crux/monitoring/web" },
-    { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:Query"], Resource = aws_dynamodb_table.incidents.arn },
+    { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:Query"], Resource = [aws_dynamodb_table.incidents.arn, "${aws_dynamodb_table.incidents.arn}/index/instance-incidents"] },
     { Effect    = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"], Resource = aws_dynamodb_table.incidents.arn,
       Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["INCIDENTS", "HISTORY#*", "LOGIN#*", "SESSION#*"] } }
     }
@@ -167,15 +200,13 @@ resource "aws_instance" "web" {
     volume_size = 16
   }
   user_data = templatefile("${path.module}/web-user-data.sh.tftpl", {
-    region = var.region, repository = aws_ecr_repository.monitoring.repository_url,
-    image  = var.web_image_digest, table = aws_dynamodb_table.incidents.name,
-    origin = local.web_origin, revision = var.revision
+    service_configuration = local.web_service_configuration
   })
   tags = { Name = "crux-incident-web", CruxRole = "monitoring-web" }
   lifecycle {
     precondition {
-      condition     = var.web_image_digest != ""
-      error_message = "Build and push the web image before enabling the web EC2."
+      condition     = var.web_image_digest != "" && var.proxy_image_digest != ""
+      error_message = "Build, scan and push the web and proxy images before enabling the web EC2."
     }
     ignore_changes = [ami]
   }
@@ -184,3 +215,5 @@ resource "aws_instance" "web" {
 output "incident_web_url" { value = local.web_origin }
 output "incident_table" { value = aws_dynamodb_table.incidents.name }
 output "incident_web_instance" { value = try(aws_instance.web[0].id, null) }
+
+output "incident_web_configuration" { value = local.web_service_configuration }
