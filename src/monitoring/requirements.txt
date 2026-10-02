@@ -1,0 +1,4 @@
+boto3==1.42.73
+httpx==0.28.1
+paramiko==4.0.0
+jsonschema==4.26.0
