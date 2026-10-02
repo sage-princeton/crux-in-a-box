@@ -579,6 +579,16 @@ class Runtime:
     def inventory(self, refresh=False):
         previous, excluded = {}, set()
         if self.config.get('fleet'):
+            if refresh:
+                # S3 masks a missing object as AccessDenied without ListBucket.
+                # Discovery already owns cache writes; initialize atomically
+                # without granting either runtime role bucket-listing access.
+                try:
+                    self.s3.put_object(Bucket=self.bucket, Key='inventory/targets.json', Body=b'{}',
+                        ContentType='application/json', ServerSideEncryption='AES256', IfNoneMatch='*')
+                except ClientError as error:
+                    if error.response['Error']['Code'] != 'PreconditionFailed':
+                        raise
             try:
                 previous = self.read_json('inventory/targets.json')
             except ClientError as error:

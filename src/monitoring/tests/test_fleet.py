@@ -34,6 +34,34 @@ def test_retired_targets_keep_mapping_for_late_evidence_and_honor_exclusions():
         assert iid not in inventory_targets(ec2, config, retired, now=3900)[0]
 
 
+def test_discovery_initializes_cache_without_list_permission_or_overwriting_history():
+    from botocore.exceptions import ClientError
+    from worker import Runtime
+    with mock_aws():
+        runtime = Runtime.__new__(Runtime)
+        runtime.bucket = 'inventory-fixture'
+        runtime.s3 = boto3.client('s3', region_name='us-east-1')
+        runtime.s3.create_bucket(Bucket=runtime.bucket)
+        runtime.config = {'fleet': {'exclude_names': ['crux-control']}, 'targets': {}}
+        runtime.ec2 = boto3.client('ec2', region_name='us-east-1')
+        read = runtime.read_json
+        def restricted_read(key):
+            try:
+                return read(key)
+            except ClientError as error:
+                if error.response['Error']['Code'] == 'NoSuchKey':
+                    raise ClientError({'Error': {'Code': 'AccessDenied'}}, 'GetObject') from None
+                raise
+        runtime.read_json = restricted_read
+        assert runtime.inventory(refresh=True)[0] == {}
+        existing = {'i-old': {'name': 'experiment', 'authorization': 'approved',
+                            'langfuse': {'environment': 'experiment'}, 'service_worker': False}}
+        runtime.put('inventory/targets.json', existing)
+        targets, _, _ = runtime.inventory(refresh=True)
+        assert targets['i-old']['langfuse'] == existing['i-old']['langfuse']
+        assert targets['i-old']['instance_state'] == 'no longer present'
+
+
 def test_fleet_excludes_controller_even_with_override_and_disambiguates_names():
     with mock_aws():
         ec2 = boto3.client('ec2', region_name='us-east-1')
