@@ -458,6 +458,19 @@ def interrupted() -> Scenario:
     return Scenario("interrupted", main, [erdos])
 
 
+def killed() -> Scenario:
+    """The pilot's last turn: a subagent and a run of tool calls, then the gateway is SIGTERMed.
+
+    The turn has no task_complete or turn_aborted line, so Codex never fires Stop for it.
+    """
+    main = Rollout(_id("thread", "killed"))
+    main.begin_turn("[Task 0wsTask07] Run Attempt 2")
+    hooke = _child(main, "Hooke", "TASK: audit the migration", steps=2)
+    main.step([spawn_agent(hooke, "TASK: audit the migration")])
+    _work(main, 12)
+    return Scenario("killed", main, [hooke])
+
+
 def goal_continuation() -> Scenario:
     """A turn that sets a goal, then a chain of turns Codex starts itself, each the moment the last ends."""
     main = Rollout(_id("thread", "goal"))
@@ -491,7 +504,7 @@ def pilot_sized() -> Scenario:
 
 
 SCENARIOS = {f.__name__: f for f in
-             (long_turn, subagents, turns_with_thread_events, interrupted, goal_continuation, pilot_sized)}
+             (long_turn, subagents, turns_with_thread_events, interrupted, killed, goal_continuation, pilot_sized)}
 
 
 if __name__ == "__main__":

@@ -209,6 +209,17 @@ agent mid-turn and the gateway then moves on to the next queued task instead of
 resuming the run. `sudo needrestart -b` lists the gateway once it is running on
 stale libraries; restart it by hand between runs, never while a turn is in flight.
 
+On Codex boxes the tracing plugin uploads a turn to Langfuse from Codex's `Stop`
+hook, which fires only when the turn ends. A turn cut off by a gateway stop,
+crash or reboot never gets one, so the gateway unit runs
+`/usr/local/lib/crux/codex-flush-turns.py` after every exit (`ExecStopPost`) and
+before every start (`ExecStartPre`). It uploads the last turn of each main
+rollout that the plugin hasn't recorded, with its subagents nested under it, and
+tags it `flush:gateway-stop` or `flush:gateway-start`. A rollout another live
+codex still holds open is left alone. See what it did with
+`journalctl -u crux-acp-gateway | grep codex-flush`, or list what it would upload
+with `sudo -iu ubuntu python3 /usr/local/lib/crux/codex-flush-turns.py --plugin <dist/index.mjs> --reason manual --check`.
+
 ### Teardown a workspace
 
 This will:

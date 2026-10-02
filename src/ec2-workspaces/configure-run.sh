@@ -9,7 +9,8 @@ set -euo pipefail
 # Required environment: AWS_REGION, RUN_SECRETS_PATH, SYSTEM_SSM_PARAM,
 # RUN_SLUG, CONTROL_MCP_BASE and the selected platform's model and effort.
 # AGENT_PLATFORM defaults to codex; Codex also requires its tracing pin and hash.
-# Place agent-config.sh beside this script; Claude also requires langfuse_hook.py.
+# Place agent-config.sh beside this script; Codex also requires
+# codex-flush-turns.py, and Claude requires langfuse_hook.py.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
@@ -24,6 +25,8 @@ cfg() { local key="$1"; printf '%s' "${!key:-}"; }
 load_agent_config settings
 if [ "$AGENT_PLATFORM" = codex ]; then
   : "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
+  [ -f "$SCRIPT_DIR/codex-flush-turns.py" ] || die "codex-flush-turns.py was not copied alongside configure-run.sh."
+  command -v python3 >/dev/null 2>&1 || die "python3 is not on PATH; the gateway's trace flush needs it."
 else
   [ -f "$SCRIPT_DIR/langfuse_hook.py" ] || die "Claude Langfuse hook was not copied alongside configure-run.sh."
 fi
@@ -226,6 +229,14 @@ else
   ok "already installed ($PLUGIN_ENTRY present)"
 fi
 
+# Codex fires Stop only when a turn ends, so a turn whose gateway is killed is
+# never uploaded. The gateway unit runs this flush around every stop and start.
+# The run user executes it; umask 077 would make a new directory root-only.
+install -d -m 755 /usr/local/lib/crux
+FLUSH_SCRIPT=/usr/local/lib/crux/codex-flush-turns.py
+install -m 755 "$SCRIPT_DIR/codex-flush-turns.py" "$FLUSH_SCRIPT"
+FLUSH="/usr/bin/python3 $FLUSH_SCRIPT --plugin $PLUGIN_ENTRY"
+
 # ====== CODEX LOGIN ======
 if [ "$MODEL_PROVIDER" = direct ]; then
 # Run Codex login to write the API key to ~/.codex/auth.json.
@@ -268,6 +279,16 @@ Almost always one of:
 Compare against a machine where tracing works:
     grep -A3 'hooks.state' ~/.codex/config.toml"
 fi
+
+# The flush must parse the rollout this codex just wrote; --check uploads nothing.
+info "Verifying the gateway's trace flush reads this codex's rollouts"
+FLUSH_OUT="$(su - "$RUN_USER" -c "$FLUSH --reason provision-check --check" 2>&1)" \
+  || die "The trace flush failed, so turns killed with the gateway will not reach Langfuse:
+$FLUSH_OUT"
+printf '%s' "$FLUSH_OUT" | grep -qE 'checked [1-9][0-9]* rollouts' \
+  || die "The trace flush found none of the probe's rollouts under $CODEX_DIR/sessions:
+$FLUSH_OUT"
+ok "$(printf '%s' "$FLUSH_OUT" | tail -1)"
 
 else
 # ====== CLAUDE CONFIG AND STANDALONE TRACING ======
@@ -343,6 +364,14 @@ fi
   || die "/etc/needrestart/conf.d/crux.conf is missing, so unattended upgrades can restart the gateway mid-run. Re-run install-run.sh; gateway was not started."
 
 # Run the gateway as a service with automatic restart.
+# ExecStopPost runs after every exit, including a SIGKILL or crash; ExecStartPre
+# catches turns cut off by a reboot or instance stop. "-" keeps a failed flush
+# from failing the unit.
+FLUSH_UNIT=""
+if [ "$AGENT_PLATFORM" = codex ]; then
+  FLUSH_UNIT="ExecStartPre=-$FLUSH --reason gateway-start
+ExecStopPost=-$FLUSH --reason gateway-stop"
+fi
 info "Installing crux-acp-gateway.service"
 cat > /etc/systemd/system/crux-acp-gateway.service <<UNIT
 [Unit]
@@ -356,6 +385,7 @@ User=${RUN_USER}
 WorkingDirectory=${WORK_DIR}
 EnvironmentFile=${GW_ENV}
 ExecStart=/usr/bin/acp-gateway -- $ACP_COMMAND
+$FLUSH_UNIT
 Restart=always
 RestartSec=10
 StandardOutput=journal
