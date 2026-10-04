@@ -112,6 +112,7 @@ def test_passes_send_each_observation_once_and_end_with_the_full_turn(rollouts, 
     assert collections.Counter(s.name for s in spans if s.type == "tool") == collections.Counter(turn.tool_names)
     assert len([s for s in spans if s.type == "generation"]) == len(turn.steps)
     assert {s.attributes["langfuse.session.id"] for s in spans} == {turn.thread_id}
+    assert {s.attributes["langfuse.user.id"] for s in spans} == {"crux-fixture"}
     assert set(root.attributes["langfuse.trace.tags"]) == set(TAGS)
     assert root.attributes["langfuse.environment"] == "crux-fixture"
 
