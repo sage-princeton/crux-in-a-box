@@ -17,9 +17,10 @@ visible. “No longer present” describes the instance, not whether an incident
 | DynamoDB | `crux-monitoring-ae211` (reviews/budgets), `crux-monitoring-ae211-incidents` (incidents/auth) |
 | Terraform state | Account `869937524494`; [backend.hcl](terraform/backend.hcl) |
 
-Public visitors see summaries and status history. All HAL members can view private
+All incident pages require AWS sign-in through **All HAL**. Members can view
 observations/notes and close or reopen incidents; Andrew inherits access through
-the group. Raw S3 evidence additionally requires AWS permissions. Sessions last
+the group. Only SAML endpoints, CSS and the content-free readiness probe are anonymous.
+S3 blocks public ACLs and policies; even the legacy HTML object requires AWS access. Raw S3 evidence additionally requires AWS permissions. Sessions last
 at most one hour; removing a group assignment prevents new sessions. Delete the
 user's `SESSION#` records when immediate revocation is required.
 
@@ -38,7 +39,7 @@ variables are `MONITORING_AWS_ROLE_ARN` and `MONITORING_CONFIG_BUCKET`.
 
 CI builds immutable images, scans their exact ECR digests, applies locked shared
 Terraform state, reconciles the complete app/proxy configuration through SSM, and verifies the public
-HTTPS revision. Releases may briefly restart the host. CI rejects infrastructure
+HTTPS revision and anonymous redirects to sign-in. Releases may briefly restart the host. CI rejects infrastructure
 creation, replacement, IAM policy edits and unrelated changes; those need a reviewed operator apply.
 Never apply stale local tfvars or overwrite shared state with a local copy.
 
@@ -47,6 +48,27 @@ Secrets stay in SSM SecureStrings `/crux/monitoring/env` and `/crux/monitoring/w
 Changing web authentication settings requires restarting `crux-incidents.service`.
 Rollback by deploying a previously validated, state-compatible commit; data is
 not automatically reverted. Do not restore legacy workers that publish raw findings.
+
+## PR infrastructure plans
+
+`monitoring-plan.yml` runs a live, speculative plan for same-repository PRs to
+`main`. Its trusted workflow and helpers come from the base branch; only Terraform
+comes from the PR commit. Fork and Dependabot PRs need a maintainer-owned branch
+for AWS planning. The `Monitoring Terraform plan` commit check reports failure
+when a plan cannot run. Resource changes create/update one PR comment; a later
+no-op clears that comment without creating a new one.
+
+The `crux-monitoring-plan` OIDC role reads infrastructure/configuration only;
+`crux-monitoring-plan-state` reads the single Princeton state object. Neither can
+apply or write state. Plans use deployed image inputs and `-lock=false`; releases
+replan under the deployment lock. Artifacts/comments contain resource addresses
+and actions only, never raw plans, state or attribute values.
+
+Before this workflow reaches `main`, validate it with
+`gh workflow run monitoring-plan.yml --ref ae-211-ec2-monitoring -f pull_request=21`.
+Remove its temporary feature-branch OIDC trust when that branch is retired.
+Role policies/trust are versioned under `ci/plan-*.json`; repository variables are
+`MONITORING_PLAN_ROLE_ARN` and `MONITORING_CONFIG_BUCKET`.
 
 ## Evidence and monitoring
 
@@ -98,7 +120,7 @@ reports retain all severities and unfixed findings for 14 days in
 `monitoring-security-reports` and `deployed-image-security-reports` artifacts.
 Checkov findings block CI; its report is `monitoring-terraform-security` (14 days).
 Run locally: `checkov -d src/monitoring/terraform --framework terraform --skip-download`.
-Resource-local exceptions explain legacy public HTML, SSE-S3 log delivery,
+Resource-local exceptions explain existing SSE-S3 evidence/log encryption,
 existing ECR encryption, single-region storage and the no-NAT worker subnet.
 Data/log KMS keys rotate annually and are protected from Terraform destruction.
 Job/access logs retain one year; owned VPCs also get flow logs and an empty default
