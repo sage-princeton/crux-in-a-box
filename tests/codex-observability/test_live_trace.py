@@ -205,3 +205,23 @@ def test_thread_events_and_goal_turns_trace_one_root_per_turn(rollouts, home, li
         found = roots(collector.spans)
         assert [r.input for r in found] == [t.prompt for t in scenario.turns], name
         assert [r.output for r in found] == [t.final_text for t in scenario.turns], name
+
+
+def test_code_mode_exec_calls_complete_with_their_output_while_the_turn_runs(rollouts, home, live):
+    """Code mode writes custom_tool_call / custom_tool_call_output, not function_call / function_call_output."""
+    scenario = rollouts.code_mode()
+    for child in scenario.children:
+        child.write(sessions(home))
+    with Collector() as collector:
+        passes(scenario.main, home, collector, live, [index_of(scenario.main, "task_complete") - 6])
+        running = [s for s in collector.spans if s.type == "tool" and s.name == "exec"]
+        assert roots(collector.spans) == []
+        assert running and all(s.output for s in running), "exec calls should arrive with their output mid-turn"
+        assert all(s.level == "DEFAULT" for s in running)
+        passes(scenario.main, home, collector, live, [len(scenario.main.lines)])
+    assert_sent_once(collector.spans)
+    calls = [t for turn in scenario.turns + [t for c in scenario.children for t in c.turns]
+             for step in turn.steps for t in step.tools if t.kind == "custom"]
+    tools = [s for s in collector.spans if s.type == "tool" and s.name == "exec"]
+    assert len(tools) == len(calls)
+    assert {s.output for s in tools} == {"done\n", "beta-1\n", "step-a\n", "step-b\n", "step-c\n"}

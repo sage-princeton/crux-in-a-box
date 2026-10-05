@@ -76,6 +76,11 @@ def create_goal(objective: str) -> Tool:
     return Tool("function", "create_goal", None, {"objective": objective}, '{"status": "active"}', 0.05)
 
 
+def exec_code(code: str, output: str = "done\n", seconds: float = 0.4) -> Tool:
+    """Code mode: one freeform `exec` call whose JavaScript calls the real tools (seen on ae240-test)."""
+    return Tool("custom", "exec", None, code, output, seconds)
+
+
 def spawn_agent(child: Rollout, message: str) -> Tool:
     out = json.dumps({"agent_id": child.thread_id, "nickname": child.nickname})
     return Tool("function", "spawn_agent", "multi_agent_v1", {"message": message}, out, 0.1, child)
@@ -293,6 +298,12 @@ class Rollout:
                                              "action": {"type": "search", "query": tool.arguments["query"],
                                                         "queries": [tool.arguments["query"]]},
                                              "internal_chat_message_metadata_passthrough": self._meta()})
+            elif tool.kind == "custom":
+                call = {"type": "custom_tool_call", "status": "completed", "call_id": _id("call", self.thread_id, len(self.lines)),
+                        "name": tool.name, "input": tool.arguments, "id": _id("ctc", len(self.lines)),
+                        "internal_chat_message_metadata_passthrough": self._meta()}
+                tool.call_id = call["call_id"]
+                self._line("response_item", call)
             else:
                 call = {"type": "function_call", "name": tool.name, "arguments": json.dumps(tool.arguments),
                         "call_id": _id("call", self.thread_id, len(self.lines)), "id": _id("fc", len(self.lines)),
@@ -315,7 +326,8 @@ class Rollout:
                 item = "CollabAgentToolCall"
             if item:
                 self._item({"type": item})
-            truth.output_at = self._line("response_item", {"type": "function_call_output", "call_id": tool.call_id,
+            output_type = "custom_tool_call_output" if tool.kind == "custom" else "function_call_output"
+            truth.output_at = self._line("response_item", {"type": output_type, "call_id": tool.call_id,
                                          "id": _id("fco", len(self.lines)), "output": tool.output,
                                          "internal_chat_message_metadata_passthrough": self._meta(
                                              {"create_time": self.t.timestamp()})})
@@ -471,6 +483,24 @@ def killed() -> Scenario:
     return Scenario("killed", main, [hooke])
 
 
+def code_mode() -> Scenario:
+    """Tools called through code mode's freeform `exec`, in the main thread and a subagent, as on ae240-test."""
+    main = Rollout(_id("thread", "code-mode"))
+    main.begin_turn("[Task 0wsTask08] LIVE-TRACE-TEST: run the steps in order.")
+    main.step([exec_code('const r = await tools.exec_command({cmd:"mkdir -p /tmp/live-trace-test"}); text(r.output)')])
+    beta = Rollout(_id("thread", "code-mode", "Beta"), main.t + timedelta(seconds=0.2), main, "Beta")
+    beta.begin_turn('Run `sleep 30 && echo beta-1`, then reply exactly "BETA DONE".')
+    beta.step([exec_code('const r = await tools.exec_command({cmd:"sleep 30 && echo beta-1"}); text(r.output)',
+                         "beta-1\n", seconds=30)])
+    beta.finish_turn("BETA DONE")
+    main.step([spawn_agent(beta, 'Run `sleep 30 && echo beta-1`, then reply exactly "BETA DONE".')])
+    for step in ("a", "b", "c"):
+        main.step([exec_code(f'const r = await tools.exec_command({{cmd:"sleep 60 && echo step-{step}"}}); text(r.output)',
+                             f"step-{step}\n", seconds=60)])
+    main.finish_turn("LIVE-TRACE-TEST COMPLETE")
+    return Scenario("code_mode", main, [beta])
+
+
 def goal_continuation() -> Scenario:
     """A turn that sets a goal, then a chain of turns Codex starts itself, each the moment the last ends."""
     main = Rollout(_id("thread", "goal"))
@@ -504,7 +534,8 @@ def pilot_sized() -> Scenario:
 
 
 SCENARIOS = {f.__name__: f for f in
-             (long_turn, subagents, turns_with_thread_events, interrupted, killed, goal_continuation, pilot_sized)}
+             (long_turn, subagents, turns_with_thread_events, interrupted, killed, code_mode, goal_continuation,
+              pilot_sized)}
 
 
 if __name__ == "__main__":

@@ -15,8 +15,11 @@ How a rollout maps onto the model:
   turn_context                   the turn's model; opens the window for its prompt
   user message                   the turn's prompt, if no model output came yet
   reasoning / assistant message  part of the current model response
-  function_call / web_search     a tool call the current model response made
-  function_call_output           completes the tool call with the same call_id
+  function_call / custom_tool_call / web_search
+                                 a tool call the current model response made; code
+                                 mode makes every call a custom_tool_call to `exec`
+  function_call_output / custom_tool_call_output
+                                 completes the tool call with the same call_id
   token_usage_record             the model response is complete (with its usage)
   token_count                    also completes it, for rollouts without the record
   task_complete / turn_aborted   ends the turn
@@ -136,7 +139,7 @@ def _decode_item(item: dict) -> Event | None:
             return AssistantMessage(_text(content))
         case {"type": "reasoning"}:
             return Reasoning()
-        case {"type": "function_call_output", "call_id": str(call_id)}:
+        case {"type": "function_call_output" | "custom_tool_call_output", "call_id": str(call_id)}:
             return ToolReturned(call_id, item.get("output"))
         case {"type": "web_search_call"}:
             return WebSearched(item.get("id") or "", (item.get("action") or {}).get("query"))
