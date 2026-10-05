@@ -228,6 +228,9 @@ plugin's `Stop` hook a service, `crux-codex-live-trace`, reads the rollouts ever
 - a `Codex Turn started` event with the turn's input, when the prompt is written
 - an `LLM` generation per model response, with its tool calls and token usage
 - a tool span per call, once its output is written
+- anything else the turn recorded, as a span (under code mode, each shell command
+  `exec` ran) or, for a line the exporter does not recognise, an event; the root
+  lists unrecognised line types in `codex.unrecognized_types`, and the service logs them
 - the `Codex Turn` root, with the input and output, when the turn ends
 
 Ids come from the thread, turn and call, so children point at their root before

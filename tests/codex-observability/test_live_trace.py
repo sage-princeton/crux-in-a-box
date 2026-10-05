@@ -224,4 +224,72 @@ def test_code_mode_exec_calls_complete_with_their_output_while_the_turn_runs(rol
              for step in turn.steps for t in step.tools if t.kind == "custom"]
     tools = [s for s in collector.spans if s.type == "tool" and s.name == "exec"]
     assert len(tools) == len(calls)
-    assert {s.output for s in tools} == {"done\n", "beta-1\n", "step-a\n", "step-b\n", "step-c\n"}
+    assert {s.output for s in tools} == {"done\n", "beta-1\n", "step-a\n", "step-b\n", "step-c\n"}, \
+        "list-of-text outputs should arrive as their text"
+    [wait] = [s for s in collector.spans if s.type == "tool" and s.name == "wait"]
+    assert wait.output == "completed"
+
+
+def test_code_mode_shell_commands_are_traced_with_their_command_and_output(rollouts, home, live):
+    """Inside code mode's exec, the real shell command is recorded only as an item_completed CommandExecution."""
+    scenario = rollouts.code_mode()
+    for child in scenario.children:
+        child.write(sessions(home))
+    with Collector() as collector:
+        passes(scenario.main, home, collector, live, [index_of(scenario.main, "task_complete") - 6])
+        assert any(s.name == "CommandExecution" for s in collector.spans), "commands should show while the turn runs"
+        passes(scenario.main, home, collector, live, [len(scenario.main.lines)])
+    assert_sent_once(collector.spans)
+    commands = sorted((s for s in collector.spans if s.name == "CommandExecution"), key=lambda s: s.start_ns)
+    expected = ["mkdir -p /tmp/live-trace-test", "sleep 30 && echo beta-1", "sleep 60 && echo step-a",
+                "sleep 60 && echo step-b", "sleep 60 && echo step-c"]
+    assert sorted(c for s in commands for c in expected if c in s.input) == sorted(expected)
+    by_command = {c: s for s in commands for c in expected if c in s.input}
+    assert by_command["sleep 60 && echo step-b"].output == "step-b\n"
+    assert 59 <= by_command["sleep 60 && echo step-b"].seconds <= 61
+    assert all(s.type == "span" and s.level == "DEFAULT" for s in commands), \
+        "commands are spans, not tool calls: in normal mode they repeat an exec_command call"
+
+
+def _rename(rollout, old: str, new: str) -> None:
+    for line in rollout.lines:
+        if line["type"] == "response_item" and line["payload"].get("type") == old:
+            line["payload"]["type"] = new
+
+
+def test_a_tool_call_type_the_exporter_has_never_seen_is_still_paired_with_its_output(rollouts, home, live):
+    scenario = rollouts.code_mode()
+    for rollout in [scenario.main, *scenario.children]:
+        _rename(rollout, "custom_tool_call", "future_tool_call")
+        _rename(rollout, "custom_tool_call_output", "future_tool_call_output")
+        if rollout is not scenario.main:
+            rollout.write(sessions(home))
+    with Collector() as collector:
+        passes(scenario.main, home, collector, live, every(scenario.main, 9))
+    tools = [s for s in collector.spans if s.type == "tool" and s.name == "exec"]
+    assert len(tools) == 5 and all(s.output and s.level == "DEFAULT" for s in tools)
+
+
+def test_a_line_the_exporter_has_never_seen_is_sent_as_an_event_and_flagged_on_the_root(rollouts, home, live):
+    scenario = rollouts.code_mode()
+    main = scenario.main
+    for child in scenario.children:
+        child.write(sessions(home))
+    at = index_of(main, "token_count")
+    stamp = main.lines[at]["timestamp"]
+    main.lines[at + 1:at + 1] = [
+        {"timestamp": stamp, "type": "event_msg", "payload": {"type": "future_event", "detail": "kept"}},
+        {"timestamp": stamp, "type": "future_line", "payload": {"detail": "also kept"}},
+        {"timestamp": stamp, "type": "world_state", "payload": {"full": False, "state": {}}},
+    ]
+    with Collector() as collector:
+        main.write(sessions(home))
+        proc = live(collector.url)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    events = {s.name: s for s in collector.spans if s.type == "event"}
+    assert "kept" in events["event_msg/future_event"].input
+    assert "also kept" in events["future_line"].input
+    assert "world_state" not in events, "known noise should stay out"
+    [root] = roots(collector.spans)
+    assert root.meta("codex.unrecognized_types") == "event_msg/future_event,future_line"
+    assert "event_msg/future_event" in proc.stdout

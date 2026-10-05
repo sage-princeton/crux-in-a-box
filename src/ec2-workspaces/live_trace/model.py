@@ -2,9 +2,11 @@
 
 A Thread is one transcript: the agent's conversation, or a subagent's. It holds
 Turns: one user (or harness) request and everything the agent did for it. A Turn
-holds the model responses (ModelStep) and the tool calls (ToolCall) they made.
-Each object knows when it is complete; observations.py turns complete objects into
-Langfuse observations, and nothing here knows about Langfuse.
+holds the model responses (ModelStep), the tool calls (ToolCall) they made, and
+Records: anything else the agent wrote during the turn, so nothing is dropped
+just because a source does not model it. Each object knows when it is complete;
+observations.py turns complete objects into Langfuse observations, and nothing
+here knows about Langfuse.
 """
 from __future__ import annotations
 
@@ -73,6 +75,24 @@ class ModelStep:
     complete: bool = False
 
 
+@dataclass(frozen=True)
+class Record:
+    """Something recorded during a turn that is neither a model response nor a tool call.
+
+    A source that understands it (a command the agent ran, say) fills in input and
+    output; anything it cannot interpret is kept whole with `unrecognized` set, so
+    a transcript format the source has not seen yet still reaches Langfuse.
+    """
+
+    name: str
+    started: float
+    ended: float
+    input: object = None
+    output: object = None
+    failed: bool = False
+    unrecognized: bool = False
+
+
 @dataclass
 class Turn:
     """One request and the agent's work on it. Ended once `end` is set."""
@@ -85,6 +105,7 @@ class Turn:
     prompt_at: float | None = None
     steps: list[ModelStep] = field(default_factory=list)
     tool_calls: dict[str, ToolCall] = field(default_factory=dict)
+    records: list[Record] = field(default_factory=list)
     ended: float | None = None
     end: TurnEnd | None = None
     output: str | None = None
@@ -99,6 +120,11 @@ class Turn:
         step = self.steps[-1]
         step.ended = at
         return step
+
+    @property
+    def unrecognized(self) -> list[str]:
+        """Names of the records the source could not interpret, for spotting format drift."""
+        return sorted({r.name for r in self.records if r.unrecognized})
 
     def current_step(self) -> ModelStep | None:
         """The model response still waiting for its usage, if any."""

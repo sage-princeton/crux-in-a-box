@@ -5,6 +5,10 @@ A turn becomes, in the order each piece is complete:
   "<Agent> Turn started"  event       the prompt, as soon as it is written
   "LLM"                   generation  one per model response: text, tool calls, usage
   <tool name>             tool        one per tool call, once it has an output
+  <record name>           span        anything else the agent recorded, e.g. a command
+                                      code mode's exec ran, with its own timing
+  <unrecognized kind>     event       a line the source could not interpret, kept whole;
+                                      the root lists these kinds in `unrecognized_types`
   "<Agent> Turn"          agent       the root, with input and output, once the turn ends
 
 Subagent turns use "<Agent> Subagent Turn" and "LLM Subagent". Every observation
@@ -19,7 +23,7 @@ import json
 from dataclasses import dataclass, field
 from enum import Enum
 
-from live_trace.model import Thread, ToolCall, Turn, TurnEnd, Usage
+from live_trace.model import Record, Thread, ToolCall, Turn, TurnEnd, Usage
 
 
 def hexid(*parts: object, n: int = 16) -> str:
@@ -46,6 +50,9 @@ class TurnIds:
 
     def tool(self, call_id: str) -> str:
         return hexid(self.thread_id, self.turn_id, "tool", call_id)
+
+    def record(self, index: int) -> str:
+        return hexid(self.thread_id, self.turn_id, "record", index)
 
 
 @dataclass(frozen=True)
@@ -80,6 +87,7 @@ class Kind(Enum):
     EVENT = "event"
     GENERATION = "generation"
     TOOL = "tool"
+    SPAN = "span"
     AGENT = "agent"
 
 
@@ -100,6 +108,8 @@ class Observation:
     level: str | None = None
     status_message: str | None = None
     metadata: dict[str, str] = field(default_factory=dict)
+    #: Set on events for lines the source could not interpret; not sent, only counted and logged.
+    unrecognized_kind: str | None = None
 
     def attributes(self) -> dict[str, object]:
         attrs: dict[str, object] = {"langfuse.observation.type": self.kind.value}
@@ -170,12 +180,25 @@ def observations_for(agent: str, thread: Thread, turn: Turn, placement: Placemen
         if not call.complete and end is None:
             continue
         out.append(_tool(call, ids, ended, meta(call_id=call.call_id, **_namespace(call))))
+    out += [_record(record, ids.record(n), ids.root(), meta()) for n, record in enumerate(turn.records)]
     if end is not None:
+        root_meta = meta(ended_by=end.value, tool_call_count=str(len(turn.tool_calls)))
+        if turn.unrecognized:
+            root_meta[f"{prefix}.unrecognized_types"] = ",".join(turn.unrecognized)
         out.append(Observation(ids.root(), placement.parent_span_id, names.turn, Kind.AGENT, turn.started, ended,
                                input=turn.prompt or "", output=turn.output,
                                level="WARNING" if end.warning(agent) else None, status_message=end.warning(agent),
-                               metadata=meta(ended_by=end.value, tool_call_count=str(len(turn.tool_calls)))))
+                               metadata=root_meta))
     return out
+
+
+def _record(record: Record, span_id: str, root_id: str, metadata: dict[str, str]) -> Observation:
+    if record.unrecognized:
+        return Observation(span_id, root_id, record.name, Kind.EVENT, record.started, record.started,
+                           input=record.input, metadata=metadata, unrecognized_kind=record.name)
+    return Observation(span_id, root_id, record.name, Kind.SPAN, record.started, record.ended,
+                       input=record.input, output=record.output, level="WARNING" if record.failed else None,
+                       metadata=metadata)
 
 
 def _tool(call: ToolCall, ids: TurnIds, turn_ended: float | None, metadata: dict[str, str]) -> Observation:

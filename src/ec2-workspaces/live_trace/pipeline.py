@@ -1,6 +1,7 @@
 """One export pass: transcripts -> complete observations -> sink, each observation sent once."""
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -82,6 +83,8 @@ class Placements:
 class PassResult:
     sent: int = 0
     errors: list[str] = field(default_factory=list)
+    #: Kinds of transcript lines the source could not interpret, among the observations sent.
+    unrecognized: Counter = field(default_factory=Counter)
 
 
 class Exporter:
@@ -102,7 +105,7 @@ class Exporter:
             self._send(thread, pending, result)
         return result
 
-    def _pending(self, thread: Thread, placements: Placements, finalize_last: bool) -> list[dict]:
+    def _pending(self, thread: Thread, placements: Placements, finalize_last: bool) -> list[tuple[dict, str | None]]:
         sent = self.ledger.sent(thread.transcript)
         trace = TraceContext(self.settings.environment, placements.session_id(thread), f"{self.source.agent} Turn",
                              self.settings.user_id, self.settings.tags, self.settings.metadata)
@@ -112,20 +115,21 @@ class Exporter:
             if placement is None:
                 continue
             finalize = finalize_last and n == len(thread.turns) - 1
-            spans += [o.to_otlp(placement.trace_id, trace)
+            spans += [(o.to_otlp(placement.trace_id, trace), o.unrecognized_kind)
                       for o in observations_for(self.source.agent, thread, turn, placement, finalize)
                       if o.span_id not in sent]
         return spans
 
-    def _send(self, thread: Thread, spans: list[dict], result: PassResult) -> None:
+    def _send(self, thread: Thread, pending: list[tuple[dict, str | None]], result: PassResult) -> None:
         sent = self.ledger.sent(thread.transcript)
-        for i in range(0, len(spans), BATCH):
-            batch = spans[i:i + BATCH]
+        for i in range(0, len(pending), BATCH):
+            batch = pending[i:i + BATCH]
             try:
-                self.sink.send(batch)
+                self.sink.send([span for span, _ in batch])
             except OSError as err:
                 result.errors.append(f"{thread.transcript.name}: {err}")
                 return
-            sent |= {s["spanId"] for s in batch}
+            sent |= {span["spanId"] for span, _ in batch}
             self.ledger.record(thread.transcript, sent)
             result.sent += len(batch)
+            result.unrecognized.update(kind for _, kind in batch if kind)

@@ -40,6 +40,9 @@ def main(source: TranscriptSource, argv: list[str] | None = None) -> int:
             print(f"{name}: export failed, retrying next pass: {error}", flush=True)
         if result.sent or args.once:
             print(f"{name}: sent {result.sent} observations", flush=True)
+        if result.unrecognized:
+            kinds = ", ".join(f"{kind} x{n}" for kind, n in sorted(result.unrecognized.items()))
+            print(f"{name}: sent unrecognized transcript lines as events: {kinds}", flush=True)
         if args.once:
             return 1 if result.errors else 0
         time.sleep(args.interval)
