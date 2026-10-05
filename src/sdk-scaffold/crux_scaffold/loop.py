@@ -107,7 +107,7 @@ class PhasedLoop(Loop):
             state.iteration += 1
             with ctx.telemetry.trace(f"{phase.name} #{state.iteration}", {"phase": phase.name,
                                                                           "iteration": state.iteration}):
-                turn = await runtime.run(prompt)
+                turn = await runtime.run(prompt, workflow=phase.name)
                 last_output = turn.final_output
                 gate_ctx = GateContext(ctx, drop_in, phase.name, state.iteration, last_output)
                 results = [await self.gates[gate].check(gate_ctx) for gate in phase.gates]

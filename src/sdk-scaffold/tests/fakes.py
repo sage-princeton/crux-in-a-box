@@ -26,7 +26,7 @@ class FakeRuntime(AgentRuntime):
     async def __aexit__(self, *exc_info: object) -> None:
         return None
 
-    async def run(self, prompt: str) -> TurnOutcome:
+    async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self.prompts.append(prompt)
         return self.outputs.pop(0)
 

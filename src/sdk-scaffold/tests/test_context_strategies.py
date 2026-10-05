@@ -8,7 +8,7 @@ from scripted import ScriptedModel, say
 async def turns(scaffold, *prompts):
     async with scaffold.runtime as runtime:
         for prompt in prompts:
-            await runtime.run(prompt)
+            await runtime.run(prompt, workflow="main")
 
 
 def test_persistent_sends_the_whole_history():

@@ -54,6 +54,9 @@ def test_each_iteration_is_one_trace_holding_sdk_spans_gates_and_coding_agent_wo
     assert root.attributes["langfuse.trace.name"] == "main #1"
     assert set(root.attributes["langfuse.trace.tags"]) == set(RunIdentity.from_env(ENV).tags())
     assert {"pm", "engineer"} <= {span.name for span in spans}
+    workflows = [span for span in spans if span.parent and span.parent.span_id == root.context.span_id]
+    assert workflows and {span.name for span in workflows} == {"main"}
+    assert "Agent workflow" not in {span.name for span in spans}
     assert {span.context.trace_id for span in spans} == {root.context.trace_id}
 
 
@@ -91,18 +94,17 @@ def test_a_stopped_scaffold_sends_what_finished_and_marks_what_did_not(langfuse)
         assert "stopped" in spans[name].attributes["langfuse.observation.status_message"]
 
 
-def test_a_generation_carries_the_output_usage_and_model_set_inside_it(langfuse):
+def test_a_generation_carries_its_model_and_the_output_and_usage_set_inside_it(langfuse):
     telemetry, exporter = langfuse
     exporter.clear()
     with telemetry.trace("implement #1"):
-        with telemetry.generation("engineer", None, "TASK") as outcome:
+        with telemetry.generation("engineer", "gpt-codex-test", "TASK") as outcome:
             outcome.output, outcome.usage = "done", TokenUsage(requests=1, input_tokens=10, output_tokens=5)
-            outcome.model = "gpt-codex-default"
     telemetry.flush()
     engineer = next(span for span in exporter.get_finished_spans() if span.name == "engineer")
     assert engineer.attributes["langfuse.observation.output"] == "done"
     assert json.loads(engineer.attributes["langfuse.observation.usage_details"]) == {"input": 10, "output": 5}
-    assert engineer.attributes["langfuse.observation.model.name"] == "gpt-codex-default"
+    assert engineer.attributes["langfuse.observation.model.name"] == "gpt-codex-test"
 
 
 def test_sigterm_mid_turn_sends_the_iteration_marked_as_stopped(langfuse, drop_in_dir, tmp_path):

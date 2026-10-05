@@ -122,7 +122,8 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
 
 
 async def probe_coding_agent(type_name: str, env: Mapping[str, str], telemetry: Telemetry, request: str) -> str:
-    agent = CODING_AGENTS.create("probe", {"type": type_name, "description": "provisioning probe"})
+    cls, options = CODING_AGENTS.resolve("probe", {"type": type_name, "description": "provisioning probe"})
+    agent = cls("probe", options.with_run_defaults("probe", env))
     with tempfile.TemporaryDirectory() as tmp:
         ctx = RunContext(Workspace(Path(tmp)), Path(tmp) / ".state", env, UsageLedger(), Budget(), telemetry)
         return (await agent.run(request, ctx)).final_response

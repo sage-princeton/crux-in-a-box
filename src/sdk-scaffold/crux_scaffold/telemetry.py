@@ -52,8 +52,6 @@ class GenerationOutcome:
 
     output: Any = None
     usage: TokenUsage | None = None
-    #: The model actually used, when only the callee knows it (e.g. a coding agent's default model).
-    model: str | None = None
 
 
 class Telemetry(ABC):
@@ -134,7 +132,7 @@ class LangfuseTelemetry(Telemetry):
                 yield outcome
             finally:
                 usage = outcome.usage
-                observation.update(output=outcome.output, model=outcome.model or model, usage_details=usage and {
+                observation.update(output=outcome.output, usage_details=usage and {
                     "input": usage.input_tokens, "output": usage.output_tokens})
 
     def flush(self) -> None:

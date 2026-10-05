@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
+from dataclasses import replace
 from typing import Any, Self
 
 from agents import (
@@ -99,12 +100,12 @@ class OpenAIAgentsRuntime(AgentRuntime):
     async def __aexit__(self, *exc_info: object) -> None:
         await self._stack.aclose()
 
-    async def run(self, prompt: str) -> TurnOutcome:
+    async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
         try:
             result = await Runner.run(orchestrator, prompt, context=self.assembly.context,
                                       max_turns=self.options.max_turns, hooks=self.hooks, session=self.session,
-                                      run_config=self.run_config)
+                                      run_config=replace(self.run_config, workflow_name=workflow))
         except MaxTurnsExceeded:
             return TurnOutcome(final_output="", completed=False)
         return TurnOutcome(final_output=str(result.final_output), completed=True)

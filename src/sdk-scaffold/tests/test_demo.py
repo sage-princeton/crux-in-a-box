@@ -89,7 +89,7 @@ def test_the_demo_runs_both_phases_through_its_gates(tmp_path, capsys):
         slept.append(seconds)
 
     rc = main(["run", "--drop-in", str(root), "--state-dir", str(tmp_path / "state")],
-              env={"SLACK_BOT_TOKEN": "xoxb-test", "FAKE_SLACK_LOG": str(log)}, sleep=sleep,
+              env={"CRUX_MODEL": "gpt-test", "SLACK_BOT_TOKEN": "xoxb-test", "FAKE_SLACK_LOG": str(log)}, sleep=sleep,
               runtime_overrides={"models": {"product_manager": pm}})
     assert rc == 0
     assert capsys.readouterr().out.startswith("loop completed in phase implement")

@@ -147,7 +147,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 | Variable | Use |
 |---|---|
 | `OPENAI_API_KEY` | Agent and Codex model calls |
-| `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The default model and effort. Overridden by `[runtime]` or by an agent's own settings. |
+| `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The default model and effort for agents and coding agents. Overridden by `[runtime]` or by an agent's or coding agent's own settings. A run with no model for some agent or coding agent stops with a configuration error. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |

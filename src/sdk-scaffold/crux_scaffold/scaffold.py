@@ -45,6 +45,7 @@ class Scaffold:
         agents = {}
         for name, table in self.drop_in.config.coding_agents.items():
             cls, options = CODING_AGENTS.resolve(name, table)
+            options = options.with_run_defaults(name, self.context.env)
             agents[name] = cls(name, options, developer_instructions=self.drop_in.standing_context(options.context))
         return agents
 

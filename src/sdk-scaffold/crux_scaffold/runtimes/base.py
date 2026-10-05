@@ -50,8 +50,8 @@ class AgentRuntime(Component):
     async def __aexit__(self, *exc_info: object) -> None: ...
 
     @abstractmethod
-    async def run(self, prompt: str) -> TurnOutcome:
-        """Send one prompt to the orchestrator, continuing its session."""
+    async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
+        """Send one prompt to the orchestrator, continuing its session. `workflow` names the turn in traces."""
 
     @abstractmethod
     def describe(self) -> list[str]:

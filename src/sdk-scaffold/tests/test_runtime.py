@@ -73,8 +73,23 @@ def test_reasoning_effort_comes_from_env_unless_overridden(drop_in_dir, assemble
 
 
 def test_an_agent_without_a_model_is_a_config_error(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "scripted"\nmodel = "gpt-codex-test"')
     with pytest.raises(ConfigError, match="agent 'reviewer' has no model"):
         assemble(drop_in_dir, env={}).runtime.build()
+
+
+def test_coding_agents_take_the_run_model_and_effort_unless_the_drop_in_sets_them(drop_in_dir, assemble):
+    engineer = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "medium"}
+                        ).coding_agents["engineer"]
+    assert (engineer.options.model, engineer.options.reasoning_effort) == ("gpt-test", "medium")
+    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "scripted"\nmodel = "gpt-codex-test"')
+    engineer = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test"}).coding_agents["engineer"]
+    assert (engineer.options.model, engineer.options.reasoning_effort) == ("gpt-codex-test", None)
+
+
+def test_a_coding_agent_without_a_model_is_a_config_error(drop_in_dir, assemble):
+    with pytest.raises(ConfigError, match="coding agent 'engineer' has no model"):
+        assemble(drop_in_dir, env={})
 
 
 def test_mcp_server_gets_its_declared_env_but_not_the_scaffold_secrets(drop_in_dir, assemble, tmp_path, monkeypatch):

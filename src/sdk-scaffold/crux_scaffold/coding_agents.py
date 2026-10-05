@@ -4,9 +4,9 @@ implementation to. The coding agent brings its own proprietary scaffold; the dro
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import aclosing
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
 from openai_codex.generated.v2_all import ItemCompletedNotification
@@ -14,6 +14,7 @@ from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnComplete
 from pydantic import BaseModel
 
 from crux_scaffold.components import Component, Options, Registry
+from crux_scaffold.errors import ConfigError
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
@@ -24,12 +25,20 @@ class CodingAgentOptions(Options):
     model: str | None = None
     reasoning_effort: str | None = None
 
+    def with_run_defaults(self, name: str, env: Mapping[str, str]) -> Self:
+        """Take the run's CRUX_MODEL and CRUX_REASONING_EFFORT where the drop-in sets neither, as agents do, so the
+        model is decided (and traced) by the scaffold rather than by the coding agent's own default."""
+        model = self.model or env.get("CRUX_MODEL")
+        if not model:
+            raise ConfigError(f"coding agent '{name}' has no model: set CRUX_MODEL or the coding agent's model")
+        return self.model_copy(update={"model": model,
+                                       "reasoning_effort": self.reasoning_effort or env.get("CRUX_REASONING_EFFORT")})
+
 
 class CodingResult(BaseModel):
     completed: bool
     final_response: str
     usage: TokenUsage
-    model: str | None = None
 
     def as_tool_output(self) -> str:
         status = "completed" if self.completed else "did not complete"
@@ -50,7 +59,7 @@ class CodingAgent(Component):
     async def run(self, brief: str, ctx: RunContext) -> CodingResult:
         with ctx.telemetry.generation(self.name, self.options.model, brief) as outcome:
             result = await self.execute(brief, ctx)
-            outcome.output, outcome.usage, outcome.model = result.final_response, result.usage, result.model
+            outcome.output, outcome.usage = result.final_response, result.usage
         ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens)
         return result
 
@@ -108,10 +117,9 @@ class CodexCodingAgent(CodingAgent):
                                            output_tokens=total.output_tokens)
                     elif isinstance(payload, TurnCompletedNotification):
                         ended = payload.turn
-            model = self.options.model or (await thread.read()).thread.model
         completed = ended is not None and ended.status == TurnStatus.completed
         error = ended.error.message if ended is not None and ended.error else ""
-        return CodingResult(completed=completed, final_response=final_response or error, usage=usage, model=model)
+        return CodingResult(completed=completed, final_response=final_response or error, usage=usage)
 
 
 CODEX_TOOL_ITEMS = {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall",
