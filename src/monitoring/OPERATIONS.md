@@ -64,9 +64,10 @@ apply or write state. Plans use deployed image inputs and `-lock=false`; release
 replan under the deployment lock. Artifacts/comments contain resource addresses
 and actions only, never raw plans, state or attribute values.
 
-Before this workflow reaches `main`, validate it with
+Before this workflow reaches `main`, pushes to the review branch plan PR #21.
+Once registered, rerun it with
 `gh workflow run monitoring-plan.yml --ref ae-211-ec2-monitoring -f pull_request=21`.
-Remove its temporary feature-branch OIDC trust when that branch is retired.
+Remove its temporary feature-branch push trigger and OIDC trust when retired.
 Role policies/trust are versioned under `ci/plan-*.json`; repository variables are
 `MONITORING_PLAN_ROLE_ARN` and `MONITORING_CONFIG_BUCKET`.
 

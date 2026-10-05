@@ -1,6 +1,9 @@
 name: Monitoring PR plan
 
 on:
+  # Bootstrap validation for PR #21; remove with the temporary branch IAM trust.
+  push:
+    branches: [ae-211-ec2-monitoring]
   # This trusted workflow must reach main before automatic PR events activate.
   # Never use a PR-controlled workflow with a pull_request-wide AWS trust policy.
   pull_request_target:
@@ -17,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: monitoring-plan-${{ github.event.pull_request.number || inputs.pull_request }}
+  group: monitoring-plan-${{ github.event.pull_request.number || inputs.pull_request || '21' }}
   cancel-in-progress: true
 
 jobs:
@@ -41,7 +44,7 @@ jobs:
       - id: pr
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request || '21' }}
         run: python3 src/monitoring/ci/pr_plan.py context
 
   plan:
