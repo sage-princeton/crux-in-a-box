@@ -6,13 +6,13 @@ import boto3
 import httpx
 import pytest
 from moto import mock_aws
-
-from worker import Runtime
 from test_lifecycle import store
+
 from review import CoverageError
+from worker import Runtime
 
 
-@pytest.mark.parametrize('stateful', [False, True])
+@pytest.mark.parametrize("stateful", [False, True])
 def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, stateful):
     with mock_aws():
         monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
@@ -20,49 +20,106 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
         monkeypatch.setenv("MONITORING_TABLE", "monitoring-test")
         monkeypatch.setenv("MONITORING_SECRETS_PARAMETER", "/crux/monitoring/test")
         if stateful:
-            monkeypatch.setenv('MONITORING_INCIDENT_TABLE', store.table.name)
+            monkeypatch.setenv("MONITORING_INCIDENT_TABLE", store.table.name)
         s3 = boto3.client("s3")
         s3.create_bucket(Bucket="monitoring-test")
-        s3.put_bucket_versioning(Bucket="monitoring-test", VersioningConfiguration={"Status": "Enabled"})
-        boto3.client("dynamodb").create_table(TableName="monitoring-test", BillingMode="PAY_PER_REQUEST",
+        s3.put_bucket_versioning(
+            Bucket="monitoring-test", VersioningConfiguration={"Status": "Enabled"}
+        )
+        boto3.client("dynamodb").create_table(
+            TableName="monitoring-test",
+            BillingMode="PAY_PER_REQUEST",
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}])
-        instance = boto3.client("ec2").run_instances(ImageId="ami-12345678", MinCount=1, MaxCount=1)["Instances"][0]["InstanceId"]
+            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+        )
+        instance = boto3.client("ec2").run_instances(
+            ImageId="ami-12345678", MinCount=1, MaxCount=1
+        )["Instances"][0]["InstanceId"]
         end = int(time.time()) // 300 * 300
         logs = boto3.client("logs")
         logs.create_log_group(logGroupName="approved-evidence")
         logs.create_log_stream(logGroupName="approved-evidence", logStreamName="activity")
-        logs.put_log_events(logGroupName="approved-evidence", logStreamName="activity",
-                            logEvents=[{"timestamp": (end - 1) * 1000, "message": "fixture activity"}])
-        registry = {"expires_at": int(time.time()) + 3600, "inference_budget_usd": 1,
-                    "reviewer_models": ["google/gemini-example"], "targets": {instance: {
-                        "authorization": "Inspect the fixture only", "subject_families": ["openai"],
-                        "logs": [{"group": "approved-evidence", "streams": ["activity"]}]}}}
+        logs.put_log_events(
+            logGroupName="approved-evidence",
+            logStreamName="activity",
+            logEvents=[{"timestamp": (end - 1) * 1000, "message": "fixture activity"}],
+        )
+        registry = {
+            "expires_at": int(time.time()) + 3600,
+            "inference_budget_usd": 1,
+            "reviewer_models": ["google/gemini-example"],
+            "targets": {
+                instance: {
+                    "authorization": "Inspect the fixture only",
+                    "subject_families": ["openai"],
+                    "logs": [{"group": "approved-evidence", "streams": ["activity"]}],
+                }
+            },
+        }
         if stateful:
-            registry['fleet'] = {'exclude_names': ['crux-control'], 'langfuse_by_name': False}
-        s3.put_object(Bucket="monitoring-test", Key="config/registry.json", Body=json.dumps(registry))
-        secrets = {"MONITORING_OPENROUTER_API_KEY": "test-only-inference-credential",
-                   "MONITORING_SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/test/fixture/only"}
-        boto3.client("ssm").put_parameter(Name="/crux/monitoring/test", Type="SecureString", Value=json.dumps(secrets))
+            registry["fleet"] = {"exclude_names": ["crux-control"], "langfuse_by_name": False}
+        s3.put_object(
+            Bucket="monitoring-test", Key="config/registry.json", Body=json.dumps(registry)
+        )
+        secrets = {
+            "MONITORING_OPENROUTER_API_KEY": "test-only-inference-credential",
+            "MONITORING_SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/test/fixture/only",
+        }
+        boto3.client("ssm").put_parameter(
+            Name="/crux/monitoring/test", Type="SecureString", Value=json.dumps(secrets)
+        )
         counts = {"model": 0, "slack": 0}
-        report = {"summary": "fixture review", "workload_profile": "test workload", "next_source_ids": ["ec2:" + instance],
-                  "coverage_gaps": [], "findings": [{"category": "test", "detector_id": "other", "anchor_id": "ec2:" + instance, "severity": "low", "confidence": "low",
-                    "evidence": "fixture finding test-only-inference-credential", "source_ids": ["ec2:" + instance], "benign_explanation": "a test"}]}
+        report = {
+            "summary": "fixture review",
+            "workload_profile": "test workload",
+            "next_source_ids": ["ec2:" + instance],
+            "coverage_gaps": [],
+            "findings": [
+                {
+                    "category": "test",
+                    "detector_id": "other",
+                    "anchor_id": "ec2:" + instance,
+                    "severity": "low",
+                    "confidence": "low",
+                    "evidence": "fixture finding test-only-inference-credential",
+                    "source_ids": ["ec2:" + instance],
+                    "benign_explanation": "a test",
+                }
+            ],
+        }
 
         def handler(request):
             if request.url.path == "/api/v1/models":
-                return httpx.Response(200, json={"data": [{"id": "google/gemini-example",
-                    "pricing": {"prompt": "0.000001", "completion": "0.000001"}}]})
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "id": "google/gemini-example",
+                                "pricing": {"prompt": "0.000001", "completion": "0.000001"},
+                            }
+                        ]
+                    },
+                )
             if request.url.path == "/api/v1/chat/completions":
                 counts["model"] += 1
-                return httpx.Response(200, json={"model": "google/gemini-example", "choices": [{
-                    "finish_reason": "stop", "message": {"content": json.dumps(report)}}]})
+                return httpx.Response(
+                    200,
+                    json={
+                        "model": "google/gemini-example",
+                        "choices": [
+                            {"finish_reason": "stop", "message": {"content": json.dumps(report)}}
+                        ],
+                    },
+                )
             assert request.url.host == "hooks.slack.com"
             counts["slack"] += 1
             assert "Full report and evidence" in request.content.decode()
             assert "fixture finding" in request.content.decode()
             assert secrets["MONITORING_OPENROUTER_API_KEY"] not in request.content.decode()
-            return httpx.Response(503 if counts["slack"] == 1 else 200, text="busy" if counts["slack"] == 1 else "ok")
+            return httpx.Response(
+                503 if counts["slack"] == 1 else 200, text="busy" if counts["slack"] == 1 else "ok"
+            )
 
         runtime = Runtime()
         runtime.http.close()
@@ -70,9 +127,11 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
         end = int(time.time()) // 300 * 300
         if stateful:
             original_ingest = runtime.incident_store.ingest
+
             def fail_ingestion(*args, **kwargs):
-                raise CoverageError('temporary storage failure')
-            monkeypatch.setattr(runtime.incident_store, 'ingest', fail_ingestion)
+                raise CoverageError("temporary storage failure")
+
+            monkeypatch.setattr(runtime.incident_store, "ingest", fail_ingestion)
             runtime.inventory(refresh=True)
         with pytest.raises(CoverageError if stateful else httpx.HTTPStatusError):
             runtime.review(instance, end)
@@ -80,13 +139,15 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
         pending = runtime.state.get(key)
         assert pending["status"] == "pending_notification"
         if stateful:
-            monkeypatch.setattr(runtime.incident_store, 'ingest', original_ingest)
-            boto3.client('ec2').terminate_instances(InstanceIds=[instance])
-            s3.put_object(Bucket='monitoring-test', Key='inventory/targets.json', Body='{}')
-            registry['targets'] = {}
-            runtime.config['targets'] = {}
+            monkeypatch.setattr(runtime.incident_store, "ingest", original_ingest)
+            boto3.client("ec2").terminate_instances(InstanceIds=[instance])
+            s3.put_object(Bucket="monitoring-test", Key="inventory/targets.json", Body="{}")
+            registry["targets"] = {}
+            runtime.config["targets"] = {}
         else:
-            history = s3.get_object(Bucket="monitoring-test", Key="reviews/incidents/index.html")["Body"].read()
+            history = s3.get_object(Bucket="monitoring-test", Key="reviews/incidents/index.html")[
+                "Body"
+            ].read()
             assert b"fixture finding" not in history
             assert b"Activity requires review" in history
         runtime.review(instance, end)
@@ -95,12 +156,16 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
         runtime.review(instance, end)
         assert counts == {"model": 1, "slack": 0 if stateful else 2}
         if stateful:
-            assert runtime.incident_store.get('FLEET', instance)['review_count'] == 1
-            assert 'Contents' not in s3.list_objects_v2(Bucket='monitoring-test', Prefix='reviews/incidents/')
+            assert runtime.incident_store.get("FLEET", instance)["review_count"] == 1
+            assert "Contents" not in s3.list_objects_v2(
+                Bucket="monitoring-test", Prefix="reviews/incidents/"
+            )
         manifest = runtime.read_json(pending["artifact_prefix"] + "/manifest.json")
         assert len(manifest["artifacts"]) == 6
         for artifact in manifest["artifacts"]:
-            obj = s3.get_object(Bucket="monitoring-test", Key=artifact["key"], VersionId=artifact["version_id"])
+            obj = s3.get_object(
+                Bucket="monitoring-test", Key=artifact["key"], VersionId=artifact["version_id"]
+            )
             stored = obj["Body"].read()
             assert artifact["sha256"] == hashlib.sha256(stored).hexdigest()
             assert artifact["version_id"]
@@ -108,5 +173,8 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
             if artifact["key"].endswith("report.md"):
                 assert obj["ContentType"] == "text/markdown; charset=utf-8"
                 assert stored.decode().startswith("# Monitoring review\n")
-                assert "fixture finding" in stored.decode() and "Possible explanation: a test" in stored.decode()
+                assert (
+                    "fixture finding" in stored.decode()
+                    and "Possible explanation: a test" in stored.decode()
+                )
         runtime.http.close()

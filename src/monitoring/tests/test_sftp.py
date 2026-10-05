@@ -20,24 +20,54 @@ def docker(*args):
 def server():
     root = Path(__file__).resolve().parents[1]
     # A separate build context includes only the fixture, never operator configs.
-    import tempfile
     import shutil
+    import tempfile
+
     with tempfile.TemporaryDirectory() as context:
-        shutil.copytree(root / "tests", Path(context) / "tests", ignore=shutil.ignore_patterns("__pycache__"))
-        docker("build", "-q", "-t", "crux-inspection-fixture", "-f", str(Path(context) / "tests/sshd.Dockerfile"), context)
+        shutil.copytree(
+            root / "tests", Path(context) / "tests", ignore=shutil.ignore_patterns("__pycache__")
+        )
+        docker(
+            "build",
+            "-q",
+            "-t",
+            "crux-inspection-fixture",
+            "-f",
+            str(Path(context) / "tests/sshd.Dockerfile"),
+            context,
+        )
     container = docker("run", "-d", "--rm", "-p", "127.0.0.1::22", "crux-inspection-fixture")
     try:
         info = json.loads(docker("inspect", container))[0]
         port = int(info["NetworkSettings"]["Ports"]["22/tcp"][0]["HostPort"])
         for _ in range(30):
-            ready = subprocess.run(["docker", "exec", container, "test", "-s", "/etc/ssh/authorized_keys/crux-inspect"], capture_output=True)
+            ready = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    container,
+                    "test",
+                    "-s",
+                    "/etc/ssh/authorized_keys/crux-inspect",
+                ],
+                capture_output=True,
+            )
             if ready.returncode == 0:
                 break
             time.sleep(0.2)
         private = docker("exec", container, "cat", "/tmp/inspection-key") + "\n"
-        host = " ".join(docker("exec", container, "cat", "/etc/ssh/ssh_host_ed25519_key.pub").split()[:2])
-        yield {"boundary_verified": True, "host_key": host, "port": port,
-               "paths": ["/exports/activity.txt"]}, private
+        host = " ".join(
+            docker("exec", container, "cat", "/etc/ssh/ssh_host_ed25519_key.pub").split()[:2]
+        )
+        yield (
+            {
+                "boundary_verified": True,
+                "host_key": host,
+                "port": port,
+                "paths": ["/exports/activity.txt"],
+            },
+            private,
+        )
     finally:
         docker("stop", container)
 
@@ -50,7 +80,9 @@ def test_real_sftp_read_succeeds_and_symlinks_are_rejected(server):
         collect_sftp({**config, "paths": ["/exports/escape"]}, "127.0.0.1", private)
     wrong_host = paramiko.RSAKey.generate(2048)
     with pytest.raises(paramiko.SSHException):
-        collect_sftp({**config, "host_key": "ssh-rsa " + wrong_host.get_base64()}, "127.0.0.1", private)
+        collect_sftp(
+            {**config, "host_key": "ssh-rsa " + wrong_host.get_base64()}, "127.0.0.1", private
+        )
 
 
 def test_server_refuses_mutations_shell_and_forwarding(server):
@@ -60,16 +92,23 @@ def test_server_refuses_mutations_shell_and_forwarding(server):
     client = paramiko.SSHClient()
     # This test attacks server permissions; the production collector tests pinning.
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect("127.0.0.1", port=config["port"], username="crux-inspect",
-                   pkey=paramiko.Ed25519Key.from_private_key(io.StringIO(private)),
-                   look_for_keys=False, allow_agent=False)
+    client.connect(
+        "127.0.0.1",
+        port=config["port"],
+        username="crux-inspect",
+        pkey=paramiko.Ed25519Key.from_private_key(io.StringIO(private)),
+        look_for_keys=False,
+        allow_agent=False,
+    )
     try:
         with client.open_sftp() as sftp:
-            for operation in [lambda: sftp.open("/exports/new", "w"),
-                              lambda: sftp.remove("/exports/activity.txt"),
-                              lambda: sftp.mkdir("/exports/newdir"),
-                              lambda: sftp.rename("/exports/activity.txt", "/exports/renamed"),
-                              lambda: sftp.chmod("/exports/activity.txt", 0o777)]:
+            for operation in [
+                lambda: sftp.open("/exports/new", "w"),
+                lambda: sftp.remove("/exports/activity.txt"),
+                lambda: sftp.mkdir("/exports/newdir"),
+                lambda: sftp.rename("/exports/activity.txt", "/exports/renamed"),
+                lambda: sftp.chmod("/exports/activity.txt", 0o777),
+            ]:
                 with pytest.raises(OSError):
                     operation()
             with pytest.raises(OSError):

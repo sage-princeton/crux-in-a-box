@@ -4,139 +4,198 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from lifecycle import Conflict, IncidentStore, evidence_anchors, public_incident, sftp_anchor_positions
+from lifecycle import (
+    Conflict,
+    IncidentStore,
+    evidence_anchors,
+    public_incident,
+    sftp_anchor_positions,
+)
 
 
 @pytest.fixture
 def store():
     with mock_aws():
-        table = boto3.resource('dynamodb', region_name='us-east-1').create_table(
-            TableName='incidents', BillingMode='PAY_PER_REQUEST',
-            KeySchema=[{'AttributeName': 'pk', 'KeyType': 'HASH'}, {'AttributeName': 'sk', 'KeyType': 'RANGE'}],
-            AttributeDefinitions=[{'AttributeName': k, 'AttributeType': 'S'} for k in ('pk', 'sk', 'instance_id', 'id')],
-            GlobalSecondaryIndexes=[{'IndexName': 'instance-incidents',
-                'KeySchema': [{'AttributeName': 'instance_id', 'KeyType': 'HASH'}, {'AttributeName': 'id', 'KeyType': 'RANGE'}],
-                'Projection': {'ProjectionType': 'ALL'}}])
+        table = boto3.resource("dynamodb", region_name="us-east-1").create_table(
+            TableName="incidents",
+            BillingMode="PAY_PER_REQUEST",
+            KeySchema=[
+                {"AttributeName": "pk", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": k, "AttributeType": "S"}
+                for k in ("pk", "sk", "instance_id", "id")
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "instance-incidents",
+                    "KeySchema": [
+                        {"AttributeName": "instance_id", "KeyType": "HASH"},
+                        {"AttributeName": "id", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
+            ],
+        )
         yield IncidentStore(table)
 
 
-def report(text='Private evidence', anchor='observation:123'):
-    return {'summary': 'Review complete', 'review_status': 'completed', 'coverage_gaps': [],
-            'findings': [{'detector_id': 'unexpected_upload', 'anchor_id': anchor,
-                          'category': 'Private title', 'evidence': text, 'source_ids': [anchor],
-                          'severity': 'low', 'confidence': 'medium'}]}
+def report(text="Private evidence", anchor="observation:123"):
+    return {
+        "summary": "Review complete",
+        "review_status": "completed",
+        "coverage_gaps": [],
+        "findings": [
+            {
+                "detector_id": "unexpected_upload",
+                "anchor_id": anchor,
+                "category": "Private title",
+                "evidence": text,
+                "source_ids": [anchor],
+                "severity": "low",
+                "confidence": "medium",
+            }
+        ],
+    }
 
 
-def ingest(store, window=300, text='Private evidence', anchor='observation:123'):
-    store.ingest(report(text, anchor), f'REVIEW#i-test#{window}', 'reviews/test',
-                 {'slug': 'test-workload'}, {'prompt_sha256': 'prompt-1', 'reported_model': 'model-1'}, {anchor: anchor})
-    return list(store.all('INCIDENTS'))[0]
+def ingest(store, window=300, text="Private evidence", anchor="observation:123"):
+    store.ingest(
+        report(text, anchor),
+        f"REVIEW#i-test#{window}",
+        "reviews/test",
+        {"slug": "test-workload"},
+        {"prompt_sha256": "prompt-1", "reported_model": "model-1"},
+        {anchor: anchor},
+    )
+    return list(store.all("INCIDENTS"))[0]
 
 
 def test_close_reopen_repeated_review_preserves_id_state_and_history(store):
     item = ingest(store)
-    incident_id = item['id']
-    actor = {'id': 'operator@example.test', 'issuer': 'test-idp'}
-    closed = store.transition(incident_id, item['version'], 'closed', actor, 'Private resolution')
-    ingest(store, 600, 'Completely rephrased explanation')
+    incident_id = item["id"]
+    actor = {"id": "operator@example.test", "issuer": "test-idp"}
+    closed = store.transition(incident_id, item["version"], "closed", actor, "Private resolution")
+    ingest(store, 600, "Completely rephrased explanation")
     repeated = store.incident(incident_id)
-    assert repeated['status'] == 'closed' and repeated['review_count'] == 2
-    assert len(list(store.all('INCIDENTS'))) == 1
+    assert repeated["status"] == "closed" and repeated["review_count"] == 2
+    assert len(list(store.all("INCIDENTS"))) == 1
     with pytest.raises(Conflict):
-        store.transition(incident_id, closed['version'], 'open', actor)
-    reopened = store.transition(incident_id, repeated['version'], 'open', actor)
-    assert reopened['status'] == 'open' and reopened['id'] == incident_id
-    events, _ = store.page('HISTORY#' + incident_id, prefix='EVENT#')
-    assert [e['status'] for e in events] == ['closed', 'open']
-    assert events[0]['note'] == 'Private resolution' and events[0]['actor'] == actor
+        store.transition(incident_id, closed["version"], "open", actor)
+    reopened = store.transition(incident_id, repeated["version"], "open", actor)
+    assert reopened["status"] == "open" and reopened["id"] == incident_id
+    events, _ = store.page("HISTORY#" + incident_id, prefix="EVENT#")
+    assert [e["status"] for e in events] == ["closed", "open"]
+    assert events[0]["note"] == "Private resolution" and events[0]["actor"] == actor
     # Retrying the same review is not another observation, even if the reviewer wording changes.
-    ingest(store, 600, 'Retry text')
-    assert store.incident(incident_id)['review_count'] == 2
-    observations, _ = store.page('HISTORY#' + incident_id, prefix='OBS#')
+    ingest(store, 600, "Retry text")
+    assert store.incident(incident_id)["review_count"] == 2
+    observations, _ = store.page("HISTORY#" + incident_id, prefix="OBS#")
     assert len(observations) == 2
-    assert all(o['provenance']['prompt_sha256'] == 'prompt-1' for o in observations)
-    assert store.get('REVIEW#REVIEW#i-test#600', 'STATE')['window_start'] == -1200
-    assert 'Private' not in str(public_incident(reopened))
+    assert all(o["provenance"]["prompt_sha256"] == "prompt-1" for o in observations)
+    assert store.get("REVIEW#REVIEW#i-test#600", "STATE")["window_start"] == -1200
+    assert "Private" not in str(public_incident(reopened))
 
 
 def test_separate_source_event_creates_new_incident_and_reopening_does_not(store):
     item = ingest(store)
-    ingest(store, 600, anchor='observation:456')
-    fleet = [{'instance_id': 'i-test', 'last_updated': 600}]
-    assert store.summaries(fleet)[0]['total_incident_count'] == 2
-    store.transition(item['id'], item['version'], 'closed', {'id': 'operator'})
-    assert store.summaries(fleet)[0]['incident_count'] == 1
-    item = store.incident(item['id'])
-    store.transition(item['id'], item['version'], 'open', {'id': 'operator'})
-    assert store.summaries(fleet)[0]['total_incident_count'] == 2
+    ingest(store, 600, anchor="observation:456")
+    fleet = [{"instance_id": "i-test", "last_updated": 600}]
+    assert store.summaries(fleet)[0]["total_incident_count"] == 2
+    store.transition(item["id"], item["version"], "closed", {"id": "operator"})
+    assert store.summaries(fleet)[0]["incident_count"] == 1
+    item = store.incident(item["id"])
+    store.transition(item["id"], item["version"], "open", {"id": "operator"})
+    assert store.summaries(fleet)[0]["total_incident_count"] == 2
 
 
 def test_anchors_are_derived_from_source_events_not_window_or_prose():
-    sources = [{'id': 'observation:1', 'kind': 'langfuse', 'data': {'text': 'anything'}},
-               {'id': 'file:/exports/activity', 'kind': 'sftp', 'mtime': 100, 'data': 'upload'},
-               {'id': 'logs:group', 'kind': 'cloudwatch', 'data': [{'eventId': 'event-1', 'message': 'upload'}]}]
+    sources = [
+        {"id": "observation:1", "kind": "langfuse", "data": {"text": "anything"}},
+        {"id": "file:/exports/activity", "kind": "sftp", "mtime": 100, "data": "upload"},
+        {
+            "id": "logs:group",
+            "kind": "cloudwatch",
+            "data": [{"eventId": "event-1", "message": "upload"}],
+        },
+    ]
     before = evidence_anchors(sources)
-    sources[1]['mtime'] = 200
+    sources[1]["mtime"] = 200
     assert evidence_anchors(sources) == before
-    assert before['event:event-1'] == 'logs:group'
-    sources[1]['data'] = 'different event'
+    assert before["event:event-1"] == "logs:group"
+    sources[1]["data"] = "different event"
     assert evidence_anchors(sources) != before
 
 
 def test_expired_sessions_and_private_rows_never_enter_incident_listing(store):
     ingest(store)
-    store.put_once({'pk': 'SESSION#private', 'sk': 'STATE', 'expires_at': int(time.time()) - 1})
-    rows, _ = store.page('INCIDENTS')
-    assert len(rows) == 1 and rows[0]['pk'] == 'INCIDENTS'
+    store.put_once({"pk": "SESSION#private", "sk": "STATE", "expires_at": int(time.time()) - 1})
+    rows, _ = store.page("INCIDENTS")
+    assert len(rows) == 1 and rows[0]["pk"] == "INCIDENTS"
 
 
 def test_legacy_failed_review_retains_failure_without_explicit_status(store):
-    report = {'summary': 'Review unavailable', 'findings': [], 'coverage_gaps': ['Private failure']}
-    ids = store.ingest(report, 'REVIEW#i-test#300', 'reviews/legacy', {}, {}, {})
+    report = {"summary": "Review unavailable", "findings": [], "coverage_gaps": ["Private failure"]}
+    ids = store.ingest(report, "REVIEW#i-test#300", "reviews/legacy", {}, {}, {})
     incident = store.incident(ids[0])
-    assert incident['detector_id'] == 'monitoring:unavailable'
-    assert store.get('REVIEW#REVIEW#i-test#300', 'STATE')['review_status'] == 'failed'
+    assert incident["detector_id"] == "monitoring:unavailable"
+    assert store.get("REVIEW#REVIEW#i-test#300", "STATE")["review_status"] == "failed"
 
 
 def test_export_append_preserves_closed_incident_and_new_event_is_distinct(store):
-    source = {'id': 'file:/exports/events', 'kind': 'sftp', 'data': '{"id":"one","action":"upload"}\n'}
+    source = {
+        "id": "file:/exports/events",
+        "kind": "sftp",
+        "data": '{"id":"one","action":"upload"}\n',
+    }
     before = evidence_anchors([source])
     anchor = next(iter(before))
+
     def finding(event):
         result = report(anchor=event)
-        result['findings'][0]['source_ids'] = [source['id']]
+        result["findings"][0]["source_ids"] = [source["id"]]
         return result
-    store.ingest(finding(anchor), 'REVIEW#i-test#300', 'reviews/1', {}, {}, before)
-    item = list(store.all('INCIDENTS'))[0]
-    store.transition(item['id'], item['version'], 'closed', {'id': 'operator'})
-    source['data'] += '{"id":"two","action":"read"}\n'
+
+    store.ingest(finding(anchor), "REVIEW#i-test#300", "reviews/1", {}, {}, before)
+    item = list(store.all("INCIDENTS"))[0]
+    store.transition(item["id"], item["version"], "closed", {"id": "operator"})
+    source["data"] += '{"id":"two","action":"read"}\n'
     after = evidence_anchors([source])
     assert set(before) < set(after)
     assert dict(sftp_anchor_positions(source))[anchor] == 1
     assert dict(sftp_anchor_positions(source))[(set(after) - set(before)).pop()] == 2
-    store.ingest(finding(anchor), 'REVIEW#i-test#600', 'reviews/2', {}, {}, after)
-    assert len(list(store.all('INCIDENTS'))) == 1
-    assert store.incident(item['id'])['status'] == 'closed'
+    store.ingest(finding(anchor), "REVIEW#i-test#600", "reviews/2", {}, {}, after)
+    assert len(list(store.all("INCIDENTS"))) == 1
+    assert store.incident(item["id"])["status"] == "closed"
     new_anchor = (set(after) - set(before)).pop()
-    store.ingest(finding(new_anchor), 'REVIEW#i-test#900', 'reviews/3', {}, {}, after)
-    assert len(list(store.all('INCIDENTS'))) == 2
-    source['data'] = '{"id":"one","action":"rephrased"}\npartial'
-    source['truncated'] = True
+    store.ingest(finding(new_anchor), "REVIEW#i-test#900", "reviews/3", {}, {}, after)
+    assert len(list(store.all("INCIDENTS"))) == 2
+    source["data"] = '{"id":"one","action":"rephrased"}\npartial'
+    source["truncated"] = True
     assert evidence_anchors([source]) == before
 
 
 def test_compact_fleet_counts_retries_once_and_preserves_latest_review(store, monkeypatch):
-    store.put_once({'pk': 'FLEET', 'sk': 'i-test', 'instance_id': 'i-test',
-                    'slug': 'test', 'state': 'running', 'review_count': 100,
-                    'review_windows': {'old-' + str(n) for n in range(100)}})
-    store.sync_fleet([{'instance_id': 'i-test', 'slug': 'test', 'state': 'running'}])
+    store.put_once(
+        {
+            "pk": "FLEET",
+            "sk": "i-test",
+            "instance_id": "i-test",
+            "slug": "test",
+            "state": "running",
+            "review_count": 100,
+            "review_windows": {"old-" + str(n) for n in range(100)},
+        }
+    )
+    store.sync_fleet([{"instance_id": "i-test", "slug": "test", "state": "running"}])
     ingest(store, 900)
     ingest(store, 900)
     ingest(store, 300)
-    row = store.get('FLEET', 'i-test')
-    assert row['review_count'] == 102 and row['last_review'] == 900
-    assert 'review_windows' not in row
-    monkeypatch.setattr(store.table, 'scan', lambda **kwargs: pytest.fail('History table scan'))
-    assert store.summaries(list(store.all('FLEET')))[0]['incident_count'] == 1
+    row = store.get("FLEET", "i-test")
+    assert row["review_count"] == 102 and row["last_review"] == 900
+    assert "review_windows" not in row
+    monkeypatch.setattr(store.table, "scan", lambda **kwargs: pytest.fail("History table scan"))
+    assert store.summaries(list(store.all("FLEET")))[0]["incident_count"] == 1
     store.sync_fleet([], complete=True)
-    assert store.get('FLEET', 'i-test')['state'] == 'no longer present'
+    assert store.get("FLEET", "i-test")["state"] == "no longer present"

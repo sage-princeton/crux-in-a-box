@@ -7,14 +7,12 @@ import json
 import posixpath
 import re
 import stat
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
-import httpx
 import jsonschema
 import paramiko
-
 
 MAX_FILE_BYTES = 64 * 1024
 MAX_EVIDENCE_BYTES = 512 * 1024
@@ -31,15 +29,39 @@ SCHEMA = {
         "next_source_ids": {"type": "array", "maxItems": 8, "items": TEXT},
         "coverage_gaps": {"type": "array", "maxItems": 30, "items": TEXT},
         "findings": {
-            "type": "array", "maxItems": 30,
+            "type": "array",
+            "maxItems": 30,
             "items": {
-                "type": "object", "additionalProperties": False,
-                "required": ["category", "detector_id", "anchor_id", "severity", "confidence", "evidence", "source_ids", "benign_explanation"],
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "category",
+                    "detector_id",
+                    "anchor_id",
+                    "severity",
+                    "confidence",
+                    "evidence",
+                    "source_ids",
+                    "benign_explanation",
+                ],
                 "properties": {
                     "category": TEXT,
-                    "detector_id": {"type": "string", "enum": ["unexpected_upload", "credential_access", "destructive_action", "unauthorized_action", "instruction_tampering", "other"]},
+                    "detector_id": {
+                        "type": "string",
+                        "enum": [
+                            "unexpected_upload",
+                            "credential_access",
+                            "destructive_action",
+                            "unauthorized_action",
+                            "instruction_tampering",
+                            "other",
+                        ],
+                    },
                     "anchor_id": TEXT,
-                    "severity": {"type": "string", "enum": ["info", "low", "medium", "high", "critical"]},
+                    "severity": {
+                        "type": "string",
+                        "enum": ["info", "low", "medium", "high", "critical"],
+                    },
                     "confidence": {"type": "string", "enum": ["low", "medium", "high"]},
                     "evidence": TEXT,
                     "source_ids": {"type": "array", "minItems": 1, "maxItems": 20, "items": TEXT},
@@ -68,13 +90,15 @@ def digest(value):
 
 
 def iso(epoch):
-    return datetime.fromtimestamp(epoch, timezone.utc).isoformat()
+    return datetime.fromtimestamp(epoch, UTC).isoformat()
 
 
 def scrub(value, secrets):
     """Defense in depth; source exports must already be approved and scrubbed."""
     text = json.dumps(value, ensure_ascii=True)
-    for secret in sorted((s for s in secrets if isinstance(s, str) and len(s) >= 8), key=len, reverse=True):
+    for secret in sorted(
+        (s for s in secrets if isinstance(s, str) and len(s) >= 8), key=len, reverse=True
+    ):
         text = text.replace(json.dumps(secret)[1:-1], "[REDACTED]")
     text = re.sub(r"(?:sk-(?:ant-|or-v1-|lf-)?|gh[pousr]_)[A-Za-z0-9_-]{16,}", "[REDACTED]", text)
     text = re.sub(r"https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+", "[REDACTED]", text)
@@ -83,7 +107,14 @@ def scrub(value, secrets):
 
 def https_url(url):
     parsed = urlparse(url)
-    if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
         raise ValueError("An HTTPS endpoint without credentials, query, or fragment is required")
     return url.rstrip("/")
 
@@ -105,8 +136,10 @@ def collect_langfuse(client, config, secrets, start, end):
         raise CoverageError("No trusted Langfuse session mapping")
     url = https_url(secrets["MONITORING_LANGFUSE_BASE_URL"]) + "/api/public/v2/observations"
     params = {
-        "fromStartTime": iso(start), "toStartTime": iso(end),
-        "fields": "core,basic,io,metadata,model,trace_context", "limit": 50,
+        "fromStartTime": iso(start),
+        "toStartTime": iso(end),
+        "fields": "core,basic,io,metadata,model,trace_context",
+        "limit": 50,
     }
     if config.get("session_id"):
         params["sessionId"] = config["session_id"]
@@ -118,9 +151,9 @@ def collect_langfuse(client, config, secrets, start, end):
         try:
             page = get_json(client, url, params=params, auth=auth)
         except EvidenceLimitError:
-            if 'io' not in params['fields'].split(','):
+            if "io" not in params["fields"].split(","):
                 raise
-            params['fields'] = 'core,basic,metadata,model,trace_context'
+            params["fields"] = "core,basic,metadata,model,trace_context"
             page = get_json(client, url, params=params, auth=auth)
         for item in page["data"]:
             if config.get("session_id") and item.get("sessionId") != config["session_id"]:
@@ -128,8 +161,11 @@ def collect_langfuse(client, config, secrets, start, end):
             if config.get("environment") and item.get("environment") != config["environment"]:
                 raise CoverageError("Langfuse returned an unexpected instance environment")
             source = {"id": "observation:" + item["id"], "kind": "langfuse", "data": item}
-            if 'io' not in params['fields'].split(','):
-                source.update(truncated=True, coverage_gap='Langfuse inputs/outputs were omitted because the full page exceeded the evidence limit; content-level review is incomplete.')
+            if "io" not in params["fields"].split(","):
+                source.update(
+                    truncated=True,
+                    coverage_gap="Langfuse inputs/outputs were omitted because the full page exceeded the evidence limit; content-level review is incomplete.",
+                )
             result.append(source)
         if len(encoded(result)) > MAX_EVIDENCE_BYTES:
             raise CoverageError("Langfuse window exceeds evidence limit; narrow the window")
@@ -162,8 +198,17 @@ def collect_sftp(config, private_ip, private_key):
     key = paramiko.Ed25519Key.from_private_key(io.StringIO(private_key))
     result = []
     try:
-        ssh.connect(private_ip, port=port, username="crux-inspect", pkey=key, look_for_keys=False,
-                    allow_agent=False, timeout=10, auth_timeout=10, banner_timeout=10)
+        ssh.connect(
+            private_ip,
+            port=port,
+            username="crux-inspect",
+            pkey=key,
+            look_for_keys=False,
+            allow_agent=False,
+            timeout=10,
+            auth_timeout=10,
+            banner_timeout=10,
+        )
         with ssh.open_sftp() as sftp:
             sftp.get_channel().settimeout(15)
             for path in paths:
@@ -172,9 +217,15 @@ def collect_sftp(config, private_ip, private_key):
                     raise CoverageError("Export must be a regular file without symlink traversal")
                 with sftp.open(path, "rb") as handle:
                     data = handle.read(MAX_FILE_BYTES + 1)
-                result.append({"id": "file:" + path, "kind": "sftp", "mtime": info.st_mtime,
-                               "truncated": len(data) > MAX_FILE_BYTES,
-                               "data": data[:MAX_FILE_BYTES].decode("utf-8", errors="replace")})
+                result.append(
+                    {
+                        "id": "file:" + path,
+                        "kind": "sftp",
+                        "mtime": info.st_mtime,
+                        "truncated": len(data) > MAX_FILE_BYTES,
+                        "data": data[:MAX_FILE_BYTES].decode("utf-8", errors="replace"),
+                    }
+                )
     finally:
         ssh.close()
     return result
@@ -185,13 +236,20 @@ def collect_logs(client, sources, start, end):
     for source in sources:
         events, token = [], None
         for _ in range(MAX_PAGES):
-            args = {"logGroupName": source["group"], "logStreamNames": source["streams"],
-                    "startTime": start * 1000, "endTime": end * 1000, "limit": 100}
+            args = {
+                "logGroupName": source["group"],
+                "logStreamNames": source["streams"],
+                "startTime": start * 1000,
+                "endTime": end * 1000,
+                "limit": 100,
+            }
             if token:
                 args["nextToken"] = token
             page = client.filter_log_events(**args)
-            events.extend({"eventId": e["eventId"], "timestamp": e["timestamp"], "message": e["message"]}
-                          for e in page["events"])
+            events.extend(
+                {"eventId": e["eventId"], "timestamp": e["timestamp"], "message": e["message"]}
+                for e in page["events"]
+            )
             if len(encoded(events)) > MAX_EVIDENCE_BYTES:
                 raise CoverageError("CloudWatch window exceeds evidence limit")
             next_token = page.get("nextToken")
@@ -220,7 +278,11 @@ def model_family(model):
 
 
 def select_reviewer(models, sources, declared_families):
-    observed = {s["data"].get("model") for s in sources if s["kind"] == "langfuse" and s["data"].get("model")}
+    observed = {
+        s["data"].get("model")
+        for s in sources
+        if s["kind"] == "langfuse" and s["data"].get("model")
+    }
     families = {model_family(model) for model in observed}
     if None in families or not (families or declared_families):
         raise CoverageError("Subject model family is unknown; configure a trusted family mapping")
@@ -232,13 +294,24 @@ def select_reviewer(models, sources, declared_families):
 
 
 def evaluate(client, model, secret, payload, record_response=None):
-    response = client.post("https://openrouter.ai/api/v1/chat/completions", headers={"Authorization": "Bearer " + secret},
-                           json={"model": model, "max_tokens": 6000, "temperature": 0,
-                                 "provider": {"require_parameters": True, "data_collection": "deny"},
-                                 "messages": [{"role": "system", "content": PROMPT},
-                                              {"role": "user", "content": encoded(payload).decode()}],
-                                 "response_format": {"type": "json_schema", "json_schema": {
-                                     "name": "ec2_review", "strict": True, "schema": SCHEMA}}})
+    response = client.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers={"Authorization": "Bearer " + secret},
+        json={
+            "model": model,
+            "max_tokens": 6000,
+            "temperature": 0,
+            "provider": {"require_parameters": True, "data_collection": "deny"},
+            "messages": [
+                {"role": "system", "content": PROMPT},
+                {"role": "user", "content": encoded(payload).decode()},
+            ],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "ec2_review", "strict": True, "schema": SCHEMA},
+            },
+        },
+    )
     response.raise_for_status()
     body = response.json()
     if record_response:
@@ -253,12 +326,19 @@ def evaluate(client, model, secret, payload, record_response=None):
         cited.update(finding["source_ids"])
     if not cited <= allowed:
         raise CoverageError("Reviewer cited evidence that was not supplied")
-    anchors = payload.get('evidence_anchors', {})
-    for finding in report['findings']:
-        if finding['anchor_id'] not in anchors or anchors[finding['anchor_id']] not in finding['source_ids']:
-            raise CoverageError('Reviewer cited an event anchor that was not supplied')
+    anchors = payload.get("evidence_anchors", {})
+    for finding in report["findings"]:
+        if (
+            finding["anchor_id"] not in anchors
+            or anchors[finding["anchor_id"]] not in finding["source_ids"]
+        ):
+            raise CoverageError("Reviewer cited an event anchor that was not supplied")
     reported_model = body.get("model", "")
     if model_family(reported_model) != model_family(model):
         raise CoverageError("Provider reported an unexpected reviewer family")
-    return report, {"requested_model": model, "reported_model": reported_model,
-                    "usage": body.get("usage", {}), "generation_id": body.get("id")}
+    return report, {
+        "requested_model": model,
+        "reported_model": reported_model,
+        "usage": body.get("usage", {}),
+        "generation_id": body.get("id"),
+    }

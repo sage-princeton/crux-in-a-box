@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import boto3
 import pytest
 from botocore.exceptions import ClientError
@@ -5,16 +7,17 @@ from moto import mock_aws
 
 from review import CoverageError
 from worker import LEASE_SECONDS, Runtime, State
-from types import SimpleNamespace
 
 
 @pytest.fixture
 def state():
     with mock_aws():
         table = boto3.resource("dynamodb", region_name="us-east-1").create_table(
-            TableName="monitoring", BillingMode="PAY_PER_REQUEST",
+            TableName="monitoring",
+            BillingMode="PAY_PER_REQUEST",
             KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}])
+            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+        )
         yield State(table)
 
 
@@ -32,7 +35,12 @@ def test_lease_fences_stale_workers_and_completed_windows(state):
 def test_delivery_retry_keeps_saved_artifact_reference(state):
     key = "REVIEW#i-example#300"
     assert state.claim(key, "first", 1000)
-    state.save(key, "first", {"status": "pending_notification", "artifact_prefix": "reviews/saved"}, release=True)
+    state.save(
+        key,
+        "first",
+        {"status": "pending_notification", "artifact_prefix": "reviews/saved"},
+        release=True,
+    )
     assert state.claim(key, "retry", 1001)
     item = state.get(key)
     assert item["status"] == "pending_notification"
@@ -42,29 +50,35 @@ def test_delivery_retry_keeps_saved_artifact_reference(state):
 def test_discovery_persists_target_before_queue_and_retries_absent_workload(state, monkeypatch):
     runtime = Runtime.__new__(Runtime)
     runtime.state = state
-    runtime.config = {'expires_at': 9999, 'fleet': {'exclude_names': ['crux-control']}}
-    target = {'authorization': 'approved', 'langfuse': {'environment': 'experiment'}, 'service_worker': False}
-    monkeypatch.setenv('MONITORING_QUEUE', 'queue')
-    monkeypatch.setenv('MONITORING_REVIEW_JOB', 'review')
-    monkeypatch.setattr('worker.time.time', lambda: 600)
+    runtime.config = {"expires_at": 9999, "fleet": {"exclude_names": ["crux-control"]}}
+    target = {
+        "authorization": "approved",
+        "langfuse": {"environment": "experiment"},
+        "service_worker": False,
+    }
+    monkeypatch.setenv("MONITORING_QUEUE", "queue")
+    monkeypatch.setenv("MONITORING_REVIEW_JOB", "review")
+    monkeypatch.setattr("worker.time.time", lambda: 600)
     commands = []
+
     def submit(**kwargs):
-        command = kwargs['containerOverrides']['command']
-        if command[2] == 'review':
-            assert state.get(f'REVIEW#{command[3]}#{command[4]}')['target'] == target
+        command = kwargs["containerOverrides"]["command"]
+        if command[2] == "review":
+            assert state.get(f"REVIEW#{command[3]}#{command[4]}")["target"] == target
         commands.append(command)
+
     runtime.batch = SimpleNamespace(submit_job=submit)
     runtime.put = lambda *args: None
-    runtime.inventory = lambda **kwargs: ({'i-example': target}, [], set())
+    runtime.inventory = lambda **kwargs: ({"i-example": target}, [], set())
     # Simulate the index immediately exposing the newly created pending row.
-    state.pending = lambda: [state.get('REVIEW#i-example#600')]
+    state.pending = lambda: [state.get("REVIEW#i-example#600")]
     runtime.discover()
-    assert sum(c[2] == 'review' for c in commands) == 1
+    assert sum(c[2] == "review" for c in commands) == 1
     commands.clear()
-    monkeypatch.setattr('worker.time.time', lambda: 900)
+    monkeypatch.setattr("worker.time.time", lambda: 900)
     runtime.inventory = lambda **kwargs: ({}, [], set())
     runtime.discover()
-    assert ['python', 'worker.py', 'review', 'i-example', '600'] in commands
+    assert ["python", "worker.py", "review", "i-example", "600"] in commands
 
 
 def test_budget_reservations_stop_at_limit(state):
@@ -90,10 +104,17 @@ def test_notice_transitions_suppress_unchanged_failures_but_keep_recovery_and_fi
     runtime.state = state
     delivered = []
     runtime.notify = lambda report, *args: delivered.append(report)
-    failed = {"review_status": "failed", "review_error": "Workspace budget exhausted",
-              "summary": "Review unavailable", "findings": [], "coverage_gaps": ["Old export"]}
+    failed = {
+        "review_status": "failed",
+        "review_error": "Workspace budget exhausted",
+        "summary": "Review unavailable",
+        "findings": [],
+        "coverage_gaps": ["Old export"],
+    }
+
     def send(report, window):
         return runtime.deliver(report, f"REVIEW#i-test#{window}", "reviews/test", {})
+
     assert send(failed, 300) == "sent"
     assert send({**failed, "coverage_gaps": ["Old export", "No new traces"]}, 600) == "suppressed"
     assert send({**failed, "review_error": "Key revoked"}, 900) == "sent"
@@ -101,7 +122,12 @@ def test_notice_transitions_suppress_unchanged_failures_but_keep_recovery_and_fi
     assert send(idle, 1200) == "sent"
     assert not delivered[-1]["notification_recovery"]
     assert send(idle, 1500) == "suppressed"
-    healthy = {"review_status": "completed", "summary": "Reviewed", "findings": [], "coverage_gaps": []}
+    healthy = {
+        "review_status": "completed",
+        "summary": "Reviewed",
+        "findings": [],
+        "coverage_gaps": [],
+    }
     assert send(healthy, 1800) == "sent"
     assert delivered[-1]["notification_recovery"] is True
     assert send(healthy, 2100) == "suppressed"
@@ -115,15 +141,23 @@ def test_notice_transitions_suppress_unchanged_failures_but_keep_recovery_and_fi
 def test_notice_contention_and_failed_webhook_remain_retryable(state):
     runtime = Runtime.__new__(Runtime)
     runtime.state = state
-    report = {"review_status": "failed", "summary": "Review unavailable", "review_error": "Budget exhausted",
-              "findings": [], "coverage_gaps": []}
+    report = {
+        "review_status": "failed",
+        "summary": "Review unavailable",
+        "review_error": "Budget exhausted",
+        "findings": [],
+        "coverage_gaps": [],
+    }
     import time
+
     assert state.claim_notice("NOTICE#i-test", "other", int(time.time()))
     with pytest.raises(CoverageError, match="in progress"):
         runtime.deliver(report, "REVIEW#i-test#300", "reviews/test", {})
     state.save("NOTICE#i-test", "other", {"updated_at": 1}, release=True)
+
     def unavailable(*args):
         raise CoverageError("Webhook rejected delivery")
+
     runtime.notify = unavailable
     with pytest.raises(CoverageError, match="Webhook"):
         runtime.deliver(report, "REVIEW#i-test#300", "reviews/test", {})
