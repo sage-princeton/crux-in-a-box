@@ -31,8 +31,10 @@ if [ "$AGENT_PLATFORM" = codex ]; then
   CODEX_TRACE_MODE="${CODEX_TRACE_MODE:-stop-hook}"
   case "$CODEX_TRACE_MODE" in
     stop-hook) ;;
-    live) [ -f "$SCRIPT_DIR/codex-live-trace.py" ] && [ -f "$SCRIPT_DIR/live_trace/__init__.py" ] \
-            || die "codex-live-trace.py and live_trace/ were not copied alongside configure-run.sh." ;;
+    live)
+      if [ ! -f "$SCRIPT_DIR/codex-live-trace.py" ] || [ ! -f "$SCRIPT_DIR/live_trace/__init__.py" ]; then
+        die "codex-live-trace.py and live_trace/ were not copied alongside configure-run.sh."
+      fi ;;
     *) die "CODEX_TRACE_MODE must be stop-hook|live (got '$CODEX_TRACE_MODE')." ;;
   esac
   command -v python3 >/dev/null 2>&1 || die "python3 is not on PATH; the gateway's trace flush needs it."
@@ -144,7 +146,12 @@ jq -n --arg pk "$LANGFUSE_PUBLIC_KEY" --arg sk "$LANGFUSE_SECRET_KEY" \
            ("platform:" + $metadata.agentPlatform)]}' > "$CODEX_DIR/langfuse.json"
 chmod 600 "$CODEX_DIR/langfuse.json"
 
-# Set the tracing environment and user ID to the run slug.
+# Set the tracing environment and user ID to the run slug. Live mode replaces the
+# plugin's Stop hook, so the plugin is disabled there.
+PLUGIN_ENABLED=true
+if [ "$CODEX_TRACE_MODE" = live ]; then
+  PLUGIN_ENABLED=false
+fi
 cat > "$CODEX_DIR/config.toml" <<TOML
 personality = "pragmatic"
 model = "$CODEX_MODEL"
@@ -155,7 +162,7 @@ model_provider = "${MODEL_PROVIDER/direct/openai}"
 hooks = true
 
 [plugins."tracing@codex-observability-plugin"]
-enabled = $([ "$CODEX_TRACE_MODE" = live ] && echo false || echo true)
+enabled = $PLUGIN_ENABLED
 
 # Pin trusted_hash to authorize the Stop hook on unattended instances.
 [hooks.state."tracing@codex-observability-plugin:hooks/hooks.json:stop:0:0"]
