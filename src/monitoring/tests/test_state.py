@@ -19,7 +19,20 @@ def state():
                 {"AttributeName": "pk", "KeyType": "HASH"},
                 {"AttributeName": "sk", "KeyType": "RANGE"},
             ],
-            AttributeDefinitions=[{"AttributeName": k, "AttributeType": "S"} for k in ("pk", "sk")],
+            AttributeDefinitions=[
+                {"AttributeName": k, "AttributeType": "S"} for k in ("pk", "sk", "status")
+            ]
+            + [{"AttributeName": "updated_at", "AttributeType": "N"}],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "status-updated",
+                    "KeySchema": [
+                        {"AttributeName": "status", "KeyType": "HASH"},
+                        {"AttributeName": "updated_at", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
+            ],
         )
         yield State(table)
 
