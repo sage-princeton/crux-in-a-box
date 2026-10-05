@@ -236,7 +236,9 @@ the trace detail, session and observations views, not in lists built from root
 observations. Subagent turns nest under the turn that was running when they
 started. In this mode the gateway unit runs `codex-live-trace.py --once
 --finalize` instead of the plugin flush, which ends a killed turn with a
-`WARNING` root. Follow it with `journalctl -u crux-codex-live-trace`.
+`WARNING` root. Live mode doesn't install the plugin, since `codex plugin add`
+re-enables it and every turn would be traced twice; provisioning fails if its
+`Stop` hook still runs. Follow the exporter with `journalctl -u crux-codex-live-trace`.
 
 The exporter is the `live_trace/` package, installed to `/usr/local/lib/crux/`
 with its `codex-live-trace.py` entry point. Only `live_trace/codex.py` knows the

@@ -205,7 +205,12 @@ PLUGIN_MARKETPLACE="$CODEX_DIR/pinned-marketplaces/codex-observability-plugin"
 PLUGIN_ENTRY="$RUN_HOME/.codex/plugins/cache/codex-observability-plugin/tracing/$TRACING_PLUGIN_VERSION/dist/index.mjs"
 
 # Check that the hook file exists; plugin status can reflect configuration only.
-if [ ! -f "$PLUGIN_ENTRY" ]; then
+# Live mode traces without the plugin. Installing it would also re-enable it:
+# `codex plugin add` sets enabled = true in config.toml, and every turn would
+# then be traced twice.
+if [ "$CODEX_TRACE_MODE" = live ]; then
+  ok "skipped: CODEX_TRACE_MODE=live traces without the plugin"
+elif [ ! -f "$PLUGIN_ENTRY" ]; then
   # Codex reads a local marketplace in place, so it must outlive this script.
   mkdir -p "$PLUGIN_MARKETPLACE/.agents/plugins"
   jq -n --arg pkg "$PLUGIN_PACKAGE" --arg version "$TRACING_PLUGIN_VERSION" \
@@ -301,6 +306,11 @@ if [ "$HOOK_STATUS" != 0 ]; then
 fi
 
 if [ "$CODEX_TRACE_MODE" = live ]; then
+  if printf '%s' "$HOOK_OUT" | grep -q 'hook: Stop'; then
+    die "The tracing plugin's Stop hook still ran in live mode, so every turn would be traced twice.
+Check that ~/.codex/config.toml has the plugin disabled:
+    grep -A1 'plugins.\"tracing@codex-observability-plugin\"' $CODEX_DIR/config.toml"
+  fi
   LIVE_OUT="$(su - "$RUN_USER" -c "$LIVE --once" 2>&1)" \
     || die "The live trace exporter could not send the probe's turn to Langfuse:
 $LIVE_OUT"
