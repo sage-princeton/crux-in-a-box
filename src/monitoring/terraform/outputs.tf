@@ -7,5 +7,5 @@ output "discovery_job" { value = try(aws_batch_job_definition.discover[0].arn, n
 output "inspection_security_group" { value = aws_security_group.monitoring.id }
 output "operations_queue" { value = aws_sqs_queue.operations.url }
 output "incident_log_url" {
-  value = var.public_incident_log ? "https://${aws_s3_bucket.evidence.id}.s3.${var.region}.amazonaws.com/reviews/incidents/index.html" : null
+  value = null
 }

@@ -1,5 +1,5 @@
 {% extends 'base.html' %}{% block content %}
-<div class="page-heading"><h1>Incident overview</h1><span class="meta">Public incident log</span></div>
+<div class="page-heading"><h1>Incident overview</h1><span class="meta">All HAL incident log</span></div>
 <section class="overview" aria-label="Monitoring overview">
   <article class="summary-card"><h2>Incidents on this page</h2><div class="metric">{{ incidents|length }}</div><a href="#incident-table">{{ status|capitalize if status != 'all' else 'All' }} incidents</a><p class="card-description">Findings and monitoring issues awaiting review or retained in history.</p><div class="card-footer"><a class="button secondary" href="?status=all">View all incidents</a></div></article>
   <article class="summary-card"><h2>Workload coverage</h2><div class="metric-pair"><div><div class="metric">{{ fleet|selectattr('state','equalto','running')|list|length }}</div><a href="#coverage">Running workloads</a></div><div><div class="metric">{{ fleet|rejectattr('state','equalto','running')|list|length }}</div><span class="meta">Stopped / historical</span></div></div><p class="card-description">Coverage and incident status are tracked separately.</p><div class="card-footer"><a class="button secondary" href="#coverage">View coverage</a></div></article>

@@ -74,7 +74,7 @@ resource "terraform_data" "incident_activation" {
   lifecycle {
     precondition {
       condition     = !var.incident_state_enabled || var.web_enabled
-      error_message = "The stateful digest requires the public web app."
+      error_message = "The stateful digest requires the authenticated web app."
     }
   }
 }
@@ -85,14 +85,18 @@ resource "aws_s3_object" "legacy_incident_link" {
   key           = "reviews/incidents/index.html"
   content_type  = "text/html; charset=utf-8"
   cache_control = "no-store"
-  content       = "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=${local.web_origin}\"><title>CRUX incident log</title><p><a href=\"${local.web_origin}\">Open the public incident log</a></p></html>"
+  content       = "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=${local.web_origin}\"><title>CRUX incident log</title><p><a href=\"${local.web_origin}\">Open the incident log (AWS login required)</a></p></html>"
 }
 
 locals {
   web_service_configuration = var.web_enabled ? templatefile("${path.module}/web-service.sh.tftpl", {
-    region = var.region, repository = aws_ecr_repository.monitoring.repository_url,
-    image  = var.web_image_digest, proxy_image = var.proxy_image_digest,
-    table  = aws_dynamodb_table.incidents.name, origin = local.web_origin, revision = var.revision
+    region      = var.region,
+    repository  = aws_ecr_repository.monitoring.repository_url,
+    image       = var.web_image_digest,
+    proxy_image = var.proxy_image_digest,
+    table       = aws_dynamodb_table.incidents.name,
+    origin      = local.web_origin,
+    revision    = var.revision
   }) : ""
   web_origin = var.web_enabled ? "https://${replace(aws_eip.web[0].public_ip, ".", "-")}.sslip.io" : ""
 }

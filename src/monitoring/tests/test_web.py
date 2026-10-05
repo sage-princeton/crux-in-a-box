@@ -4,7 +4,6 @@ import time
 import pytest
 from lxml import html
 
-from lifecycle import public_incident
 from review import digest
 from test_lifecycle import ingest, report, store
 from web import create_app
@@ -35,6 +34,7 @@ def authorize(client, store, expires=None):
 
 
 def test_filtered_pages_are_full_and_running_instances_precede_history(client, store):
+    authorize(client, store)
     # Closed records sort first within the index; they must not consume the page.
     prototype = ingest(store)
     store.table.delete_item(Key={'pk': 'INCIDENTS', 'sk': prototype['id']})
@@ -62,19 +62,35 @@ def test_filtered_pages_are_full_and_running_instances_precede_history(client, s
     assert client.get('/?cursor=invalid', base_url=ORIGIN).status_code == 400
 
 
-def test_public_open_and_closed_pages_exclude_evidence_notes_and_actors(client, store):
+def test_anonymous_pages_redirect_without_disclosing_incidents(client, store):
     item = ingest(store, text='PRIVATE_TRANSCRIPT_MARKER<script>bad()</script>')
     store.transition(item['id'], item['version'], 'closed', {'id': 'PRIVATE_ACTOR'}, 'PRIVATE_NOTE')
-    for path in ['/?status=closed', '/?status=all', '/incidents/' + item['id']]:
+    for path in ['/', '/?status=closed', '/?status=all', '/incidents/' + item['id'], '/incidents/not-an-id']:
         response = client.get(path, base_url=ORIGIN)
-        assert response.status_code == 200
+        assert response.status_code == 302
+        assert response.headers['Location'] == '/auth/login'
         body = response.get_data(as_text=True)
-        assert 'Unexpected upload destination' in body
+        assert 'Unexpected upload destination' not in body
         assert 'PRIVATE_' not in body and 'reviews/test' not in body and 'observation:123' not in body
         assert 'name="version"' not in body
         assert response.headers['Cache-Control'] == 'no-store'
         assert response.headers['Referrer-Policy'] == 'same-origin'
     assert 'Unexpected upload destination' not in client.get('/', base_url=ORIGIN).get_data(as_text=True)
+    authorize(client, store)
+    body = client.get('/incidents/' + item['id'], base_url=ORIGIN).get_data(as_text=True)
+    assert 'Unexpected upload destination' in body
+    assert 'PRIVATE_TRANSCRIPT_MARKER' in body and 'PRIVATE_NOTE' in body and 'PRIVATE_ACTOR' in body
+    assert '<script>bad()</script>' not in body
+
+
+def test_readiness_discloses_no_incident_data_and_expired_session_cannot_read(client, store):
+    ingest(store, text='PRIVATE_TRANSCRIPT_MARKER')
+    authorize(client, store, expires=int(time.time()) - 1)
+    assert client.get('/', base_url=ORIGIN).status_code == 302
+    response = client.get('/healthz', base_url=ORIGIN)
+    assert response.status_code == 200
+    assert response.json == {'status': 'ok', 'revision': 'local'}
+    assert client.get('/static/incidents.css', base_url=ORIGIN).status_code == 200
 
 
 def test_auth_csrf_origin_stale_write_close_reopen_and_logout(client, store):
@@ -125,6 +141,7 @@ def test_malformed_security_tokens_are_rejected_without_server_errors(client, st
 
 @pytest.mark.parametrize('historical_state', ['terminated', 'no longer present'])
 def test_incident_tables_keep_distinct_instances_with_the_same_label_separate(client, store, historical_state):
+    authorize(client, store)
     first = ingest(store)
     store.sync_fleet([{'instance_id': 'i-test',
                     'slug': 'test-workload', 'state': 'running', 'review_count': 1}])

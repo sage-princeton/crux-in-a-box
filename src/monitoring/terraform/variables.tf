@@ -75,5 +75,5 @@ variable "schedule_end" {
 variable "public_incident_log" {
   type        = bool
   default     = false
-  description = "Allow anonymous HTTPS reads of the incident HTML only; reports and evidence remain private."
+  description = "Deprecated compatibility input; ignored. All S3 objects remain private."
 }

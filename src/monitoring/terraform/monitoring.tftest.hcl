@@ -126,22 +126,16 @@ run "activation_requires_image_and_registry" {
   expect_failures = [terraform_data.configuration]
 }
 
-run "public_log_does_not_publish_evidence" {
+run "legacy_public_input_cannot_reopen_s3" {
   command = apply
   variables { public_incident_log = true }
   assert {
-    condition = [for statement in jsondecode(aws_s3_bucket_policy.tls.policy).Statement : statement if statement.Effect == "Allow"] == [{
-      Sid       = "PublicIncidentLog"
-      Effect    = "Allow"
-      Principal = "*"
-      Action    = "s3:GetObject"
-      Resource  = "${aws_s3_bucket.evidence.arn}/reviews/incidents/index.html"
-    }]
-    error_message = "Anonymous access must permit only the current incident HTML, never reports, versions, or bucket listing."
+    condition     = length([for statement in jsondecode(aws_s3_bucket_policy.tls.policy).Statement : statement if statement.Effect == "Allow"]) == 0
+    error_message = "No object, including legacy HTML, may have a public policy grant."
   }
   assert {
-    condition     = aws_s3_bucket_public_access_block.evidence.block_public_acls && aws_s3_bucket_public_access_block.evidence.ignore_public_acls
-    error_message = "Public ACLs must remain blocked even when the HTML is published."
+    condition     = aws_s3_bucket_public_access_block.evidence.block_public_acls && aws_s3_bucket_public_access_block.evidence.ignore_public_acls && aws_s3_bucket_public_access_block.evidence.block_public_policy && aws_s3_bucket_public_access_block.evidence.restrict_public_buckets
+    error_message = "All four S3 public-access protections must remain enabled."
   }
 }
 

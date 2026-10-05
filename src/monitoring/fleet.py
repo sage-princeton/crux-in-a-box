@@ -108,7 +108,7 @@ def deliver_summary(runtime, summaries, force=False):
             runtime.state.save(key, owner, {'updated_at':int(time.time())}, release=True)
             return 'suppressed'
         if runtime.public_incident_log_url:
-            lines.append(f'<{runtime.public_incident_log_url}|Open the public incident log>')
+            lines.append(f'<{runtime.public_incident_log_url}|Open the incident log (AWS login required)>')
         chunks = []
         for line in lines:
             if chunks and len(chunks[-1]) + len(line) + 1 <= 3000:

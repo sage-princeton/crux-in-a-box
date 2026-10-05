@@ -60,7 +60,7 @@ def install_auth(app, store, settings):
     @app.get('/auth/login')
     def login():
         if not settings.get('idp'):
-            abort(503, 'AWS sign-in is awaiting Identity Center configuration. Public incident viewing is available.')
+            abort(503, 'AWS sign-in is awaiting Identity Center configuration.')
         auth = saml()
         nonce = secrets.token_urlsafe(32)
         url = auth.login(return_to=nonce)

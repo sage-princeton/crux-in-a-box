@@ -1,4 +1,4 @@
-"""Public incident pages and authenticated operator actions."""
+"""Authenticated incident pages and operator actions."""
 
 import base64
 import json
@@ -28,6 +28,19 @@ def create_app(store=None, settings=None):
     app.config.update(PUBLIC_ORIGIN=origin, TRUSTED_HOSTS=[parsed.hostname], MAX_CONTENT_LENGTH=128 * 1024)
     app.extensions['incidents'] = store
     install_auth(app, store, settings)
+
+    @app.before_request
+    def require_login():
+        if request.routing_exception and request.routing_exception.code == 400:
+            raise request.routing_exception
+        # Authentication endpoints, CSS, and the content-free readiness probe
+        # must work before login. All incident routes default to private.
+        if request.endpoint in {'login', 'callback', 'metadata', 'static', 'health'}:
+            return None
+        if not g.actor:
+            if request.method in {'GET', 'HEAD'}:
+                return redirect(url_for('login'))
+            abort(401, 'Sign in to access incidents.')
 
     @app.template_filter('stamp')
     def stamp(value):

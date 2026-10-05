@@ -102,15 +102,14 @@ def main():
                 pass
             time.sleep(5)
         else:
-            raise RuntimeError('Public web health did not confirm the deployed commit')
+            raise RuntimeError('HTTPS readiness did not confirm the deployed commit')
         response = client.get(outputs['incident_web_url'] + '/?status=all')
-        response.raise_for_status()
-        if 'Incident log' not in response.text:
-            raise RuntimeError('Public incident page did not contain the expected content')
+        if response.status_code != 302 or response.headers.get('location') != '/auth/login':
+            raise RuntimeError('Incident pages must require AWS login')
     config['registry_file'] = 'registry.json'
     s3.put_object(Bucket=bucket, Key='config/deployment.json', Body=json.dumps(config).encode(),
                   ContentType='application/json', ServerSideEncryption='AES256')
-    summary = f"Deployed `{revision}` to {outputs['incident_web_url']}; public HTTPS and revision checks passed.\n"
+    summary = f"Deployed `{revision}` to {outputs['incident_web_url']}; HTTPS, revision and login enforcement checks passed.\n"
     print(summary)
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as handle:

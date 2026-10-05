@@ -12,7 +12,7 @@ locals {
     { name = "MONITORING_INCIDENT_TABLE", value = var.incident_state_enabled ? aws_dynamodb_table.incidents.name : "" },
     { name = "MONITORING_SECRETS_PARAMETER", value = local.parameter_name },
     { name = "MONITORING_REVISION", value = var.revision },
-    { name = "MONITORING_PUBLIC_LOG_URL", value = var.incident_state_enabled ? local.web_origin : (var.public_incident_log ? "https://${aws_s3_bucket.evidence.bucket_regional_domain_name}/reviews/incidents/index.html" : "") }
+    { name = "MONITORING_PUBLIC_LOG_URL", value = var.incident_state_enabled ? local.web_origin : "" }
   ]
 }
 
@@ -36,19 +36,16 @@ resource "terraform_data" "configuration" {
 resource "aws_s3_bucket" "evidence" {
   #checkov:skip=CKV_AWS_144:Single-region monitoring evidence expires after 90 days; versioning protects against accidental overwrites.
   #checkov:skip=CKV2_AWS_62:Evidence is consumed synchronously by the worker; no event consumer exists.
-  #checkov:skip=CKV_AWS_145:SSE-S3 preserves anonymous reads of the legacy public HTML object; all evidence remains IAM-protected.
-  #checkov:skip=CKV2_AWS_6:Public access block is attached below; only the explicitly opted-in legacy HTML object permits public reads.
+  #checkov:skip=CKV_AWS_145:Existing evidence uses SSE-S3 with private IAM-only access; customer-key migration is tracked separately.
   bucket        = "${var.name}-${var.account_id}-${var.region}"
   force_destroy = false
 }
 resource "aws_s3_bucket_public_access_block" "evidence" {
-  #checkov:skip=CKV_AWS_54:Opt-in legacy HTML link needs its exact-object public policy; evidence prefixes are never public.
-  #checkov:skip=CKV_AWS_56:Opt-in legacy HTML link needs anonymous reads; public ACLs remain blocked.
   bucket                  = aws_s3_bucket.evidence.id
   block_public_acls       = true
-  block_public_policy     = !var.public_incident_log
+  block_public_policy     = true
   ignore_public_acls      = true
-  restrict_public_buckets = !var.public_incident_log
+  restrict_public_buckets = true
 }
 resource "aws_s3_bucket_versioning" "evidence" {
   bucket = aws_s3_bucket.evidence.id
@@ -62,15 +59,11 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "evidence" {
 }
 resource "aws_s3_bucket_policy" "tls" {
   bucket = aws_s3_bucket.evidence.id
-  policy = jsonencode({ Version = "2012-10-17", Statement = concat([{
+  policy = jsonencode({ Version = "2012-10-17", Statement = [{
     Effect    = "Deny", Principal = "*", Action = "s3:*",
     Resource  = [aws_s3_bucket.evidence.arn, "${aws_s3_bucket.evidence.arn}/*"],
     Condition = { Bool = { "aws:SecureTransport" = "false" } }
-    }], var.public_incident_log ? [{
-    Sid      = "PublicIncidentLog"
-    Effect   = "Allow", Principal = "*", Action = "s3:GetObject",
-    Resource = "${aws_s3_bucket.evidence.arn}/reviews/incidents/index.html"
-  }] : []) })
+  }] })
   depends_on = [aws_s3_bucket_public_access_block.evidence]
 }
 resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
