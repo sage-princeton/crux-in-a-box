@@ -203,11 +203,13 @@ An OpenRouter preset can enforce `provider.only=["google-vertex"]` and
 as the model. The BYOK key's shared-capacity fallback setting is still required.
 
 Boxes keep Ubuntu's daily unattended security upgrades, and needrestart still
-restarts the services they touch, except `crux-acp-gateway`: `install-run.sh`
-excludes it via `/etc/needrestart/conf.d/crux.conf`, because a restart kills the
-agent mid-turn and the gateway then moves on to the next queued task instead of
-resuming the run. `sudo needrestart -b` lists the gateway once it is running on
-stale libraries; restart it by hand between runs, never while a turn is in flight.
+restarts the services they touch, except the run services `crux-acp-gateway`
+and `crux-sdk-run`: `install-run.sh` excludes them via
+`/etc/needrestart/conf.d/crux.conf`, because a restart kills the agent mid-turn.
+The gateway then moves on to the next queued task instead of resuming the run;
+the SDK scaffold resumes but reruns the interrupted iteration. `sudo needrestart
+-b` lists either service once it is running on stale libraries; restart it by
+hand between runs, never while a turn is in flight.
 
 The gateway is not installed from npm. Upstream `@agentrq/acp-gateway` starts
 waiting for a permission verdict only once AgentRQ has acknowledged the request,

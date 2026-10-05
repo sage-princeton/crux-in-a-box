@@ -30,15 +30,17 @@ ok "apt packages in"
 
 # ====== NEEDRESTART ======
 # Unattended security upgrades stay on, and needrestart still restarts every
-# other service they touch. The gateway is the exception: every process the
-# agent launches runs inside its unit, so almost any library update flags it,
-# and a restart kills the run mid-turn. The gateway does not resume the
-# in-flight task afterwards, so the run is silently orphaned.
-info "needrestart: exclude crux-acp-gateway from automatic restarts"
+# other service they touch. The run services are the exception: every process
+# the agent launches runs inside its unit, so almost any library update flags
+# it, and a restart kills the run mid-turn. The ACP gateway does not resume the
+# in-flight task afterwards, so the run is silently orphaned; the SDK scaffold
+# resumes, but reruns the interrupted iteration from its start.
+info "needrestart: exclude crux-acp-gateway and crux-sdk-run from automatic restarts"
 NR_DROPIN=/etc/needrestart/conf.d/crux.conf
 install -d -m 755 "$(dirname "$NR_DROPIN")"
 cat > "$NR_DROPIN" <<'PERL'
 $nrconf{override_rc}{qr(^crux-acp-gateway\.service$)} = 0;
+$nrconf{override_rc}{qr(^crux-sdk-run\.service$)} = 0;
 PERL
 chmod 644 "$NR_DROPIN"
 ok "Wrote $NR_DROPIN"
