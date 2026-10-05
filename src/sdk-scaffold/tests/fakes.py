@@ -34,7 +34,7 @@ class FakeRuntime(AgentRuntime):
         return []
 
     @classmethod
-    async def probe(cls, env, prompt: str) -> str:
+    async def probe(cls, env, prompt: str, telemetry) -> str:
         return prompt
 
 

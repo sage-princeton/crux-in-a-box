@@ -4,8 +4,10 @@ import signal
 
 import pytest
 from agents import set_tracing_disabled
+from agents.models.multi_provider import MultiProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
+from crux_scaffold import cli
 from crux_scaffold.cli import main
 from crux_scaffold.telemetry import LangfuseTelemetry, NullTelemetry, RunIdentity, telemetry_from_env
 from crux_scaffold.usage import TokenUsage
@@ -89,16 +91,18 @@ def test_a_stopped_scaffold_sends_what_finished_and_marks_what_did_not(langfuse)
         assert "stopped" in spans[name].attributes["langfuse.observation.status_message"]
 
 
-def test_a_generation_carries_the_output_and_usage_set_inside_it(langfuse):
+def test_a_generation_carries_the_output_usage_and_model_set_inside_it(langfuse):
     telemetry, exporter = langfuse
     exporter.clear()
     with telemetry.trace("implement #1"):
-        with telemetry.generation("engineer", "gpt-codex-test", "TASK") as outcome:
+        with telemetry.generation("engineer", None, "TASK") as outcome:
             outcome.output, outcome.usage = "done", TokenUsage(requests=1, input_tokens=10, output_tokens=5)
+            outcome.model = "gpt-codex-default"
     telemetry.flush()
     engineer = next(span for span in exporter.get_finished_spans() if span.name == "engineer")
     assert engineer.attributes["langfuse.observation.output"] == "done"
     assert json.loads(engineer.attributes["langfuse.observation.usage_details"]) == {"input": 10, "output": 5}
+    assert engineer.attributes["langfuse.observation.model.name"] == "gpt-codex-default"
 
 
 def test_sigterm_mid_turn_sends_the_iteration_marked_as_stopped(langfuse, drop_in_dir, tmp_path):
@@ -109,3 +113,35 @@ def test_sigterm_mid_turn_sends_the_iteration_marked_as_stopped(langfuse, drop_i
     assert status == 128 + signal.SIGTERM
     iteration = next(span for span in exporter.get_finished_spans() if span.name == "main #1")
     assert iteration.attributes["langfuse.observation.level"] == "WARNING"
+
+
+def test_a_long_conversation_keeps_every_generation_in_the_run_session(langfuse, drop_in_dir, assemble):
+    """OpenTelemetry keeps at most 128 attributes per span and evicts the oldest, which are Langfuse's own. The
+    SDK's flattened per-message attributes grow with the conversation, so they must not be recorded."""
+    telemetry, exporter = langfuse
+    exporter.clear()
+    set_tracing_disabled(False)
+    reads = [call("read_file", {"path": "AGENTS.md"}, f"r{turn}") for turn in range(40)]
+    asyncio.run(assemble(drop_in_dir, {"pm": ScriptedModel(*reads, say("done"))}, env=ENV,
+                         telemetry=telemetry).run())
+    generations = [span for span in exporter.get_finished_spans()
+                   if span.attributes.get("openinference.span.kind") == "LLM"]
+    assert len(generations) == 41
+    for span in generations:
+        assert span.dropped_attributes == 0
+        assert span.attributes["session.id"] == "Demo-Slug"
+        assert span.attributes["llm.token_count.prompt"] == 10
+        assert "input.value" in span.attributes and "output.value" in span.attributes
+
+
+def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, monkeypatch):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    set_tracing_disabled(True)
+    monkeypatch.setattr(MultiProvider, "get_model", lambda self, name: ScriptedModel(say(cli.PROBE_MARKER)))
+    monkeypatch.setattr(telemetry.client, "auth_check", lambda: True)
+    assert main(["probe"], env={**ENV, "CRUX_MODEL": "gpt-test"}, telemetry=telemetry) == 0
+    spans = exporter.get_finished_spans()
+    root = next(span for span in spans if span.name == "crux-probe")
+    llm = [span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]
+    assert llm and {span.context.trace_id for span in llm} == {root.context.trace_id}

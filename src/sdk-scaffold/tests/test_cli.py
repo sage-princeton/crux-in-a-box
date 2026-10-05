@@ -80,7 +80,7 @@ def probe_telemetry(monkeypatch):
 def test_probe_passes_only_when_every_probed_agent_answers(monkeypatch, probe_telemetry, capsys):
     runtime = RUNTIMES.get("openai-agents")
 
-    async def answer(env, prompt):
+    async def answer(env, prompt, telemetry):
         return cli.PROBE_MARKER
 
     async def coding_answer(type_name, env, telemetry, request):

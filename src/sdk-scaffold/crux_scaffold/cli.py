@@ -108,7 +108,7 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
     request = f"Say exactly: {PROBE_MARKER}"
     try:
         with telemetry.trace("crux-probe"):
-            replies = {runtime: await RUNTIMES.get(runtime).probe(env, request)}
+            replies = {runtime: await RUNTIMES.get(runtime).probe(env, request, telemetry)}
             if coding_agent:
                 replies[coding_agent] = await probe_coding_agent(coding_agent, env, telemetry, request)
     finally:

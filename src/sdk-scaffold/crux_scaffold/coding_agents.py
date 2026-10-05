@@ -29,6 +29,7 @@ class CodingResult(BaseModel):
     completed: bool
     final_response: str
     usage: TokenUsage
+    model: str | None = None
 
     def as_tool_output(self) -> str:
         status = "completed" if self.completed else "did not complete"
@@ -49,7 +50,7 @@ class CodingAgent(Component):
     async def run(self, brief: str, ctx: RunContext) -> CodingResult:
         with ctx.telemetry.generation(self.name, self.options.model, brief) as outcome:
             result = await self.execute(brief, ctx)
-            outcome.output, outcome.usage = result.final_response, result.usage
+            outcome.output, outcome.usage, outcome.model = result.final_response, result.usage, result.model
         ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens)
         return result
 
@@ -107,9 +108,10 @@ class CodexCodingAgent(CodingAgent):
                                            output_tokens=total.output_tokens)
                     elif isinstance(payload, TurnCompletedNotification):
                         ended = payload.turn
+            model = self.options.model or (await thread.read()).thread.model
         completed = ended is not None and ended.status == TurnStatus.completed
         error = ended.error.message if ended is not None and ended.error else ""
-        return CodingResult(completed=completed, final_response=final_response or error, usage=usage)
+        return CodingResult(completed=completed, final_response=final_response or error, usage=usage, model=model)
 
 
 CODEX_TOOL_ITEMS = {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall",

@@ -55,6 +55,9 @@ class FakeThread:
         self.turns.append((brief, kwargs))
         return FakeTurn(self.events, self.log)
 
+    async def read(self):
+        return SimpleNamespace(thread=SimpleNamespace(model="gpt-codex-default"))
+
 
 class FakeCodex:
     """Stands in for openai_codex.AsyncCodex."""
@@ -94,7 +97,7 @@ class RecordingTelemetry(NullTelemetry):
                 return self.outcome
 
             def __exit__(self, *exc_info):
-                telemetry.generations.append((name, model, input, self.outcome.output,
+                telemetry.generations.append((name, self.outcome.model or model, input, self.outcome.output,
                                               self.outcome.usage.total_tokens))
 
         return Generation()
@@ -131,3 +134,12 @@ def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):
     result = asyncio.run(agent.run("TASK", ctx))
     assert fake.logins == []
     assert result.as_tool_output() == "[coding agent did not complete]\nsandbox denied"
+
+
+def test_the_generation_names_the_model_codex_resolved_when_the_drop_in_leaves_it_unset(tmp_path):
+    fake = FakeCodex([usage(1200, 300), item(ANSWER), completed()])
+    telemetry = RecordingTelemetry([])
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"}, client_factory=lambda ctx: fake)
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {}, UsageLedger(), Budget(), telemetry)
+    asyncio.run(agent.run("TASK", ctx))
+    assert [generation[1] for generation in telemetry.generations] == ["gpt-codex-default"]

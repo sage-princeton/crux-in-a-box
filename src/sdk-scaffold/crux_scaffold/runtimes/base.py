@@ -18,6 +18,7 @@ from crux_scaffold.workspace import RunContext
 
 if TYPE_CHECKING:
     from crux_scaffold.drop_in import DropInDirectory
+    from crux_scaffold.telemetry import Telemetry
 
 
 @dataclass
@@ -58,7 +59,7 @@ class AgentRuntime(Component):
 
     @classmethod
     @abstractmethod
-    async def probe(cls, env: Mapping[str, str], prompt: str) -> str:
+    async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry) -> str:
         """One model call outside any drop-in, used by provisioning to prove the runtime works."""
 
 

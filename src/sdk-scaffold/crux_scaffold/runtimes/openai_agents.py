@@ -22,6 +22,7 @@ from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool_context import ToolContext
 from openai.types.shared import Reasoning
+from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import Field, ValidationError
 
@@ -30,6 +31,7 @@ from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.errors import ConfigError, ToolError
 from crux_scaffold.runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
+from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool
 from crux_scaffold.usage import UsageLedger
 
@@ -86,10 +88,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 model=self._model(name, spec.model), model_settings=self._settings(spec.reasoning_effort))
 
     async def __aenter__(self) -> Self:
-        telemetry = self.assembly.context.telemetry
-        set_tracing_disabled(not telemetry.sdk_tracing)
-        if telemetry.sdk_tracing:
-            instrument_agents_sdk()
+        trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
         for server in self.servers.values():
             await self._stack.enter_async_context(server)
@@ -117,7 +116,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 f"mcp [{', '.join(config.agents[name].mcp_servers)}]" for name, agent in self.agents.items()]
 
     @classmethod
-    async def probe(cls, env: Mapping[str, str], prompt: str) -> str:
+    async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry) -> str:
+        trace_agents_sdk(telemetry)
         model = env.get("CRUX_MODEL")
         if not model:
             raise ConfigError("CRUX_MODEL is not set")
@@ -180,8 +180,18 @@ def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str]) -> M
                           name=name, cache_tools_list=True, client_session_timeout_seconds=config.timeout_seconds)
 
 
+def trace_agents_sdk(telemetry: Telemetry) -> None:
+    set_tracing_disabled(not telemetry.sdk_tracing)
+    if telemetry.sdk_tracing:
+        instrument_agents_sdk()
+
+
 def instrument_agents_sdk() -> None:
-    """Export Agents SDK spans through OpenTelemetry (and so into Langfuse) instead of to the OpenAI platform."""
+    """Export Agents SDK spans through OpenTelemetry (and so into Langfuse) instead of to the OpenAI platform.
+
+    Langfuse reads a generation's input and output from `input.value` and `output.value`. The per-message copies
+    (`llm.input_messages.*`) grow with the conversation, and past OpenTelemetry's 128-attribute limit they evict a
+    span's oldest attributes: Langfuse's session, tags, model and usage."""
     instrumentor = OpenAIAgentsInstrumentor()
     if not instrumentor.is_instrumented_by_opentelemetry:
-        instrumentor.instrument()
+        instrumentor.instrument(config=TraceConfig(hide_input_messages=True, hide_output_messages=True))

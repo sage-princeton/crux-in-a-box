@@ -8,8 +8,16 @@ import signal
 
 from agents.items import ModelResponse
 from agents.models.interface import Model
+from agents.tracing import response_span
 from agents.usage import Usage
-from openai.types.responses import ResponseFunctionToolCall, ResponseOutputMessage, ResponseOutputText
+from openai.types.responses import (
+    Response,
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+    ResponseUsage,
+)
+from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
 
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent, CodingAgentOptions, CodingResult
 from crux_scaffold.usage import TokenUsage
@@ -27,7 +35,8 @@ def say(text: str) -> ResponseOutputMessage:
 
 
 class ScriptedModel(Model):
-    """Replays scripted model outputs and records what the model was sent."""
+    """Replays scripted model outputs and records what the model was sent. Like the real Responses model, it traces
+    each call as a response span."""
 
     def __init__(self, *turns):
         self.turns = list(turns)
@@ -39,7 +48,16 @@ class ScriptedModel(Model):
         self.inputs.append(input)
         if not self.turns:
             raise AssertionError("ScriptedModel ran out of scripted turns")
-        return ModelResponse(output=[self.turns.pop(0)], response_id=None,
+        output = [self.turns.pop(0)]
+        with response_span() as span:
+            span.span_data.input = input
+            span.span_data.response = Response(
+                id="resp_scripted", created_at=0, model="scripted", object="response", output=output,
+                parallel_tool_calls=True, tool_choice="auto", tools=[],
+                usage=ResponseUsage(input_tokens=10, output_tokens=5, total_tokens=15,
+                                    input_tokens_details=InputTokensDetails(cached_tokens=0, cache_write_tokens=0),
+                                    output_tokens_details=OutputTokensDetails(reasoning_tokens=0)))
+        return ModelResponse(output=output, response_id=None,
                              usage=Usage(requests=1, input_tokens=10, output_tokens=5, total_tokens=15))
 
     def stream_response(self, *args, **kwargs):
