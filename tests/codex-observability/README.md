@@ -10,6 +10,7 @@ These tests check what the Codex Langfuse plugin (`@langfuse/codex-observability
 | `expectations/plugin-<TRACING_PLUGIN_VERSION>.json` | the plugin pin | what that plugin version exports, one key per behavior |
 | `test_version_pins.py` | | fails when a pin, or the codex that codex-acp installs, moves past the fixtures or expectations |
 | `test_tracing.py` | | one test per pilot failure mode |
+| `test_flush.py` | | the gateway unit's flush of turns that never reached `Stop` (`src/ec2-workspaces/codex-flush-turns.py`) |
 | `rollout_shape.py` | | reduces rollouts to structure only, for re-recording fixtures from a run box |
 
 The pins are read from `src/ec2-workspaces/placeholders-base.txt.example`. When the fixture directory or expectations file named by the current pins doesn't exist, the run stops before any test with a banner naming the pin that changed.
@@ -29,10 +30,14 @@ The pins are read from `src/ec2-workspaces/placeholders-base.txt.example`. When 
 | `test_stop_before_task_complete_uploads_the_turn_once` | duplicate traces of one turn |
 | `test_reupload_after_lost_sidecar_reuses_trace_and_span_ids` | duplicate traces of one turn |
 | `test_pilot_sized_rollout_uploads_within_the_hook_timeout` | Codex kills the `Stop` hook after 30s |
+| `test_flush_uploads_a_killed_turn_with_its_subagents_tagged_as_flushed` | the 06:43 turn lost to a gateway SIGTERM |
+| `test_flush_twice_uploads_once`, `test_stop_after_a_resumed_thread_does_not_reupload_the_flushed_turn`, `test_flush_leaves_turns_stop_already_uploaded` | duplicate traces of one turn |
+| `test_flush_uploads_an_interrupted_turn_no_stop_followed` | an interrupted turn waits for a `Stop` that never comes |
+| `test_flush_skips_a_rollout_a_live_codex_still_has_open` | freezing a turn that is still running (Linux only) |
 
 Known gaps in plugin 0.4.0, recorded in its expectations:
 - A model step's generation starts at its first assistant message or tool call. A step that goes straight from reasoning to a tool call therefore still reports about 0s.
-- A turn that hasn't finished is never uploaded, so the only way to see a long turn is for it to end.
+- A turn that hasn't finished is never uploaded, so the only way to see a long turn is for it to end. The gateway's flush uploads a killed turn once the gateway exits.
 
 ## Running locally
 
