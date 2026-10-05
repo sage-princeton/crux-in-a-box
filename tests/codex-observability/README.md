@@ -11,6 +11,7 @@ These tests check what the Codex Langfuse plugin (`@langfuse/codex-observability
 | `test_version_pins.py` | | fails when a pin, or the codex that codex-acp installs, moves past the fixtures or expectations |
 | `test_tracing.py` | | one test per pilot failure mode |
 | `test_flush.py` | | the gateway unit's flush of turns that never reached `Stop` (`src/ec2-workspaces/codex-flush-turns.py`) |
+| `test_live_trace.py` | | the live exporter for `CODEX_TRACE_MODE=live` (`src/ec2-workspaces/codex-live-trace.py` and `live_trace/`), including tool-call and line types it has never seen: each test writes a rollout a piece at a time and runs one pass per piece, and every observation must arrive exactly once |
 | `rollout_shape.py` | | reduces rollouts to structure only, for re-recording fixtures from a run box |
 
 The pins are read from `src/ec2-workspaces/placeholders-base.txt.example`. When the fixture directory or expectations file named by the current pins doesn't exist, the run stops before any test with a banner naming the pin that changed.

@@ -220,6 +220,36 @@ codex still holds open is left alone. See what it did with
 `journalctl -u crux-acp-gateway | grep codex-flush`, or list what it would upload
 with `sudo -iu ubuntu python3 /usr/local/lib/crux/codex-flush-turns.py --plugin <dist/index.mjs> --reason manual --check`.
 
+`CODEX_TRACE_MODE=live` (experimental) shows a turn in Langfuse while it runs.
+Langfuse v4 never updates an observation it has stored, so instead of the
+plugin's `Stop` hook a service, `crux-codex-live-trace`, reads the rollouts every
+30s and sends each observation once, as soon as it is complete:
+
+- a `Codex Turn started` event with the turn's input, when the prompt is written
+- an `LLM` generation per model response, with its tool calls and token usage
+- a tool span per call, once its output is written
+- anything else the turn recorded, as a span (under code mode, each shell command
+  `exec` ran) or, for a line the exporter does not recognise, an event; the root
+  lists unrecognised line types in `codex.unrecognized_types`, and the service logs them
+- the `Codex Turn` root, with the input and output, when the turn ends
+
+Ids come from the thread, turn and call, so children point at their root before
+it arrives and nothing is sent twice. Until the root arrives, the turn shows in
+the trace detail, session and observations views, not in lists built from root
+observations. Subagent turns nest under the turn that was running when they
+started. In this mode the gateway unit runs `codex-live-trace.py --once
+--finalize` instead of the plugin flush, which ends a killed turn with a
+`WARNING` root. Live mode doesn't install the plugin, since `codex plugin add`
+re-enables it and every turn would be traced twice; provisioning fails if its
+`Stop` hook still runs. Follow the exporter with `journalctl -u crux-codex-live-trace`.
+
+The exporter is the `live_trace/` package, installed to `/usr/local/lib/crux/`
+with its `codex-live-trace.py` entry point. Only `live_trace/codex.py` knows the
+Codex rollout format; the turn model, the Langfuse observation schema, the ledger
+of sent ids and the OTLP sink are shared. Tracing another agent means one more
+`TranscriptSource` subclass and entry point; `live_trace/__init__.py` describes
+the design.
+
 ### Teardown a workspace
 
 This will:
