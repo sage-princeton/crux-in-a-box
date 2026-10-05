@@ -49,13 +49,13 @@ Each criterion is binary. Each one is proved by an artifact on disk under `runs/
    A control that renders but does nothing counts as a failure, not a partial pass.
 
    Subscription forms work when they deliver to the same list the source's form does: the same external endpoint or provider, with the same fields. Verify this by inspecting the source form and the request your form would send, for example with Playwright request interception. **Never submit a real subscription** on either site. If the source relies on a provider you cannot reuse from a self-hosted site, build the nearest working equivalent and log the difference.
-5. **Public access, restricted admin.** The site is publicly reachable over HTTPS on a domain you registered (§ Environment). The Payload admin is restricted to exactly these users: {{ADMIN_EMAILS|nn7887@princeton.edu, mm9934@princeton.edu}}. No other account can log in.
+5. **Public access, restricted admin.** The site is publicly reachable over HTTPS on a domain you registered (§ Environment). The Payload admin is restricted to exactly these users: nn7887@princeton.edu, mm9934@princeton.edu. No other account can log in.
    - Create an account for each of those emails, with a strong random password.
    - Store the passwords only on this box, in a file outside the git repository (for example `/srv/crux-run/admin-credentials.txt`, mode 600).
    - Put the file's path, never the passwords, in the completion report. The operator hands the passwords over.
    - Do your own content work through Payload's Local API or an API key, not through an extra admin login. Delete any temporary account you create before the final iteration.
 6. **Accessibility.** On every pilot page, WAVE errors and contrast errors are no worse than on the source page.
-7. **Performance.** Core Web Vitals on the new site are in the "good" range: LCP ≤ 2.5 s, CLS ≤ 0.1, and INP ≤ 200 ms (TBT stands in for INP in lab runs). They are also no worse than the source by more than {{PERF_MARGIN|10%}}.
+7. **Performance.** Core Web Vitals on the new site are in the "good" range: LCP ≤ 2.5 s, CLS ≤ 0.1, and INP ≤ 200 ms (TBT stands in for INP in lab runs). They are also no worse than the source by more than 10%.
 8. **Security.** An OWASP ZAP full scan of the new site raises no High-risk alert, and no alert type that is absent from both source test-site scans. The baseline is the union of the two source scans' alert types.
 
 ## Verification
@@ -127,10 +127,10 @@ Record per-page, per-axis results in `runs/<N>/rubric.md`, with a one-line reaso
 <!-- prettier-ignore -->
 | Resource | Cap | Measure with |
 |---|---|---|
-| Time | {{DEADLINE|6 weeks from launch}} | the clock, against your `PLAN.md` milestones |
-| LLM spend (your own Claude Code / Codex session tokens, including any subagents) | {{LLM_BUDGET|$100}} | a script you write at hour 0, `scripts/llm_costs.py`: it sums token usage from your scaffold's own session transcripts (find where your scaffold stores them) and multiplies by the model's published prices. Record the method and prices in `LOG.md`. Never hand-estimate |
-| Third-party API spend (WAVE credits, any other paid API) | {{API_BUDGET|$100}} | WAVE's remaining-credits field on each response, against the starting balance you record at hour 0, converted at {{WAVE_CREDIT_PRICE|$0.04}} per credit. PageSpeed Insights is free within its daily quota |
-| AWS spend in the auxiliary account (everything you provision, including the domain registration) | {{AWS_BUDGET|$100}} | `aws ce get-cost-and-usage` against the auxiliary account (it lags by about a day), plus your own running tally of what you launched and its hourly price |
+| Time | 6 weeks from launch | the clock, against your `PLAN.md` milestones |
+| LLM spend (your own Claude Code / Codex session tokens, including any subagents) | $100 | a script you write at hour 0, `scripts/llm_costs.py`: it sums token usage from your scaffold's own session transcripts (find where your scaffold stores them) and multiplies by the model's published prices. Record the method and prices in `LOG.md`. Never hand-estimate |
+| Third-party API spend (WAVE credits, any other paid API) | $100 | WAVE's remaining-credits field on each response, against the starting balance you record at hour 0, converted at $0.04 per credit. PageSpeed Insights is free within its daily quota |
+| AWS spend in the auxiliary account (everything you provision, including the domain registration) | $100 | `aws ce get-cost-and-usage` against the auxiliary account (it lags by about a day), plus your own running tally of what you launched and its hourly price |
 
 These caps are small, on purpose: this run is a pilot. Choose instance and database sizes, and how often you run checks, with that in mind. A single `db.t4g.micro` Postgres and a small EC2 instance are plenty for a 20-page pilot. Stop anything you are not using.
 
@@ -220,7 +220,7 @@ Verify everything here at hour 0 and correct this section where reality differs.
   - Production is `https://citp.princeton.edu/`. Use it for reference only.
 - **Source — CITP blog (WordPress):**
   - Test copy: `https://blogs-qa.princeton.edu/blog-citp/`. This is the migration source.
-  - It sits behind a Pantheon site lock (HTTP basic auth). The lock exists only to keep search engines and bots out, so use these credentials freely: user `{{BLOGS_QA_USER}}`, password `{{BLOGS_QA_PASSWORD}}`.
+  - It sits behind a Pantheon site lock (HTTP basic auth). The lock exists only to keep search engines and bots out, so use these credentials freely: user `wds`, password `oit`.
   - Get past the lock for the crawl, the REST API (`/wp-json/wp/v2/*`), the sitemap and the ZAP scan. If you truly cannot, fall back to production `https://blog.citp.princeton.edu/` (public; sitemap index at `/sitemap_index.xml`, REST API public) for content, and log the fallback.
   - Blog posts link to main-site pages on `citp.princeton.edu`. Rewrite those links to their mapped targets.
 - **AWS — the auxiliary account:**
@@ -228,7 +228,7 @@ Verify everything here at hour 0 and correct this section where reality differs.
   - Assume the role in `$AUX_RESOURCE_ROLE_ARN` (account `$AUX_RESOURCE_ACCOUNT_ID`) from this box's instance credentials, for example with an `~/.aws/config` profile using `role_arn` and `credential_source = Ec2InstanceMetadata`. That role covers RDS, S3, EC2 (including load balancers), Route53 (including domain registration), CloudFront, ACM and Cost Explorer. It can also create IAM roles and instance profiles named `crux-app-*`, but only with the `crux-app-boundary` permissions boundary attached (S3 in the auxiliary account, plus CloudWatch Logs), and it can pass them only to EC2. Give your Payload server its S3 access through such an instance role, not through access keys.
   - Confirm at hour 0 exactly what it allows. If something you need is denied, that is an escalation (§ When to stop).
   - Nothing in the main CRUX account is yours to change.
-- **Domain:** register an available, descriptive domain with `crux` in the name through Route53 in the auxiliary account, for example something naming CITP. Log the choice. The registration fee counts against the AWS budget. Use these registrant contact details exactly as given, with privacy protection on: {{DOMAIN_CONTACT}}.
+- **Domain:** register an available, descriptive domain with `crux` in the name through Route53 in the auxiliary account, for example something naming CITP. Log the choice. The registration fee counts against the AWS budget. Use these registrant contact details exactly as given, with privacy protection on: Max Morgan, Center for Information Technology Policy, Princeton University, 303 Sherrerd Hall, Princeton, NJ 08544, 609-258-9658, max.posh354@passmail.net.
 - **Payload CMS:**
   - Use the current stable major version (v3). Match its docs to the installed version: `https://payloadcms.com/docs/v3/llms.txt` and `llms-full.txt`, and any docs page as `.md`.
   - The official MCP plugin (`@payloadcms/plugin-mcp`) and the S3 storage adapter (`@payloadcms/storage-s3`) are available.

@@ -1,9 +1,3 @@
-# Launch Prompt
-
-_Operator: submit everything below the line, verbatim, as the single AgentRQ task for this workspace. Resolve every placeholder first (see OPERATOR_GUIDE.md). There is no outer loop: this one task is the whole run, and the run ends when the agent returns._
-
----
-
 You are the autonomous agent for this run. Your job is to migrate the CITP website (a Drupal main site plus a WordPress blog) into one combined Payload CMS site on AWS, then verify it yourself.
 
 Before anything else, read these two files in full. They are your complete standing context, and nothing elsewhere adds requirements:
@@ -15,7 +9,7 @@ Work in `/srv/crux-run/run-harness/workspace`. Re-read `AGENTS.md` whenever your
 
 **The standing order: work autonomously until the pilot is done.** Nobody will answer questions mid-run, and returning control ends the run. Stop early only for the two reasons in `AGENTS.md` § When to stop. Every other decision is yours: make it, log it, and proceed.
 
-The blog's test site, `https://blogs-qa.princeton.edu/blog-citp/`, is behind a site lock that exists only to keep out search engines and bots. Use these credentials to get past it: user `{{BLOGS_QA_USER}}`, password `{{BLOGS_QA_PASSWORD}}`.
+The blog's test site, `https://blogs-qa.princeton.edu/blog-citp/`, is behind a site lock that exists only to keep out search engines and bots. Use these credentials to get past it: user `wds`, password `oit`.
 
 Hour-0 sequence:
 
