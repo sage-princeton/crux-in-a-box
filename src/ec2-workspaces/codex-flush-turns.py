@@ -22,36 +22,56 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-TURN_EVENTS = (b'"task_started"', b'"task_complete"', b'"turn_aborted"')
+
+@dataclass
+class RolloutSummary:
+    """The parts of a rollout the flush needs: whose thread it is, and its last turn.
+
+    Only two line shapes matter, so every other line is skipped before it is
+    parsed: the first line (session_meta) and each task_started event.
+    """
+
+    thread_id: str | None = None
+    cwd: str | None = None
+    subagent: bool = False
+    last_turn_id: str | None = None
+
+    @classmethod
+    def read(cls, path: Path) -> RolloutSummary:
+        summary = cls()
+        with path.open("rb") as f:
+            for n, raw in enumerate(f):
+                if n and b'"task_started"' not in raw:
+                    continue
+                try:
+                    summary.apply(json.loads(raw))
+                except ValueError:
+                    continue
+        return summary
+
+    def apply(self, line: dict) -> None:
+        match line:
+            case {"type": "session_meta", "payload": {"id": str(thread_id)} as meta}:
+                self.thread_id, self.cwd = thread_id, meta.get("cwd")
+                self.subagent = spawned_by_another_thread(meta)
+            case {"type": "event_msg", "payload": {"type": "task_started", "turn_id": str(turn_id)}}:
+                self.last_turn_id = turn_id
 
 
-def is_subagent(meta: dict) -> bool:
-    source = meta.get("source")
-    return meta.get("thread_source") == "subagent" or (isinstance(source, dict) and "subagent" in source)
-
-
-def read_rollout(path: Path) -> tuple[dict, str | None]:
-    """The session_meta payload and the id of the last turn that started."""
-    meta, last = {}, None
-    with path.open("rb") as f:
-        for n, raw in enumerate(f):
-            if n and not any(event in raw for event in TURN_EVENTS):
-                continue
-            try:
-                line = json.loads(raw)
-            except ValueError:
-                continue
-            payload = line.get("payload") or {}
-            if line.get("type") == "session_meta":
-                meta = payload
-            elif line.get("type") == "event_msg" and payload.get("type") == "task_started":
-                last = payload.get("turn_id") or last
-    return meta, last
+def spawned_by_another_thread(meta: dict) -> bool:
+    """A subagent's turns are uploaded nested in the parent turn that spawned it, never on their own."""
+    match meta:
+        case {"thread_source": "subagent"} | {"source": {"subagent": _}}:
+            return True
+        case _:
+            return False
 
 
 def uploaded_turns(path: Path) -> set[str]:
+    """Turn ids the plugin has recorded as uploaded, in its `<rollout>.langfuse` file."""
     try:
         return set(Path(f"{path}.langfuse").read_text().split())
     except FileNotFoundError:
@@ -88,9 +108,11 @@ def run_tags(home: Path) -> list[str]:
     return [str(t) for t in tags]
 
 
-def upload(plugin: Path, rollout: Path, meta: dict, turn_id: str, tags: list[str], timeout: float) -> str | None:
+def upload(plugin: Path, rollout: Path, summary: RolloutSummary, turn_id: str, tags: list[str],
+           timeout: float) -> str | None:
     """Run the plugin's Stop hook for one turn; returns an error message, or None on success."""
-    payload = {"session_id": meta.get("id"), "transcript_path": str(rollout), "cwd": meta.get("cwd") or str(Path.cwd()),
+    payload = {"session_id": summary.thread_id, "transcript_path": str(rollout),
+               "cwd": summary.cwd or str(Path.cwd()),
                "hook_event_name": "Stop", "stop_hook_active": False, "turn_id": turn_id,
                "last_assistant_message": None, "model": "", "permission_mode": "default"}
     env = {**os.environ, "LANGFUSE_CODEX_TAGS": json.dumps(tags), "LANGFUSE_CODEX_FAIL_ON_ERROR": "true"}
@@ -125,8 +147,9 @@ def main() -> int:
 
     checked, pending, uploaded, in_use, failed = 0, 0, 0, 0, 0
     for rollout in sorted(sessions.rglob("rollout-*.jsonl")):
-        meta, turn_id = read_rollout(rollout)
-        if is_subagent(meta) or turn_id is None:
+        summary = RolloutSummary.read(rollout)
+        turn_id = summary.last_turn_id
+        if summary.thread_id is None or summary.subagent or turn_id is None:
             continue
         checked += 1
         if turn_id in uploaded_turns(rollout):
@@ -139,7 +162,7 @@ def main() -> int:
         if args.check:
             print(f"codex-flush: {rollout.name} turn {turn_id}: would upload")
             continue
-        error = upload(args.plugin, rollout, meta, turn_id, tags, args.timeout)
+        error = upload(args.plugin, rollout, summary, turn_id, tags, args.timeout)
         if error:
             failed += 1
             print(f"codex-flush: {rollout.name} turn {turn_id}: upload failed: {error}")
