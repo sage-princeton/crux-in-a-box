@@ -88,47 +88,6 @@ resource "aws_s3_object" "registry" {
   content_type = "application/json"
   depends_on   = [aws_s3_bucket_versioning.evidence]
 }
-# Retained until the shared-table release and copied records are verified live.
-resource "aws_dynamodb_table" "state" {
-  name         = var.name
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  attribute {
-    name = "pk"
-    type = "S"
-  }
-  attribute {
-    name = "status"
-    type = "S"
-  }
-  attribute {
-    name = "updated_at"
-    type = "N"
-  }
-  global_secondary_index {
-    name            = "status-updated"
-    projection_type = "ALL"
-    key_schema {
-      attribute_name = "status"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "updated_at"
-      key_type       = "RANGE"
-    }
-  }
-  ttl {
-    attribute_name = "expires_at"
-    enabled        = true
-  }
-  point_in_time_recovery { enabled = true }
-  server_side_encryption {
-    enabled     = true
-    kms_key_arn = aws_kms_key.state.arn
-  }
-  deletion_protection_enabled = true
-  depends_on                  = [aws_iam_role_policy.state_encryption]
-}
 resource "aws_ecr_repository" "monitoring" {
   #checkov:skip=CKV_AWS_136:ECR already encrypts at rest with AES256; changing encryption forces replacement and would delete release/rollback images.
   name                 = var.name

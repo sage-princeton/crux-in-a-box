@@ -1,19 +1,23 @@
-- [ ] Use tailwind instead of custom incidents.css
-- [ ] consolidate dynamodb to be one instance, not two
-- [ ] add ruff checks to CI and make 'em pass
-- [ ] clean up monitoring python to not use any abstractions we don't need now - YAGNI, e.g., remove default values when we don't need them, hardcode values instead of passing them if we always pass the same thing
-- [ ] Let's check on models - depending on how much it's reading, token costs can get high
+DO NOW BELOW
 
-- [ ] Should be anthropic and openai models only (no deepseek or google)
+- [x] Use tailwind instead of custom incidents.css
+- [x] consolidate dynamodb to be one instance, not two
+- [x] add ruff checks to CI and make 'em pass
+- [x] clean up monitoring python to not use any abstractions we don't need now - YAGNI, e.g., remove default values when we don't need them, hardcode values instead of passing them if we always pass the same thing
+- [x] Let's check on models - depending on how much it's reading, token costs can get high
 
-* Two pieces:
+- [x] Should be anthropic and openai models only (no deepseek or google)
 
-- A. Sweep (flash model in the family) - reads all the tokens / context, surfaces points of interests and hands it off to
-- B. Summarize (beefiest model in the family) - go in and look at the interesting things, budgets, etc.
+DO NOW ABOVE
 
-- [ ] Are we doing OpenRouter for all models in the actual CRUX runs through agent RQ?
+- Two pieces:
 
-- [ ] Update prompt to include status updates
+* A. Sweep (flash model in the family) - reads all the tokens / context, surfaces points of interests and hands it off to
+* B. Summarize (beefiest model in the family) - go in and look at the interesting things, budgets, etc.
+
+* [ ] Are we doing OpenRouter for all models in the actual CRUX runs through agent RQ?
+
+* [ ] Update prompt to include status updates
 
 ```
 Read-only status check for [project]. Report in 3–5 lines:

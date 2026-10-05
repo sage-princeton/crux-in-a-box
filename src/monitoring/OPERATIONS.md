@@ -153,6 +153,7 @@ cap still apply. The current $3.69995 reserved is not actual spend; ambiguous ca
 are not refunded. The registry/schedule expired on 2 October and remain expired.
 
 Operational records use `sk=OPERATION` in the shared table; incident/auth keys
-remain unchanged. The old table's pre-consolidation on-demand backup is retained.
+remain unchanged. The old table's on-demand backup
+`crux-monitoring-ae211-pre-consolidation-20261005` is retained.
 Never deploy a pre-consolidation worker without restoring its table and reconciling
 new operational rows, or budgets and notification acknowledgments could regress.
