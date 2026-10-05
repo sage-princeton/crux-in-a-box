@@ -131,12 +131,20 @@ class LangfuseTelemetry(Telemetry):
             try:
                 yield outcome
             finally:
-                usage = outcome.usage
-                observation.update(output=outcome.output, usage_details=usage and {
-                    "input": usage.input_tokens, "output": usage.output_tokens})
+                observation.update(output=outcome.output, usage_details=outcome.usage and usage_details(outcome.usage))
 
     def flush(self) -> None:
         self.client.flush()
+
+
+def usage_details(usage: TokenUsage) -> dict[str, int]:
+    """Langfuse's exclusive usage buckets: each token counted once, so each is priced once and at its own rate."""
+    details = {"input": usage.input_tokens - usage.cached_input_tokens - usage.cache_write_input_tokens,
+               "input_cached_tokens": usage.cached_input_tokens,
+               "input_cache_creation": usage.cache_write_input_tokens,
+               "output": usage.output_tokens - usage.reasoning_output_tokens,
+               "output_reasoning_tokens": usage.reasoning_output_tokens}
+    return {key: count for key, count in details.items() if count or key in ("input", "output")}
 
 
 def telemetry_from_env(env: Mapping[str, str], identity: RunIdentity,

@@ -9,7 +9,13 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from crux_scaffold import cli
 from crux_scaffold.cli import main
-from crux_scaffold.telemetry import LangfuseTelemetry, NullTelemetry, RunIdentity, telemetry_from_env
+from crux_scaffold.telemetry import (
+    LangfuseTelemetry,
+    NullTelemetry,
+    RunIdentity,
+    telemetry_from_env,
+    usage_details,
+)
 from crux_scaffold.usage import TokenUsage
 
 from scripted import ScriptedModel, StoppedModel, call, say
@@ -147,3 +153,13 @@ def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, mon
     root = next(span for span in spans if span.name == "crux-probe")
     llm = [span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]
     assert llm and {span.context.trace_id for span in llm} == {root.context.trace_id}
+
+
+def test_generation_usage_is_split_into_the_exclusive_buckets_langfuse_prices():
+    """Langfuse stores flat usage as given and prices each key separately, so OpenAI-style inclusive counts (input
+    includes cache reads and writes; output includes reasoning) would be billed twice or at the wrong rate."""
+    usage = TokenUsage(requests=1, input_tokens=62147, output_tokens=2064, cached_input_tokens=43858,
+                       cache_write_input_tokens=18277, reasoning_output_tokens=110)
+    assert usage_details(usage) == {"input": 12, "input_cached_tokens": 43858, "input_cache_creation": 18277,
+                                    "output": 1954, "output_reasoning_tokens": 110}
+    assert usage_details(TokenUsage(requests=1, input_tokens=10, output_tokens=5)) == {"input": 10, "output": 5}

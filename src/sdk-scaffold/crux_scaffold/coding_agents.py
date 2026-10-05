@@ -114,7 +114,10 @@ class CodexCodingAgent(CodingAgent):
                     elif isinstance(payload, ThreadTokenUsageUpdatedNotification):
                         total = payload.token_usage.total
                         usage = TokenUsage(requests=1, input_tokens=total.input_tokens,
-                                           output_tokens=total.output_tokens)
+                                           output_tokens=total.output_tokens,
+                                           cached_input_tokens=total.cached_input_tokens,
+                                           cache_write_input_tokens=total.cache_write_input_tokens or 0,
+                                           reasoning_output_tokens=total.reasoning_output_tokens)
                     elif isinstance(payload, TurnCompletedNotification):
                         ended = payload.turn
         completed = ended is not None and ended.status == TurnStatus.completed

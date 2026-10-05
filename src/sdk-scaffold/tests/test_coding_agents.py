@@ -19,9 +19,10 @@ def item(payload):
         {"completedAtMs": 1, "item": payload, "threadId": "t1", "turnId": "turn1"})
 
 
-def usage(input_tokens, output_tokens):
-    breakdown = {"cachedInputTokens": 0, "inputTokens": input_tokens, "outputTokens": output_tokens,
-                 "reasoningOutputTokens": 0, "totalTokens": input_tokens + output_tokens}
+def usage(input_tokens, output_tokens, cached=0, cache_write=0, reasoning=0):
+    breakdown = {"cachedInputTokens": cached, "cacheWriteInputTokens": cache_write, "inputTokens": input_tokens,
+                 "outputTokens": output_tokens, "reasoningOutputTokens": reasoning,
+                 "totalTokens": input_tokens + output_tokens}
     return ThreadTokenUsageUpdatedNotification.model_validate(
         {"threadId": "t1", "turnId": "turn1", "tokenUsage": {"last": breakdown, "total": breakdown}})
 
@@ -102,7 +103,8 @@ class RecordingTelemetry(NullTelemetry):
 
 def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_completes(tmp_path):
     log = []
-    fake = FakeCodex([item(COMMAND), usage(1200, 300), item(ANSWER), completed()], log)
+    fake = FakeCodex([item(COMMAND), usage(1200, 300, cached=900, cache_write=200, reasoning=40), item(ANSWER),
+                      completed()], log)
     telemetry = RecordingTelemetry(log)
     cls, options = CODING_AGENTS.resolve("engineer", {"type": "codex", "description": "Implements specs.",
                                                       "model": "gpt-codex-test", "reasoning_effort": "high"})
@@ -120,6 +122,8 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
                    "stream:TurnCompletedNotification"]
     assert (result.completed, result.final_response) == (True, "Added location; 6 tests pass.")
     assert ctx.usage.by_source["engineer"].total_tokens == 1500
+    assert (result.usage.cached_input_tokens, result.usage.cache_write_input_tokens,
+            result.usage.reasoning_output_tokens) == (900, 200, 40)
     assert telemetry.generations == [("engineer", "gpt-codex-test", "TASK: add location",
                                       "Added location; 6 tests pass.", 1500)]
 

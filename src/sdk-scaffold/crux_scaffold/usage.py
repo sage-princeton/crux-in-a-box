@@ -6,9 +6,14 @@ from crux_scaffold.components import Options
 
 
 class TokenUsage(BaseModel):
+    """Counts as OpenAI reports them: input includes cache reads and writes, and output includes reasoning."""
+
     requests: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    cached_input_tokens: int = 0
+    cache_write_input_tokens: int = 0
+    reasoning_output_tokens: int = 0
 
     @property
     def total_tokens(self) -> int:
