@@ -11,8 +11,8 @@
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
           "token.actions.githubusercontent.com:sub": [
-            "repo:sage-princeton/crux-in-a-box:ref:refs/heads/main",
-            "repo:sage-princeton/crux-in-a-box:ref:refs/heads/ae-211-ec2-monitoring"
+            "repo:sage-princeton@292236392/crux-in-a-box@1314254060:ref:refs/heads/main",
+            "repo:sage-princeton@292236392/crux-in-a-box@1314254060:ref:refs/heads/ae-211-ec2-monitoring"
           ]
         }
       }
