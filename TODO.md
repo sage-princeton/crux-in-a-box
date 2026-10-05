@@ -1,6 +1,11 @@
+- [ ] Use tailwind instead of custom incidents.css
+- [ ] consolidate dynamodb to be one instance, not two
+- [ ] add ruff checks to CI and make 'em pass
+- [ ] clean up monitoring python to not use any abstractions we don't need now - YAGNI, e.g., remove default values when we don't need them, hardcode values instead of passing them if we always pass the same thing
 - [ ] Let's check on models - depending on how much it's reading, token costs can get high
 
-* Should be anthropic and openai models only (no deepseek or google)
+- [ ] Should be anthropic and openai models only (no deepseek or google)
+
 * Two pieces:
 
 - A. Sweep (flash model in the family) - reads all the tokens / context, surfaces points of interests and hands it off to
