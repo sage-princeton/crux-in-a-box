@@ -102,3 +102,12 @@ def test_the_demo_runs_both_phases_through_its_gates(tmp_path, capsys):
     state = json.loads((tmp_path / "state/state.json").read_text())
     assert [(r["phase"], [g["passed"] for g in r["gates"]]) for r in state["history"]] == [
         ("clarify", [True]), ("implement", [True, True])]
+
+
+def test_the_slack_app_can_list_every_conversation_type_the_slack_mcp_server_caches_at_boot():
+    """slack-mcp-server 1.3.0 lists mpim, im, public and private channels in one call at startup; Slack rejects the
+    call with missing_scope unless the bot can read every type, and the server then exits."""
+    manifest = (DEMO / "slack-app-manifest.yaml").read_text()
+    scopes = {line.strip().removeprefix("- ") for line in manifest.splitlines() if line.strip().startswith("- ")}
+    assert {"im:read", "mpim:read", "channels:read", "groups:read"} <= scopes
+    assert 'slack-mcp-server@1.3.0' in (DEMO / "scaffold.toml").read_text()

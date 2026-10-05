@@ -7,7 +7,7 @@ This demo exercises the scaffold end to end, in two phases:
 
 ## 1. Slack
 
-- Create the app from [`slack-app-manifest.yaml`](slack-app-manifest.yaml): at <https://api.slack.com/apps>, choose **Create New App → From a manifest**, pick the workspace and paste the file. It requests only the bot scopes the Slack MCP server needs: `channels:history`, `channels:read`, `groups:history`, `groups:read`, `chat:write`, `users:read`.
+- Create the app from [`slack-app-manifest.yaml`](slack-app-manifest.yaml): at <https://api.slack.com/apps>, choose **Create New App → From a manifest**, pick the workspace and paste the file. It requests only the bot scopes the Slack MCP server needs: `channels:history`, `channels:read`, `groups:history`, `groups:read`, `im:read`, `mpim:read`, `chat:write`, `users:read`. The server lists every conversation type when it starts, and exits if any of the four `*:read` scopes is missing. After changing scopes, reinstall the app.
 - Install it to the workspace and copy the **Bot User OAuth Token** (`xoxb-…`) from **OAuth & Permissions**. Give it to the scaffold as `SLACK_BOT_TOKEN`.
 - Invite the bot to the request channel (`/invite @crux-pm`) and copy the channel's ID (`C…`) from its details.
 
