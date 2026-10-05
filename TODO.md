@@ -22,7 +22,7 @@ alerts.
 Lead with any alert and recommend a next step, but change nothing without approval.
 ```
 
-=======
+---
 
 - [ ] Update structure:
 
