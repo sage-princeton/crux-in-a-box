@@ -31,31 +31,23 @@ Provisioning writes both into `/etc/crux-run.env`, which is the agent process's 
 
 Also set a spend limit in the provider console at about `LLM_BUDGET`. The agent measures its own spend but cannot enforce a cap.
 
-### Step 3: Resolve placeholders on the box
+### Step 3: Check the run settings
 
-The harness is staged, unconfigured, at `/srv/crux-run/run-harness`. Nothing resolves its `{{…}}` placeholders automatically, so resolve them by hand:
+The run settings are written directly into the harness files. There are no placeholders to resolve on the box. Current values:
 
-| Placeholder | File(s) | Value |
+| Setting | File(s) | Value |
 |---|---|---|
-| `{{BLOGS_QA_USER}}`, `{{BLOGS_QA_PASSWORD}}` | `PROMPT.md`, `workspace/AGENTS.md` | Pantheon site-lock credentials for `blogs-qa.princeton.edu`. They are non-sensitive, but keep them out of this repo anyway. **Required**; there is no default. |
-| `{{DOMAIN_CONTACT}}` | `workspace/AGENTS.md` | Registrant contact for the Route53 domain registration: name, organization, address, phone and email. The agent may not invent these, so without them it cannot register a domain. **Required**; there is no default. |
-| `{{DEADLINE\|6 weeks from launch}}` | `AGENTS.md`, `PLAN.md` | The time cap. Write an absolute date. |
-| `{{LLM_BUDGET\|$100}}` | `AGENTS.md`, `PLAN.md` | The agent's own Claude Code/Codex spend. |
-| `{{API_BUDGET\|$100}}` | `AGENTS.md`, `PLAN.md` | Third-party API spend (WAVE credits). |
-| `{{AWS_BUDGET\|$100}}` | `AGENTS.md`, `PLAN.md` | Spend cap for the auxiliary account, including the domain. |
-| `{{ADMIN_EMAILS\|nn7887@princeton.edu, mm9934@princeton.edu}}` | `AGENTS.md` | The only accounts allowed into the Payload admin. |
-| `{{PERF_MARGIN\|10%}}` | `AGENTS.md` | How much worse than the source the Core Web Vitals may be. |
-| `{{WAVE_CREDIT_PRICE\|$0.04}}` | `AGENTS.md` | What you paid per WAVE credit, used to convert credits to dollars. |
+| blogs-qa site-lock credentials | `PROMPT.md`, `workspace/AGENTS.md` | user `wds`, password `oit`. They only keep search engines and bots off the QA site, so they are not sensitive. |
+| Domain registrant contact | `workspace/AGENTS.md` | Max Morgan, Center for Information Technology Policy, Princeton University, 303 Sherrerd Hall, Princeton, NJ 08544, 609-258-9658, max.posh354@passmail.net |
+| Time cap | `workspace/AGENTS.md`, `workspace/PLAN.md` | 6 weeks from launch |
+| LLM cap | `workspace/AGENTS.md`, `workspace/PLAN.md` | $100 for the agent's own Claude Code/Codex spend |
+| API cap | `workspace/AGENTS.md`, `workspace/PLAN.md` | $100 for third-party APIs (WAVE credits) |
+| AWS cap | `workspace/AGENTS.md`, `workspace/PLAN.md` | $100 for the auxiliary account, including the domain |
+| Payload admins | `workspace/AGENTS.md` | nn7887@princeton.edu, mm9934@princeton.edu |
+| Performance margin | `workspace/AGENTS.md` | 10% |
+| WAVE credit price | `workspace/AGENTS.md` | $0.04 per credit |
 
-To take every default after setting the required values:
-
-```bash
-cd /srv/crux-run/run-harness
-sed -i 's/{{BLOGS_QA_USER}}/<user>/g; s/{{BLOGS_QA_PASSWORD}}/<password>/g' PROMPT.md workspace/AGENTS.md
-sed -i 's/{{DOMAIN_CONTACT}}/<name, org, address, phone, email>/' workspace/AGENTS.md
-sed -i -E 's/\{\{[A-Z_]+\|([^}]*)\}\}/\1/g' PROMPT.md workspace/*.md
-grep -rn '{{' .    # must print nothing
-```
+To change a value, edit it in this branch before provisioning. If the box is already provisioned, edit the staged copy under `/srv/crux-run/run-harness` before launch. Update every file listed for that setting.
 
 ### Step 4: Verify from the box, not the agent
 
@@ -66,7 +58,7 @@ grep -rn '{{' .    # must print nothing
 
 ### Step 5: Launch
 
-Submit everything below the line in `PROMPT.md` as the workspace's single AgentRQ task.
+Submit the whole of `PROMPT.md`, as-is, as the workspace's single AgentRQ task. The file contains only the agent's instructions, so there is nothing to strip. This one task is the whole run, and the run ends when the agent returns.
 
 Within the first hour you should see:
 

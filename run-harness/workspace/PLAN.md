@@ -18,7 +18,7 @@ _Write at hour 0; keep current. Update spent/remaining whenever you spend meanin
 | Importers + templates | | | | | |
 | Verification iterations + fixes | | | | | |
 | Reserve | | | | | |
-| **Allocated / cap** | / {{DEADLINE|6 weeks from launch}} | / {{LLM_BUDGET|$100}} | / {{API_BUDGET|$100}} | / {{AWS_BUDGET|$100}} | |
+| **Allocated / cap** | / 6 weeks from launch | / $100 | / $100 | / $100 | |
 
 **Current position:** spent / remaining for each budget, as of <timestamp>. Also list the running AWS resources and their hourly cost.
 
