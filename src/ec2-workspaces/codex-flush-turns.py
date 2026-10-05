@@ -115,9 +115,13 @@ def upload(plugin: Path, rollout: Path, summary: RolloutSummary, turn_id: str, t
                "cwd": summary.cwd or str(Path.cwd()),
                "hook_event_name": "Stop", "stop_hook_active": False, "turn_id": turn_id,
                "last_assistant_message": None, "model": "", "permission_mode": "default"}
-    env = {**os.environ, "LANGFUSE_CODEX_TAGS": json.dumps(tags), "LANGFUSE_CODEX_FAIL_ON_ERROR": "true"}
+    # The plugin also reads <cwd>/.codex/langfuse.json over the global one, and the
+    # gateway runs this in the agent's workspace: run it from / so a file the agent
+    # writes cannot redirect the upload. It gets none of the gateway's API keys either.
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path.home()),
+           "LANGFUSE_CODEX_TAGS": json.dumps(tags), "LANGFUSE_CODEX_FAIL_ON_ERROR": "true"}
     try:
-        proc = subprocess.run(["node", str(plugin)], input=json.dumps(payload), env=env,
+        proc = subprocess.run(["node", str(plugin)], input=json.dumps(payload), env=env, cwd="/",
                               capture_output=True, text=True, timeout=timeout, check=False)
     except subprocess.TimeoutExpired:
         return f"plugin timed out after {timeout:.0f}s"

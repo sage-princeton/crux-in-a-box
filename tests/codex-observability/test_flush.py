@@ -35,14 +35,15 @@ def home(tmp_path) -> Path:
 def flush(plugin, home):
     """Run the flush as the gateway unit does; langfuse.json points the plugin at `collector`."""
 
-    def run(collector: Collector, reason: str = "gateway-stop", *extra: str) -> subprocess.CompletedProcess:
+    def run(collector: Collector, reason: str = "gateway-stop", *extra: str,
+            cwd: Path | None = None) -> subprocess.CompletedProcess:
         (home / ".codex" / "langfuse.json").write_text(json.dumps({
             "enabled": True, "public_key": "pk-lf-fixture", "secret_key": "sk-lf-fixture",
             "base_url": collector.url, "environment": "crux-fixture", "tags": RUN_TAGS}))
         proc = subprocess.run(
             [sys.executable, str(FLUSH), "--plugin", str(plugin.resolve() / "dist" / "index.mjs"),
              "--reason", reason, *extra],
-            env={"PATH": os.environ["PATH"], "HOME": str(home)}, cwd=home,
+            env={"PATH": os.environ["PATH"], "HOME": str(home)}, cwd=cwd or home,
             capture_output=True, text=True, timeout=300, check=False)
         assert not collector.bad_requests, collector.bad_requests
         return proc
@@ -149,3 +150,19 @@ def test_flush_skips_a_rollout_a_live_codex_still_has_open(rollouts, flush, home
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert collector.spans == []
     assert "in use" in proc.stdout
+
+
+def test_a_langfuse_config_in_the_working_directory_cannot_redirect_the_upload(rollouts, flush, home, tmp_path):
+    """The gateway runs the flush in the agent's workspace, and the plugin also reads <cwd>/.codex/langfuse.json.
+
+    An agent that wrote one could send the flush's uploads, with the real keys, anywhere.
+    """
+    rollouts.killed().write(sessions(home))
+    workspace = tmp_path / "srv-crux-run"
+    (workspace / ".codex").mkdir(parents=True)
+    with Collector() as collector, Collector() as decoy:
+        (workspace / ".codex" / "langfuse.json").write_text(json.dumps({"base_url": decoy.url}))
+        proc = flush(collector, cwd=workspace)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert decoy.spans == [], "the upload followed a config file the agent can write"
+    assert collector.spans
