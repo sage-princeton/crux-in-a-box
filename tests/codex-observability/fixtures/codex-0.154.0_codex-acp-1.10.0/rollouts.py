@@ -44,11 +44,12 @@ class Tool:
     kind: str
     name: str
     namespace: str | None = None
-    arguments: dict = field(default_factory=dict)
-    output: str = "ok"
+    arguments: dict | str = field(default_factory=dict)
+    output: str | list = "ok"
     seconds: float = 0.4
     child: Rollout | None = None
     call_id: str = ""
+    command: str | None = None
 
 
 def exec_command(cmd: str, output: str = "done\n", seconds: float = 0.4) -> Tool:
@@ -76,9 +77,19 @@ def create_goal(objective: str) -> Tool:
     return Tool("function", "create_goal", None, {"objective": objective}, '{"status": "active"}', 0.05)
 
 
-def exec_code(code: str, output: str = "done\n", seconds: float = 0.4) -> Tool:
-    """Code mode: one freeform `exec` call whose JavaScript calls the real tools (seen on ae240-test)."""
-    return Tool("custom", "exec", None, code, output, seconds)
+def exec_code(command: str, output: str | list = "done\n", seconds: float = 0.4) -> Tool:
+    """Code mode: one freeform `exec` call whose JavaScript runs `command` (seen on ae240-test).
+
+    The shell command itself is recorded only in an item_completed CommandExecution event.
+    """
+    code = f'const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); text(r.output)'
+    return Tool("custom", "exec", None, code, output, seconds, command=command)
+
+
+def wait_code_mode(*children: Rollout) -> Tool:
+    """Code mode's `wait`: a plain function call whose output is a list of text parts (seen on ae240-test)."""
+    return Tool("function", "wait", None, {"targets": [c.thread_id for c in children]},
+                [{"type": "input_text", "text": "completed"}], 1.0)
 
 
 def spawn_agent(child: Rollout, message: str) -> Tool:
@@ -179,10 +190,10 @@ class Rollout:
     def _meta(self, extra: dict | None = None) -> dict:
         return {"turn_id": self.turns[-1].turn_id, **(extra or {})}
 
-    def _item(self, item: dict) -> None:
+    def _item(self, item: dict, seconds: float = 0.005) -> None:
         now = int(self.t.timestamp() * 1000)
         self._line("event_msg", {"type": "item_completed", "thread_id": self.thread_id,
-                                 "turn_id": self.turns[-1].turn_id, "started_at_ms": now - 5,
+                                 "turn_id": self.turns[-1].turn_id, "started_at_ms": now - int(seconds * 1000),
                                  "completed_at_ms": now, "item": {"id": _id("item", len(self.lines)), **item}})
 
     def _message(self, role: str, text: str, phase: str | None = None, kind: str | None = None) -> datetime:
@@ -324,7 +335,15 @@ class Rollout:
                 item = "McpToolCall"
             elif tool.namespace == "multi_agent_v1":
                 item = "CollabAgentToolCall"
-            if item:
+            if tool.command is not None:
+                stdout = tool.output if isinstance(tool.output, str) else "".join(p["text"] for p in tool.output)
+                self._item({"type": "CommandExecution", "command": ["/bin/bash", "-lc", tool.command],
+                            "cwd": "/srv/fixture", "process_id": "4242", "source": "unified_exec_startup",
+                            "status": "completed", "exit_code": 0, "stdout": stdout, "stderr": "",
+                            "aggregated_output": stdout, "formatted_output": stdout,
+                            "parsed_cmd": [{"type": "unknown", "cmd": tool.command}],
+                            "duration": {"secs": int(tool.seconds), "nanos": 0}}, seconds=tool.seconds)
+            elif item:
                 self._item({"type": item})
             output_type = "custom_tool_call_output" if tool.kind == "custom" else "function_call_output"
             truth.output_at = self._line("response_item", {"type": output_type, "call_id": tool.call_id,
@@ -487,16 +506,15 @@ def code_mode() -> Scenario:
     """Tools called through code mode's freeform `exec`, in the main thread and a subagent, as on ae240-test."""
     main = Rollout(_id("thread", "code-mode"))
     main.begin_turn("[Task 0wsTask08] LIVE-TRACE-TEST: run the steps in order.")
-    main.step([exec_code('const r = await tools.exec_command({cmd:"mkdir -p /tmp/live-trace-test"}); text(r.output)')])
+    main.step([exec_code("mkdir -p /tmp/live-trace-test")])
     beta = Rollout(_id("thread", "code-mode", "Beta"), main.t + timedelta(seconds=0.2), main, "Beta")
     beta.begin_turn('Run `sleep 30 && echo beta-1`, then reply exactly "BETA DONE".')
-    beta.step([exec_code('const r = await tools.exec_command({cmd:"sleep 30 && echo beta-1"}); text(r.output)',
-                         "beta-1\n", seconds=30)])
+    beta.step([exec_code("sleep 30 && echo beta-1", [{"type": "input_text", "text": "beta-1\n"}], seconds=30)])
     beta.finish_turn("BETA DONE")
     main.step([spawn_agent(beta, 'Run `sleep 30 && echo beta-1`, then reply exactly "BETA DONE".')])
     for step in ("a", "b", "c"):
-        main.step([exec_code(f'const r = await tools.exec_command({{cmd:"sleep 60 && echo step-{step}"}}); text(r.output)',
-                             f"step-{step}\n", seconds=60)])
+        main.step([exec_code(f"sleep 60 && echo step-{step}", f"step-{step}\n", seconds=60)])
+    main.step([wait_code_mode(beta)])
     main.finish_turn("LIVE-TRACE-TEST COMPLETE")
     return Scenario("code_mode", main, [beta])
 
