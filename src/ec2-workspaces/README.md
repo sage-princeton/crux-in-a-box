@@ -238,6 +238,13 @@ started. In this mode the gateway unit runs `codex-live-trace.py --once
 --finalize` instead of the plugin flush, which ends a killed turn with a
 `WARNING` root. Follow it with `journalctl -u crux-codex-live-trace`.
 
+The exporter is the `live_trace/` package, installed to `/usr/local/lib/crux/`
+with its `codex-live-trace.py` entry point. Only `live_trace/codex.py` knows the
+Codex rollout format; the turn model, the Langfuse observation schema, the ledger
+of sent ids and the OTLP sink are shared. Tracing another agent means one more
+`TranscriptSource` subclass and entry point; `live_trace/__init__.py` describes
+the design.
+
 ### Teardown a workspace
 
 This will:

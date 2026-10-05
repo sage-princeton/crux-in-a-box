@@ -12,7 +12,7 @@ set -euo pipefail
 # Optional CODEX_TRACE_MODE: stop-hook (default, the tracing plugin's Stop hook)
 # or live (codex-live-trace.py streams each observation as it completes).
 # Place agent-config.sh beside this script; Codex also requires
-# codex-flush-turns.py and codex-live-trace.py, and Claude requires langfuse_hook.py.
+# codex-flush-turns.py, codex-live-trace.py and live_trace/, and Claude requires langfuse_hook.py.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
@@ -31,7 +31,8 @@ if [ "$AGENT_PLATFORM" = codex ]; then
   CODEX_TRACE_MODE="${CODEX_TRACE_MODE:-stop-hook}"
   case "$CODEX_TRACE_MODE" in
     stop-hook) ;;
-    live) [ -f "$SCRIPT_DIR/codex-live-trace.py" ] || die "codex-live-trace.py was not copied alongside configure-run.sh." ;;
+    live) [ -f "$SCRIPT_DIR/codex-live-trace.py" ] && [ -f "$SCRIPT_DIR/live_trace/__init__.py" ] \
+            || die "codex-live-trace.py and live_trace/ were not copied alongside configure-run.sh." ;;
     *) die "CODEX_TRACE_MODE must be stop-hook|live (got '$CODEX_TRACE_MODE')." ;;
   esac
   command -v python3 >/dev/null 2>&1 || die "python3 is not on PATH; the gateway's trace flush needs it."
@@ -253,6 +254,9 @@ GATEWAY_STOP_FLUSH="$FLUSH --reason gateway-stop"
 if [ "$CODEX_TRACE_MODE" = live ]; then
   LIVE_SCRIPT=/usr/local/lib/crux/codex-live-trace.py
   install -m 755 "$SCRIPT_DIR/codex-live-trace.py" "$LIVE_SCRIPT"
+  rm -rf /usr/local/lib/crux/live_trace
+  install -d -m 755 /usr/local/lib/crux/live_trace
+  install -m 644 "$SCRIPT_DIR"/live_trace/*.py /usr/local/lib/crux/live_trace/
   LIVE="/usr/bin/python3 $LIVE_SCRIPT"
   GATEWAY_START_FLUSH="$LIVE --once --finalize"
   GATEWAY_STOP_FLUSH="$LIVE --once --finalize"

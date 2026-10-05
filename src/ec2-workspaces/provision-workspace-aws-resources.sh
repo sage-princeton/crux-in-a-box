@@ -567,7 +567,7 @@ scp -q "$SCRIPT_DIR/configure-run.sh" "$SCRIPT_DIR/agent-config.sh" "$SLUG:/tmp/
 if [ "$AGENT_PLATFORM" = claude ]; then
   scp -q "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" "$SLUG:/tmp/langfuse_hook.py"
 else
-  scp -q "$SCRIPT_DIR/codex-flush-turns.py" "$SCRIPT_DIR/codex-live-trace.py" "$SLUG:/tmp/"
+  scp -q -r "$SCRIPT_DIR/codex-flush-turns.py" "$SCRIPT_DIR/codex-live-trace.py" "$SCRIPT_DIR/live_trace" "$SLUG:/tmp/"
 fi
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
