@@ -1,3 +1,29 @@
+- [ ] Let's check on models - depending on how much it's reading, token costs can get high
+
+* Should be anthropic and openai models only (no deepseek or google)
+* Two pieces:
+
+- A. Sweep (flash model in the family) - reads all the tokens / context, surfaces points of interests and hands it off to
+- B. Summarize (beefiest model in the family) - go in and look at the interesting things, budgets, etc.
+
+- [ ] Are we doing OpenRouter for all models in the actual CRUX runs through agent RQ?
+
+- [ ] Update prompt to include status updates
+
+```
+Read-only status check for [project]. Report in 3–5 lines:
+
+alive or stalled;
+progress since the last check;
+spend and time against plan;
+quality trend;
+milestones reached;
+alerts.
+Lead with any alert and recommend a next step, but change nothing without approval.
+```
+
+=======
+
 - [ ] Update structure:
 
 ```
