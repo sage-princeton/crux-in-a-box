@@ -84,12 +84,12 @@ flowchart LR
 
 ```
 scaffold.toml            the declaration (see examples/product-change/scaffold.toml)
-PROMPT.md                first phase's prompt; text above its first `---` line is operator notes
+PROMPT.md                first phase's prompt, sent verbatim
 prompts/*.md             later phase prompts and continue prompts
 personas/*.md            one per agent
 scaffold_extensions.py   optional: the drop-in's own components
 workspace/               where agents work; AGENTS.md and other standing context live here
-OPERATOR_GUIDE.md        how to resolve placeholders and launch
+OPERATOR_GUIDE.md        how to resolve placeholders and launch; operator notes live only here
 ```
 
 The run stops before any model call if an operator-facing file or standing-context file still contains a `{{KEY}}` or `{{KEY|default}}` placeholder. The error lists each one as `file:line`.
@@ -125,7 +125,21 @@ python -m crux_scaffold run --drop-in DIR      # run the loop; resumes from DIR/
 python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (plus one Codex turn)
 ```
 
-`check` and `probe` are the first two of the team's testing protocols: nothing in the environment is broken, and the agent can do anything at all. Exit codes are 0 when the loop completes, 1 when a probe fails, 2 for a configuration error and 3 when the loop stops early (iterations or budget exhausted).
+`check` and `probe` are the first two of the team's testing protocols: nothing in the environment is broken, and the agent can do anything at all. Exit codes:
+
+- 0: the loop completed.
+- 1: a probe failed.
+- 2: a configuration error.
+- 3: the loop stopped early because its iterations or budget ran out.
+- 128 + the signal number: the run was stopped by SIGTERM or SIGINT. The unfinished iteration reruns on restart.
+
+## Tracing
+
+Langfuse v4 never updates an observation once it has stored it, so each observation is sent exactly once, when it ends. The scaffold keeps what it sends short-lived so that a long run stays visible while it progresses. These rules follow the AE-240 findings for the Codex boxes:
+
+- **One trace per loop iteration.** Traces are named like `clarify #1` and grouped by the run's session (`RUN_SLUG`). A trace's root arrives when its iteration ends; its children arrive as they finish.
+- **Coding-agent turns stream.** A Codex turn is one `generation` observation. Each Codex item, such as a command, file change or message, is sent as a child the moment it completes. The generation itself arrives at the end of the turn with the output and token usage.
+- **A stopped scaffold flushes.** SIGTERM or SIGINT ends every open observation with level `WARNING` and a `stopped` status message before the process exits. A SIGKILL, such as from the OOM killer, still loses the open iteration's root and anything not yet flushed. Langfuse's flush interval is 5 seconds.
 
 ## Environment
 
@@ -136,6 +150,39 @@ python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |
+
+## Run the demo in Docker
+
+`docker/demo.sh` builds an image holding the scaffold, the demo drop-in and the Slack MCP server, then runs it. The container stages the drop-in once in the volume `crux-sdk-scaffold-demo` at `/work/product-change`, so a rerun resumes the run there.
+
+1. **Slack.** Create the app from [`examples/product-change/slack-app-manifest.yaml`](examples/product-change/slack-app-manifest.yaml), then install it, invite the bot to a channel and copy the channel ID. See the demo's [OPERATOR_GUIDE.md](examples/product-change/OPERATOR_GUIDE.md), section 1.
+2. **Secrets.** Export them in the shell that runs `demo.sh`. `read -rs` keeps them off the screen and out of shell history:
+
+   ```bash
+   for name in OPENAI_API_KEY SLACK_BOT_TOKEN LANGFUSE_PUBLIC_KEY LANGFUSE_SECRET_KEY; do
+     printf '%s: ' "$name"; read -rs "$name"; export "$name"; echo
+   done
+   export LANGFUSE_BASE_URL=https://us.cloud.langfuse.com CRUX_MODEL=<model> CRUX_REASONING_EFFORT=medium
+   export RUN_SLUG=local-<you> SLACK_CHANNEL_ID=C…
+   ```
+
+   The Langfuse keys are the CRUX project's, the same ones stored in SSM `/crux/system/env`. `demo.sh` passes each variable to the container by name (`--env NAME`), so no value appears on a command line.
+3. **Run.**
+
+   ```bash
+   cd src/sdk-scaffold
+   docker/demo.sh probe   # one traced model call and one Codex turn
+   docker/demo.sh check   # stage the drop-in and print its assembly; no model calls
+   docker/demo.sh run
+   ```
+
+   Before `run`, post the request in the channel as yourself, as a top-level message: *"Can events show where they're happening?"* Then answer the agent's question in the thread. The demo's OPERATOR_GUIDE.md, sections 3 and 4, describes the run and what success looks like.
+4. **Inspect, stop, reset.**
+   - `docker/demo.sh bash` opens a shell in the volume. `REQUEST.md`, `LOG.md` and `site/` are in `/work/product-change/workspace`, and the loop state is in `/work/product-change/.state`.
+   - Ctrl-C or `docker stop` ends the run cleanly (exit 130 or 143). `docker/demo.sh run` resumes it.
+   - `docker/demo.sh reset` deletes the volume so the next run starts fresh.
+
+Inside the container, Codex runs with `sandbox = "full-access"` because its Linux sandbox (bubblewrap) cannot create namespaces in an unprivileged container. The container is the boundary instead: it runs as a non-root user, and the volume at `/work` is its only persistent storage. A run box keeps `workspace-write`.
 
 ## Development
 

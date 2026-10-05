@@ -33,3 +33,22 @@ jobs:
       - run: python -m pytest -q
       - name: Demo site tests
         run: python -m unittest discover -s examples/product-change/workspace/site
+      - name: Lint the demo's Docker scripts
+        run: shellcheck docker/*.sh
+
+  demo-image:
+    name: Demo image builds and checks the drop-in
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/sdk-scaffold
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - run: docker build --tag crux-sdk-scaffold-demo --file docker/Dockerfile .
+      - name: Stage and check the demo in the container (no model calls)
+        run: >-
+          docker run --rm --init -e SLACK_CHANNEL_ID=C0000000000 -e SLACK_BOT_TOKEN=xoxb-ci -e CRUX_MODEL=ci
+          crux-sdk-scaffold-demo check

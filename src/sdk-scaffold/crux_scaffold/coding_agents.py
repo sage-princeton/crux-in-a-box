@@ -5,9 +5,12 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable
-from typing import Literal
+from contextlib import aclosing
+from typing import Any, Literal
 
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
+from openai_codex.generated.v2_all import ItemCompletedNotification
+from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnCompletedNotification, TurnStatus
 from pydantic import BaseModel
 
 from crux_scaffold.components import Component, Options, Registry
@@ -44,9 +47,10 @@ class CodingAgent(Component):
         return self.options.description
 
     async def run(self, brief: str, ctx: RunContext) -> CodingResult:
-        result = await self.execute(brief, ctx)
+        with ctx.telemetry.generation(self.name, self.options.model, brief) as outcome:
+            result = await self.execute(brief, ctx)
+            outcome.output, outcome.usage = result.final_response, result.usage
         ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens)
-        ctx.telemetry.generation(self.name, self.options.model, brief, result.final_response, result.usage)
         return result
 
     @abstractmethod
@@ -90,10 +94,32 @@ class CodexCodingAgent(CodingAgent):
                 cwd=str(ctx.workspace.root), model=self.options.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
                 developer_instructions=self.developer_instructions or None)
-            turn = await thread.run(brief, effort=self.options.reasoning_effort)
-        total = turn.usage.total if turn.usage else None
-        usage = TokenUsage(requests=1, input_tokens=total.input_tokens if total else 0,
-                           output_tokens=total.output_tokens if total else 0)
-        completed = turn.error is None and str(getattr(turn.status, "value", turn.status)) == "completed"
-        return CodingResult(completed=completed, final_response=turn.final_response or str(turn.error or ""),
-                            usage=usage)
+            turn = await thread.turn(brief, effort=self.options.reasoning_effort)
+            final_response, usage, ended = "", TokenUsage(requests=1), None
+            async with aclosing(turn.stream()) as events:
+                async for event in events:
+                    payload = event.payload
+                    if isinstance(payload, ItemCompletedNotification):
+                        final_response = record_item(ctx, payload.item.root) or final_response
+                    elif isinstance(payload, ThreadTokenUsageUpdatedNotification):
+                        total = payload.token_usage.total
+                        usage = TokenUsage(requests=1, input_tokens=total.input_tokens,
+                                           output_tokens=total.output_tokens)
+                    elif isinstance(payload, TurnCompletedNotification):
+                        ended = payload.turn
+        completed = ended is not None and ended.status == TurnStatus.completed
+        error = ended.error.message if ended is not None and ended.error else ""
+        return CodingResult(completed=completed, final_response=final_response or error, usage=usage)
+
+
+CODEX_TOOL_ITEMS = {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall",
+                    "webSearch"}
+
+
+def record_item(ctx: RunContext, item: Any) -> str | None:
+    """Send a completed Codex item now, so a long turn shows its progress; returns an agent message's text."""
+    if item.type == "userMessage":
+        return None
+    ctx.telemetry.record(f"codex:{item.type}", "tool" if item.type in CODEX_TOOL_ITEMS else "span", None,
+                         item.model_dump(mode="json", by_alias=True, exclude_none=True, warnings=False))
+    return item.text if item.type == "agentMessage" else None

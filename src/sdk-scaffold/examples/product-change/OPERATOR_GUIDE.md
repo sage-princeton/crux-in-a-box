@@ -7,10 +7,13 @@ This demo exercises the scaffold end to end, in two phases:
 
 ## 1. Slack
 
-- Create a Slack app with a bot token (`xoxb-…`) and these scopes: `channels:history`, `channels:read`, `groups:history`, `groups:read`, `chat:write`, `users:read`. Invite the bot to the request channel.
-- Give the scaffold the token as `SLACK_BOT_TOKEN` in its environment.
+- Create the app from [`slack-app-manifest.yaml`](slack-app-manifest.yaml): at <https://api.slack.com/apps>, choose **Create New App → From a manifest**, pick the workspace and paste the file. It requests only the bot scopes the Slack MCP server needs: `channels:history`, `channels:read`, `groups:history`, `groups:read`, `chat:write`, `users:read`.
+- Install it to the workspace and copy the **Bot User OAuth Token** (`xoxb-…`) from **OAuth & Permissions**. Give it to the scaffold as `SLACK_BOT_TOKEN`.
+- Invite the bot to the request channel (`/invite @crux-pm`) and copy the channel's ID (`C…`) from its details.
 
 ## 2. Resolve placeholders
+
+`PROMPT.md` is the `clarify` phase's first prompt and is sent to the agent verbatim, so operator notes stay in this guide.
 
 | Placeholder | Files | Value |
 |---|---|---|
@@ -35,8 +38,7 @@ It is deliberately underspecified: the demo expects the agent to ask before it b
 - `REQUEST.md` holds `- [ ]` acceptance criteria, and `LOG.md` has entries for the clarification, delegation and verification.
 - `site/` gains the field and its tests.
 - `.state/state.json` shows both phases with all gates passing.
-- Langfuse has one `crux-run` trace in environment `<slug>`, tagged `run:<slug>` and `platform:openai-agents`. It contains:
-  - one span per iteration (`clarify #1`, `implement #1`, …)
-  - `gate:*` evaluations
-  - the Codex `engineer` generation, with token usage
+- Langfuse environment `<slug>` has one trace per iteration (`clarify #1`, `implement #1`, …) in session `<slug>`, tagged `run:<slug>` and `platform:openai-agents`. Each trace contains:
   - SDK spans for the product manager
+  - `gate:*` evaluations
+  - in `implement`, the Codex `engineer` generation with its token usage, and a `codex:*` child for each command, file change and message

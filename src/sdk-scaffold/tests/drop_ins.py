@@ -35,7 +35,7 @@ total_seconds = 90
 
 BASE_FILES = {
     "scaffold.toml": SCAFFOLD_TOML,
-    "PROMPT.md": "_Operator: submit below the line._\n\n---\n\nHandle the request in channel C123.\n",
+    "PROMPT.md": "Handle the request in channel C123.\n",
     "OPERATOR_GUIDE.md": "Resolve {{SLACK_CHANNEL_ID}} before launch.\n",
     "personas/pm.md": "You are the product manager.\n",
     "personas/reviewer.md": "You are the reviewer.\n",

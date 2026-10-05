@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -45,23 +46,35 @@ class RunIdentity:
         return [f"workspace:{self.workspace_id}", *tags] if self.workspace_id else tags
 
 
+@dataclass
+class GenerationOutcome:
+    """What a generation produced, set by the caller before the generation ends."""
+
+    output: Any = None
+    usage: TokenUsage | None = None
+
+
 class Telemetry(ABC):
+    """Langfuse v4 never updates an observation it has stored, so each one is sent once, when it ends. Short
+    observations under short traces keep a run visible while it progresses; an observation still open when the
+    scaffold is stopped is sent marked as stopped (AE-240)."""
+
     #: Whether the agent runtime should export its own SDK spans into this backend.
     sdk_tracing: bool = False
 
     @abstractmethod
     @contextmanager
-    def run(self, name: str) -> Iterator[None]: ...
+    def trace(self, name: str, metadata: Mapping[str, Any] | None = None) -> Iterator[None]:
+        """A new trace, in the run's session. Observations made inside it nest under it."""
+
+    @abstractmethod
+    def record(self, name: str, kind: RecordKind, input: Any, output: Any) -> None:
+        """A finished observation, sent now."""
 
     @abstractmethod
     @contextmanager
-    def span(self, name: str, metadata: Mapping[str, Any] | None = None) -> Iterator[None]: ...
-
-    @abstractmethod
-    def record(self, name: str, kind: RecordKind, input: Any, output: Any) -> None: ...
-
-    @abstractmethod
-    def generation(self, name: str, model: str | None, input: Any, output: Any, usage: TokenUsage) -> None: ...
+    def generation(self, name: str, model: str | None, input: Any) -> Iterator[GenerationOutcome]:
+        """A long model call, such as a coding-agent turn. Observations recorded inside it nest under it."""
 
     def flush(self) -> None:
         return None
@@ -69,18 +82,18 @@ class Telemetry(ABC):
 
 class NullTelemetry(Telemetry):
     @contextmanager
-    def run(self, name: str) -> Iterator[None]:
-        yield
-
-    @contextmanager
-    def span(self, name: str, metadata: Mapping[str, Any] | None = None) -> Iterator[None]:
+    def trace(self, name: str, metadata: Mapping[str, Any] | None = None) -> Iterator[None]:
         yield
 
     def record(self, name: str, kind: RecordKind, input: Any, output: Any) -> None:
         return None
 
-    def generation(self, name: str, model: str | None, input: Any, output: Any, usage: TokenUsage) -> None:
-        return None
+    @contextmanager
+    def generation(self, name: str, model: str | None, input: Any) -> Iterator[GenerationOutcome]:
+        yield GenerationOutcome()
+
+
+STOPPED = "stopped: the scaffold was stopped before this finished"
 
 
 class LangfuseTelemetry(Telemetry):
@@ -91,30 +104,36 @@ class LangfuseTelemetry(Telemetry):
         self.identity = identity
 
     @contextmanager
-    def run(self, name: str) -> Iterator[None]:
-        try:
-            with self.client.start_as_current_observation(as_type="span", name=name):
-                with propagate_attributes(session_id=self.identity.run_slug, user_id=self.identity.run_slug,
-                                          tags=self.identity.tags(), metadata=self.identity.metadata(),
-                                          trace_name=name):
-                    yield
-        finally:
-            self.client.flush()
+    def observe(self, **kwargs: Any) -> Iterator[Any]:
+        with self.client.start_as_current_observation(**kwargs) as observation:
+            try:
+                yield observation
+            except (asyncio.CancelledError, KeyboardInterrupt):
+                observation.update(level="WARNING", status_message=STOPPED)
+                raise
 
     @contextmanager
-    def span(self, name: str, metadata: Mapping[str, Any] | None = None) -> Iterator[None]:
-        with self.client.start_as_current_observation(as_type="span", name=name, metadata=metadata):
-            yield
+    def trace(self, name: str, metadata: Mapping[str, Any] | None = None) -> Iterator[None]:
+        with self.observe(as_type="span", name=name, metadata=metadata):
+            with propagate_attributes(session_id=self.identity.run_slug, user_id=self.identity.run_slug,
+                                      tags=self.identity.tags(), metadata=self.identity.metadata(),
+                                      trace_name=name):
+                yield
 
     def record(self, name: str, kind: RecordKind, input: Any, output: Any) -> None:
         with self.client.start_as_current_observation(as_type=kind, name=name, input=input, output=output):
             pass
 
-    def generation(self, name: str, model: str | None, input: Any, output: Any, usage: TokenUsage) -> None:
-        with self.client.start_as_current_observation(
-                as_type="generation", name=name, model=model, input=input, output=output,
-                usage_details={"input": usage.input_tokens, "output": usage.output_tokens}):
-            pass
+    @contextmanager
+    def generation(self, name: str, model: str | None, input: Any) -> Iterator[GenerationOutcome]:
+        outcome = GenerationOutcome()
+        with self.observe(as_type="generation", name=name, model=model, input=input) as observation:
+            try:
+                yield outcome
+            finally:
+                usage = outcome.usage
+                observation.update(output=outcome.output, usage_details=usage and {
+                    "input": usage.input_tokens, "output": usage.output_tokens})
 
     def flush(self) -> None:
         self.client.flush()

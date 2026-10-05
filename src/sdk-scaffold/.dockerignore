@@ -1,0 +1,7 @@
+*
+!requirements.txt
+!crux_scaffold/
+!examples/product-change/
+!docker/entrypoint.sh
+**/__pycache__
+**/.state

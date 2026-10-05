@@ -49,9 +49,11 @@ class Scaffold:
         return agents
 
     async def run(self) -> LoopOutcome:
-        with self.context.telemetry.run("crux-run"):
+        try:
             async with self.runtime:
                 return await self.loop.run(self.runtime, self.drop_in, self.context, self.state, self.store)
+        finally:
+            self.context.telemetry.flush()
 
     def describe(self) -> list[str]:
         config = self.drop_in.config

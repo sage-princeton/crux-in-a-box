@@ -1,3 +1,5 @@
+import signal
+
 import pytest
 
 from crux_scaffold import cli
@@ -6,7 +8,7 @@ from crux_scaffold.runtimes.base import RUNTIMES
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity
 
 from drop_ins import edit
-from scripted import ScriptedModel, say
+from scripted import ScriptedModel, StoppedModel, say
 
 
 def run_cli(drop_in_dir, tmp_path, models, command="run"):
@@ -29,7 +31,7 @@ def test_unresolved_placeholders_stop_the_run_before_any_model_call(drop_in_dir,
     edit(drop_in_dir, "PROMPT.md", "channel C123", "channel {{SLACK_CHANNEL_ID}}")
     pm = ScriptedModel(say("should not run"))
     assert run_cli(drop_in_dir, tmp_path, {"pm": pm}) == 2
-    assert "PROMPT.md:5: {{SLACK_CHANNEL_ID}}" in capsys.readouterr().err
+    assert "PROMPT.md:1: {{SLACK_CHANNEL_ID}}" in capsys.readouterr().err
     assert pm.inputs == []
 
 
@@ -48,6 +50,13 @@ def test_a_loop_that_does_not_complete_exits_3(drop_in_dir, tmp_path, capsys):
     assert capsys.readouterr().out.startswith("loop iterations_exhausted in phase main")
 
 
+def test_sigterm_stops_the_run_cleanly_so_a_restart_resumes_it(drop_in_dir, tmp_path, capsys):
+    assert run_cli(drop_in_dir, tmp_path, {"pm": StoppedModel()}) == 128 + signal.SIGTERM
+    assert "stopped by SIGTERM" in capsys.readouterr().err
+    assert not (tmp_path / "state" / "state.json").exists()
+    assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
+
+
 def test_probe_requires_langfuse(capsys):
     assert main(["probe"], env={}) == 1
     assert "LANGFUSE_PUBLIC_KEY" in capsys.readouterr().err
@@ -64,7 +73,7 @@ class AuthorizedClient:
 @pytest.fixture
 def probe_telemetry(monkeypatch):
     telemetry = LangfuseTelemetry(AuthorizedClient(), RunIdentity.from_env({}))
-    monkeypatch.setattr(LangfuseTelemetry, "run", lambda self, name: __import__("contextlib").nullcontext())
+    monkeypatch.setattr(LangfuseTelemetry, "trace", lambda self, name: __import__("contextlib").nullcontext())
     return telemetry
 
 

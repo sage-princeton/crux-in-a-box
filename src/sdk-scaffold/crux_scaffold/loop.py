@@ -105,8 +105,8 @@ class PhasedLoop(Loop):
                 return LoopOutcome(status="budget_exhausted", phase=phase.name, final_output=last_output)
             prompt = state.next_prompt or drop_in.prompt(phase.prompt)
             state.iteration += 1
-            with ctx.telemetry.span(f"{phase.name} #{state.iteration}", {"phase": phase.name,
-                                                                         "iteration": state.iteration}):
+            with ctx.telemetry.trace(f"{phase.name} #{state.iteration}", {"phase": phase.name,
+                                                                          "iteration": state.iteration}):
                 turn = await runtime.run(prompt)
                 last_output = turn.final_output
                 gate_ctx = GateContext(ctx, drop_in, phase.name, state.iteration, last_output)

@@ -1,7 +1,10 @@
 """Scripted test doubles for the real agent runtime: models that replay outputs, and a coding agent that
 writes declared files."""
 
+import asyncio
 import json
+import os
+import signal
 
 from agents.items import ModelResponse
 from agents.models.interface import Model
@@ -41,6 +44,14 @@ class ScriptedModel(Model):
 
     def stream_response(self, *args, **kwargs):
         raise NotImplementedError
+
+
+class StoppedModel(ScriptedModel):
+    """The scaffold is stopped, as by `systemctl stop`, while the model is answering."""
+
+    async def get_response(self, *args, **kwargs):
+        os.kill(os.getpid(), signal.SIGTERM)
+        await asyncio.sleep(30)
 
 
 class ScriptedCodingOptions(CodingAgentOptions):

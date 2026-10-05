@@ -1,0 +1,20 @@
+display_information:
+  name: CRUX Product Manager
+  description: Product manager agent for the CRUX product-change demo. Clarifies change requests in their threads.
+features:
+  bot_user:
+    display_name: crux-pm
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - chat:write
+      - users:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

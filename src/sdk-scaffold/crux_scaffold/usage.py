@@ -15,6 +15,7 @@ class TokenUsage(BaseModel):
         return self.input_tokens + self.output_tokens
 
 
+# TODO: read usage directly from Langfuse (via an AWS Lambda) instead of tallying it in-process.
 class UsageLedger(BaseModel):
     """Token usage per source (agent or coding agent), persisted with the run state."""
 

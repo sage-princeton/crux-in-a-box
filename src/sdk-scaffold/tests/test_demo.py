@@ -26,7 +26,7 @@ def resolved_copy(tmp_path: Path) -> Path:
 def test_the_pristine_demo_lists_its_placeholders(tmp_path, capsys):
     assert main(["check", "--drop-in", str(DEMO), "--state-dir", str(tmp_path)], env=CHECK_ENV) == 2
     err = capsys.readouterr().err
-    for location in ("PROMPT.md:7:", "scaffold.toml:", "workspace/AGENTS.md:"):
+    for location in ("PROMPT.md:1:", "scaffold.toml:", "workspace/AGENTS.md:"):
         assert location in err
 
 

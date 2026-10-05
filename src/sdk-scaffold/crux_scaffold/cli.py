@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import signal
 import sys
 import tempfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,13 @@ from crux_scaffold.workspace import RunContext, Sleep, Workspace
 
 PROBE_MARKER = "SCAFFOLD-PROBE"
 EXIT_OK, EXIT_PROBE_FAILED, EXIT_CONFIG, EXIT_STOPPED = 0, 1, 2, 3
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+
+
+class Stopped(Exception):
+    def __init__(self, signum: int) -> None:
+        super().__init__(signal.Signals(signum).name)
+        self.signum = signum
 
 
 def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None, *,
@@ -50,12 +58,38 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
             return EXIT_OK
         if not isinstance(telemetry, LangfuseTelemetry):
             print("tracing off: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are not set", file=sys.stderr)
-        outcome = asyncio.run(scaffold.run())
+        outcome = asyncio.run(until_stopped(scaffold.run()))
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
+    except Stopped as stop:
+        print(f"stopped by {stop}; the unfinished iteration reruns when the scaffold restarts", file=sys.stderr)
+        return 128 + stop.signum
     print(f"loop {outcome.status} in phase {outcome.phase}\n{outcome.final_output}")
     return EXIT_OK if outcome.status == "completed" else EXIT_STOPPED
+
+
+async def until_stopped[T](coro: Coroutine[Any, Any, T]) -> T:
+    """Turn SIGTERM and SIGINT into cancellation, so open observations end, marked as stopped, and are flushed."""
+    task = asyncio.ensure_future(coro)
+    loop = asyncio.get_running_loop()
+    received: list[int] = []
+
+    def stop(signum: int) -> None:
+        received.append(signum)
+        task.cancel()
+
+    for signum in STOP_SIGNALS:
+        loop.add_signal_handler(signum, stop, signum)
+    try:
+        return await task
+    except asyncio.CancelledError:
+        if received:
+            raise Stopped(received[0]) from None
+        raise
+    finally:
+        for signum in STOP_SIGNALS:
+            loop.remove_signal_handler(signum)
 
 
 async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, str], telemetry: Telemetry) -> int:
@@ -72,10 +106,13 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
         print("probe failed: Langfuse rejected the configured keys", file=sys.stderr)
         return EXIT_PROBE_FAILED
     request = f"Say exactly: {PROBE_MARKER}"
-    with telemetry.run("crux-probe"):
-        replies = {runtime: await RUNTIMES.get(runtime).probe(env, request)}
-        if coding_agent:
-            replies[coding_agent] = await probe_coding_agent(coding_agent, env, telemetry, request)
+    try:
+        with telemetry.trace("crux-probe"):
+            replies = {runtime: await RUNTIMES.get(runtime).probe(env, request)}
+            if coding_agent:
+                replies[coding_agent] = await probe_coding_agent(coding_agent, env, telemetry, request)
+    finally:
+        telemetry.flush()
     failed = [name for name, reply in replies.items() if PROBE_MARKER not in reply]
     if failed:
         print(f"probe failed: {', '.join(failed)} did not answer {PROBE_MARKER}", file=sys.stderr)

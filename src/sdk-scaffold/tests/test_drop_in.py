@@ -7,17 +7,13 @@ from crux_scaffold.tools import TOOLS
 from drop_ins import edit
 
 
-def test_prompt_is_the_text_below_the_divider(drop_in_dir):
-    assert DropInDirectory.load(drop_in_dir).prompt("PROMPT.md") == "Handle the request in channel C123."
-
-
-def test_prompt_without_a_divider_is_the_whole_file(drop_in_dir):
-    (drop_in_dir / "PROMPT.md").write_text("Just do it.\n")
-    assert DropInDirectory.load(drop_in_dir).prompt("PROMPT.md") == "Just do it."
+def test_prompt_is_the_whole_file(drop_in_dir):
+    (drop_in_dir / "PROMPT.md").write_text("Just do it.\n\n---\n\nThen report.\n")
+    assert DropInDirectory.load(drop_in_dir).prompt("PROMPT.md") == "Just do it.\n\n---\n\nThen report."
 
 
 def test_unresolved_placeholders_are_listed_with_their_locations(drop_in_dir):
-    (drop_in_dir / "PROMPT.md").write_text("{{NOTE}} for the operator\n---\nPost to {{SLACK_CHANNEL_ID}}.\n")
+    (drop_in_dir / "PROMPT.md").write_text("Find the request.\n\nPost to {{SLACK_CHANNEL_ID}}.\n")
     (drop_in_dir / "personas/pm.md").write_text("You are {{ROLE|the PM}}.\n")
     (drop_in_dir / "workspace/ENGINEERING.md").write_text("Deploy to {{HOST}}.\n")
     (drop_in_dir / "workspace/notes.md").write_text("Agent notes may mention {{ANYTHING}}.\n")
@@ -27,7 +23,7 @@ def test_unresolved_placeholders_are_listed_with_their_locations(drop_in_dir):
     assert "PROMPT.md:3: {{SLACK_CHANNEL_ID}}" in message
     assert "personas/pm.md:1: {{ROLE|the PM}}" in message
     assert "workspace/ENGINEERING.md:1: {{HOST}}" in message
-    for skipped in ("{{NOTE}}", "{{ANYTHING}}", "OPERATOR_GUIDE.md:"):
+    for skipped in ("{{ANYTHING}}", "OPERATOR_GUIDE.md:"):
         assert skipped not in message
 
 

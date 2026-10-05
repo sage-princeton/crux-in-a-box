@@ -22,6 +22,7 @@ MAX_OUTPUT_CHARS = 20_000
 Sleep = Callable[[float], Awaitable[None]]
 
 
+# TODO: add runtime monitoring guardrails, especially for write_file and run_shell.
 @dataclass
 class Workspace:
     """The agents' working directory. File tools are confined to it; shell commands start in it, unsandboxed."""
