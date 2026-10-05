@@ -81,6 +81,7 @@ ExecStart=${SCAFFOLD_PYTHON} -m crux_scaffold run --drop-in ${DROP_IN_DIR} --sta
 Restart=on-failure
 RestartSec=30
 RestartPreventExitStatus=2 3
+SuccessExitStatus=130 143
 StandardOutput=journal
 StandardError=journal
 UNIT
