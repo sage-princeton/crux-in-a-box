@@ -15,8 +15,11 @@ def state():
         table = boto3.resource("dynamodb", region_name="us-east-1").create_table(
             TableName="monitoring",
             BillingMode="PAY_PER_REQUEST",
-            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+            KeySchema=[
+                {"AttributeName": "pk", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[{"AttributeName": k, "AttributeType": "S"} for k in ("pk", "sk")],
         )
         yield State(table)
 
@@ -165,3 +168,49 @@ def test_notice_contention_and_failed_webhook_remain_retryable(state):
     assert "lease_owner" not in state.get("NOTICE#i-test")
     runtime.notify = lambda *args: None
     assert runtime.deliver(report, "REVIEW#i-test#300", "reviews/test", {}) == "sent"
+
+
+def test_operational_keys_do_not_overwrite_incident_records(state):
+    state.table.put_item(Item={"pk": "REVIEW#i-example#300", "sk": "STATE", "status": "closed"})
+    assert state.claim("REVIEW#i-example#300", "worker", 1000)
+    assert state.get("REVIEW#i-example#300")["status"] == "processing"
+    assert (
+        state.table.get_item(Key={"pk": "REVIEW#i-example#300", "sk": "STATE"})["Item"]["status"]
+        == "closed"
+    )
+
+
+def test_price_tiers_and_per_call_cap_are_reserved_before_inference(state, monkeypatch):
+    from review import MAX_OUTPUT_TOKENS, input_size
+
+    runtime = Runtime.__new__(Runtime)
+    runtime.state, runtime.http = state, None
+    runtime.config = {"inference_budget_usd": 100}
+    price = {
+        "prompt": "0.000001",
+        "completion": "0.000002",
+        "overrides": [{"prompt": "0.000002", "completion": "0.000004"}],
+    }
+    monkeypatch.setattr(
+        "worker.get_json",
+        lambda *args, **kwargs: {"data": [{"id": "anthropic/claude-example", "pricing": price}]},
+    )
+    reserved = runtime.reserve_inference("anthropic/claude-example", {})
+    assert reserved == input_size({}) * 2 + MAX_OUTPUT_TOKENS * 4
+    price["request"] = "1"
+    with pytest.raises(CoverageError, match="per-call"):
+        runtime.reserve_inference("anthropic/claude-example", {})
+    price["request"] = "NaN"
+    with pytest.raises(CoverageError, match="invalid"):
+        runtime.reserve_inference("anthropic/claude-example", {})
+    assert state.get("BUDGET#inference")["reserved_microusd"] == reserved
+
+
+def test_pending_index_keeps_operational_retries_separate(state):
+    assert state.claim("REVIEW#i-one#300", "worker", 1000)
+    assert state.claim("REVIEW#i-two#300", "worker", 1000)
+    state.save("REVIEW#i-two#300", "worker", {"status": "done"}, release=True)
+    state.table.put_item(
+        Item={"pk": "REVIEW#historical", "sk": "STATE", "status": "processing", "updated_at": 1000}
+    )
+    assert [item["pk"] for item in state.pending()] == ["REVIEW#i-one#300"]

@@ -63,16 +63,34 @@ def test_incomplete_or_misattributed_langfuse_is_not_accepted(body):
 
 def test_model_family_separation_uses_observed_and_declared_models():
     sources = [{"kind": "langfuse", "data": {"model": "claude-example"}}]
-    assert (
-        select_reviewer(["anthropic/claude-example", "google/gemini-example"], sources, ["openai"])
-        == "google/gemini-example"
-    )
-    with pytest.raises(CoverageError):
-        select_reviewer(["anthropic/claude-example"], sources, [])
-    with pytest.raises(CoverageError):
+    assert select_reviewer(["openai/gpt-example"], sources, []) == "openai/gpt-example"
+    with pytest.raises(CoverageError, match="different model family"):
+        select_reviewer(["anthropic/claude-example", "openai/gpt-example"], sources, ["openai"])
+    with pytest.raises(CoverageError, match="unknown"):
         select_reviewer(
-            ["google/gemini-example"], [{"kind": "langfuse", "data": {"model": "unknown"}}], []
+            ["openai/gpt-example"], [{"kind": "langfuse", "data": {"model": "unknown"}}], []
         )
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        "google/gemini-example",
+        "deepseek/deepseek-example",
+        "other/claude-example",
+        "claude-example",
+    ],
+)
+def test_disallowed_reviewers_fail_before_network_access(model):
+    with pytest.raises(CoverageError, match="explicit"):
+        select_reviewer(["anthropic/claude-example", model], [], ["openai"])
+    with pytest.raises(CoverageError, match="explicit"):
+        evaluate(None, model, "fixture", {})
+
+
+def test_large_reviewer_input_fails_before_network_access():
+    with pytest.raises(CoverageError, match="128 KiB"):
+        evaluate(None, "anthropic/claude-example", "fixture", {"data": "x" * (128 * 1024)})
 
 
 def test_unverified_or_escaping_sftp_sources_fail_before_connecting():
@@ -110,7 +128,7 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
         return httpx.Response(
             200,
             json={
-                "model": "google/gemini-example",
+                "model": "anthropic/claude-example",
                 "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(report)}}],
             },
         )
@@ -118,7 +136,10 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(CoverageError, match="cited"):
             evaluate(
-                client, "google/gemini-example", "test-credential", {"sources": [{"id": "known"}]}
+                client,
+                "anthropic/claude-example",
+                "test-credential",
+                {"sources": [{"id": "known"}]},
             )
 
 

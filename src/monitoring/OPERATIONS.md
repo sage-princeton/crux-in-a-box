@@ -14,7 +14,7 @@ visible. “No longer present” describes the instance, not whether an incident
 | Identity Center | `805370850700`; **CRUX incident management** app; **All HAL** group |
 | Web host | `i-02d24c35065046688`, service `crux-incidents.service`; SSM administration |
 | Artifact/config bucket | `crux-monitoring-ae211-881004720495-us-east-1` |
-| DynamoDB | `crux-monitoring-ae211` (reviews/budgets), `crux-monitoring-ae211-incidents` (incidents/auth) |
+| DynamoDB | `crux-monitoring-ae211-incidents` (reviews, budgets, incidents and auth) |
 | Terraform state | Account `869937524494`; [backend.hcl](terraform/backend.hcl) |
 
 All incident pages require AWS sign-in through **All HAL**. Members can view
@@ -75,7 +75,8 @@ Role policies/trust are versioned under `ci/plan-*.json`; repository variables a
 
 - Review [the prompt](prompts/reviewer.md) and approve evidence before activation.
   Only scrubbed exports and approved Langfuse content may reach the model provider.
-  Reviewer and subject model families must differ; unknown families fail visibly.
+  Only explicit `anthropic/` and `openai/` reviewers are accepted. Reviewer and
+  subject families must differ; unknown families fail visibly.
 - SFTP requires a dedicated `crux-inspect` user, root-owned chroot/exports,
   `ForceCommand internal-sftp -R`, disabled shell/forwarding/password login, and a
   pinned host key. Verify reads succeed and writes, deletion, shell and forwarding
@@ -114,7 +115,7 @@ using browser forms. SAML diagnostics log categories, not assertions or tokens.
 ## Security checks
 
 Every PR builds and scans the worker, web app and patched Caddy proxy, and runs
-Python/Terraform tests, Checkov 3.3.19, Trivy 0.75.0 and Bandit 1.9.4.
+Python/Terraform tests, Ruff 0.16.10 lint/format, Checkov 3.3.19, Trivy 0.75.0 and Bandit 1.9.4.
 Source secrets, medium/high Bandit findings and **fixable high/critical** image
 vulnerabilities block releases. Scanner failures also fail the job. Full JSON
 reports retain all severities and unfixed findings for 14 days in
@@ -134,3 +135,24 @@ Debian CVEs remain unfixed, plus a low Paramiko finding. Rebuild when fixes arri
 a passing gate does not mean vulnerability-free. Follow-ups: login rate limiting,
 HTTPS egress restrictions and eventual ECR/customer-key migration.
 Install dependencies by rebuilding images, not modifying running containers.
+
+## Model costs
+
+The 5 October audit found 1,038 saved review records: 15 Sonnet 4.6 calls and
+1,023 without inference. Recorded API charges total $0.593118; average $0.03954,
+maximum $0.07839. Average input/output: 5,903 / 1,455 tokens; maximum input:
+14,680 tokens. These are saved response charges, not a complete provider invoice.
+At the same average, a continuously active five-minute reviewer costs about
+$11.39 per instance/day; idle windows avoid inference.
+
+Each call is limited to 128 KiB of input including prompt/schema allowance, 6,000
+output tokens, and a conservative $1 reservation using the highest listed price
+tier. Oversized evidence becomes a visible coverage failure; it is never silently
+truncated. The existing $100 global reservation limit and dedicated provider key
+cap still apply. The current $3.69995 reserved is not actual spend; ambiguous calls
+are not refunded. The registry/schedule expired on 2 October and remain expired.
+
+Operational records use `sk=OPERATION` in the shared table; incident/auth keys
+remain unchanged. The old table's pre-consolidation on-demand backup is retained.
+Never deploy a pre-consolidation worker without restoring its table and reconciling
+new operational rows, or budgets and notification acknowledgments could regress.

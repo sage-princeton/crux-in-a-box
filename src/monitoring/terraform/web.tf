@@ -57,6 +57,26 @@ resource "aws_dynamodb_table" "incidents" {
       key_type       = "RANGE"
     }
   }
+  attribute {
+    name = "status"
+    type = "S"
+  }
+  attribute {
+    name = "updated_at"
+    type = "N"
+  }
+  global_secondary_index {
+    name            = "status-updated"
+    projection_type = "ALL"
+    key_schema {
+      attribute_name = "status"
+      key_type       = "HASH"
+    }
+    key_schema {
+      attribute_name = "updated_at"
+      key_type       = "RANGE"
+    }
+  }
   ttl {
     attribute_name = "expires_at"
     enabled        = true

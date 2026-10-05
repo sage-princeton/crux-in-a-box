@@ -12,25 +12,17 @@ from review import CoverageError
 from worker import Runtime
 
 
-@pytest.mark.parametrize("stateful", [False, True])
-def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, stateful):
+@pytest.mark.parametrize("fleet", [False, True])
+def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, fleet):
     with mock_aws():
         monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
         monkeypatch.setenv("MONITORING_BUCKET", "monitoring-test")
-        monkeypatch.setenv("MONITORING_TABLE", "monitoring-test")
+        monkeypatch.setenv("MONITORING_TABLE", store.table.name)
         monkeypatch.setenv("MONITORING_SECRETS_PARAMETER", "/crux/monitoring/test")
-        if stateful:
-            monkeypatch.setenv("MONITORING_INCIDENT_TABLE", store.table.name)
         s3 = boto3.client("s3")
         s3.create_bucket(Bucket="monitoring-test")
         s3.put_bucket_versioning(
             Bucket="monitoring-test", VersioningConfiguration={"Status": "Enabled"}
-        )
-        boto3.client("dynamodb").create_table(
-            TableName="monitoring-test",
-            BillingMode="PAY_PER_REQUEST",
-            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
         )
         instance = boto3.client("ec2").run_instances(
             ImageId="ami-12345678", MinCount=1, MaxCount=1
@@ -47,7 +39,7 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
         registry = {
             "expires_at": int(time.time()) + 3600,
             "inference_budget_usd": 1,
-            "reviewer_models": ["google/gemini-example"],
+            "reviewer_models": ["anthropic/claude-example"],
             "targets": {
                 instance: {
                     "authorization": "Inspect the fixture only",
@@ -56,7 +48,7 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
                 }
             },
         }
-        if stateful:
+        if fleet:
             registry["fleet"] = {"exclude_names": ["crux-control"], "langfuse_by_name": False}
         s3.put_object(
             Bucket="monitoring-test", Key="config/registry.json", Body=json.dumps(registry)
@@ -95,7 +87,7 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
                     json={
                         "data": [
                             {
-                                "id": "google/gemini-example",
+                                "id": "anthropic/claude-example",
                                 "pricing": {"prompt": "0.000001", "completion": "0.000001"},
                             }
                         ]
@@ -106,7 +98,7 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
                 return httpx.Response(
                     200,
                     json={
-                        "model": "google/gemini-example",
+                        "model": "anthropic/claude-example",
                         "choices": [
                             {"finish_reason": "stop", "message": {"content": json.dumps(report)}}
                         ],
@@ -125,7 +117,7 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
         runtime.http.close()
         runtime.http = httpx.Client(transport=httpx.MockTransport(handler))
         end = int(time.time()) // 300 * 300
-        if stateful:
+        if fleet:
             original_ingest = runtime.incident_store.ingest
 
             def fail_ingestion(*args, **kwargs):
@@ -133,29 +125,23 @@ def test_retry_uses_durable_evidence_after_termination(monkeypatch, store, state
 
             monkeypatch.setattr(runtime.incident_store, "ingest", fail_ingestion)
             runtime.inventory(refresh=True)
-        with pytest.raises(CoverageError if stateful else httpx.HTTPStatusError):
+        with pytest.raises(CoverageError if fleet else httpx.HTTPStatusError):
             runtime.review(instance, end)
         key = f"REVIEW#{instance}#{end}"
         pending = runtime.state.get(key)
         assert pending["status"] == "pending_notification"
-        if stateful:
+        if fleet:
             monkeypatch.setattr(runtime.incident_store, "ingest", original_ingest)
             boto3.client("ec2").terminate_instances(InstanceIds=[instance])
             s3.put_object(Bucket="monitoring-test", Key="inventory/targets.json", Body="{}")
             registry["targets"] = {}
             runtime.config["targets"] = {}
-        else:
-            history = s3.get_object(Bucket="monitoring-test", Key="reviews/incidents/index.html")[
-                "Body"
-            ].read()
-            assert b"fixture finding" not in history
-            assert b"Activity requires review" in history
         runtime.review(instance, end)
         assert runtime.state.get(key)["status"] == "done"
-        assert counts == {"model": 1, "slack": 0 if stateful else 2}
+        assert counts == {"model": 1, "slack": 0 if fleet else 2}
         runtime.review(instance, end)
-        assert counts == {"model": 1, "slack": 0 if stateful else 2}
-        if stateful:
+        assert counts == {"model": 1, "slack": 0 if fleet else 2}
+        if fleet:
             assert runtime.incident_store.get("FLEET", instance)["review_count"] == 1
             assert "Contents" not in s3.list_objects_v2(
                 Bucket="monitoring-test", Prefix="reviews/incidents/"

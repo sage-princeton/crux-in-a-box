@@ -31,9 +31,7 @@ def create_app(store=None, settings=None):
         or parsed.username
     ):
         raise ValueError("Web origin must be an HTTPS origin")
-    store = store or IncidentStore(
-        boto3.resource("dynamodb").Table(os.environ["MONITORING_INCIDENT_TABLE"])
-    )
+    store = store or IncidentStore(boto3.resource("dynamodb").Table(os.environ["MONITORING_TABLE"]))
     app = Flask(__name__)
     app.config.update(
         PUBLIC_ORIGIN=origin, TRUSTED_HOSTS=[parsed.hostname], MAX_CONTENT_LENGTH=128 * 1024
@@ -180,27 +178,22 @@ def create_app(store=None, settings=None):
         events, event_cursor = store.page(
             "HISTORY#" + incident_id, prefix="EVENT#", cursor=request.args.get("events")
         )
-        public_events = [{k: e[k] for k in ("at", "from_status", "status")} for e in events]
-        private = None
-        observations, observation_cursor = [], None
-        if g.actor:
-            private = item
-            observations, observation_cursor = store.page(
-                "HISTORY#" + incident_id, prefix="OBS#", cursor=request.args.get("observations")
+        observations, observation_cursor = store.page(
+            "HISTORY#" + incident_id, prefix="OBS#", cursor=request.args.get("observations")
+        )
+        for observation in observations:
+            prefix = observation.get("artifact_prefix", "")
+            observation["evidence_url"] = (
+                "https://s3.console.aws.amazon.com/s3/buckets/"
+                + quote(settings["bucket"], safe="")
+                + "?prefix="
+                + quote(prefix + "/", safe="")
             )
-            for observation in observations:
-                prefix = observation.get("artifact_prefix", "")
-                observation["evidence_url"] = (
-                    "https://s3.console.aws.amazon.com/s3/buckets/"
-                    + quote(settings["bucket"], safe="")
-                    + "?prefix="
-                    + quote(prefix + "/", safe="")
-                )
         return render_template(
             "detail.html",
             incident=public_incident(item),
-            private=private,
-            events=events if g.actor else public_events,
+            private=item,
+            events=events,
             observations=observations,
             event_cursor=event_cursor,
             observation_cursor=observation_cursor,

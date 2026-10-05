@@ -16,6 +16,8 @@ import paramiko
 
 MAX_FILE_BYTES = 64 * 1024
 MAX_EVIDENCE_BYTES = 512 * 1024
+MAX_INPUT_BYTES = 128 * 1024
+MAX_OUTPUT_TOKENS = 6000
 MAX_PAGES = 10
 PROMPT = Path(__file__).with_name("prompts").joinpath("reviewer.md").read_text()
 TEXT = {"type": "string", "maxLength": 4000}
@@ -277,7 +279,23 @@ def model_family(model):
     return None
 
 
+def reviewer_family(model):
+    family = model_family(model)
+    if family not in {"anthropic", "openai"} or not model.startswith(family + "/"):
+        raise CoverageError("Reviewers must be explicit anthropic/ or openai/ models")
+    return family
+
+
+def input_size(payload):
+    # Include system instructions, structured-output schema and a protocol allowance.
+    size = len(encoded(payload)) + len(PROMPT.encode()) + len(encoded(SCHEMA)) + 1024
+    if size > MAX_INPUT_BYTES:
+        raise CoverageError("Reviewer input exceeds the 128 KiB per-call limit")
+    return size
+
+
 def select_reviewer(models, sources, declared_families):
+    reviewers = [(model, reviewer_family(model)) for model in models]
     observed = {
         s["data"].get("model")
         for s in sources
@@ -287,19 +305,21 @@ def select_reviewer(models, sources, declared_families):
     if None in families or not (families or declared_families):
         raise CoverageError("Subject model family is unknown; configure a trusted family mapping")
     families.update(declared_families)
-    for model in models:
-        if model_family(model) and model_family(model) not in families:
+    for model, family in reviewers:
+        if family not in families:
             return model
     raise CoverageError("No configured reviewer is from a different model family")
 
 
 def evaluate(client, model, secret, payload, record_response=None):
+    reviewer_family(model)
+    input_size(payload)
     response = client.post(
         "https://openrouter.ai/api/v1/chat/completions",
         headers={"Authorization": "Bearer " + secret},
         json={
             "model": model,
-            "max_tokens": 6000,
+            "max_tokens": MAX_OUTPUT_TOKENS,
             "temperature": 0,
             "provider": {"require_parameters": True, "data_collection": "deny"},
             "messages": [

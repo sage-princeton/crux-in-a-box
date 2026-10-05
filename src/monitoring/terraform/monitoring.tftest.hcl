@@ -150,11 +150,23 @@ run "existing_vpc_is_not_reconfigured" {
     error_message = "Existing shared VPC security groups and network logging remain under their owner's control."
   }
   assert {
-    condition     = aws_dynamodb_table.state.deletion_protection_enabled && aws_dynamodb_table.state.server_side_encryption[0].kms_key_arn == aws_kms_key.state.arn && aws_dynamodb_table.incidents.server_side_encryption[0].kms_key_arn == aws_kms_key.state.arn
-    error_message = "Both persistent tables must use the managed state key and protect review state from deletion."
+    condition     = aws_dynamodb_table.incidents.deletion_protection_enabled && aws_dynamodb_table.incidents.server_side_encryption[0].kms_key_arn == aws_kms_key.state.arn
+    error_message = "The shared table must use the managed state key and protect review state from deletion."
   }
   assert {
     condition     = jsondecode(aws_iam_role_policy.state_encryption["review"].policy).Statement[0].Condition.StringEquals["kms:ViaService"] == "dynamodb.us-east-1.amazonaws.com"
     error_message = "Worker key use must be limited to DynamoDB, not arbitrary KMS decryption."
+  }
+}
+
+run "shared_state_keeps_worker_access_out_of_operator_sessions" {
+  command = apply
+  assert {
+    condition     = alltrue([for statement in jsondecode(aws_iam_role_policy.job["review"].policy).Statement : can(statement.Condition["ForAllValues:StringLike"]["dynamodb:LeadingKeys"]) if contains(statement.Action, "dynamodb:UpdateItem")])
+    error_message = "Every worker state write must remain constrained by record prefix on the shared table."
+  }
+  assert {
+    condition     = toset([for index in aws_dynamodb_table.incidents.global_secondary_index : index.name]) == toset(["instance-incidents", "status-updated"])
+    error_message = "The shared table must support both incident pages and pending review discovery."
   }
 }

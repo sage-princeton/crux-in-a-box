@@ -20,10 +20,10 @@ from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from fleet import LATE_EVIDENCE_SECONDS, deliver_summary, inventory_targets
-from incidents import IncidentLog
 from lifecycle import IncidentStore, evidence_anchors, sftp_anchor_positions
 from review import (
     MAX_EVIDENCE_BYTES,
+    MAX_OUTPUT_TOKENS,
     PROMPT,
     CoverageError,
     collect_langfuse,
@@ -34,7 +34,9 @@ from review import (
     evaluate,
     get_json,
     https_url,
+    input_size,
     iso,
+    reviewer_family,
     scrub,
     select_reviewer,
 )
@@ -246,6 +248,8 @@ def validate_registry(config):
         raise ValueError("Fleet discovery must exclude crux-control")
     if not config.get("reviewer_models") or not 0 < config.get("inference_budget_usd", 0) <= 500:
         raise ValueError("Reviewer models and a bounded inference budget are required")
+    for model in config["reviewer_models"]:
+        reviewer_family(model)
     for instance_id, target in config["targets"].items():
         if not re.fullmatch(r"i-[0-9a-f]{8,17}", instance_id) or not target.get("authorization"):
             raise ValueError("Each target needs an EC2 instance ID and operator authorization")
@@ -263,7 +267,7 @@ class State:
     def claim(self, key, owner, now):
         try:
             self.table.update_item(
-                Key={"pk": key},
+                Key={"pk": key, "sk": "OPERATION"},
                 UpdateExpression="SET lease_owner=:owner, lease_until=:until, updated_at=:now, #s=if_not_exists(#s,:processing) ADD attempts :one",
                 ConditionExpression="(attribute_not_exists(lease_until) OR lease_until < :now) AND (attribute_not_exists(#s) OR #s <> :done) AND (attribute_not_exists(attempts) OR attempts < :max)",
                 ExpressionAttributeNames={"#s": "status"},
@@ -284,7 +288,9 @@ class State:
         return True
 
     def get(self, key):
-        return self.table.get_item(Key={"pk": key}, ConsistentRead=True).get("Item", {})
+        return self.table.get_item(Key={"pk": key, "sk": "OPERATION"}, ConsistentRead=True).get(
+            "Item", {}
+        )
 
     def save(self, key, owner, values, release=False):
         names = {"#v" + str(i): k for i, k in enumerate(values)}
@@ -294,7 +300,7 @@ class State:
         if release:
             update += " REMOVE lease_owner, lease_until"
         self.table.update_item(
-            Key={"pk": key},
+            Key={"pk": key, "sk": "OPERATION"},
             UpdateExpression=update,
             ConditionExpression="lease_owner=:owner",
             ExpressionAttributeNames=names,
@@ -306,7 +312,7 @@ class State:
             raise CoverageError("Invalid inference reservation")
         try:
             self.table.update_item(
-                Key={"pk": "BUDGET#inference"},
+                Key={"pk": "BUDGET#inference", "sk": "OPERATION"},
                 UpdateExpression="ADD reserved_microusd :amount",
                 ConditionExpression="attribute_not_exists(reserved_microusd) OR reserved_microusd <= :remaining",
                 ExpressionAttributeValues={":amount": amount, ":remaining": limit - amount},
@@ -324,7 +330,7 @@ class State:
             }
             while True:
                 page = self.table.query(**args)
-                yield from page["Items"]
+                yield from (item for item in page["Items"] if item.get("sk") == "OPERATION")
                 if not page.get("LastEvaluatedKey"):
                     break
                 args["ExclusiveStartKey"] = page["LastEvaluatedKey"]
@@ -332,7 +338,7 @@ class State:
     def claim_notice(self, key, owner, now):
         try:
             self.table.update_item(
-                Key={"pk": key},
+                Key={"pk": key, "sk": "OPERATION"},
                 UpdateExpression="SET lease_owner=:owner, lease_until=:until",
                 ConditionExpression="attribute_not_exists(lease_until) OR lease_until < :now",
                 ExpressionAttributeValues={
@@ -363,15 +369,7 @@ class Runtime:
         self.state = State(
             boto3.resource("dynamodb", config=sdk).Table(os.environ["MONITORING_TABLE"])
         )
-        self.incident_store = (
-            IncidentStore(
-                boto3.resource("dynamodb", config=sdk).Table(
-                    os.environ["MONITORING_INCIDENT_TABLE"]
-                )
-            )
-            if os.environ.get("MONITORING_INCIDENT_TABLE")
-            else None
-        )
+        self.incident_store = IncidentStore(self.state.table)
         self.config = self.read_json("config/registry.json")
         validate_registry(self.config)
         self.http = httpx.Client(timeout=httpx.Timeout(180, connect=10), follow_redirects=False)
@@ -411,7 +409,7 @@ class Runtime:
             # Persist approval before queuing: a long queue or termination must
             # not remove the source mapping needed to finish this window.
             self.state.table.update_item(
-                Key={"pk": f"REVIEW#{instance_id}#{end}"},
+                Key={"pk": f"REVIEW#{instance_id}#{end}", "sk": "OPERATION"},
                 UpdateExpression="SET target=if_not_exists(target,:target), #status=if_not_exists(#status,:status), updated_at=if_not_exists(updated_at,:end), expires_at=if_not_exists(expires_at,:ttl)",
                 ExpressionAttributeNames={"#status": "status"},
                 ExpressionAttributeValues={
@@ -579,6 +577,8 @@ class Runtime:
         return scrub(sources, secrets.values()), gaps
 
     def reserve_inference(self, model, payload):
+        reviewer_family(model)
+        input_bytes = input_size(payload)
         blocked = self.state.get("HEALTH#reviewer")
         if blocked.get("blocked"):
             raise CoverageError(
@@ -590,19 +590,27 @@ class Runtime:
             self.http, "https://openrouter.ai/api/v1/models", max_bytes=8 * 1024 * 1024
         )["data"]
         price = next(m["pricing"] for m in models if m["id"] == model)
-        input_price, output_price = float(price["prompt"]), float(price["completion"])
-        if input_price < 0 or output_price < 0 or input_price > 0.00002 or output_price > 0.0001:
+        # Reserve the most expensive listed tier, including long-context overrides.
+        tiers = [price, *price.get("overrides", [])]
+        rates = {}
+        for key in ("prompt", "completion", "request"):
+            base = float(price.get(key, 0) if key == "request" else price[key])
+            values = [float(tier.get(key, base)) for tier in tiers]
+            if any(not math.isfinite(value) or value < 0 for value in values):
+                raise CoverageError("Reviewer pricing is invalid")
+            rates[key] = max(values)
+        input_price, output_price, request_price = (
+            rates[k] for k in ("prompt", "completion", "request")
+        )
+        if input_price > 0.00002 or output_price > 0.0001:
             raise CoverageError("Reviewer pricing exceeds the approved per-token ceiling")
-        # Reserve at worst-case one token per UTF-8 byte, plus output; no refunds
-        # on ambiguous provider responses. Also require a capped dedicated API key.
+        # One token per UTF-8 byte plus output. Never refund ambiguous responses.
         amount = math.ceil(
-            (
-                (len(encoded(payload)) + len(PROMPT.encode()) + 16000) * input_price
-                + 6000 * output_price
-                + float(price.get("request", 0))
-            )
+            (input_bytes * input_price + MAX_OUTPUT_TOKENS * output_price + request_price)
             * 1_000_000
         )
+        if amount > 1_000_000:
+            raise CoverageError("Reviewer reservation exceeds the $1 per-call limit")
         limit = int(self.config["inference_budget_usd"] * 1_000_000)
         if amount < 0 or amount > limit or not 0 < limit <= 500_000_000:
             raise CoverageError("Invalid or insufficient inference budget")
@@ -783,7 +791,7 @@ class Runtime:
                         and error.response.status_code in (401, 402, 403)
                     ):
                         self.state.table.update_item(
-                            Key={"pk": "HEALTH#reviewer"},
+                            Key={"pk": "HEALTH#reviewer", "sk": "OPERATION"},
                             UpdateExpression="SET blocked=:blocked, reason=:reason",
                             ExpressionAttributeValues={":blocked": True, ":reason": reason},
                         )
@@ -828,7 +836,7 @@ class Runtime:
                 if report.get("review_status") == "completed" and report["workload_profile"]:
                     try:
                         self.state.table.update_item(
-                            Key={"pk": "TARGET#" + instance_id},
+                            Key={"pk": "TARGET#" + instance_id, "sk": "OPERATION"},
                             UpdateExpression="SET profile=:p, next_source_ids=:focus, window_end=:end",
                             ConditionExpression="attribute_not_exists(window_end) OR window_end < :end",
                             ExpressionAttributeValues={
@@ -840,33 +848,21 @@ class Runtime:
                     except ClientError as error:
                         if not conditional_failure(error):
                             raise
-            if self.incident_store:
-                payload = self.read_json(prefix + "/evidence.json")
-                provenance = {
-                    **self.read_json(prefix + "/model.json"),
-                    "prompt_sha256": self.read_json(prefix + "/prompt.json")["sha256"],
-                    "detector_version": "1",
-                    "deployment": os.environ.get("MONITORING_REVISION", "unknown"),
-                }
-                self.incident_store.ingest(
-                    report,
-                    key,
-                    prefix,
-                    target,
-                    provenance,
-                    payload.get("evidence_anchors", evidence_anchors(payload["sources"])),
-                )
-            else:
-                log = IncidentLog(
-                    self.state,
-                    self.s3,
-                    self.bucket,
-                    self.config.get("fleet", {}).get("exclude_names", []),
-                )
-                if inventory:
-                    log.sync_inventory([i for i in inventory if i["instance_id"] == instance_id])
-                log.record(report, key, prefix)
-                log.publish()
+            payload = self.read_json(prefix + "/evidence.json")
+            provenance = {
+                **self.read_json(prefix + "/model.json"),
+                "prompt_sha256": self.read_json(prefix + "/prompt.json")["sha256"],
+                "detector_version": "1",
+                "deployment": os.environ.get("MONITORING_REVISION", "unknown"),
+            }
+            self.incident_store.ingest(
+                report,
+                key,
+                prefix,
+                target,
+                provenance,
+                payload.get("evidence_anchors", evidence_anchors(payload["sources"])),
+            )
             delivery = (
                 "fleet_digest"
                 if self.config.get("fleet")
@@ -887,32 +883,17 @@ class Runtime:
             self.state.save(key, owner, {"updated_at": int(time.time())}, release=True)
             raise
 
-    def fleet_digest(self, force=False):
+    def fleet_digest(self):
         if int(time.time()) >= self.config["expires_at"]:
             return
         _, inventory = inventory_targets(self.ec2, self.config)
-        if self.incident_store:
-            self.incident_store.sync_fleet(inventory, complete=True)
+        self.incident_store.sync_fleet(inventory, complete=True)
 
-            def summaries():
-                return self.incident_store.summaries(list(self.incident_store.all("FLEET")))
+        def summaries():
+            return self.incident_store.summaries(list(self.incident_store.all("FLEET")))
 
-            artifact = {"url": self.public_incident_log_url}
-        else:
-            log = IncidentLog(
-                self.state,
-                self.s3,
-                self.bucket,
-                self.config.get("fleet", {}).get("exclude_names", []),
-            )
-            log.sync_inventory(inventory, complete=True)
-
-            def summaries():
-                return log.summaries(inventory)
-
-            artifact = log.publish()
-        delivery = deliver_summary(self, summaries, force=force)
-        return {"notification": delivery, "html": artifact, "instances": len(inventory)}
+        delivery = deliver_summary(self, summaries)
+        return {"notification": delivery, "instances": len(inventory)}
 
     def inventory(self, refresh=False):
         previous, excluded = {}, set()

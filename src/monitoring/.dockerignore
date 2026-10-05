@@ -16,7 +16,6 @@
 !static/**
 !review.py
 !worker.py
-!incidents.py
 !fleet.py
 !prompts/
 !prompts/reviewer.md

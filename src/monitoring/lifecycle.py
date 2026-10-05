@@ -130,13 +130,11 @@ class IncidentStore:
     def incident(self, incident_id):
         return self.get("INCIDENTS", incident_id)
 
-    def page(self, pk, *, prefix=None, status=None, cursor=None, limit=50):
+    def page(self, pk, *, prefix=None, cursor=None, limit=50):
         condition = Key("pk").eq(pk)
         if prefix:
             condition &= Key("sk").begins_with(prefix)
         args = {"KeyConditionExpression": condition, "ConsistentRead": True, "Limit": limit}
-        if status:
-            args["FilterExpression"] = Attr("status").eq(status)
         if cursor:
             args["ExclusiveStartKey"] = {"pk": pk, "sk": cursor}
         page = self.table.query(**args)

@@ -57,7 +57,7 @@ if name == 'systemctl' and args[0] == 'restart':
         }
         subprocess.run(["bash"], input=script, text=True, env=env, check=True)
     assert "https://new.example" in (service / "Caddyfile").read_text()
-    assert "MONITORING_INCIDENT_TABLE=new-table" in (service / "start").read_text()
+    assert "MONITORING_TABLE=new-table" in (service / "start").read_text()
     assert "MONITORING_REVISION=new" in (service / "start").read_text()
     import json
 

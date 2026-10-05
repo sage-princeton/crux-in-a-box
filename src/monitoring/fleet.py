@@ -117,13 +117,12 @@ def summary_lines(summaries, acknowledged):
     return lines
 
 
-def deliver_summary(runtime, summaries, force=False):
+def deliver_summary(runtime, summaries):
     owner, key = str(uuid.uuid4()), "NOTICE#fleet"
     if not runtime.state.claim_notice(key, owner, int(time.time())):
         raise CoverageError("Fleet summary delivery is in progress; retry")
     try:
-        if callable(summaries):
-            summaries = summaries()
+        summaries = summaries()
         summaries = [row for row in summaries if row.get("state") == "running"]
         previous = runtime.state.get(key)
         acknowledged = previous.get("acknowledged", {})
@@ -138,7 +137,7 @@ def deliver_summary(runtime, summaries, force=False):
             for r in summaries
         }
         fingerprint = digest(snapshot)
-        if not force and fingerprint == previous.get("fingerprint"):
+        if fingerprint == previous.get("fingerprint"):
             runtime.state.save(key, owner, {"updated_at": int(time.time())}, release=True)
             return "suppressed"
         secrets = runtime.secrets()

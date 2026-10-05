@@ -139,8 +139,11 @@ def test_fleet_summary_acknowledges_new_incidents_only_after_success():
         table = boto3.resource("dynamodb", region_name="us-east-1").create_table(
             TableName="fleet",
             BillingMode="PAY_PER_REQUEST",
-            KeySchema=[{"AttributeName": "pk", "KeyType": "HASH"}],
-            AttributeDefinitions=[{"AttributeName": "pk", "AttributeType": "S"}],
+            KeySchema=[
+                {"AttributeName": "pk", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[{"AttributeName": k, "AttributeType": "S"} for k in ("pk", "sk")],
         )
         row = {
             "instance_id": "i-web",
@@ -169,12 +172,12 @@ def test_fleet_summary_acknowledges_new_incidents_only_after_success():
                 },
             )
             with pytest.raises(httpx.HTTPStatusError):
-                deliver_summary(runtime, [row])
+                deliver_summary(runtime, lambda: [row])
             assert "acknowledged" not in runtime.state.get("NOTICE#fleet")
             assert (
                 deliver_summary(
                     runtime,
-                    [
+                    lambda: [
                         row,
                         {
                             **row,
@@ -194,24 +197,26 @@ def test_fleet_summary_acknowledges_new_incidents_only_after_success():
             assert "stopped-workload" not in attempts[1]["text"]
             assert attempts[1]["blocks"][0]["text"]["type"] == "mrkdwn"
             assert (
-                deliver_summary(runtime, [{**row, "review_count": 4, "last_updated": 1790641200}])
+                deliver_summary(
+                    runtime, lambda: [{**row, "review_count": 4, "last_updated": 1790641200}]
+                )
                 == "suppressed"
             )
             changed = {**row, "incident_count": 3, "review_count": 5}
-            assert deliver_summary(runtime, [changed]) == "sent"
+            assert deliver_summary(runtime, lambda: [changed]) == "sent"
             assert (
                 "3 incidents based on 5 reviews, *1 new incident :warning:* ("
                 in attempts[-1]["text"]
             )
-            assert deliver_summary(runtime, [changed]) == "suppressed"
+            assert deliver_summary(runtime, lambda: [changed]) == "suppressed"
             closed = {**changed, "total_incident_count": 3, "incident_count": 2}
-            assert deliver_summary(runtime, [closed]) == "sent"
+            assert deliver_summary(runtime, lambda: [closed]) == "sent"
             assert (
                 "2 open incidents" in attempts[-1]["text"]
                 and "0 new incidents" in attempts[-1]["text"]
             )
             reopened = {**closed, "incident_count": 3}
-            assert deliver_summary(runtime, [reopened]) == "sent"
+            assert deliver_summary(runtime, lambda: [reopened]) == "sent"
             assert (
                 "3 open incidents" in attempts[-1]["text"]
                 and "0 new incidents" in attempts[-1]["text"]

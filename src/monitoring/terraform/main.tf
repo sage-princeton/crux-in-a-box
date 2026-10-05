@@ -8,8 +8,7 @@ locals {
   env = [
     { name = "AWS_DEFAULT_REGION", value = var.region },
     { name = "MONITORING_BUCKET", value = aws_s3_bucket.evidence.id },
-    { name = "MONITORING_TABLE", value = aws_dynamodb_table.state.name },
-    { name = "MONITORING_INCIDENT_TABLE", value = var.incident_state_enabled ? aws_dynamodb_table.incidents.name : "" },
+    { name = "MONITORING_TABLE", value = aws_dynamodb_table.incidents.name },
     { name = "MONITORING_SECRETS_PARAMETER", value = local.parameter_name },
     { name = "MONITORING_REVISION", value = var.revision },
     { name = "MONITORING_PUBLIC_LOG_URL", value = var.incident_state_enabled ? local.web_origin : "" }
@@ -89,6 +88,7 @@ resource "aws_s3_object" "registry" {
   content_type = "application/json"
   depends_on   = [aws_s3_bucket_versioning.evidence]
 }
+# Retained until the shared-table release and copied records are verified live.
 resource "aws_dynamodb_table" "state" {
   name         = var.name
   billing_mode = "PAY_PER_REQUEST"
@@ -232,12 +232,18 @@ resource "aws_iam_role_policy" "job" {
     { Effect = "Allow", Action = ["ec2:DescribeInstances"], Resource = "*" },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/config/registry.json" },
     { Effect = "Allow", Action = ["s3:PutObject", "s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/${each.key == "discover" ? "inventory" : "reviews"}/*" },
-    { Effect = "Allow", Action = each.key == "discover" ? ["dynamodb:Query"] : concat(["dynamodb:GetItem", "dynamodb:UpdateItem"], var.incident_state_enabled ? [] : ["dynamodb:Scan"]),
-    Resource = [aws_dynamodb_table.state.arn, "${aws_dynamodb_table.state.arn}/index/*"] }
     ], each.key == "discover" ? [
-    { Effect = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.state.arn,
-    Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["REVIEW#*"] } } }
-    ] : [], each.key == "review" ? [
+    { Effect    = "Allow", Action = ["dynamodb:Query"], Resource = "${aws_dynamodb_table.incidents.arn}/index/status-updated",
+      Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["processing", "pending_notification"] } }
+    },
+    { Effect    = "Allow", Action = ["dynamodb:UpdateItem"], Resource = aws_dynamodb_table.incidents.arn,
+      Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["REVIEW#*"] } }
+    }
+    ] : [
+    { Effect    = "Allow", Action = ["dynamodb:GetItem", "dynamodb:UpdateItem"], Resource = aws_dynamodb_table.incidents.arn,
+      Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["REVIEW#*", "TARGET#*", "NOTICE#*", "BUDGET#*", "HEALTH#*"] } }
+    }
+    ], each.key == "review" ? [
     { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = var.secrets_parameter_arn },
     { Effect = "Allow", Action = ["s3:GetObject"], Resource = "${aws_s3_bucket.evidence.arn}/inventory/targets.json" }
     ] : [], each.key == "review" && var.secrets_kms_key_arn != "" ? [
