@@ -282,7 +282,9 @@ For an SDK box:
   with `journalctl -u crux-sdk-run -f`.
 - **Resuming:** loop state and sessions live in `/srv/crux-run/state`. A crash
   restarts the unit and resumes the run. A configuration error (exit 2) or a
-  loop that stopped early (exit 3) does not restart.
+  loop that stopped early (exit 3) does not restart. `sudo systemctl stop
+  crux-sdk-run` stops the run cleanly: open traces are flushed and marked
+  stopped, and `systemctl start` resumes the unfinished iteration.
 
 See [`../sdk-scaffold/README.md`](../sdk-scaffold/README.md) for the scaffold
 itself.
