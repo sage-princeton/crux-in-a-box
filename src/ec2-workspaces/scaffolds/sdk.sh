@@ -63,6 +63,11 @@ scaffold_configure() {
   fi
   ok "$(tail -1 "$PROBE_LOG")"
 
+  # install-run.sh excludes the run from needrestart. A box provisioned before
+  # that would let an unattended upgrade restart it mid-iteration.
+  grep -qF 'crux-sdk-run' /etc/needrestart/conf.d/crux.conf 2>/dev/null \
+    || die "/etc/needrestart/conf.d/crux.conf does not exclude crux-sdk-run, so unattended upgrades can restart the run mid-iteration. Re-run install-run.sh; crux-sdk-run was not installed."
+
   # Installed, not started. Crashes restart and resume from $STATE_DIR; a config
   # error (2) or a loop that stopped early (3) is left for the operator.
   info "Installing crux-sdk-run.service (not started)"
