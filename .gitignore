@@ -50,3 +50,5 @@ src/monitoring/terraform/.terraform/
 src/monitoring/terraform/*.tfvars
 src/monitoring/registry.json
 src/monitoring/.venv/
+src/monitoring/node_modules/
+.ruff_cache/

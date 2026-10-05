@@ -74,7 +74,7 @@ def test_filtered_pages_are_full_and_running_instances_precede_history(client, s
         links = document.xpath('//td[contains(@class,"incident-title")]/a/@href')
         assert links
         pages.append(links)
-        next_links = document.xpath('//div[@class="pagination"]/a/@href')
+        next_links = document.xpath('//div[contains(@class,"pagination")]/a/@href')
         path = next_links[0] if next_links else None
     assert [len(page) for page in pages] == [50, 50, 10]
     links = sum(pages, [])
@@ -124,7 +124,7 @@ def test_readiness_discloses_no_incident_data_and_expired_session_cannot_read(cl
     response = client.get("/healthz", base_url=ORIGIN)
     assert response.status_code == 200
     assert response.json == {"status": "ok", "revision": "local"}
-    assert client.get("/static/incidents.css", base_url=ORIGIN).status_code == 200
+    assert client.get("/static/app.css", base_url=ORIGIN).status_code == 200
 
 
 def test_auth_csrf_origin_stale_write_close_reopen_and_logout(client, store):

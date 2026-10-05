@@ -36,6 +36,15 @@ jobs:
         run: |
           ruff check src/monitoring
           ruff format --check src/monitoring
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Verify compiled Tailwind stylesheet
+        working-directory: src/monitoring
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:css
+          git diff --exit-code -- static/app.css
       - name: Behavior and real read-only SSH boundary
         env:
           PYTHONPATH: src/monitoring
@@ -59,8 +68,8 @@ jobs:
           pip install bandit==1.9.4
           bandit -r src/monitoring -x src/monitoring/tests --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
           bandit -r src/monitoring -x src/monitoring/tests -ll
-          trivy fs --scanners misconfig,secret --skip-dirs src/monitoring/tests --format json --output "$RUNNER_TEMP/security/source.json" src/monitoring
-          trivy fs --scanners secret --skip-dirs src/monitoring/tests --exit-code 1 src/monitoring
+          trivy fs --scanners misconfig,secret --skip-dirs src/monitoring/tests --skip-dirs src/monitoring/node_modules --format json --output "$RUNNER_TEMP/security/source.json" src/monitoring
+          trivy fs --scanners secret --skip-dirs src/monitoring/tests --skip-dirs src/monitoring/node_modules --exit-code 1 src/monitoring
       - name: Scan worker image
         if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
         run: bash src/monitoring/ci/scan-image.sh crux-monitoring:check "$RUNNER_TEMP/security/worker.json"
