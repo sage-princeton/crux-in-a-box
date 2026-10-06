@@ -72,8 +72,10 @@ if [ -n "$ALLOC_ID" ] && [ "$ALLOC_ID" != "None" ]; then
 fi
 if [ "$AUX_PROVISIONED" = 1 ]; then
   echo "  also sweep aux AWS resources for '$SLUG' in the isolated account:"
-  echo "  every RDS instance, S3 bucket, EC2 instance and public Route53 zone"
-  echo "  found there, plus $RUN_ROLE and crux-agent-devops"
+  echo "  every RDS instance, S3 bucket, EC2 instance, public Route53 zone,"
+  echo "  CloudFront distribution, and ACM certificate found there, plus"
+  echo "  $RUN_ROLE and crux-agent-devops (registered domain names are not"
+  echo "  deleted — see teardown-aux-aws-resources.sh)"
 fi
 echo "  remove ~/.ssh/config entry for $SLUG"
 echo
