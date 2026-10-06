@@ -31,6 +31,7 @@ There are two entry types.
   6. Accessibility: PASS | FAIL (...)
   7. Performance: PASS | FAIL (...)
   8. Security: PASS | FAIL (...)
+  9. Maintainability: PASS | FAIL (editorial scenarios <n>/<total>: runs/N/editorial/; CMS review: runs/N/cms_review.md)
 - **Verdict:** DONE | CONTINUE
 - **Next:** the fixes this iteration calls for, most important first (omit on DONE)
 ```

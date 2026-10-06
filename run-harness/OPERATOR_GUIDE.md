@@ -2,7 +2,7 @@
 
 How to set up, launch and watch a run of this harness.
 
-**The design in one paragraph.** A single Claude Code or Codex task, started through AgentRQ/ACP, migrates a 20-page pilot slice of the CITP main site (Drupal) and blog (WordPress) into one combined Payload CMS site. The agent provisions that site itself in an isolated AWS account, then verifies it. There is no outer loop: nothing pushes the agent forward and nothing re-verifies its work, so the task runs until the agent returns. That is why the done-definition carries so much weight in `workspace/AGENTS.md`, the agent's one standing-context file. It defines eight binary success criteria, a page rubric, and the thresholds for checks the agent must script itself. Done is valid only as a full verification iteration against the deployed site, recorded in `LOG.md` with a `DONE` verdict. The agent keeps a budget ledger in `PLAN.md` against four caps: time, LLM, API and AWS.
+**The design in one paragraph.** A single Claude Code or Codex task, started through AgentRQ/ACP, migrates a 20-page pilot slice of the CITP main site (Drupal) and blog (WordPress) into one combined Payload CMS site. The agent provisions that site itself in an isolated AWS account, then verifies it. There is no outer loop: nothing pushes the agent forward and nothing re-verifies its work, so the task runs until the agent returns. That is why the done-definition carries so much weight in `workspace/AGENTS.md`, the agent's one standing-context file. It defines nine binary success criteria (eight covering what visitors see, and one covering whether staff can maintain the site through the CMS), a page rubric, and the thresholds for checks the agent must script itself. Done is valid only as a full verification iteration against the deployed site, recorded in `LOG.md` with a `DONE` verdict. The agent keeps a budget ledger in `PLAN.md` against four caps: time, LLM, API and AWS.
 
 ---
 
@@ -83,7 +83,8 @@ Within the first hour you should see:
 
 1. Copy `/srv/crux-run/run-harness/workspace` off the box (the git repo, `runs/`, `inventory/`) before teardown. It is the run's artifact.
 2. Retrieve the Payload admin passwords from the credentials file named in `COMPLETION_REPORT.md` (it is on the box, outside the repo), and hand them to the admins.
-3. Review the deployed site against the success criteria yourself. The agent's verdict is evidence, not the evaluation.
+3. Review the deployed site against the success criteria yourself. The agent's verdict is evidence, not the evaluation. For criterion 9, log into the admin and try a few routine tasks (add an item, edit something shown in several places, change navigation or a listing's settings), then check the public site.
+
 4. `teardown-workspace-aws-resources.sh <slug>` terminates the box, and also sweeps **everything** in the auxiliary account: the site, database, buckets and DNS. Take anything you need from the site first. The registered domain itself remains until it expires.
 
 ## 4. Design rationale (failure tendency → mechanism)
@@ -91,9 +92,10 @@ Within the first hour you should see:
 | Tendency of long-horizon agents | Mechanism here |
 |---|---|
 | Standing instructions stop binding as context compacts over a long run | **One standing-context file** (`AGENTS.md`) holding every requirement, an explicit instruction to re-read it after compaction, and a prompt that names it, since neither scaffold auto-loads files outside its working directory |
-| Declaring done early, on a partial or local check | **Eight binary criteria**, each proved by an artifact under `runs/`. `DONE` is valid only for a full iteration against the deployed site that re-runs every check and reviews every pilot page |
+| Declaring done early, on a partial or local check | **Nine binary criteria**, each proved by an artifact under `runs/`. `DONE` is valid only for a full iteration against the deployed site that re-runs every check and reviews every pilot page |
 | Numbers without judgment: checks run, results logged, nothing learned | **An "Interpretation" field** in every Verification iteration entry. The log records what the results mean, not just what they were |
 | Weak visual QA; controls that render but do nothing | **The page rubric**, with side-by-side screenshots at two widths that the agent must look at, and "renders but does nothing" named as a failure |
+| Visitor-facing parity reached by copying the source's output (stored page markup, fixed lists), leaving a site that can't be maintained through the CMS | **A maintainability criterion** with two halves: scripted editorial scenarios that must take effect through content alone, and a CMS design review against general principles. The principles are stated generally; the content model itself is left for the agent to derive |
 | Fabricating content to fill gaps | **A red line**, a named failure mode, and content parity measured against the source |
 | Budgets unmanaged in either direction | **A four-budget ledger** in `PLAN.md` with scripted measurement where possible (`llm_costs.py`, WAVE credits, Cost Explorer). Approaching any of the four caps is one of only two legitimate reasons to stop early |
 | No outer loop to push past an early return | **Returning is framed as the end of the run**, with only two permitted early-stop reasons, each requiring all unblocked work to be done first and a partial completion report |

@@ -11,14 +11,19 @@ Build a new website for Princeton's Center for Information Technology Policy (CI
 - the **CITP main site**, a Drupal site, and
 - the **CITP blog**, a WordPress site.
 
-The new site must reproduce the originals. **Aim for exact copies**: the same pages, the same content, the same look, and the same behavior.
+The new site serves two audiences, and both matter equally:
+
+- **Visitors** should not be able to tell the sites apart. **Aim for exact copies** of what a visitor sees and can do: the same pages, the same content, the same look, and the same behavior.
+- **Editors** are CITP staff, not developers. After the migration, they will run this site in Payload for weeks: publishing new items, updating existing ones, retiring old ones, and changing navigation and how lists are presented. (Adding entirely new kinds of content is developer work. A good model makes it straightforward, but it is not something editors do.) A site that looks identical but that staff cannot maintain through the CMS has failed the migration, however good the pages look.
+
+"Exact copy" describes the visitor's experience, not how you build it. The site must be a real Payload CMS site (§ CMS design principles).
 
 **This run is the pilot.** You are done when:
 
-1. the Payload content model covers 3–5 nontrivial content types, and
+1. the Payload content model covers at least 3 nontrivial content types (as many as the sites actually need), and
 2. every page in `PILOT_PAGES.md` is migrated and passes every success criterion below, on the deployed public site.
 
-Design the content model for the **whole** of both sites, not just the pilot pages. Model the types so that the rest of each sitemap could be imported later with no schema change. The sitemaps hold about 1,570 main-site URLs and about 2,280 blog posts, plus category, tag and author archives. A good starting point is Event, News, Person, Blog Post and Publication/Resource, plus a generic Page, but derive the real model from the sites themselves.
+Design the content model for the **whole** of both sites, not just the pilot pages. Model it so that the rest of each sitemap could be imported later with no schema change. The sitemaps hold about 1,570 main-site URLs and about 2,280 blog posts, plus category, tag and author archives. Which content types, fields, relationships and shared structures the sites need is yours to work out from the sites themselves. That analysis is a central part of this task, so record your reasoning in `PLAN.md` and `LOG.md`. In `PLAN.md`, list every recurring kind of element you find on the source pages (for example dates, bylines, labels, and links to other items) and where it lives in your model. If something stays inside rich text rather than becoming a field or reference, give the reason.
 
 **Derive everything from the public-facing sites.** You have no CMS admin access to either source, and you should not look for it. Content, structure, content types, relationships and media all come from the rendered public pages, their sitemaps and feeds, and any public unauthenticated endpoints such as the WordPress REST API.
 
@@ -35,7 +40,7 @@ Each criterion is binary. Each one is proved by an artifact on disk under `runs/
    - each item is presented the way the source presents it (title, date, teaser, image)
    - everything on the page outside the list itself matches the source
 
-   Items that are out of scope are expected to be missing. Leave them out of the list comparison and out of the 10% counts. Record the expected in-scope item list for each listing page under `inventory/`.
+   Items that are out of scope are expected to be missing. Leave them out of the list comparison and out of the 10% counts. Record the expected in-scope item list for each listing page under `inventory/`. Elements derived from the list's contents, such as counts, pagination and filter options, are judged on whether they are correct for the content actually in the CMS, not on whether they match the source's numbers.
 3. **Visual parity.** Every pilot page passes the page rubric (§ Page rubric) at desktop and mobile widths.
 4. **Functional parity.** Everything the source does, the new site does. That includes:
    - site navigation and menus
@@ -53,10 +58,30 @@ Each criterion is binary. Each one is proved by an artifact on disk under `runs/
    - Create an account for each of those emails, with a strong random password.
    - Store the passwords only on this box, in a file outside the git repository (for example `/srv/crux-run/admin-credentials.txt`, mode 600).
    - Put the file's path, never the passwords, in the completion report. The operator hands the passwords over.
-   - Do your own content work through Payload's Local API or an API key, not through an extra admin login. Delete any temporary account you create before the final iteration.
+   - Do your own content work through Payload's Local API or an API key, not through an extra admin login.
+   - You may use temporary accounts while you work, for example for reviews or admin-UI scenarios. At completion, only the two admins above can log in, plus at most one API-key-only account with no password, which you name in the completion report. Delete every other account as the final step, and then re-check this criterion.
 6. **Accessibility.** On every pilot page, WAVE errors and contrast errors are no worse than on the source page.
 7. **Performance.** Core Web Vitals on the new site are in the "good" range: LCP ≤ 2.5 s, CLS ≤ 0.1, and INP ≤ 200 ms (TBT stands in for INP in lab runs). They are also no worse than the source by more than 10%.
 8. **Security.** An OWASP ZAP full scan of the new site raises no High-risk alert, and no alert type that is absent from both source test-site scans. The baseline is the union of the two source scans' alert types.
+9. **Maintainability.** A CITP staff member, working only in the Payload admin, can carry out routine site maintenance, and every change shows up correctly everywhere it should on the public site. "Only in the admin" means no code changes, no editing raw HTML, no files in the repository and no redeploys. The site follows § CMS design principles. This criterion has two halves, and both must pass:
+   - **Editorial scenarios (scripted).**
+     - Design a set of maintenance tasks a site administrator would realistically perform, derived from what these sites do and how they change over time.
+     - The set must cover every content type in your model, every listing page in scope, and the site-wide elements editors would expect to control.
+     - For each content type, cover the whole lifecycle: create a new item that did not exist at import time, edit it, change what it references, and unpublish or delete it.
+     - For anything shown in more than one place, check every place it appears.
+     - Script each task against Payload's API, acting as an editor would. A script may only change what an editor can see and edit in the admin. Run a representative sample of the scenarios through the admin UI itself, with Playwright, to prove the admin supports them.
+     - After making the change, the script only observes the public site. It must not trigger cache purges, revalidation, restarts or rebuilds itself. Any freshness has to come from the site's own mechanisms.
+     - Check the public site everywhere the change should appear, and wherever it should disappear. Then revert the change.
+     - Save the scenarios, the results and the before and after evidence under `runs/<N>/editorial/`.
+     - A scenario passes only if the change took effect through content alone, with no code change or rebuild.
+   - **CMS design review (judgment).**
+     - A reviewer evaluates the content model, the admin experience and how the front end uses them, against § CMS design principles, from the point of view of a non-technical editor and of a developer who will maintain the site later.
+     - If your scaffold supports subagents, delegate this to a fresh one with only a brief and access to the source sites, the code and the admin. Don't tell it what you think the answers are, and don't give it your scenario list.
+     - If your scaffold has no subagents, do the review yourself. Say so in the log, and mark criterion 9 as self-assessed in the completion report.
+     - The reviewer lists issues ranked by severity in `runs/<N>/cms_review.md`. Its severity ratings stand: you may fix an issue, but not downgrade it. Keep every review you run; never delete or overwrite one.
+     - The criterion fails while any issue would make a routine editorial task impossible, unreliable, or possible only by working around the CMS.
+
+   Criteria 1–8 measure what a visitor gets; criterion 9 measures what an editor gets. Passing 1–8 by a route that fails criterion 9, for example by storing and replaying captured page markup, does not count as done.
 
 ## Verification
 
@@ -76,7 +101,7 @@ There is no outer harness checking your work. You are the only verifier. Verific
 
 **Interpretation is the point of the log entry.** A raw number is not a finding. For example:
 
-> "Word count 14% under on 3 event pages. All three are missing the speaker bio block. The importer drops a Drupal field it doesn't map."
+> "Word count 14% under on 3 pages of the same type. All three are missing a sidebar block the source renders. The importer never captures that part of the source page."
 
 A diagnosis like that tells you what to fix next.
 
@@ -85,6 +110,7 @@ A `DONE` verdict is valid only when all of these hold:
 - the iteration re-ran **every** check against the deployed public site, not a local build
 - every criterion passed
 - every pilot page was reviewed against the rubric in that same iteration
+- the editorial scenarios ran against the deployed site and the CMS design review was done fresh in that same iteration
 
 Declaring done early is the most expensive mistake available to you. So is lowering the bar in the interpretation to make a check pass.
 
@@ -117,10 +143,22 @@ Review every pilot page side by side with its source. Take full-page Playwright 
 | Axis | Pass | Fail |
 |---|---|---|
 | **Static content & style** | Same text, headings, images and embedded media, in the same order and hierarchy. Typography, color, spacing and layout are recognizably the same design. | Missing or extra content blocks, broken or placeholder images, garbled rich text, wrong fonts or colors, or a layout that reads as a different site. |
-| **Navigation** | Header, menus, footer, breadcrumbs and in-page links match the source and land on the right mapped pages, including on mobile (hamburger or collapsed menus). | A missing menu item, a link to the old host or a 404, or a menu that doesn't open on mobile. |
+| **Navigation** | Header, menus, footer, breadcrumbs and in-page links match the source and land on the right mapped pages, including on mobile (hamburger or collapsed menus). Links to pages outside the pilot point at their mapped target URLs and may 404 until the full migration. List them in `runs/<N>/rubric.md`. | A missing menu item, a link to the old host, a 404 on an in-scope page, or a menu that doesn't open on mobile. |
 | **Dynamic content & features** | Lists, filters, pagination, search, forms, subscription signup, feeds, and embedded video or maps behave as on the source. | A control that renders but does nothing, an empty list, a form that doesn't submit, or a filter that returns wrong results. |
 
 Record per-page, per-axis results in `runs/<N>/rubric.md`, with a one-line reason for every fail.
+
+## CMS design principles
+
+These are general principles of good content management, not a design. Apply them with judgment to what you find on these sites, and record the decisions they drive.
+
+- **Store content as structured data, and keep presentation in templates.** Content belongs in fields and in the CMS's native rich-text and block tools. Markup belongs in templates and components. An editor should never need to read or write HTML to change content.
+- **Model content by what it is and how it is used,** not by how one page happened to display it. When the same kind of thing appears in many places, it is one content type rendered by one template. Each fact is stored once, in one place, and appears wherever it is relevant.
+- **Connect related content with references, not copies.** If one item mentions another item that exists in the CMS, that is a relationship. Updating the referenced item then updates every place it appears.
+- **Derive every collection view from the content.** Lists, archives, directories, feeds, search results, counts and pagination come from the content when the page is rendered, or through Payload's revalidation. Adding, editing or removing an item updates every view that should show it. A view that only looks dynamic, such as a fixed list, fixed pagination or filters matched against stored markup, is not dynamic.
+- **Put what editors expect to change in the CMS, not in code.** Navigation, footers and other site-wide elements, page sections, and how a listing is filtered, sorted and paged are the kind of things staff change. They belong in the CMS (collections, globals, blocks, fields), with sensible validation. They don't belong in code, config files or data files in the repository.
+- **Use Payload's features rather than rebuilding them.** That includes drafts and versions, live preview, access control, media and upload handling, validation, hooks, and admin labels, descriptions and grouping. Make the admin legible to a non-developer.
+- **The new site stands on its own.** At runtime it never depends on the source sites. Keep migration provenance, such as source URLs and IDs, if it is useful. Keep it out of the editor's way, and never render pages from it.
 
 ## Budgets
 
@@ -144,11 +182,12 @@ All four are **hard caps**. Stay within each one. Approaching any of them is a r
 2. **`LOG.md`**, append-only. It gets an entry for every significant decision, surprise and dead end, and a Verification iteration entry for every iteration.
 3. **Version control.** `git init` the workspace at hour 0. Make small, frequent local commits with descriptive messages. There is no remote. The site's code lives in this repository, and so do your scripts.
 4. **Artifacts back every claim.** Every pass/fail you record points to a file under `runs/`. A result that exists only in your context is treated as not run.
-5. **The pilot scope is fixed.** Migrate exactly the pages in `PILOT_PAGES.md`: no page dropped, and no extra content items imported. The listing pages are verified against this exact set.
+5. **The pilot scope is fixed.** Migrate exactly the pages in `PILOT_PAGES.md`: no page dropped, and no extra content items imported. The listing pages are verified against this exact set. Content that the editorial scenarios create temporarily must be removed again before the final iteration. The exception is supporting records: you may create a record only so that a pilot page's reference points at real content. It holds only what the source shows about it, and it appears in a listing only if the source listing would show it there too.
 6. **Completion report.** When the final iteration is `DONE`, write `COMPLETION_REPORT.md` at the workspace root and commit it. Also write one if you stop early (§ When to stop). It contains:
    - the live URL and the admin URL
    - the URL scheme you chose
-   - the content model
+   - the content model, and why it is shaped that way
+   - a short editor's guide: how a staff member performs each routine task you scripted, in the admin
    - the final iteration's per-criterion results, with artifact paths
    - known gaps
    - spend against every budget
@@ -165,10 +204,10 @@ These are heuristics, not gates. You own the schedule, and `PLAN.md` holds your 
 - **Verify the environment first** (§ Environment). Check every fact against reality, and correct this file where reality differs. Confirm AWS role assumption, source access (including the `blogs-qa` lock), the WAVE and PageSpeed keys, Docker and Playwright before you need any of them.
 - **Inventory both sites.** Pull both sitemaps and the blog's REST API listings. Classify every URL by content type. Confirm every `PILOT_PAGES.md` URL exists on its source. Save the inventory as `inventory/pages.csv`.
 - **Decide the URL scheme** for the combined site. Main-site and blog paths must coexist, and one old main-site page, `/blog`, collides with the obvious blog prefix. Log the decision and its reasoning in `LOG.md`. Write the full source → target map to `inventory/url_map.csv` before building importers, because every parity check runs through it.
-- **Model the content** from what the public pages show. Payload's schema is TypeScript code, so model relationships as relationships (an event's speakers are People) rather than as copied text.
+- **Model the content** from what the public pages show, following § CMS design principles. Study how each kind of content appears across both sites: on its own page, in lists, in other items' pages, and in feeds. Consider how staff will need to change it. Design the model before building importers, and revise it when the evidence says so.
 - **Stand up the infrastructure** in the auxiliary AWS account, with a registered domain and TLS. Treat it like production: provision it reproducibly with scripts or IaC committed to the repo, never with one-off console clicks you can't repeat.
-- **Build importers, not hand copies.** Scrape Drupal pages and use the WordPress REST API. Transform the content into Payload through its Local or REST API. The importers are how the full migration would run later, so build them to take any URL of their type, then run them on the pilot URLs only. Hand-editing pilot pages into place proves nothing about the full migration.
-- **Match the design.** Rebuild the front-end templates from the source's rendered HTML and CSS. Pull the source's fonts, colors and assets rather than approximating them.
+- **Build importers, not hand copies.** Scrape Drupal pages and use the WordPress REST API. Transform the source content into your content model: its fields, references and the CMS's native rich text. Write it into Payload through its Local or REST API. Captured page markup is raw material to parse, not content to store. The importers are how the full migration would run later, so build them to take any URL of their type, then run them on the pilot URLs only. Hand-editing pilot pages into place proves nothing about the full migration.
+- **Match the design.** Rebuild the front-end templates from the source's rendered HTML and CSS, with templates rendering from content fields. Pull the source's fonts, colors and assets rather than approximating them.
 - **Verify, fix, repeat** (§ Verification). Run the first full iteration as soon as a handful of pages are live. Early iterations are how you find systemic importer bugs while they are cheap.
 - **When a check fails, diagnose the level before reacting.**
   - A page-specific glitch: fix that page's data.
@@ -184,6 +223,9 @@ Long-running agents on tasks like this one fail in recognizable ways. Watch for 
 - **Controls that look finished but do nothing.** A subscribe button, filter or search box that renders and does nothing is worse than a missing one, because it passes a glance.
 - **Declaring done early.** An agent calls the work complete on a partial or local check, or on a sample it treats as the whole. Done is a full `DONE` iteration against the deployed site.
 - **Softening the bar instead of doing the work.** An agent answers a failing check by reinterpreting it, and "close enough" creeps into the log. Fix the site.
+- **Migrating the output instead of the content.** Copying what a page looks like, rather than what it is made of, is the most tempting shortcut on a migration, because it passes visual and parity checks quickly. It leaves a CMS that nobody can maintain. Ask of every piece of the site: if an editor needed to change this tomorrow, where would they do it, and would every page that shows it update?
+- **Hard-coding what editors should control.** Values, lists, menus and settings baked into templates, scripts or data files work on launch day, and then break the first time staff need to change them.
+- **Fake dynamism.** A list, filter, pagination control or search that behaves correctly on today's content but cannot respond to new content. Test with content that did not exist at import time.
 - **Instruction drift.** Over a long run, the rules in this file stop binding. Re-read it after every compaction, and before you declare done.
 - **Losing track of resources and state.** An agent forgets what it launched, what it spent, or what credentials it already has. Keep `PLAN.md` current, and read it before re-deriving anything.
 
