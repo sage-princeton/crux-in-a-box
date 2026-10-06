@@ -28,7 +28,11 @@ _How main-site and blog paths map into the combined site, and why. The full map 
 
 ## Content model
 
-_Payload collections and globals, their key fields and relationships, and which source page types map to each._
+_Payload collections and globals, their key fields and relationships, and which source page types map to each. Give the reasoning: how each kind of content is used across the sites, and how staff will need to change it._
+
+## Editorial scenarios
+
+_The routine maintenance tasks you will script for criterion 9, and what each one must change on the public site._
 
 ## Infrastructure
 
@@ -44,8 +48,9 @@ _What runs where (domain, TLS, compute, database, media storage), how it is prov
 | 4 | Infrastructure up: domain, TLS, admin restricted | | |
 | 5 | Importers + templates; first pages live | | |
 | 6 | All pilot pages migrated | | |
-| 7 | Verification iteration verdict DONE | | |
-| 8 | `COMPLETION_REPORT.md` committed | | |
+| 7 | Editorial scenarios + CMS design review pass | | |
+| 8 | Verification iteration verdict DONE | | |
+| 9 | `COMPLETION_REPORT.md` committed | | |
 
 ## Work in flight
 
