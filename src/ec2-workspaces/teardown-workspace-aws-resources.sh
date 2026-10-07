@@ -9,6 +9,8 @@ set -euo pipefail
 #
 # Usage: ./teardown-workspace-aws-resources.sh CONFIG_FILE [--yes]
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 info() { printf "\033[1;34m▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m! %s\033[0m\n" "$*"; }
