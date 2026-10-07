@@ -1,0 +1,155 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sts:AssumeRole"
+      ],
+      "Resource": "arn:aws:iam::869937524494:role/crux-monitoring-plan-state"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ec2:Describe*",
+        "batch:Describe*",
+        "batch:List*",
+        "logs:DescribeLogGroups"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "ecr:DescribeRepositories",
+        "ecr:DescribeImages",
+        "ecr:ListTagsForResource",
+        "ecr:GetRepositoryPolicy",
+        "ecr:GetLifecyclePolicy"
+      ],
+      "Resource": "arn:aws:ecr:us-east-1:881004720495:repository/crux-monitoring-ae211"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetRole",
+        "iam:GetRolePolicy",
+        "iam:ListRolePolicies",
+        "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole"
+      ],
+      "Resource": [
+        "arn:aws:iam::881004720495:role/crux-monitoring-ae211*",
+        "arn:aws:iam::881004720495:role/crux-incident-web"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "iam:GetInstanceProfile"
+      ],
+      "Resource": [
+        "arn:aws:iam::881004720495:instance-profile/crux-monitoring-ae211*",
+        "arn:aws:iam::881004720495:instance-profile/crux-incident-web"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetBucket*",
+        "s3:GetEncryptionConfiguration",
+        "s3:GetLifecycleConfiguration",
+        "s3:GetAccelerateConfiguration",
+        "s3:GetReplicationConfiguration",
+        "s3:GetObjectLockConfiguration",
+        "s3:ListBucket"
+      ],
+      "Resource": [
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1",
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1-access"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:GetObjectTagging"
+      ],
+      "Resource": [
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/config/registry.json",
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/config/deployment.json",
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/reviews/incidents/index.html"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:DescribeTable",
+        "dynamodb:DescribeContinuousBackups",
+        "dynamodb:DescribeTimeToLive",
+        "dynamodb:ListTagsOfResource"
+      ],
+      "Resource": "arn:aws:dynamodb:us-east-1:881004720495:table/crux-monitoring-ae211*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "scheduler:GetSchedule",
+        "scheduler:GetScheduleGroup",
+        "scheduler:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:scheduler:us-east-1:881004720495:schedule/crux-monitoring-ae211/crux-monitoring-ae211",
+        "arn:aws:scheduler:us-east-1:881004720495:schedule-group/crux-monitoring-ae211"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "events:DescribeRule",
+        "events:ListTargetsByRule",
+        "events:ListTagsForResource"
+      ],
+      "Resource": "arn:aws:events:us-east-1:881004720495:rule/crux-monitoring-ae211-failed"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "sqs:GetQueueAttributes",
+        "sqs:ListQueueTags"
+      ],
+      "Resource": "arn:aws:sqs:us-east-1:881004720495:crux-monitoring-ae211-operations"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "logs:ListTagsForResource",
+        "logs:ListTagsLogGroup"
+      ],
+      "Resource": "arn:aws:logs:us-east-1:881004720495:log-group:/crux/monitoring/crux-monitoring-ae211*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "cloudwatch:DescribeAlarms",
+        "cloudwatch:ListTagsForResource"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:DescribeKey",
+        "kms:GetKeyPolicy",
+        "kms:GetKeyRotationStatus",
+        "kms:ListResourceTags"
+      ],
+      "Resource": "arn:aws:kms:us-east-1:881004720495:key/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "crux-monitoring"
+        }
+      }
+    }
+  ]
+}

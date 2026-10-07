@@ -1,0 +1,21 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::881004720495:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": [
+            "repo:sage-princeton@292236392/crux-in-a-box@1314254060:ref:refs/heads/main",
+            "repo:sage-princeton@292236392/crux-in-a-box@1314254060:ref:refs/heads/ae-211-ec2-monitoring"
+          ]
+        }
+      }
+    }
+  ]
+}

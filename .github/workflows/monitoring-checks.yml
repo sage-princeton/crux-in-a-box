@@ -1,0 +1,134 @@
+name: Monitoring checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy this tested ref to the monitoring environment
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitoring-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  monitoring:
+    name: Monitoring behavior and image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: pip install -r src/monitoring/web-requirements.txt 'pytest>=8,<9' 'moto[dynamodb,s3,ec2,ssm]>=5,<6' ruff==0.16.10
+      - name: Python lint and formatting
+        run: |
+          ruff check src/monitoring
+          ruff format --check src/monitoring
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Verify compiled Tailwind stylesheet
+        working-directory: src/monitoring
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build:css
+          git diff --exit-code -- static/app.css
+      - name: Behavior and real read-only SSH boundary
+        env:
+          PYTHONPATH: src/monitoring
+        run: pytest -q src/monitoring/tests
+      - name: Build EC2 reviewer image
+        run: |
+          docker build --platform linux/amd64 -t crux-monitoring:check src/monitoring
+          docker run --rm --read-only --network none crux-monitoring:check python worker.py --help
+          docker build --platform linux/amd64 -f src/monitoring/Dockerfile.web -t crux-incidents:check src/monitoring
+          docker run --rm --read-only --network none crux-incidents:check python -c 'from web import create_app'
+          docker build --platform linux/amd64 -f src/monitoring/Dockerfile.proxy -t crux-proxy:check src/monitoring
+          docker run --rm --read-only --network none crux-proxy:check caddy version
+      - name: Install Trivy
+        id: trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.75.0
+      - name: Scan Python source and configuration
+        run: |
+          mkdir -p "$RUNNER_TEMP/security"
+          pip install bandit==1.9.4
+          bandit -r src/monitoring -x src/monitoring/tests --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
+          bandit -r src/monitoring -x src/monitoring/tests -ll
+          trivy fs --scanners misconfig,secret --skip-dirs src/monitoring/tests --skip-dirs src/monitoring/node_modules --format json --output "$RUNNER_TEMP/security/source.json" src/monitoring
+          trivy fs --scanners secret --skip-dirs src/monitoring/tests --skip-dirs src/monitoring/node_modules --exit-code 1 src/monitoring
+      - name: Scan worker image
+        if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
+        run: bash src/monitoring/ci/scan-image.sh crux-monitoring:check "$RUNNER_TEMP/security/worker.json"
+      - name: Scan incident web image
+        if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
+        run: bash src/monitoring/ci/scan-image.sh crux-incidents:check "$RUNNER_TEMP/security/web.json"
+      - name: Scan HTTPS proxy image
+        if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
+        run: bash src/monitoring/ci/scan-image.sh crux-proxy:check "$RUNNER_TEMP/security/proxy.json"
+      - name: Upload security reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitoring-security-reports
+          path: ${{ runner.temp }}/security/
+          retention-days: 14
+          if-no-files-found: ignore
+  terraform:
+    name: Monitoring Terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: src/monitoring/terraform
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: '1.14.8'
+          terraform_wrapper: false
+      - run: terraform fmt -check
+      - run: terraform init -backend=false -lockfile=readonly
+      - run: terraform validate
+      - run: terraform test
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install Checkov
+        run: pip install checkov==3.3.19
+      - name: Gate Terraform security
+        run: |
+          mkdir -p "$RUNNER_TEMP/checkov"
+          checkov --directory . --framework terraform --skip-download --compact \
+            --output cli --output json \
+            --output-file-path "console,$RUNNER_TEMP/checkov/results.json"
+      - name: Upload Terraform security report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitoring-terraform-security
+          path: ${{ runner.temp }}/checkov/
+          retention-days: 14
+          if-no-files-found: ignore
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    needs: [monitoring, terraform]
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/monitoring-deploy.yml
