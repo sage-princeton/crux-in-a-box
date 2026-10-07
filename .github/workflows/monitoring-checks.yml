@@ -1,4 +1,4 @@
-name: Monitoring checks
+name: Lint monitor
 
 on:
   pull_request:

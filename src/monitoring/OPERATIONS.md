@@ -68,6 +68,13 @@ apply or write state. Plans use deployed image inputs and `-lock=false`; release
 replan under the deployment lock. Artifacts/comments contain resource addresses
 and actions only, never raw plans, state or attribute values.
 
+GitHub issues a `pull_request` OIDC subject for `pull_request_target` runs. The
+planning trust policy accepts it only with `ref=refs/heads/main` and the trusted
+plan workflow name. Ordinary PR-controlled workflows use a PR merge ref and are
+not trusted. Both `Monitoring PR plan` and `Monitor Terraform plan` are accepted
+during the workflow rename; apply `ci/plan-trust.json` to the live role before
+rerunning existing PR checks, since they use the workflow already on `main`.
+
 Before this workflow reaches `main`, pushes to the review branch plan PR #21.
 Once registered, rerun it with
 `gh workflow run monitoring-plan.yml --ref ae-211-ec2-monitoring -f pull_request=21`.
