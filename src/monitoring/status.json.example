@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "expires_at": 0,
+  "interval_seconds": 900,
+  "stale_seconds": 1800,
+  "inference_budget_usd": 0,
+  "sweep_model": "",
+  "summary_model": "",
+  "targets": {}
+}

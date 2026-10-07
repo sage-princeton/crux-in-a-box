@@ -76,6 +76,10 @@ run "immutable_workers_remain_disabled" {
     image_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
   assert {
+    condition     = length(terraform_data.status_configuration) == 0 && length(aws_dynamodb_table.status) == 0 && length(aws_batch_job_definition.status) == 0
+    error_message = "Ordinary releases must not create status infrastructure before operator bootstrap."
+  }
+  assert {
     condition     = aws_scheduler_schedule.monitoring[0].state == "DISABLED"
     error_message = "Adding an image must not implicitly activate monitoring."
   }
@@ -168,5 +172,37 @@ run "shared_state_keeps_worker_access_out_of_operator_sessions" {
   assert {
     condition     = toset([for index in aws_dynamodb_table.incidents.global_secondary_index : index.name]) == toset(["instance-incidents", "status-updated"])
     error_message = "The shared table must support both incident pages and pending review discovery."
+  }
+}
+
+run "status_has_its_own_storage_roles_queue_and_disabled_schedule" {
+  command = apply
+  variables {
+    status_provisioned           = true
+    status_secrets_parameter_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/status/env"
+    image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    web_enabled                  = true
+    web_image_digest             = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    proxy_image_digest           = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  }
+  assert {
+    condition     = aws_dynamodb_table.status[0].name != aws_dynamodb_table.incidents.name && aws_dynamodb_table.status[0].deletion_protection_enabled && aws_dynamodb_table.status[0].point_in_time_recovery[0].enabled
+    error_message = "Status needs a separate protected table and recovery policy."
+  }
+  assert {
+    condition     = aws_scheduler_schedule.status[0].state == "DISABLED" && aws_scheduler_schedule.monitoring[0].state == "DISABLED" && aws_batch_job_queue.status[0].name != aws_batch_job_queue.monitoring.name
+    error_message = "Status and incident scheduling must be independent and default disabled."
+  }
+  assert {
+    condition     = alltrue([for s in jsondecode(aws_iam_role_policy.status_job["check"].policy).Statement : s.Resource == aws_dynamodb_table.status[0].arn if contains(s.Action, "dynamodb:UpdateItem")]) && !strcontains(aws_iam_role_policy.status_job["check"].policy, "ssm:SendCommand") && !strcontains(aws_iam_role_policy.status_job["check"].policy, "batch:SubmitJob")
+    error_message = "Status checkers can write only their own table and cannot dispatch workload commands or jobs."
+  }
+  assert {
+    condition     = !strcontains(aws_iam_role_policy.web_status[0].policy, "dynamodb:PutItem") && !strcontains(aws_iam_role_policy.web_status[0].policy, "dynamodb:UpdateItem") && !strcontains(aws_iam_role_policy.web_status[0].policy, "dynamodb:DeleteItem")
+    error_message = "The website must have read-only status access."
+  }
+  assert {
+    condition     = !strcontains(aws_batch_job_definition.status["check"].container_properties, "MONITORING_TABLE") && strcontains(aws_batch_job_definition.status["check"].container_properties, "STATUS_TABLE") && strcontains(local.web_service_configuration, "STATUS_TABLE=")
+    error_message = "Status jobs and the web service must use explicit independent table configuration."
   }
 }

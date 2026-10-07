@@ -67,6 +67,16 @@ resource "aws_s3_bucket_policy" "tls" {
 }
 resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
   bucket = aws_s3_bucket.evidence.id
+  dynamic "rule" {
+    for_each = var.status_provisioned ? [true] : []
+    content {
+      id     = "status-checks-90-days"
+      status = "Enabled"
+      filter { prefix = "status_checks/" }
+      expiration { days = 90 }
+      noncurrent_version_expiration { noncurrent_days = 90 }
+    }
+  }
   rule {
     id     = "abort-incomplete-uploads"
     status = "Enabled"

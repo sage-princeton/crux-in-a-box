@@ -110,13 +110,14 @@ resource "aws_s3_object" "legacy_incident_link" {
 
 locals {
   web_service_configuration = var.web_enabled ? templatefile("${path.module}/web-service.sh.tftpl", {
-    region      = var.region,
-    repository  = aws_ecr_repository.monitoring.repository_url,
-    image       = var.web_image_digest,
-    proxy_image = var.proxy_image_digest,
-    table       = aws_dynamodb_table.incidents.name,
-    origin      = local.web_origin,
-    revision    = var.revision
+    region       = var.region,
+    repository   = aws_ecr_repository.monitoring.repository_url,
+    image        = var.web_image_digest,
+    proxy_image  = var.proxy_image_digest,
+    table        = aws_dynamodb_table.incidents.name,
+    status_table = try(aws_dynamodb_table.status[0].name, ""),
+    origin       = local.web_origin,
+    revision     = var.revision
   }) : ""
   web_origin = var.web_enabled ? "https://${replace(aws_eip.web[0].public_ip, ".", "-")}.sslip.io" : ""
 }

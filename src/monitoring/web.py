@@ -3,19 +3,23 @@
 import base64
 import json
 import os
+import re
 from datetime import datetime
 from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
 import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 from flask import Flask, abort, g, redirect, render_template, request, url_for
 from werkzeug.exceptions import HTTPException
 
 from lifecycle import Conflict, IncidentStore, public_incident
+from status_store import StatusStore
+from status_view import coverage_rows
 from web_auth import install_auth, require_operator
 
 
-def create_app(store=None, settings=None):
+def create_app(store=None, settings=None, status_store=None):
     if settings is None:
         parameter = boto3.client("ssm").get_parameter(
             Name=os.environ["MONITORING_WEB_PARAMETER"], WithDecryption=True
@@ -37,6 +41,9 @@ def create_app(store=None, settings=None):
         PUBLIC_ORIGIN=origin, TRUSTED_HOSTS=[parsed.hostname], MAX_CONTENT_LENGTH=128 * 1024
     )
     app.extensions["incidents"] = store
+    if status_store is None and os.environ.get("STATUS_TABLE"):
+        status_store = StatusStore(boto3.resource("dynamodb").Table(os.environ["STATUS_TABLE"]))
+    app.extensions["status"] = status_store
     install_auth(app, store, settings)
 
     @app.before_request
@@ -92,6 +99,34 @@ def create_app(store=None, settings=None):
         cursor = request.args.get("cursor")
         if cursor and len(cursor) > 200:
             abort(400)
+        incident_error, status_error = False, False
+        try:
+            incident_rows = list(store.all("FLEET"))
+        except (BotoCoreError, ClientError):
+            incident_rows, incident_error = [], True
+            app.logger.warning("Incident coverage read unavailable")
+        try:
+            status_rows = status_store.fleet() if status_store else []
+        except (BotoCoreError, ClientError):
+            status_rows, status_error = [], True
+            app.logger.warning("Project status read unavailable")
+        coverage = coverage_rows(status_rows, incident_rows)
+        selected = request.args.get("workload", "")
+        if selected and selected not in {row["sk"] for row in coverage}:
+            if not status_error:
+                abort(404, "Workload not found.")
+        try:
+            coverage_page = int(request.args.get("coverage_page", "1"))
+            if not 1 <= coverage_page <= 10000:
+                raise ValueError()
+        except ValueError:
+            abort(400, "Invalid coverage page.")
+        active_coverage = [row for row in coverage if row.get("state") == "running"]
+        shown = (
+            [row for row in coverage if row["sk"] == selected]
+            if selected
+            else active_coverage[(coverage_page - 1) * 5 : coverage_page * 5]
+        )
         fleet = [
             {
                 k: row[k]
@@ -105,7 +140,7 @@ def create_app(store=None, settings=None):
                 )
                 if k in row
             }
-            for row in store.all("FLEET")
+            for row in incident_rows
         ]
         fleet.sort(
             key=lambda row: (
@@ -124,17 +159,22 @@ def create_app(store=None, settings=None):
                     raise ValueError()
             except (ValueError, TypeError, UnicodeError):
                 abort(400, "Invalid page cursor.")
-            if start_instance not in {row["instance_id"] for row in fleet}:
+            if not incident_error and start_instance not in {row["instance_id"] for row in fleet}:
                 abort(400, "Workload changed; return to the first page.")
         for row in fleet:
             if start_instance and row["instance_id"] != start_instance:
                 continue
-            page, _ = store.instance_page(
-                row["instance_id"],
-                None if status == "all" else status,
-                start_id,
-                limit=51 - len(items),
-            )
+            try:
+                page, _ = store.instance_page(
+                    row["instance_id"],
+                    None if status == "all" else status,
+                    start_id,
+                    limit=51 - len(items),
+                )
+            except (BotoCoreError, ClientError):
+                items, next_cursor, incident_error = [], None, True
+                app.logger.warning("Incident list read unavailable")
+                break
             items.extend(page)
             start_instance, start_id = None, None
             if len(items) == 51:
@@ -164,9 +204,35 @@ def create_app(store=None, settings=None):
             status=status,
             next_cursor=next_cursor,
             fleet=fleet,
+            coverage=coverage,
+            shown=shown,
+            selected=selected,
+            coverage_page=coverage_page,
+            coverage_more=len(active_coverage) > coverage_page * 5,
+            incident_error=incident_error,
+            status_error=status_error,
+            status_configured=status_store is not None,
             groups=sorted(
                 groups.values(), key=lambda group: (group["label"].casefold(), group["instance_id"])
             ),
+        )
+
+    @app.get("/workloads/<key>/status")
+    def status_history(key):
+        if not re.fullmatch(r"[a-f0-9]{32}", key) or status_store is None:
+            abort(404)
+        before = request.args.get("before")
+        if before and not re.fullmatch(r"WINDOW#[0-9]{12}", before):
+            abort(400, "Invalid status history cursor.")
+        try:
+            row = status_store.get("FLEET", key)
+            history, next_cursor = status_store.history(key, before)
+        except (BotoCoreError, ClientError):
+            abort(503, "Status history is temporarily unavailable.")
+        if not row:
+            abort(404)
+        return render_template(
+            "status_history.html", workload=row, history=history, next_cursor=next_cursor
         )
 
     @app.get("/incidents/<uuid:incident_id>")

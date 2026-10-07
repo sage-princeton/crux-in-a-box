@@ -72,6 +72,10 @@ def main():
     registry = Path(os.environ["RUNNER_TEMP"]) / "monitoring-registry.json"
     s3.download_file(bucket, "config/registry.json", str(registry))
     config["registry_file"] = str(registry)
+    if config.get("status_provisioned"):
+        status_registry = Path(os.environ["RUNNER_TEMP"]) / "status-registry.json"
+        s3.download_file(bucket, "config/status.json", str(status_registry))
+        config["status_registry_file"] = str(status_registry)
     variables = Path(os.environ["RUNNER_TEMP"]) / "monitoring-deployment.tfvars.json"
     variables.write_text(json.dumps(config))
     terraform = ROOT / "terraform"
@@ -95,6 +99,9 @@ def main():
         "aws_batch_job_definition.review[0]",
         "aws_scheduler_schedule.monitoring[0]",
         "aws_instance.web[0]",
+        'aws_batch_job_definition.status["discover"]',
+        'aws_batch_job_definition.status["check"]',
+        "aws_scheduler_schedule.status[0]",
     }
     rejected = [
         r["address"]
@@ -162,6 +169,8 @@ def main():
         if response.status_code != 302 or response.headers.get("location") != "/auth/login":
             raise RuntimeError("Incident pages must require AWS login")
     config["registry_file"] = "registry.json"
+    if config.get("status_provisioned"):
+        config["status_registry_file"] = "status.json"
     s3.put_object(
         Bucket=bucket,
         Key="config/deployment.json",

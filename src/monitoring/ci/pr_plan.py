@@ -127,6 +127,10 @@ def plan(directory, bucket, report):
             registry = temporary / "registry.json"
             s3.download_file(bucket, "config/registry.json", str(registry))
             config["registry_file"] = str(registry)
+            if config.get("status_provisioned"):
+                status_registry = temporary / "status.json"
+                s3.download_file(bucket, "config/status.json", str(status_registry))
+                config["status_registry_file"] = str(status_registry)
             # Preserve deployed image digests/revision: PR infrastructure plans
             # must not manufacture an application release on every code change.
             variables = temporary / "inputs.tfvars.json"

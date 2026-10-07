@@ -78,7 +78,8 @@
       "Resource": [
         "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/config/registry.json",
         "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/config/deployment.json",
-        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/reviews/incidents/index.html"
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/reviews/incidents/index.html",
+        "arn:aws:s3:::crux-monitoring-ae211-881004720495-us-east-1/config/status.json"
       ]
     },
     {
@@ -100,7 +101,9 @@
       ],
       "Resource": [
         "arn:aws:scheduler:us-east-1:881004720495:schedule/crux-monitoring-ae211/crux-monitoring-ae211",
-        "arn:aws:scheduler:us-east-1:881004720495:schedule-group/crux-monitoring-ae211"
+        "arn:aws:scheduler:us-east-1:881004720495:schedule-group/crux-monitoring-ae211",
+        "arn:aws:scheduler:us-east-1:881004720495:schedule/crux-monitoring-ae211-status/crux-monitoring-ae211-status",
+        "arn:aws:scheduler:us-east-1:881004720495:schedule-group/crux-monitoring-ae211-status"
       ]
     },
     {
@@ -110,7 +113,10 @@
         "events:ListTargetsByRule",
         "events:ListTagsForResource"
       ],
-      "Resource": "arn:aws:events:us-east-1:881004720495:rule/crux-monitoring-ae211-failed"
+      "Resource": [
+        "arn:aws:events:us-east-1:881004720495:rule/crux-monitoring-ae211-failed",
+        "arn:aws:events:us-east-1:881004720495:rule/crux-monitoring-ae211-status-failed"
+      ]
     },
     {
       "Effect": "Allow",
@@ -118,7 +124,10 @@
         "sqs:GetQueueAttributes",
         "sqs:ListQueueTags"
       ],
-      "Resource": "arn:aws:sqs:us-east-1:881004720495:crux-monitoring-ae211-operations"
+      "Resource": [
+        "arn:aws:sqs:us-east-1:881004720495:crux-monitoring-ae211-operations",
+        "arn:aws:sqs:us-east-1:881004720495:crux-monitoring-ae211-status-operations"
+      ]
     },
     {
       "Effect": "Allow",
