@@ -24,12 +24,13 @@ def deployment(tmp_path):
         "name": "crux-monitoring-ae211",
         "account_id": "881004720495",
         "region": "us-east-1",
-        "status_provisioned": True,
+        "status_provisioned": False,
+        "status_registry_file": "stale-status.json",
+        "status_secrets_parameter_arn": "stale-parameter",
         "registry_file": "old-local-path",
     }
     (remote / "deployment.json").write_text(json.dumps(config))
-    for name in ("registry", "status"):
-        (remote / f"{name}.json").write_text("{}")
+    (remote / "registry.json").write_text("{}")
     stub = (Path(__file__).parent / "fixtures/deployment-cli.py").read_text()
     for name in ("aws", "terraform", "docker", "trivy", "curl", "git", "sleep"):
         path = binaries / name
@@ -82,7 +83,7 @@ def test_yaml_release_applies_complete_plan_and_reuses_verified_images(deploymen
     published = json.loads((remote / "published.json").read_text())
     assert published["revision"] == env["GITHUB_SHA"]
     assert published["registry_file"] == "registry.json"
-    assert published["status_registry_file"] == "status.json"
+    assert not any(key.startswith("status_") for key in published)
     assert (
         published["image_digest"]
         == published["web_image_digest"]

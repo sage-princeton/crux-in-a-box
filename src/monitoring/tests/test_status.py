@@ -1,5 +1,6 @@
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import boto3
@@ -253,6 +254,41 @@ def test_retirement_and_changed_workload_do_not_run_queued_inference(runtime):
     assert worker.store.fleet()[0]["state"] == "stopped"
     worker.check(iid, "old-experiment", end)
     assert not worker.calls
+
+
+def test_continuous_status_and_explicit_expiry(runtime):
+    worker, _, end = runtime
+    worker.config["expires_at"] = 0
+    validate(worker.config)
+    assert worker.active(end + 10 * 365 * 86400)
+    worker.config["enabled"] = False
+    assert not worker.active(end)
+    worker.config["enabled"] = True
+    worker.config["expires_at"] = end
+    assert worker.active(end - 1)
+    assert not worker.active(end)
+    worker.config["expires_at"] = -1
+    with pytest.raises(ValueError, match="expiry"):
+        validate(worker.config)
+
+
+def test_absent_workload_keeps_its_name_without_submitting_checks(runtime):
+    worker, iid, _ = runtime
+    worker.config["targets"][iid]["name"] = "retired-project"
+    worker.ec2.terminate_instances(InstanceIds=[iid])
+    # EC2 eventually stops returning terminated instances; select an absent ID.
+    worker.config["targets"]["i-00000000000000000"] = worker.config["targets"].pop(iid)
+    worker.discover()
+    assert not worker.submitted
+    row = worker.store.fleet()[0]
+    assert row["slug"] == "retired-project" and row["state"] == "no longer present"
+
+
+def test_production_status_configuration_is_accepted_by_the_worker():
+    config = json.loads(
+        Path(__file__).resolve().parents[1].joinpath("status.production.json").read_text()
+    )
+    validate(config)
 
 
 def test_budget_exhaustion_prevents_model_calls(runtime):

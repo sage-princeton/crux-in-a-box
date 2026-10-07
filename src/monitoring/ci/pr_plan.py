@@ -127,10 +127,9 @@ def plan(directory, bucket, report):
             registry = temporary / "registry.json"
             s3.download_file(bucket, "config/registry.json", str(registry))
             config["registry_file"] = str(registry)
-            if config.get("status_provisioned"):
-                status_registry = temporary / "status.json"
-                s3.download_file(bucket, "config/status.json", str(status_registry))
-                config["status_registry_file"] = str(status_registry)
+            # Status settings come from the candidate's status.auto.tfvars.json.
+            # Legacy S3 inputs must not override the configuration under review.
+            config = {key: value for key, value in config.items() if not key.startswith("status_")}
             # Preserve deployed image digests/revision: PR infrastructure plans
             # must not manufacture an application release on every code change.
             variables = temporary / "inputs.tfvars.json"
