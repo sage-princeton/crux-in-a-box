@@ -175,10 +175,11 @@ run "shared_state_keeps_worker_access_out_of_operator_sessions" {
   }
 }
 
-run "status_has_its_own_storage_roles_queue_and_disabled_schedule" {
+run "status_has_its_own_storage_roles_queue_and_enabled_schedule" {
   command = apply
   variables {
     status_provisioned           = true
+    status_registry_file         = "../tests/fixtures/status.json"
     status_secrets_parameter_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/status/env"
     image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     web_enabled                  = true
@@ -190,8 +191,8 @@ run "status_has_its_own_storage_roles_queue_and_disabled_schedule" {
     error_message = "Status needs a separate protected table and recovery policy."
   }
   assert {
-    condition     = aws_scheduler_schedule.status[0].state == "DISABLED" && aws_scheduler_schedule.monitoring[0].state == "DISABLED" && aws_batch_job_queue.status[0].name != aws_batch_job_queue.monitoring.name
-    error_message = "Status and incident scheduling must be independent and default disabled."
+    condition     = aws_scheduler_schedule.status[0].state == "ENABLED" && jsondecode(aws_s3_object.status_registry[0].content).enabled && aws_scheduler_schedule.monitoring[0].state == "DISABLED" && aws_batch_job_queue.status[0].name != aws_batch_job_queue.monitoring.name
+    error_message = "Provisioned status must enable its schedule and worker config even when the input says disabled, independently of incident scheduling."
   }
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.status_job["check"].policy).Statement : s.Resource == aws_dynamodb_table.status[0].arn if contains(s.Action, "dynamodb:UpdateItem")]) && !strcontains(aws_iam_role_policy.status_job["check"].policy, "ssm:SendCommand") && !strcontains(aws_iam_role_policy.status_job["check"].policy, "batch:SubmitJob")
@@ -205,4 +206,14 @@ run "status_has_its_own_storage_roles_queue_and_disabled_schedule" {
     condition     = !strcontains(aws_batch_job_definition.status["check"].container_properties, "MONITORING_TABLE") && strcontains(aws_batch_job_definition.status["check"].container_properties, "STATUS_TABLE") && strcontains(local.web_service_configuration, "STATUS_TABLE=")
     error_message = "Status jobs and the web service must use explicit independent table configuration."
   }
+}
+
+run "status_provisioning_requires_complete_configuration" {
+  command = plan
+  variables {
+    status_provisioned           = true
+    status_secrets_parameter_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/status/env"
+    image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  expect_failures = [terraform_data.status_configuration[0]]
 }

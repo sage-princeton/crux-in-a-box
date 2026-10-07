@@ -1,12 +1,12 @@
 variable "status_provisioned" {
   type        = bool
   default     = false
-  description = "Provision independent status infrastructure with an operator-reviewed apply. Scheduling is controlled separately by status.json."
+  description = "Provision independent status infrastructure with an operator-reviewed apply. Provisioned status checks are always enabled."
 }
 variable "status_registry_file" {
   type        = string
   default     = ""
-  description = "Non-secret status configuration; empty uses the disabled example."
+  description = "Non-secret status configuration; complete the example before provisioning. Terraform always sets enabled=true."
 }
 variable "status_secrets_parameter_arn" {
   type        = string
@@ -28,7 +28,10 @@ variable "status_evidence_log_group_arns" {
 }
 
 locals {
-  status_config = jsondecode(file(var.status_registry_file == "" ? "${path.module}/../status.json.example" : var.status_registry_file))
+  status_config = merge(
+    jsondecode(file(var.status_registry_file == "" ? "${path.module}/../status.json.example" : var.status_registry_file)),
+    { enabled = true }
+  )
   status_active = var.status_provisioned && local.active
   status_end    = local.status_config.expires_at > 0 ? timeadd("1970-01-01T00:00:00Z", "${local.status_config.expires_at}s") : "2030-01-01T00:00:00Z"
   status_env = var.status_provisioned ? [
@@ -41,14 +44,14 @@ locals {
 }
 
 resource "terraform_data" "status_configuration" {
-  count = var.status_provisioned || local.status_config.enabled ? 1 : 0
+  count = var.status_provisioned ? 1 : 0
   lifecycle {
     precondition {
       condition     = !var.status_provisioned || var.status_secrets_parameter_arn != ""
       error_message = "Provisioning requires a dedicated status credentials parameter."
     }
     precondition {
-      condition = !local.status_config.enabled || (local.status_active && local.status_config.expires_at > 0 &&
+      condition = (local.status_active && local.status_config.expires_at > 0 &&
         timecmp(local.status_end, timestamp()) > 0 && length(local.status_config.targets) > 0 &&
         local.status_config.inference_budget_usd > 0 && local.status_config.inference_budget_usd <= 500 &&
       local.status_config.sweep_model != "" && local.status_config.summary_model != "")
@@ -204,9 +207,8 @@ resource "aws_scheduler_schedule" "status" {
   count               = local.status_active ? 1 : 0
   name                = "${var.name}-status"
   group_name          = aws_scheduler_schedule_group.status[0].name
-  state               = local.status_config.enabled ? "ENABLED" : "DISABLED"
+  state               = "ENABLED"
   schedule_expression = "rate(${local.status_config.interval_seconds / 60} minutes)"
-  start_date          = local.status_config.enabled ? null : timeadd(local.status_end, "-1h")
   end_date            = local.status_end
   flexible_time_window { mode = "OFF" }
   target {
