@@ -26,14 +26,18 @@ user's `SESSION#` records when immediate revocation is required.
 
 ## Deploy
 
-Run the checked branch through GitHub Actions:
+Pushes to `main`, including PR merges, automatically deploy after both monitoring
+and Terraform checks pass. PR checks do not deploy. Newer merges do not cancel
+an in-progress deployment; deployments remain serialized.
+
+To deploy a checked branch manually through GitHub Actions:
 
 ```sh
 gh workflow run monitoring-checks.yml --ref <branch> -f deploy=true
 ```
 
 The `crux-monitoring` environment permits `main` and `ae-211-ec2-monitoring`.
-Remove the review branch when retired. Merging alone does not deploy. GitHub OIDC
+Remove the review branch when retired. GitHub OIDC
 assumes `crux-monitoring-deploy`; no static AWS keys are needed. Environment
 variables are `MONITORING_AWS_ROLE_ARN` and `MONITORING_CONFIG_BUCKET`.
 
