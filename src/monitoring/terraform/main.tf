@@ -33,7 +33,7 @@ resource "terraform_data" "configuration" {
 }
 
 resource "aws_s3_bucket" "evidence" {
-  #checkov:skip=CKV_AWS_144:Single-region monitoring evidence expires after 90 days; versioning protects against accidental overwrites.
+  #checkov:skip=CKV_AWS_144:Single-region monitoring evidence expires after 365 days; versioning protects against accidental overwrites.
   #checkov:skip=CKV2_AWS_62:Evidence is consumed synchronously by the worker; no event consumer exists.
   #checkov:skip=CKV_AWS_145:Existing evidence uses SSE-S3 with private IAM-only access; customer-key migration is tracked separately.
   bucket        = "${var.name}-${var.account_id}-${var.region}"
@@ -70,11 +70,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
   dynamic "rule" {
     for_each = var.status_provisioned ? [true] : []
     content {
-      id     = "status-checks-90-days"
+      id     = "status-checks-365-days"
       status = "Enabled"
       filter { prefix = "status_checks/" }
-      expiration { days = 90 }
-      noncurrent_version_expiration { noncurrent_days = 90 }
+      expiration { days = 365 }
+      noncurrent_version_expiration { noncurrent_days = 365 }
     }
   }
   rule {
@@ -84,11 +84,11 @@ resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
     abort_incomplete_multipart_upload { days_after_initiation = 7 }
   }
   rule {
-    id     = "reviews-90-days"
+    id     = "reviews-365-days"
     status = "Enabled"
     filter { prefix = "reviews/" }
-    expiration { days = 90 }
-    noncurrent_version_expiration { noncurrent_days = 90 }
+    expiration { days = 365 }
+    noncurrent_version_expiration { noncurrent_days = 365 }
   }
 }
 resource "aws_s3_object" "registry" {
