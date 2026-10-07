@@ -26,14 +26,18 @@ user's `SESSION#` records when immediate revocation is required.
 
 ## Deploy
 
-Run the checked branch through GitHub Actions:
+Pushes to `main`, including PR merges, automatically deploy after both monitoring
+and Terraform checks pass. PR checks do not deploy. Newer merges do not cancel
+an in-progress deployment; deployments remain serialized.
+
+To deploy a checked branch manually through GitHub Actions:
 
 ```sh
 gh workflow run monitoring-checks.yml --ref <branch> -f deploy=true
 ```
 
 The `crux-monitoring` environment permits `main` and `ae-211-ec2-monitoring`.
-Remove the review branch when retired. Merging alone does not deploy. GitHub OIDC
+Remove the review branch when retired. GitHub OIDC
 assumes `crux-monitoring-deploy`; no static AWS keys are needed. Environment
 variables are `MONITORING_AWS_ROLE_ARN` and `MONITORING_CONFIG_BUCKET`.
 
@@ -63,6 +67,13 @@ The `crux-monitoring-plan` OIDC role reads infrastructure/configuration only;
 apply or write state. Plans use deployed image inputs and `-lock=false`; releases
 replan under the deployment lock. Artifacts/comments contain resource addresses
 and actions only, never raw plans, state or attribute values.
+
+GitHub issues a `pull_request` OIDC subject for `pull_request_target` runs. The
+planning trust policy accepts it only with `ref=refs/heads/main` and the trusted
+plan workflow name. Ordinary PR-controlled workflows use a PR merge ref and are
+not trusted. Both `Monitoring PR plan` and `Monitor Terraform plan` are accepted
+during the workflow rename; apply `ci/plan-trust.json` to the live role before
+rerunning existing PR checks, since they use the workflow already on `main`.
 
 Before this workflow reaches `main`, pushes to the review branch plan PR #21.
 Once registered, rerun it with

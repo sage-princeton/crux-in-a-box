@@ -1,4 +1,4 @@
-name: Monitoring checks
+name: Lint monitor
 
 on:
   pull_request:
@@ -17,7 +17,8 @@ permissions:
 
 concurrency:
   group: monitoring-checks-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+  # A newer merge must not cancel a run that may already be applying Terraform.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   monitoring:
@@ -126,7 +127,9 @@ jobs:
           retention-days: 14
           if-no-files-found: ignore
   deploy:
-    if: github.event_name == 'workflow_dispatch' && inputs.deploy
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy)
     needs: [monitoring, terraform]
     permissions:
       contents: read

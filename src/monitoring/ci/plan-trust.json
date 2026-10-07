@@ -16,6 +16,24 @@
           ]
         }
       }
+    },
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Federated": "arn:aws:iam::881004720495:oidc-provider/token.actions.githubusercontent.com"
+      },
+      "Action": "sts:AssumeRoleWithWebIdentity",
+      "Condition": {
+        "StringEquals": {
+          "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+          "token.actions.githubusercontent.com:sub": "repo:sage-princeton@292236392/crux-in-a-box@1314254060:pull_request",
+          "token.actions.githubusercontent.com:ref": "refs/heads/main",
+          "token.actions.githubusercontent.com:workflow": [
+            "Monitoring PR plan",
+            "Monitor Terraform plan"
+          ]
+        }
+      }
     }
   ]
 }

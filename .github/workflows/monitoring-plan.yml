@@ -1,11 +1,11 @@
-name: Monitoring PR plan
+name: Monitor Terraform plan
 
 on:
   # Bootstrap validation for PR #21; remove with the temporary branch IAM trust.
   push:
     branches: [ae-211-ec2-monitoring]
-  # This trusted workflow must reach main before automatic PR events activate.
-  # Never use a PR-controlled workflow with a pull_request-wide AWS trust policy.
+  # AWS checks the PR subject together with the main ref and trusted workflow name.
+  # Keep automation on the base branch; ordinary pull_request refs are not trusted.
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
