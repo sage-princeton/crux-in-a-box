@@ -23,13 +23,11 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.12'
-      - name: Install check dependencies
+      - name: Verify runner tools
+        # ubuntu-24.04 already includes both tools; avoid apt mirror delays.
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+          python3 --version
+          shellcheck --version
       - name: Bash syntax
         run: |
           for script in src/ec2-workspaces/*.sh; do
