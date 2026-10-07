@@ -32,7 +32,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - run: pip install -r src/monitoring/web-requirements.txt 'pytest>=8,<9' 'moto[dynamodb,s3,ec2,ssm]>=5,<6' ruff==0.16.10
+      - run: pip install -r src/monitoring/web-requirements.txt 'pytest>=8,<9' 'moto[dynamodb,s3,ec2,ssm]>=5,<6' PyYAML==6.0.3 ruff==0.16.10
       - name: Python lint and formatting
         run: |
           ruff check src/monitoring

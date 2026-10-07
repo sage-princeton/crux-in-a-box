@@ -17,16 +17,17 @@ jobs:
     runs-on: ubuntu-24.04
     environment: crux-monitoring
     timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
     env:
       AWS_DEFAULT_REGION: us-east-1
       MONITORING_CONFIG_BUCKET: ${{ vars.MONITORING_CONFIG_BUCKET }}
+      TF_IN_AUTOMATION: 'true'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.12'
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: '1.14.8'
@@ -38,13 +39,134 @@ jobs:
           allowed-account-ids: '881004720495'
           role-session-name: monitoring-${{ github.run_id }}
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
-      - run: pip install -r src/monitoring/requirements.txt
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.75.0
-      - name: Build immutable images, apply shared state, and verify HTTPS
-        run: python src/monitoring/ci/deploy.py
+      - name: Load deployed inputs
+        run: |
+          aws s3 cp "s3://$MONITORING_CONFIG_BUCKET/config/deployment.json" "$RUNNER_TEMP/deployment.json" --only-show-errors
+          account=$(aws sts get-caller-identity --query Account --output text)
+          jq -e --arg account "$account" '
+            .account_id == $account and .account_id == "881004720495" and
+            .region == "us-east-1" and (.name | test("^[a-z][a-z0-9-]{2,35}$"))
+          ' "$RUNNER_TEMP/deployment.json" > /dev/null
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          aws s3 cp "s3://$MONITORING_CONFIG_BUCKET/config/registry.json" "$RUNNER_TEMP/registry.json" --only-show-errors
+          if jq -e '.status_provisioned == true' "$RUNNER_TEMP/deployment.json" > /dev/null; then
+            aws s3 cp "s3://$MONITORING_CONFIG_BUCKET/config/status.json" "$RUNNER_TEMP/status.json" --only-show-errors
+          fi
+      - name: Build and scan immutable images
+        working-directory: src/monitoring
+        run: |
+          name=$(jq -r .name "$RUNNER_TEMP/deployment.json")
+          account=$(jq -r .account_id "$RUNNER_TEMP/deployment.json")
+          repository="$account.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$name"
+          for kind in worker web proxy; do
+            case "$kind" in
+              worker) dockerfile=Dockerfile; field=image_digest ;;
+              web) dockerfile=Dockerfile.web; field=web_image_digest ;;
+              proxy) dockerfile=Dockerfile.proxy; field=proxy_image_digest ;;
+            esac
+            tag="$kind-$GITHUB_SHA"
+            if ! aws ecr describe-images --repository-name "$name" --image-ids "imageTag=$tag" \
+                --output json > "$RUNNER_TEMP/image.json" 2> "$RUNNER_TEMP/image-error"; then
+              if ! grep -q '(ImageNotFoundException)' "$RUNNER_TEMP/image-error"; then
+                cat "$RUNNER_TEMP/image-error" >&2
+                exit 1
+              fi
+              docker build --platform linux/amd64 -f "$dockerfile" -t "$repository:$tag" .
+              docker push "$repository:$tag"
+              aws ecr describe-images --repository-name "$name" --image-ids "imageTag=$tag" --output json > "$RUNNER_TEMP/image.json"
+            fi
+            digest=$(jq -er '.imageDetails[0].imageDigest | select(test("^sha256:[a-f0-9]{64}$"))' "$RUNNER_TEMP/image.json")
+            bash ci/scan-image.sh "$repository@$digest" "$RUNNER_TEMP/security/$kind.json"
+            jq --arg field "$field" --arg digest "$digest" '.[$field] = $digest' \
+              "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/deployment-next.json"
+            mv "$RUNNER_TEMP/deployment-next.json" "$RUNNER_TEMP/deployment.json"
+          done
+      - name: Prepare Terraform inputs
+        run: |
+          jq --arg revision "$GITHUB_SHA" --arg directory "$RUNNER_TEMP" '
+            .revision = $revision | .registry_file = ($directory + "/registry.json") |
+            if .status_provisioned == true then .status_registry_file = ($directory + "/status.json") else . end
+          ' "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/deployment.tfvars.json"
+      - name: Initialize shared Terraform state
+        working-directory: src/monitoring/terraform
+        run: terraform init -input=false -lockfile=readonly -backend-config=backend.hcl
+      - name: Plan infrastructure
+        working-directory: src/monitoring/terraform
+        run: terraform plan -input=false -lock-timeout=5m -var-file="$RUNNER_TEMP/deployment.tfvars.json" -out="$RUNNER_TEMP/deploy.tfplan"
+      - name: Apply infrastructure
+        working-directory: src/monitoring/terraform
+        run: terraform apply -input=false -lock-timeout=5m "$RUNNER_TEMP/deploy.tfplan"
+      - name: Read deployment outputs
+        working-directory: src/monitoring/terraform
+        run: terraform output -json > "$RUNNER_TEMP/deployment-outputs.json"
+      - name: Reconcile web service
+        run: |
+          instance=$(jq -r '.incident_web_instance.value // empty' "$RUNNER_TEMP/deployment-outputs.json")
+          if [ -z "$instance" ]; then exit 0; fi
+          jq -e '{commands: [.incident_web_configuration.value | select(type == "string" and length > 0)]} | select(.commands | length == 1)' \
+            "$RUNNER_TEMP/deployment-outputs.json" > "$RUNNER_TEMP/web-command.json"
+          # EC2 may restart during apply; retry only while SSM reconnects.
+          command_id=""
+          for _attempt in {1..24}; do
+            if command_id=$(aws ssm send-command --instance-ids "$instance" --document-name AWS-RunShellScript \
+                --parameters "file://$RUNNER_TEMP/web-command.json" --timeout-seconds 600 \
+                --comment "Deploy CRUX incident web $GITHUB_SHA" --query Command.CommandId --output text 2> "$RUNNER_TEMP/ssm-error"); then
+              break
+            fi
+            if ! grep -q '(InvalidInstanceId)' "$RUNNER_TEMP/ssm-error"; then
+              cat "$RUNNER_TEMP/ssm-error" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          test -n "$command_id"
+          deadline=$((SECONDS + 600))
+          while [ "$SECONDS" -lt "$deadline" ]; do
+            if status=$(aws ssm get-command-invocation --command-id "$command_id" --instance-id "$instance" \
+                --query Status --output text 2> "$RUNNER_TEMP/ssm-error"); then
+              case "$status" in
+                Success) exit 0 ;;
+                Failed|TimedOut|Cancelled|Cancelling) echo "Web deployment command: $status" >&2; exit 1 ;;
+              esac
+            elif ! grep -q '(InvocationDoesNotExist)' "$RUNNER_TEMP/ssm-error"; then
+              cat "$RUNNER_TEMP/ssm-error" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "Web deployment command did not complete in time" >&2
+          exit 1
+      - name: Verify HTTPS revision and authentication
+        run: |
+          url=$(jq -r '.incident_web_url.value // empty' "$RUNNER_TEMP/deployment-outputs.json")
+          if [ -z "$url" ]; then exit 0; fi
+          healthy=false
+          for _attempt in {1..24}; do
+            if curl --fail --silent --show-error --max-time 20 "$url/healthz" > "$RUNNER_TEMP/health.json" && \
+                jq -e --arg revision "$GITHUB_SHA" '.status == "ok" and .revision == $revision' "$RUNNER_TEMP/health.json" > /dev/null; then
+              healthy=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$healthy" != true ]; then echo "HTTPS readiness did not confirm this commit" >&2; exit 1; fi
+          code=$(curl --silent --show-error --max-time 20 --output /dev/null \
+            --dump-header "$RUNNER_TEMP/headers" --write-out '%{http_code}' "$url/?status=all")
+          test "$code" = 302
+          tr -d '\r' < "$RUNNER_TEMP/headers" | grep -Eiq '^location: /auth/login$'
+      - name: Persist successful release inputs
+        run: |
+          jq '.registry_file = "registry.json" |
+            if .status_provisioned == true then .status_registry_file = "status.json" else . end
+          ' "$RUNNER_TEMP/deployment.tfvars.json" > "$RUNNER_TEMP/deployed.json"
+          aws s3 cp "$RUNNER_TEMP/deployed.json" "s3://$MONITORING_CONFIG_BUCKET/config/deployment.json" \
+            --content-type application/json --sse AES256 --only-show-errors
+          url=$(jq -r '.incident_web_url.value // "web disabled"' "$RUNNER_TEMP/deployment-outputs.json")
+          printf 'Deployed %s. Infrastructure applied; configured web service verified: %s\n' "$GITHUB_SHA" "$url" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload deployment security reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
