@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import os
 from pathlib import Path
 
 import boto3
@@ -102,6 +103,7 @@ class GitHub:
 
 def test_comments_are_upserted_and_clear_stale_changes_on_noop_or_failure():
     api = GitHub()
+    summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
     noop = {"status": "success", "changes": []}
     pr_plan.publish(noop, 1, SHA, REPO, URL, api)
     assert not api.comments
@@ -113,10 +115,13 @@ def test_comments_are_upserted_and_clear_stale_changes_on_noop_or_failure():
     pr_plan.publish(changed, 1, SHA, REPO, URL, api)
     assert len(api.comments) == 1
     assert "aws_s3_bucket.evidence" in api.comments[0]["body"]
+    assert summary.read_text() == api.comments[0]["body"]
     pr_plan.publish(noop, 1, SHA, REPO, URL, api)
     assert "No resource changes" in api.comments[0]["body"]
+    assert summary.read_text() == api.comments[0]["body"]
     pr_plan.publish({"status": "error", "changes": []}, 1, SHA, REPO, URL, api)
     assert "Plan failed" in api.comments[0]["body"]
+    assert summary.read_text() == api.comments[0]["body"]
     assert api.writes[-1][2]["state"] == "error"
 
 
