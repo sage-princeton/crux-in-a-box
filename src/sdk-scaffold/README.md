@@ -115,7 +115,7 @@ extensions = ["scaffold_extensions.py"]
 tools = ["read_file", "site_preview"]
 ```
 
-Gates, context strategies, coding agents, loops and runtimes extend the same way.
+Gates, context strategies, coding agents, loops and runtimes extend the same way. [docs/extending.md](docs/extending.md) describes each extension point's contract, and when to extend one rather than add a new abstraction.
 
 ## Commands
 
@@ -194,4 +194,4 @@ uv pip install --python .venv/bin/python -r requirements.txt 'pytest>=8,<9' ruff
 .venv/bin/ruff check . && .venv/bin/python -m pytest -q
 ```
 
-Tests never call a model or the network. They use scripted models, a scripted coding agent, a fake runtime, a fake stdio Slack MCP server and an in-memory span exporter.
+Contribution guidelines are in [AGENTS.md](AGENTS.md). Tests never call a model or the network. They use scripted models, a scripted coding agent, a fake runtime, a fake stdio Slack MCP server and an in-memory span exporter.
