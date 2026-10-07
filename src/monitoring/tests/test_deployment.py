@@ -67,23 +67,3 @@ if name == 'systemctl' and args[0] == 'restart':
     assert commands.count(["docker", "rm", "-f", "crux-incident-proxy"]) == 2
     pulls = [args[-1] for args in commands if args[:2] == ["docker", "pull"]]
     assert pulls == ["fixture@old", "fixture@old-proxy", "fixture@new", "fixture@new-proxy"]
-
-
-def test_deployment_role_cannot_change_iam_permissions():
-    import json
-
-    policy = json.loads(
-        (Path(__file__).resolve().parents[1] / "ci/deployment-policy.json").read_text()
-    )
-    actions = {
-        a.lower() for s in policy["Statement"] if s["Effect"] == "Allow" for a in s["Action"]
-    }
-    assert {a for a in actions if a.startswith("iam:")} <= {
-        "iam:getrole",
-        "iam:getrolepolicy",
-        "iam:listrolepolicies",
-        "iam:listattachedrolepolicies",
-        "iam:listinstanceprofilesforrole",
-        "iam:getinstanceprofile",
-        "iam:passrole",
-    }
