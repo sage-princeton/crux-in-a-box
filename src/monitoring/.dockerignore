@@ -17,5 +17,11 @@
 !review.py
 !worker.py
 !fleet.py
+!status_worker.py
+!status_review.py
+!status_store.py
+!status_view.py
 !prompts/
 !prompts/reviewer.md
+!prompts/status-sweep.md
+!prompts/status-summary.md

@@ -8,6 +8,7 @@ RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/python3.12/ensurepip \
     && useradd --uid 10001 --create-home monitor
 COPY review.py worker.py fleet.py lifecycle.py ./
+COPY status_worker.py status_review.py status_store.py ./
 COPY prompts ./prompts
 USER 10001
 CMD ["python", "worker.py", "discover"]

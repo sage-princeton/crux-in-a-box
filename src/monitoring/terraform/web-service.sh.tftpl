@@ -16,6 +16,7 @@ docker rm -f crux-incidents 2>/dev/null || true
 docker run -d --name crux-incidents --restart unless-stopped --network host --read-only --tmpfs /tmp:size=64m \
   --log-driver journald --log-opt tag=crux-incidents \
   -e AWS_DEFAULT_REGION=${region} -e MONITORING_TABLE=${table} \
+  -e STATUS_TABLE=${status_table} \
   -e MONITORING_WEB_PARAMETER=/crux/monitoring/web -e MONITORING_REVISION=${revision} \
   ${repository}@${image}
 docker rm -f crux-incident-proxy 2>/dev/null || true

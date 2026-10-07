@@ -1,0 +1,17 @@
+{
+  "enabled": false,
+  "expires_at": 4102444800,
+  "interval_seconds": 900,
+  "stale_seconds": 1800,
+  "inference_budget_usd": 1,
+  "sweep_model": "anthropic/claude-small",
+  "summary_model": "anthropic/claude-large",
+  "targets": {
+    "i-0123456789abcdef0": {
+      "workload_id": "terraform-fixture",
+      "authorization": "Read the fixture log stream only.",
+      "subject_families": ["openai"],
+      "logs": [{"group": "status-fixture", "streams": ["progress"]}]
+    }
+  }
+}

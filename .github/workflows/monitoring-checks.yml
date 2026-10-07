@@ -54,6 +54,7 @@ jobs:
         run: |
           docker build --platform linux/amd64 -t crux-monitoring:check src/monitoring
           docker run --rm --read-only --network none crux-monitoring:check python worker.py --help
+          docker run --rm --read-only --network none crux-monitoring:check python status_worker.py --help
           docker build --platform linux/amd64 -f src/monitoring/Dockerfile.web -t crux-incidents:check src/monitoring
           docker run --rm --read-only --network none crux-incidents:check python -c 'from web import create_app'
           docker build --platform linux/amd64 -f src/monitoring/Dockerfile.proxy -t crux-proxy:check src/monitoring
