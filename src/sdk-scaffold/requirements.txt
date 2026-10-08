@@ -1,0 +1,6 @@
+openai-agents==0.22.3
+openai==3.21.0
+mcp==2.2.0
+langfuse==4.15.6
+openinference-instrumentation-openai-agents==2.5.0
+openai-codex==0.159.2

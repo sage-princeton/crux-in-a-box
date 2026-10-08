@@ -1,0 +1,15 @@
+# TODO(AE-245): consolidate pytest and ruff configuration across the repo.
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["F", "E", "W", "I", "B", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["crux_scaffold"]
+known-local-folder = ["drop_ins", "scripted", "fakes"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
