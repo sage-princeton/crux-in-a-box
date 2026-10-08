@@ -235,8 +235,8 @@ class Runtime:
                     "Status checks and incident monitoring are enrolled.",
                 )
 
-    def tick(self, now=None):
-        now = int(time.time()) if now is None else now
+    def tick(self):
+        now = int(time.time())
         end = now // self.config["interval_seconds"] * self.config["interval_seconds"]
         # One session lock replaces job queues, leases, and independent dispatchers.
         with self.store.db.connect().execution_options(isolation_level="AUTOCOMMIT") as lock:
@@ -309,7 +309,7 @@ class Runtime:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["run", "once"], default="run", nargs="?")
+    parser.add_argument("mode", choices=["run", "once"])
     args = parser.parse_args()
     runtime = Runtime()
     runtime.run() if args.mode == "run" else runtime.tick()

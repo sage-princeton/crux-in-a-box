@@ -3,8 +3,8 @@
 import time
 
 
-def coverage_rows(rows, now=None):
-    now = int(time.time()) if now is None else now
+def coverage_rows(rows):
+    now = int(time.time())
     result = []
     for item in rows:
         row = dict(item)

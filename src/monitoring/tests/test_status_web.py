@@ -3,7 +3,9 @@ from test_web import ORIGIN, authorize, client
 from status_view import coverage_rows
 
 
-def test_failed_status_keeps_last_success_and_history_is_private(client, store, target):
+def test_failed_status_keeps_last_success_and_history_is_private(
+    client, store, target, monkeypatch
+):
     key = target["key"]
     for end in (900, 1800):
         store.save_collection(key, end, {"target": target, "sources": []})
@@ -38,7 +40,9 @@ def test_failed_status_keeps_last_success_and_history_is_private(client, store, 
     )
     row = store.fleet()[0]
     assert row["latest"]["checked_at"] == 910 and row["attempt"] == "failed"
-    view = coverage_rows([row], now=2700)[0]
+    with monkeypatch.context() as clock:
+        clock.setattr("status_view.time.time", lambda: 2700)
+        view = coverage_rows([row])[0]
     assert view["stale"] and view["attention"]
     path = f"/workloads/{key}/status"
     assert client.get(path, base_url=ORIGIN).status_code == 302
@@ -47,5 +51,5 @@ def test_failed_status_keeps_last_success_and_history_is_private(client, store, 
     assert (
         page.status_code == 200 and b"Two evaluations" in page.data and b"Unavailable" in page.data
     )
-    history, cursor = store.history(key)
+    history, cursor = store.history(key, None)
     assert [r["window_end"] for r in history] == [1800, 900] and cursor is None

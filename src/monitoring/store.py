@@ -122,7 +122,7 @@ class Store:
                 {"key": key, "end": end, "kind": kind, "result": encoded(result)},
             )
 
-    def history(self, key, before=None):
+    def history(self, key, before):
         with self.db.connect() as connection:
             rows = (
                 connection.execute(
@@ -274,7 +274,7 @@ class Store:
             )
         return self._incident(row) if row else None
 
-    def instance_page(self, instance, status=None, cursor=None, limit=50):
+    def instance_page(self, instance, status, cursor, limit):
         with self.db.connect() as connection:
             rows = connection.execute(
                 text("""
@@ -289,7 +289,7 @@ class Store:
             ).mappings()
             return [self._incident(row) for row in rows]
 
-    def incident_history(self, identity, kind, cursor=None):
+    def incident_history(self, identity, kind, cursor):
         column, query = (
             (
                 "version",
@@ -316,7 +316,7 @@ class Store:
             rows
         ) > 50 else None
 
-    def transition(self, identity, version, status, actor, note=""):
+    def transition(self, identity, version, status, actor, note):
         if status not in ("open", "closed") or not actor or len(note) > 4000:
             raise ValueError("Invalid incident transition")
         now = int(time.time())

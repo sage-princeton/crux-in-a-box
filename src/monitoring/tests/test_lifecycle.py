@@ -27,19 +27,19 @@ def report(anchor="observation:123"):
     }
 
 
-def ingest(store, target, end=900, anchor="observation:123"):
+def ingest(store, target, end=900):
     key = target["key"]
     store.save_collection(key, end, {"target": target, "sources": []})
     result = {
         "outcome": "completed",
         "window_end": end,
         "artifact_prefix": "private/review",
-        "report": report(anchor),
+        "report": report(),
         "model": {"reported_model": "model-1"},
     }
     store.publish(key, end, "incident", result)
-    store.ingest(key, end, result, {anchor: anchor})
-    return store.instance_page(target["instance_id"])[0]
+    store.ingest(key, end, result, {"observation:123": "observation:123"})
+    return store.instance_page(target["instance_id"], None, None, 50)[0]
 
 
 def test_alembic_roundtrip(db):
@@ -60,14 +60,14 @@ def test_incident_identity_and_closed_state_survive_repeated_observations(store,
     ingest(store, target, 1800)
     repeated = store.incident(item["id"])
     assert repeated["status"] == "closed" and repeated["review_count"] == 2
-    assert len(store.instance_page(target["instance_id"])) == 1
+    assert len(store.instance_page(target["instance_id"], None, None, 50)) == 1
     with pytest.raises(Conflict):
-        store.transition(item["id"], closed["version"], "open", {"id": "operator"})
-    reopened = store.transition(item["id"], repeated["version"], "open", {"id": "operator"})
+        store.transition(item["id"], closed["version"], "open", {"id": "operator"}, "")
+    reopened = store.transition(item["id"], repeated["version"], "open", {"id": "operator"}, "")
     ingest(store, target, 1800)
     assert store.incident(item["id"])["version"] == reopened["version"]
-    events, _ = store.incident_history(item["id"], "events")
-    observations, _ = store.incident_history(item["id"], "observations")
+    events, _ = store.incident_history(item["id"], "events", None)
+    observations, _ = store.incident_history(item["id"], "observations", None)
     assert [e["status"] for e in events] == ["closed", "open"]
     assert events[0]["note"] == "Resolved" and len(observations) == 2
     assert "Private evidence" not in str(public_incident(reopened))
@@ -80,7 +80,7 @@ def test_missing_or_fabricated_anchors_are_rejected(store, target):
     del result["report"]["findings"][0]["anchor_id"]
     with pytest.raises(KeyError):
         store.ingest(target["key"], 900, result, {})
-    assert store.instance_page(target["instance_id"]) == []
+    assert store.instance_page(target["instance_id"], None, None, 50) == []
 
 
 def test_workspace_append_preserves_existing_event_identity():

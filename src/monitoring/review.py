@@ -263,7 +263,7 @@ def select_reviewer(models, sources, declared_families):
     raise CoverageError("No configured reviewer is from a different model family")
 
 
-def evaluate(client, model, secret, payload, record_response=None):
+def evaluate(client, model, secret, payload, record_response):
     reviewer_family(model)
     input_size(payload)
     response = client.post(
@@ -286,8 +286,7 @@ def evaluate(client, model, secret, payload, record_response=None):
     )
     response.raise_for_status()
     body = response.json()
-    if record_response:
-        record_response(body)
+    record_response(body)
     if body["choices"][0].get("finish_reason") != "stop":
         raise CoverageError("Reviewer response was incomplete")
     report = json.loads(body["choices"][0]["message"]["content"])

@@ -39,22 +39,21 @@ def eligible(pr, repository):
     )
 
 
-def status(api, repository, sha, state, description, url):
-    api(
+def status(repository, sha, state, description, url):
+    github(
         f"repos/{repository}/statuses/{sha}",
         "POST",
         {"state": state, "context": CHECK, "description": description, "target_url": url},
     )
 
 
-def context(number, repository, url, api=github):
-    pr = api(f"repos/{repository}/pulls/{number}")
+def context(number, repository, url):
+    pr = github(f"repos/{repository}/pulls/{number}")
     sha = pr["head"]["sha"]
     if not re.fullmatch("[0-9a-f]{40}", sha):
         raise ValueError("Invalid PR commit")
     allowed = eligible(pr, repository)
     status(
-        api,
         repository,
         sha,
         "pending" if allowed else "error",
@@ -242,14 +241,14 @@ def render(report, sha, url):
     return "\n".join(lines) + "\n"
 
 
-def publish(report, number, sha, repository, url, api=github):
-    pr = api(f"repos/{repository}/pulls/{number}")
+def publish(report, number, sha, repository, url):
+    pr = github(f"repos/{repository}/pulls/{number}")
     if pr["head"]["sha"] != sha or not eligible(pr, repository):
         print("Skipping stale or ineligible PR result.")
         return
     existing = None
     for page in range(1, 101):
-        comments = api(f"repos/{repository}/issues/{number}/comments?per_page=100&page={page}")
+        comments = github(f"repos/{repository}/issues/{number}/comments?per_page=100&page={page}")
         for comment in comments:
             if comment["user"]["login"] == "github-actions[bot]" and comment["body"].startswith(
                 MARKER
@@ -262,12 +261,11 @@ def publish(report, number, sha, repository, url, api=github):
         raise RuntimeError("Comment pagination exceeded its bound")
     body = render(report, sha, url)
     if existing:
-        api(f"repos/{repository}/issues/comments/{existing['id']}", "PATCH", {"body": body})
+        github(f"repos/{repository}/issues/comments/{existing['id']}", "PATCH", {"body": body})
     elif report["status"] == "success" and report["changes"]:
-        api(f"repos/{repository}/issues/{number}/comments", "POST", {"body": body})
+        github(f"repos/{repository}/issues/{number}/comments", "POST", {"body": body})
     success = report["status"] == "success"
     status(
-        api,
         repository,
         sha,
         "success" if success else "error",

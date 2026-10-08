@@ -84,12 +84,18 @@ def test_disallowed_reviewers_fail_before_network_access(model):
     with pytest.raises(CoverageError, match="explicit"):
         select_reviewer(["anthropic/claude-example", model], [], ["openai"])
     with pytest.raises(CoverageError, match="explicit"):
-        evaluate(None, model, "fixture", {})
+        evaluate(None, model, "fixture", {}, lambda body: None)
 
 
 def test_large_reviewer_input_fails_before_network_access():
     with pytest.raises(CoverageError, match="128 KiB"):
-        evaluate(None, "anthropic/claude-example", "fixture", {"data": "x" * (128 * 1024)})
+        evaluate(
+            None,
+            "anthropic/claude-example",
+            "fixture",
+            {"data": "x" * (128 * 1024)},
+            lambda body: None,
+        )
 
 
 def test_reviewer_cannot_invent_citations_or_acquire_tools():
@@ -131,6 +137,7 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
                 "anthropic/claude-example",
                 "test-credential",
                 {"sources": [{"id": "known"}]},
+                lambda body: None,
             )
 
 

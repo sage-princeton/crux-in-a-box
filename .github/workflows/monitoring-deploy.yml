@@ -43,17 +43,18 @@ jobs:
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.75.0
-      - name: Load checked-in deployment settings
+      - name: Verify deployment target
         run: |
-          cp src/monitoring/terraform/production.auto.tfvars.json "$RUNNER_TEMP/deployment.json"
           account=$(aws sts get-caller-identity --query Account --output text)
-          jq -e --arg account "$account" '.account_id == $account and .account_id == "881004720495"' "$RUNNER_TEMP/deployment.json" > /dev/null
+          jq -e --arg account "$account" '.account_id == $account and .account_id == "881004720495"' \
+            src/monitoring/terraform/production.auto.tfvars.json > /dev/null
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          jq -n --arg revision "$GITHUB_SHA" '{revision: $revision}' > "$RUNNER_TEMP/release.tfvars.json"
       - name: Build and scan immutable images
         working-directory: src/monitoring
         run: |
-          name=$(jq -r .name "$RUNNER_TEMP/deployment.json")
-          account=$(jq -r .account_id "$RUNNER_TEMP/deployment.json")
+          name=$(jq -r .name terraform/production.auto.tfvars.json)
+          account=$(jq -r .account_id terraform/production.auto.tfvars.json)
           repository="$account.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$name"
           for kind in web proxy; do
             case "$kind" in
@@ -74,13 +75,9 @@ jobs:
             digest=$(jq -er '.imageDetails[0].imageDigest | select(test("^sha256:[a-f0-9]{64}$"))' "$RUNNER_TEMP/image.json")
             bash ci/scan-image.sh "$repository@$digest" "$RUNNER_TEMP/security/$kind.json"
             jq --arg field "$field" --arg digest "$digest" '.[$field] = $digest' \
-              "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/deployment-next.json"
-            mv "$RUNNER_TEMP/deployment-next.json" "$RUNNER_TEMP/deployment.json"
+              "$RUNNER_TEMP/release.tfvars.json" > "$RUNNER_TEMP/release-next.json"
+            mv "$RUNNER_TEMP/release-next.json" "$RUNNER_TEMP/release.tfvars.json"
           done
-      - name: Prepare release inputs
-        run: |
-          jq --arg revision "$GITHUB_SHA" '{revision: $revision, web_image_digest, proxy_image_digest}' \
-            "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/release.tfvars.json"
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'

@@ -105,7 +105,7 @@ def test_one_collection_and_independent_assessments_survive_slack_retry(runtime)
     worker.run_target(target, 900, {}, secrets)
     worker.run_target(target, 900, {}, secrets)
     assert counts == {"collection": 1, "model": 2, "slack": 2}
-    assert len(worker.store.instance_page(target["instance_id"])) == 1
+    assert len(worker.store.instance_page(target["instance_id"], None, None, 50)) == 1
 
 
 def test_model_checkpoint_is_reused_after_database_publication_failure(runtime, monkeypatch):

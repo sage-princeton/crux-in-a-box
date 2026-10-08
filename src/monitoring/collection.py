@@ -24,7 +24,7 @@ class HashingReader:
     def __init__(self, stream):
         self.stream, self.hash = stream, hashlib.sha256()
 
-    def read(self, size=-1):
+    def read(self, size):
         value = self.stream.read(size)
         self.hash.update(value)
         return value
