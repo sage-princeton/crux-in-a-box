@@ -46,7 +46,7 @@ def inventory_targets(ec2, config, previous=None, now=None, excluded=None):
                         "name": name,
                         "state": instance["State"]["Name"],
                         "batch": "AWSBatchServiceTag" in tags,
-                        "run": tags.get("CruxRole") == "run",
+                        "monitor": tags.get("MonitorWithCruxMonitor") == "1",
                         "named": bool(tags.get("Name")),
                     }
                 )

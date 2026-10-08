@@ -155,7 +155,7 @@ class StatusRuntime:
         if self.config.get("auto_register_runs"):
             for instance in inventory:
                 iid = instance["instance_id"]
-                if not instance["run"] or instance["batch"] or iid in configured_targets:
+                if not instance["monitor"] or instance["batch"] or iid in configured_targets:
                     continue
                 found = targets[iid]
                 configured_targets[iid] = {

@@ -354,7 +354,7 @@ def test_config_and_budget_baselines_do_not_invent_metrics(runtime):
 
 def enable_auto_registration(worker, iid):
     worker.config.update(targets={}, auto_register_runs=True)
-    worker.ec2.create_tags(Resources=[iid], Tags=[{"Key": "CruxRole", "Value": "run"}])
+    worker.ec2.create_tags(Resources=[iid], Tags=[{"Key": "MonitorWithCruxMonitor", "Value": "1"}])
     validate(worker.config)
 
 
@@ -391,12 +391,15 @@ def test_automatic_registration_excludes_infrastructure_and_ambiguous_sources(ru
     enable_auto_registration(worker, iid)
     ids = {}
     for label, name, tags in [
-        ("control", "controller", {"CruxRole": "control"}),
-        ("web", "web", {"CruxRole": "monitoring-web"}),
-        ("batch", "batch", {"CruxRole": "run", "AWSBatchServiceTag": "worker"}),
+        ("control", "controller", {"CruxRole": "control", "MonitorWithCruxMonitor": "1"}),
+        ("web", "web", {"CruxRole": "monitoring-web", "MonitorWithCruxMonitor": "1"}),
+        ("batch", "batch", {"MonitorWithCruxMonitor": "1", "AWSBatchServiceTag": "worker"}),
         ("unrelated", "other", {}),
-        ("duplicate", "project-alpha", {"CruxRole": "run"}),
-        ("stopped", "stopped", {"CruxRole": "run"}),
+        ("role_only", "role-only", {"CruxRole": "run"}),
+        ("disabled", "disabled", {"MonitorWithCruxMonitor": "0"}),
+        ("wrong_value", "wrong-value", {"MonitorWithCruxMonitor": "true"}),
+        ("duplicate", "project-alpha", {"MonitorWithCruxMonitor": "1"}),
+        ("stopped", "stopped", {"MonitorWithCruxMonitor": "1"}),
     ]:
         ids[label] = worker.ec2.run_instances(
             ImageId="ami-12345678",
@@ -425,7 +428,7 @@ def test_automatic_registration_excludes_infrastructure_and_ambiguous_sources(ru
 def test_auto_registration_preserves_overrides_and_does_not_ack_failed_submission(runtime):
     worker, iid, end = runtime
     worker.config["auto_register_runs"] = True
-    worker.ec2.create_tags(Resources=[iid], Tags=[{"Key": "CruxRole", "Value": "run"}])
+    worker.ec2.create_tags(Resources=[iid], Tags=[{"Key": "MonitorWithCruxMonitor", "Value": "1"}])
 
     def fail(**kwargs):
         raise RuntimeError("Queue unavailable")
