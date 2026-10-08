@@ -141,7 +141,10 @@ def test_model_checkpoint_is_reused_after_database_publication_failure(runtime, 
     assert counts["model"] == initial["model"] and counts["collection"] == 1
 
 
-def test_successful_status_sweep_summary_and_incident_publish_independently(runtime, monkeypatch):
+@pytest.mark.parametrize("verbose", [False, True])
+def test_successful_status_sweep_summary_and_incident_publish_independently(
+    runtime, monkeypatch, verbose
+):
     worker, target, secrets, counts = runtime
     calls = []
     collect = worker.collector.collect
@@ -155,6 +158,14 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(runt
                 "data": "".join(f"{index:06}\n" for index in range(500)),
             }
         )
+        evidence["sources"].extend(
+            {
+                "id": f"observation:{index}",
+                "kind": "langfuse",
+                "data": {"model": "gpt-6.1-sol", "input": "Evidence. " * 256},
+            }
+            for index in range(12)
+        )
         return evidence
 
     monkeypatch.setattr(worker.collector, "collect", workspace_evidence)
@@ -167,17 +178,22 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(runt
         body = json.loads(request.content)
         schema = body["response_format"]["json_schema"]
         calls.append(schema["name"])
+        if schema["name"] == "project_status":
+            allowed = json.loads(body["messages"][1]["content"])["allowed_source_ids"]
         if schema["name"] == "project_status" and "notes" in schema["schema"]["properties"]:
-            report = {"notes": "Work is active.", "source_ids": ["observation:123"]}
+            report = {
+                "notes": "Work is active. " * (150 if verbose else 1),
+                "source_ids": allowed,
+            }
         elif schema["name"] == "project_status":
             report = {
                 "activity": "alive",
                 "alert": "",
                 "recommendation": "Continue.",
-                "progress": "Work is active.",
+                "progress": "Work is active. " * (20 if verbose else 1),
                 "quality": "Not established.",
                 "milestones": "Unknown.",
-                "source_ids": ["observation:123"],
+                "source_ids": allowed,
             }
         else:
             report = {
@@ -200,6 +216,9 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(runt
     worker.run_target(target, 900, {}, secrets)
     initial = calls.copy()
     assert worker.store.fleet()[0]["latest"]["report"]["activity"] == "alive"
+    status = worker.store.assessment(target["key"], 900, "status")
+    assert len(status["report"]["source_ids"]) == 14
+    assert status["report"]["progress"] == "Work is active. " * (20 if verbose else 1)
     incident = worker.store.assessment(target["key"], 900, "incident")
     assert incident["outcome"] == "completed"
     assert any("workspace event anchors" in gap for gap in incident["report"]["coverage_gaps"])

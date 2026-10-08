@@ -12,13 +12,15 @@ CHUNK_BYTES = 24 * 1024
 MAX_CHUNKS = 8
 MAX_INPUT = 64 * 1024
 MAX_OUTPUT = 1800
-SOURCE_IDS = {"type": "array", "maxItems": 12, "items": {"type": "string", "maxLength": 256}}
-TEXT = {"type": "string", "maxLength": 240}
+# Bound the complete response by bytes and tokens. Anthropic structured outputs
+# do not enforce per-field length/count limits, which rejected valid citations.
+SOURCE_IDS = {"type": "array", "items": {"type": "string"}}
+TEXT = {"type": "string"}
 SWEEP_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
     "required": ["notes", "source_ids"],
-    "properties": {"notes": {"type": "string", "maxLength": 2000}, "source_ids": SOURCE_IDS},
+    "properties": {"notes": TEXT, "source_ids": SOURCE_IDS},
 }
 REPORT_SCHEMA = {
     "type": "object",
@@ -133,7 +135,14 @@ def call(client, store, secret, model, stage, payload, budget):
     if model_family(body.get("model", "")) != model_family(model):
         raise CoverageError("Unexpected status model family")
     result = json.loads(body["choices"][0]["message"]["content"])
-    jsonschema.validate(result, schema)
+    try:
+        jsonschema.validate(result, schema)
+    except jsonschema.ValidationError as error:
+        # Include the rule and field, never the model's potentially sensitive value.
+        field = ".".join(str(part) for part in error.absolute_path) or "response"
+        raise CoverageError(
+            f"Status {stage} output violates {error.validator} at {field}."
+        ) from None
     if not set(result["source_ids"]) <= set(payload["allowed_source_ids"]):
         raise CoverageError("Status model cited evidence that was not supplied")
     return result, {
