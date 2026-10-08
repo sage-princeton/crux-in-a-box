@@ -13,7 +13,7 @@ import httpx
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from fleet import inventory_targets
+from fleet import DEFAULT_AUTHORIZATION, inventory_targets
 from review import (
     MAX_EVIDENCE_BYTES,
     CoverageError,
@@ -44,8 +44,12 @@ def validate(config):
         raise ValueError("Stale threshold must be at least one interval and at most one day")
     if reviewer_family(config["sweep_model"]) != reviewer_family(config["summary_model"]):
         raise ValueError("Sweep and summary models must belong to the same permitted family")
-    if not 1 <= len(config.get("targets", {})) <= 200:
-        raise ValueError("Register 1–200 explicit status targets")
+    if not isinstance(config.get("auto_register_runs", False), bool):
+        raise ValueError("auto_register_runs must be a boolean")
+    if not isinstance(config.get("targets"), dict) or not 0 <= len(config["targets"]) <= 200:
+        raise ValueError("Register at most 200 explicit status targets")
+    if not config["targets"] and not config.get("auto_register_runs"):
+        raise ValueError("Register status targets or enable automatic run registration")
     for iid, target in config["targets"].items():
         if not re.fullmatch(r"i-[0-9a-f]{8,17}", iid):
             raise ValueError("Invalid status instance ID")
@@ -134,18 +138,43 @@ class StatusRuntime:
         now = int(time.time())
         if not self.active(now):
             return
-        targets, _ = inventory_targets(
+        targets, inventory = inventory_targets(
             self.ec2,
             {
                 "targets": self.config["targets"],
-                "fleet": {"exclude_names": ["crux-control", "crux-monitor-worker"]},
+                "fleet": {
+                    "exclude_names": ["crux-control", "crux-monitor-worker"],
+                    "langfuse_by_name": True,
+                },
             },
             now=now,
         )
         interval = self.config.get("interval_seconds", 900)
         end = now // interval * interval
+        configured_targets = dict(self.config["targets"])
+        if self.config.get("auto_register_runs"):
+            for instance in inventory:
+                iid = instance["instance_id"]
+                if not instance["run"] or instance["batch"] or iid in configured_targets:
+                    continue
+                found = targets[iid]
+                configured_targets[iid] = {
+                    "workload_id": iid,
+                    "authorization": DEFAULT_AUTHORIZATION,
+                    # Model families come from observed Langfuse models. Unknown
+                    # or same-family evidence cannot pass select_reviewer.
+                    "subject_families": [],
+                    "auto_registered": True,
+                    **(
+                        {"langfuse": found["langfuse"]}
+                        if instance["named"] and found.get("langfuse")
+                        else {}
+                    ),
+                }
+        if len(configured_targets) > 200:
+            raise CoverageError("Status registration exceeds the 200-target bound")
         seen = set()
-        for iid, configured in self.config["targets"].items():
+        for iid, configured in configured_targets.items():
             found = targets.get(iid, {})
             key = workload_key(iid, configured["workload_id"])
             target = {
@@ -159,6 +188,7 @@ class StatusRuntime:
             if target["state"] != "running" or found.get("service_worker"):
                 continue
             for window in sorted({end, *self.store.pending(key, now)}):
+                self.store.register_job(key, window, configured)
                 self.batch.submit_job(
                     jobName=f"status-{key}-{window}",
                     jobQueue=os.environ["STATUS_QUEUE"],
@@ -174,9 +204,16 @@ class StatusRuntime:
                         ]
                     },
                 )
+            self.store.update(key, {"enrolled": True}, "enrolled_at", now)
         for row in self.store.fleet():
             if row["sk"] not in seen:
-                self.store.update(row["sk"], {"state": "unregistered"}, "inventory_at", now)
+                state = (
+                    "no longer present"
+                    if self.config.get("auto_register_runs")
+                    and row["workload_id"] == row["instance_id"]
+                    else "unregistered"
+                )
+                self.store.update(row["sk"], {"state": state}, "inventory_at", now)
 
     def collect(self, target, iid, start, end, secrets):
         sources, gaps = [], []
@@ -237,8 +274,12 @@ class StatusRuntime:
         now, owner = int(time.time()), str(uuid.uuid4())
         if not self.active(now):
             return
-        target = self.config["targets"][iid]
-        if target["workload_id"] != workload_id:
+        target = self.config["targets"].get(iid)
+        if target is None and self.config.get("auto_register_runs"):
+            target = self.store.get("JOB#" + workload_key(iid, workload_id), str(end)).get("target")
+            if target and not target.get("auto_registered"):
+                return
+        if not target or target["workload_id"] != workload_id:
             return  # A queued job must never switch to a different project/run.
         interval = self.config.get("interval_seconds", 900)
         if end > now or end % interval or end < now - 86400:

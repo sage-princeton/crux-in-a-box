@@ -33,9 +33,14 @@ variable "enabled" {
   type    = bool
   default = false
 }
+variable "continuous_fleet_monitoring" {
+  type        = bool
+  default     = false
+  description = "Enable continuous incident fleet discovery using existing registry exclusions, reviewer models and budget. Removes registry and scheduler expiry."
+}
 variable "registry_file" {
   type        = string
-  description = "Local non-secret registry JSON; expires_at bounds the deployment's activity."
+  description = "Local non-secret registry JSON; expires_at is zero for continuous operation or a positive expiry epoch."
 }
 variable "secrets_parameter_arn" {
   type        = string

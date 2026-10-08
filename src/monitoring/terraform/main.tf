@@ -1,24 +1,34 @@
 locals {
-  registry       = jsondecode(file(var.registry_file))
-  own_vpc        = var.vpc_id == ""
-  vpc_id         = local.own_vpc ? aws_vpc.monitoring[0].id : var.vpc_id
-  subnet_ids     = local.own_vpc ? [aws_subnet.monitoring[0].id] : var.subnet_ids
-  active         = var.image_digest != ""
-  parameter_name = split(":parameter", var.secrets_parameter_arn)[1]
-  env = [
+  registry_input = jsondecode(file(var.registry_file))
+  registry = var.continuous_fleet_monitoring ? merge(local.registry_input, {
+    expires_at = 0
+    fleet = merge(try(local.registry_input.fleet, {}), {
+      exclude_names    = distinct(concat(try(local.registry_input.fleet.exclude_names, []), ["crux-control", "crux-monitor-worker"]))
+      langfuse_by_name = true
+    })
+  }) : local.registry_input
+  incident_enabled = var.enabled || var.continuous_fleet_monitoring
+  own_vpc          = var.vpc_id == ""
+  vpc_id           = local.own_vpc ? aws_vpc.monitoring[0].id : var.vpc_id
+  subnet_ids       = local.own_vpc ? [aws_subnet.monitoring[0].id] : var.subnet_ids
+  active           = var.image_digest != ""
+  parameter_name   = split(":parameter", var.secrets_parameter_arn)[1]
+  env = concat([
     { name = "AWS_DEFAULT_REGION", value = var.region },
     { name = "MONITORING_BUCKET", value = aws_s3_bucket.evidence.id },
     { name = "MONITORING_TABLE", value = aws_dynamodb_table.incidents.name },
     { name = "MONITORING_SECRETS_PARAMETER", value = local.parameter_name },
     { name = "MONITORING_REVISION", value = var.revision },
     { name = "MONITORING_PUBLIC_LOG_URL", value = var.incident_state_enabled ? local.web_origin : "" }
-  ]
+    ], var.status_provisioned ? [
+    { name = "MONITORING_STATUS_TABLE", value = aws_dynamodb_table.status[0].name }
+  ] : [])
 }
 
 resource "terraform_data" "configuration" {
   lifecycle {
     precondition {
-      condition     = !var.enabled || local.active
+      condition     = !local.incident_enabled || local.active
       error_message = "Build and push the image before enabling the scheduler."
     }
     precondition {
@@ -26,8 +36,8 @@ resource "terraform_data" "configuration" {
       error_message = "Existing VPC mode requires explicit existing subnets."
     }
     precondition {
-      condition     = !var.enabled || (local.registry.expires_at > 0 && length(local.registry.reviewer_models) > 0 && length(local.registry.targets) > 0)
-      error_message = "Activation requires a finite expiry, reviewer models, and approved targets."
+      condition     = !local.incident_enabled || (local.registry.expires_at >= 0 && length(local.registry.reviewer_models) > 0 && (length(local.registry.targets) > 0 || try(local.registry.fleet.langfuse_by_name, false)))
+      error_message = "Activation requires a nonnegative expiry, reviewer models, and approved targets or fleet discovery."
     }
   }
 }
@@ -95,7 +105,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "evidence" {
 resource "aws_s3_object" "registry" {
   bucket       = aws_s3_bucket.evidence.id
   key          = "config/registry.json"
-  content      = file(var.registry_file)
+  content      = jsonencode(local.registry)
   content_type = "application/json"
   depends_on   = [aws_s3_bucket_versioning.evidence]
 }
@@ -349,11 +359,11 @@ resource "aws_scheduler_schedule" "monitoring" {
   count               = local.active ? 1 : 0
   name                = var.name
   group_name          = aws_scheduler_schedule_group.monitoring.name
-  state               = var.enabled ? "ENABLED" : "DISABLED"
+  state               = local.incident_enabled ? "ENABLED" : "DISABLED"
   schedule_expression = "rate(5 minutes)"
   # Without an explicit start, AWS uses now and rejects updates after the end date.
-  start_date = var.enabled ? null : timeadd(var.schedule_end, "-1h")
-  end_date   = var.schedule_end
+  start_date = local.incident_enabled || local.registry.expires_at == 0 ? null : timeadd(var.schedule_end, "-1h")
+  end_date   = local.registry.expires_at == 0 ? null : var.schedule_end
   flexible_time_window { mode = "OFF" }
   target {
     arn      = "arn:aws:scheduler:::aws-sdk:batch:submitJob"

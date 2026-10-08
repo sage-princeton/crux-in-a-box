@@ -73,7 +73,8 @@ run "web_service_and_operator_state_are_separate_from_workers" {
 run "immutable_workers_remain_disabled" {
   command = apply
   variables {
-    image_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    image_digest  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    registry_file = "../registry.json"
   }
   assert {
     condition     = length(terraform_data.status_configuration) == 0 && length(aws_dynamodb_table.status) == 0 && length(aws_batch_job_definition.status) == 0
@@ -98,12 +99,13 @@ run "immutable_workers_remain_disabled" {
 }
 
 variables {
-  status_provisioned    = false
-  status_registry_file  = ""
-  account_id            = "123456789012"
-  registry_file         = "../registry.json.example"
-  secrets_parameter_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/monitoring/env"
-  schedule_end          = "2030-01-01T00:00:00Z"
+  continuous_fleet_monitoring = false
+  status_provisioned          = false
+  status_registry_file        = ""
+  account_id                  = "123456789012"
+  registry_file               = "../registry.json.example"
+  secrets_parameter_arn       = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/monitoring/env"
+  schedule_end                = "2030-01-01T00:00:00Z"
 }
 
 run "bootstrap_without_workers" {
@@ -235,6 +237,9 @@ run "production_status_runs_continuously_in_a_separate_table" {
     status_registry_file         = "../status.production.json"
     status_secrets_parameter_arn = "arn:aws:ssm:us-east-1:881004720495:parameter/crux/status/env"
     image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    continuous_fleet_monitoring  = true
+    registry_file                = "../registry.json"
+    schedule_end                 = "2026-10-02T19:33:56Z"
   }
   assert {
     condition     = aws_scheduler_schedule.status[0].state == "ENABLED" && aws_scheduler_schedule.status[0].end_date == null && aws_scheduler_schedule.status[0].schedule_expression == "rate(15 minutes)"
@@ -243,5 +248,17 @@ run "production_status_runs_continuously_in_a_separate_table" {
   assert {
     condition     = aws_dynamodb_table.status[0].name != aws_dynamodb_table.incidents.name && length(local.status_config.targets) > 0
     error_message = "Configured workloads must use independent status storage."
+  }
+  assert {
+    condition     = aws_scheduler_schedule.monitoring[0].state == "ENABLED" && aws_scheduler_schedule.monitoring[0].end_date == null && jsondecode(aws_s3_object.registry.content).expires_at == 0 && jsondecode(aws_s3_object.registry.content).fleet.langfuse_by_name && local.status_config.auto_register_runs
+    error_message = "Production must enroll new runs in both monitors even when the old incident registry and schedule have expired."
+  }
+  assert {
+    condition     = jsondecode(aws_s3_object.registry.content).fleet.exclude_instance_ids == local.registry_input.fleet.exclude_instance_ids && jsondecode(aws_s3_object.registry.content).inference_budget_usd == local.registry_input.inference_budget_usd
+    error_message = "Continuous discovery must retain operator exclusions and the inference budget."
+  }
+  assert {
+    condition     = jsondecode(aws_iam_role_policy.enrollment_status[0].policy).Statement[0].Action == ["dynamodb:Query"] && jsondecode(aws_iam_role_policy.enrollment_status[0].policy).Statement[0].Condition["ForAllValues:StringEquals"]["dynamodb:LeadingKeys"] == ["FLEET"] && contains([for env in jsondecode(aws_batch_job_definition.review[0].container_properties).environment : env.name], "MONITORING_STATUS_TABLE")
+    error_message = "Enrollment notices need only read status inventory; incident workers must not write status results."
   }
 }

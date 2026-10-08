@@ -89,6 +89,14 @@ class StatusStore:
             raise
         return True
 
+    def register_job(self, key, end, target):
+        """Keep the approved source mapping through queue delays and termination."""
+        self.table.update_item(
+            Key={"pk": "JOB#" + key, "sk": str(end)},
+            UpdateExpression="SET target=if_not_exists(target,:target), expires_at=if_not_exists(expires_at,:ttl)",
+            ExpressionAttributeValues={":target": numbers(target), ":ttl": end + RETENTION},
+        )
+
     def checkpoint(self, key, end, owner, result_key):
         self.table.update_item(
             Key={"pk": "JOB#" + key, "sk": str(end)},
