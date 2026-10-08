@@ -201,6 +201,13 @@ run "status_has_its_own_storage_roles_queue_and_enabled_schedule" {
     error_message = "Status checkers can write only their own table and cannot dispatch workload commands or jobs."
   }
   assert {
+    condition = contains(
+      one([for s in jsondecode(aws_iam_role_policy.status_job["discover"].policy).Statement : s.Resource if contains(s.Action, "batch:SubmitJob")]),
+      "arn:aws:batch:${var.region}:${var.account_id}:job-definition/${one([for env in jsondecode(aws_batch_job_definition.status["discover"].container_properties).environment : env.value if env.name == "STATUS_JOB"])}"
+    )
+    error_message = "Discovery must be authorized to submit the unversioned job definition passed in STATUS_JOB."
+  }
+  assert {
     condition     = !strcontains(aws_iam_role_policy.web_status[0].policy, "dynamodb:PutItem") && !strcontains(aws_iam_role_policy.web_status[0].policy, "dynamodb:UpdateItem") && !strcontains(aws_iam_role_policy.web_status[0].policy, "dynamodb:DeleteItem")
     error_message = "The website must have read-only status access."
   }
