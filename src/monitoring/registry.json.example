@@ -1,0 +1,34 @@
+{
+  "expires_at": 0,
+  "inference_budget_usd": 100,
+  "reviewer_models": [],
+  "targets": {
+    "i-REPLACE": {
+      "authorization": "Replace with the operator-approved task and its permitted actions, destinations, and budget.",
+      "subject_families": [
+        "openai"
+      ],
+      "langfuse": {
+        "session_id": "REPLACE-WITH-VERIFIED-SESSION-ID"
+      },
+      "sftp": {
+        "boundary_verified": false,
+        "host_key": "ssh-ed25519 REPLACE-WITH-OUT-OF-BAND-VERIFIED-PUBLIC-HOST-KEY",
+        "key_name": "MONITORING_INSPECTION_KEY_EXAMPLE",
+        "paths": [
+          "/exports/status.json",
+          "/exports/activity.txt"
+        ]
+      },
+      "logs": []
+    }
+  },
+  "fleet": {
+    "exclude_names": [
+      "crux-control",
+      "crux-monitor-worker"
+    ],
+    "exclude_instance_ids": [],
+    "langfuse_by_name": true
+  }
+}

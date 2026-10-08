@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+dnf install -y docker
+systemctl enable --now docker
+${service_configuration}

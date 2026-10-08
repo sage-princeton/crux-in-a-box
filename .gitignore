@@ -41,3 +41,14 @@ runs-export/
 
 clean-room-old
 logs-for-release
+
+# Monitoring deployment state, plans, and operator configuration.
+src/monitoring/terraform/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+src/monitoring/terraform/*.tfvars
+src/monitoring/registry.json
+src/monitoring/.venv/
+src/monitoring/node_modules/
+.ruff_cache/

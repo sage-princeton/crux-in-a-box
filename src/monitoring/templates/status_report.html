@@ -1,0 +1,9 @@
+{% macro report_lines(report) %}
+<ol class="status-report m-0 list-none space-y-2 p-0 text-sm leading-relaxed wrap-anywhere">
+  <li><strong class="font-semibold {{ 'text-amber-800' if report.alert else 'text-ink' }}">{{ report.alert or 'No alerts observed.' }}</strong> {{ report.recommendation }}</li>
+  <li><span class="font-semibold">{{ report.activity|capitalize }}.</span> {{ report.progress }}</li>
+  <li><span class="font-medium">Spend &amp; time.</span> {{ report.budget }}</li>
+  <li><span class="font-medium">Quality.</span> {{ report.quality }}</li>
+  <li><span class="font-medium">Milestones.</span> {{ report.milestones }}</li>
+</ol>
+{% endmacro %}
