@@ -69,8 +69,10 @@ gh workflow run monitoring-checks.yml --ref main -f deploy=true
 Confirm the deployment succeeds, then verify
 `crux-monitoring-ae211-status` in the same-named Scheduler group is enabled with
 `rate(15 minutes)`. After the next interval and Batch startup, confirm discovery
-succeeds and the status table's `FLEET` partition contains both configured runs
-(`pr19-test` and `crux-web-pilot`). Each running target should receive a check job
-and publish a result. Refresh the website to confirm registration and check
-timestamps. A successful image build or `/healthz` response alone does not
+succeeds and the status table's `FLEET` partition contains the current run
+`crux-web-pilot3` and the retired runs `pr19-test` and `crux-web-pilot`. The current
+run uses its matching Langfuse environment; its observed model is `gpt-6.1-sol`,
+so the configured Anthropic reviewers remain independent. Each running target
+should receive a check job and publish a result. Refresh the website to confirm
+registration and check timestamps. A successful image build or `/healthz` response alone does not
 verify status-job execution.
