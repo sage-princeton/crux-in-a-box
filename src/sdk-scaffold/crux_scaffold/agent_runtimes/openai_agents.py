@@ -95,7 +95,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         for server in self.servers.values():
             await self._stack.enter_async_context(server)
         self.session = self.assembly.context_strategy.session(
-            self.assembly.drop_in.config.orchestrator, self.assembly.context.state_dir)
+            self.assembly.drop_in.config.orchestrator, self.assembly.context)
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:

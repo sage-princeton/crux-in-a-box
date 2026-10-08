@@ -138,9 +138,9 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 
 - `persistent` keeps and sends everything.
 - `trim_recent` overrides `select`. It sends only recent items, starting at a user message so that a tool call is never separated from its result.
-- `openai_compaction` overrides `session`. It wraps the default session in the Agents SDK's compaction session. Its compaction calls are not yet added to `ctx.usage`.
+- `openai_compaction` overrides `session`. It wraps the default session in the Agents SDK's compaction session, using `ctx.model`, which must be an OpenAI model. Each compaction call is added to `ctx.usage` as `compaction:<session>` and traced as a generation, through `MeteredCompactClient`.
 
-- **`session(session_id, state_dir)`** returns the orchestrator's durable conversation store. The default is SQLite in `state_dir`, which survives restarts.
+- **`session(session_id, ctx)`** returns the orchestrator's durable conversation store. The default is SQLite in `ctx.state_dir`, which survives restarts. A strategy that calls a model itself uses `ctx.model` and adds its usage to `ctx.usage`.
 - **`select(items)`** returns the items sent on the next model call. The runtime applies it to every model call, delegated agents included. The stored history is unchanged.
 - **Standing context is never trimmed.** Personas and standing context are the agents' instructions, not conversation items, so `select` never sees them.
 - **Strategies use the runtime's types.** Items and `Session` are OpenAI Agents SDK types today, so a strategy targets the `openai-agents` runtime. A second runtime decides whether to adapt them or to take strategies of its own.

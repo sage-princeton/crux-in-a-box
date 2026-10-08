@@ -138,7 +138,7 @@ A CRUX with different needs changes declarations, not code. The same drop-in cou
   type = "trim_recent"
   max_items = 300
   ```
-  Or let the Responses API summarize older history once it grows:
+  Or let the Responses API summarize older history once it grows. It uses `CRUX_MODEL`, which must then be an OpenAI model, and its calls count toward the budget:
   ```toml
   [context]
   type = "openai_compaction"
