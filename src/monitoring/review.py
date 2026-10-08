@@ -159,7 +159,7 @@ def https_url(url):
     return url.rstrip("/")
 
 
-def get_json(client, url, max_bytes=MAX_EVIDENCE_BYTES, **kwargs):
+def get_json(client, url, max_bytes, **kwargs):
     # Streaming bounds apply before JSON parsing, including to error responses.
     with client.stream("GET", url, **kwargs) as response:
         response.raise_for_status()

@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 from collection import Collector
 from fleet import inventory_targets, notify
-from lifecycle import evidence_anchors, workspace_anchor_positions
+from lifecycle import evidence_anchors, review_anchors
 from review import (
     MAX_OUTPUT_TOKENS,
     PROMPT,
@@ -92,7 +92,8 @@ class Runtime:
 
     def incident(self, target, end, evidence, previous, secrets, prefix):
         sources, gaps = evidence["sources"], evidence["gaps"]
-        anchors = evidence_anchors(sources)
+        anchors, positions, omitted = review_anchors(sources)
+        gaps = [*gaps, *omitted]
         payload = {
             "authorization": target["authorization"],
             "window": {"start": iso(end - 1800), "end": iso(end)},
@@ -101,12 +102,7 @@ class Runtime:
             "previous_profile": previous.get("workload_profile", ""),
             "previous_focus": previous.get("next_source_ids", []),
             "evidence_anchors": anchors,
-            "evidence_anchor_positions": {
-                anchor: position
-                for source in sources
-                if source["kind"] == "workspace"
-                for anchor, position in workspace_anchor_positions(source)
-            },
+            "evidence_anchor_positions": positions,
         }
         model = select_reviewer(
             self.config["incident"]["reviewer_models"], sources, target["subject_families"]

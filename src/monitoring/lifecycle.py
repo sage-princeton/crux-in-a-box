@@ -100,3 +100,25 @@ def evidence_anchors(sources):
         else:
             result[sid] = sid
     return result
+
+
+def review_anchors(sources):
+    """Bound citation metadata separately from the saved workspace evidence."""
+    anchors = {s["id"]: s["id"] for s in sources if s["kind"] != "workspace"}
+    positions = {}
+    for source in sources:
+        if source["kind"] != "workspace":
+            continue
+        for anchor, position in workspace_anchor_positions(source):
+            if len(positions) == 128 and anchor not in positions:
+                return (
+                    anchors,
+                    positions,
+                    [
+                        "Only 128 workspace event anchors fit the review context; "
+                        "remaining records require saved workspace inspection."
+                    ],
+                )
+            anchors[anchor] = source["id"]
+            positions[anchor] = position
+    return anchors, positions, []

@@ -141,9 +141,23 @@ def test_model_checkpoint_is_reused_after_database_publication_failure(runtime, 
     assert counts["model"] == initial["model"] and counts["collection"] == 1
 
 
-def test_successful_status_sweep_summary_and_incident_publish_independently(runtime):
+def test_successful_status_sweep_summary_and_incident_publish_independently(runtime, monkeypatch):
     worker, target, secrets, counts = runtime
     calls = []
+    collect = worker.collector.collect
+
+    def workspace_evidence(*args):
+        evidence = collect(*args)
+        evidence["sources"].append(
+            {
+                "id": "workspace:" + "a" * 32,
+                "kind": "workspace",
+                "data": "".join(f"{index:06}\n" for index in range(500)),
+            }
+        )
+        return evidence
+
+    monkeypatch.setattr(worker.collector, "collect", workspace_evidence)
 
     def handler(request):
         if request.url.path == "/api/v1/models":
@@ -186,6 +200,8 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(runt
     worker.run_target(target, 900, {}, secrets)
     initial = calls.copy()
     assert worker.store.fleet()[0]["latest"]["report"]["activity"] == "alive"
-    assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
+    incident = worker.store.assessment(target["key"], 900, "incident")
+    assert incident["outcome"] == "completed"
+    assert any("workspace event anchors" in gap for gap in incident["report"]["coverage_gaps"])
     worker.run_target(target, 900, {}, secrets)
     assert counts["collection"] == 1 and calls == initial
