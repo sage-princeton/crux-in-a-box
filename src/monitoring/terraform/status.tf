@@ -132,7 +132,7 @@ resource "aws_iam_role_policy" "status_job" {
     { Effect = "Allow", Action = ["s3:GetObject", "s3:PutObject"], Resource = "${aws_s3_bucket.evidence.arn}/status_checks/*" },
     { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = var.status_secrets_parameter_arn }
     ] : [], each.key == "discover" ? [
-    { Effect = "Allow", Action = ["batch:SubmitJob"], Resource = [aws_batch_job_queue.status[0].arn, "arn:aws:batch:${var.region}:${var.account_id}:job-definition/${var.name}-status-check:*"] }
+    { Effect = "Allow", Action = ["batch:SubmitJob"], Resource = [aws_batch_job_queue.status[0].arn, "arn:aws:batch:${var.region}:${var.account_id}:job-definition/${var.name}-status-check", "arn:aws:batch:${var.region}:${var.account_id}:job-definition/${var.name}-status-check:*"] }
     ] : [], each.key == "check" && length(var.status_evidence_log_group_arns) > 0 ? [
     { Effect = "Allow", Action = ["logs:FilterLogEvents"], Resource = var.status_evidence_log_group_arns }
     ] : [], each.key == "check" && var.status_secrets_kms_key_arn != "" ? [
