@@ -28,6 +28,9 @@ def deployment(tmp_path):
         "status_registry_file": "stale-status.json",
         "status_secrets_parameter_arn": "stale-parameter",
         "registry_file": "old-local-path",
+        "enabled": False,
+        "continuous_fleet_monitoring": False,
+        "schedule_end": "2026-10-02T19:33:56Z",
     }
     (remote / "deployment.json").write_text(json.dumps(config))
     (remote / "registry.json").write_text("{}")
@@ -84,6 +87,7 @@ def test_yaml_release_applies_complete_plan_and_reuses_verified_images(deploymen
     assert published["revision"] == env["GITHUB_SHA"]
     assert published["registry_file"] == "registry.json"
     assert not any(key.startswith("status_") for key in published)
+    assert not {"enabled", "continuous_fleet_monitoring", "schedule_end"} & published.keys()
     assert (
         published["image_digest"]
         == published["web_image_digest"]

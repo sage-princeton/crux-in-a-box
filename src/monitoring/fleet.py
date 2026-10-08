@@ -46,6 +46,8 @@ def inventory_targets(ec2, config, previous=None, now=None, excluded=None):
                         "name": name,
                         "state": instance["State"]["Name"],
                         "batch": "AWSBatchServiceTag" in tags,
+                        "monitor": tags.get("MonitorWithCruxMonitor") == "1",
+                        "named": bool(tags.get("Name")),
                     }
                 )
     if len(instances) > 200:
@@ -86,6 +88,41 @@ def inventory_targets(ec2, config, previous=None, now=None, excluded=None):
                 "retired_at": retired_at,
             }
     return targets, instances
+
+
+def deliver_enrollment(runtime, row):
+    """Acknowledge enrollment once per instance, independently of fleet digests."""
+    owner, key = str(uuid.uuid4()), "NOTICE#enrollment#" + row["instance_id"]
+    if not runtime.state.claim_notice(key, owner, int(time.time())):
+        raise CoverageError("Enrollment delivery is in progress; retry")
+    try:
+        if runtime.state.get(key).get("delivered_at"):
+            return "suppressed"
+        webhook = https_url(runtime.secrets()["MONITORING_SLACK_WEBHOOK_URL"])
+        if not webhook.startswith("https://hooks.slack.com/services/"):
+            raise ValueError("Only Slack incoming webhooks are supported")
+        # Plain text prevents EC2 names from injecting Slack mentions or links.
+        message = (
+            f"Monitoring has begun on {row['slug']} ({row['instance_id']}). "
+            "Status checks and incident monitoring are now enrolled."
+        )
+        response = runtime.http.post(
+            webhook,
+            json={
+                "text": message,
+                "blocks": [{"type": "section", "text": {"type": "plain_text", "text": message}}],
+                "mrkdwn": False,
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
+        )
+        response.raise_for_status()
+        if response.text.strip() != "ok":
+            raise CoverageError("Slack did not acknowledge enrollment")
+        runtime.state.save(key, owner, {"delivered_at": int(time.time())})
+        return "sent"
+    finally:
+        runtime.state.save(key, owner, {"updated_at": int(time.time())}, release=True)
 
 
 def summary_lines(summaries, acknowledged):

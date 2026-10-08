@@ -52,7 +52,7 @@ resource "terraform_data" "status_configuration" {
     }
     precondition {
       condition = (local.status_active && local.status_config.expires_at >= 0 &&
-        (local.status_config.expires_at == 0 ? true : timecmp(local.status_end, timestamp()) > 0) && length(local.status_config.targets) > 0 &&
+        (local.status_config.expires_at == 0 ? true : timecmp(local.status_end, timestamp()) > 0) && (length(local.status_config.targets) > 0 || try(local.status_config.auto_register_runs, false)) &&
         local.status_config.inference_budget_usd > 0 && local.status_config.inference_budget_usd <= 500 &&
       local.status_config.sweep_model != "" && local.status_config.summary_model != "")
       error_message = "Status activation requires its infrastructure, image, targets, model pair and bounded budget; expiry must be zero (continuous) or in the future."
@@ -147,6 +147,18 @@ resource "aws_iam_role_policy" "web_status" {
   policy = jsonencode({ Version = "2012-10-17", Statement = [
     { Effect    = "Allow", Action = ["dynamodb:GetItem", "dynamodb:Query"], Resource = aws_dynamodb_table.status[0].arn,
       Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["FLEET", "STATUS#*"] } }
+    },
+    { Effect    = "Allow", Action = ["kms:Decrypt", "kms:DescribeKey"], Resource = aws_kms_key.status[0].arn,
+      Condition = { StringEquals = { "kms:ViaService" = "dynamodb.${var.region}.amazonaws.com", "kms:CallerAccount" = var.account_id } }
+    }
+  ] })
+}
+resource "aws_iam_role_policy" "enrollment_status" {
+  count = var.status_provisioned ? 1 : 0
+  role  = aws_iam_role.job["review"].id
+  policy = jsonencode({ Version = "2012-10-17", Statement = [
+    { Effect    = "Allow", Action = ["dynamodb:Query"], Resource = aws_dynamodb_table.status[0].arn,
+      Condition = { "ForAllValues:StringEquals" = { "dynamodb:LeadingKeys" = ["FLEET"] } }
     },
     { Effect    = "Allow", Action = ["kms:Decrypt", "kms:DescribeKey"], Resource = aws_kms_key.status[0].arn,
       Condition = { StringEquals = { "kms:ViaService" = "dynamodb.${var.region}.amazonaws.com", "kms:CallerAccount" = var.account_id } }
