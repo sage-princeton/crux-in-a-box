@@ -1,7 +1,8 @@
 FROM python:3.12-slim@sha256:f77ac9e44ae96ef2c90b8053ea08c31f8be030f824196b0ae4db6d462c84e51f
 WORKDIR /app
 COPY requirements.txt web-requirements.txt ./
-RUN apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
+RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get upgrade -y && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --upgrade pip==26.2.1 \
     && pip install --no-cache-dir -r web-requirements.txt \
     && pip uninstall --yes pip \
