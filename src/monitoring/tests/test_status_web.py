@@ -1,4 +1,4 @@
-from test_web import ORIGIN, authorize, client
+from conftest import ORIGIN, authorize
 
 from status_view import coverage_rows
 

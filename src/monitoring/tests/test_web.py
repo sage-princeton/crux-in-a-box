@@ -1,87 +1,68 @@
 import base64
 import json
-import secrets
 import time
 
 import pytest
+from conftest import ORIGIN, authorize, ingest
 from lxml import html
-from test_lifecycle import ingest
 
 from lifecycle import Conflict
-from review import digest
-from web import create_app
-from web_auth import SESSION_COOKIE
-
-ORIGIN = "https://incidents.example.test"
-SETTINGS = {
-    "origin": ORIGIN,
-    "bucket": "private-evidence",
-    "idp": {
-        "entityId": "https://idp.example.test",
-        "singleSignOnService": {"url": "https://idp.example.test/login"},
-        "x509cert": "configured-in-signed-saml-tests",
-    },
-}
 
 
-@pytest.fixture
-def client(store):
-    app = create_app(store, SETTINGS)
-    app.config.update(TESTING=True)
-    return app.test_client()
-
-
-def authorize(client, store, expires=None):
-    token, csrf = secrets.token_urlsafe(32), secrets.token_urlsafe(32)
-    nonce = digest(secrets.token_urlsafe(32))
-    now = int(time.time())
-    store.login(nonce, "fixture-request", now + 300)
-    store.finish_login(
-        nonce, digest(token), {"id": "operator", "issuer": "test"}, csrf, expires or now + 300, now
-    )
-    client.set_cookie(SESSION_COOKIE, token, domain="incidents.example.test")
-    return csrf
-
-
-def test_authentication_csrf_conflict_and_logout(client, store, target):
+def test_private_pages_require_signin_after_logout(client, store, target):
     item = ingest(store, target)
     path = f"/incidents/{item['id']}"
     assert client.get(path, base_url=ORIGIN).status_code == 302
     csrf = authorize(client, store)
     assert client.get(path, base_url=ORIGIN).status_code == 200
-    data = {"version": item["version"], "status": "closed", "csrf": csrf}
-    assert client.post(path + "/status", base_url=ORIGIN, data=data).status_code == 403
-    assert (
-        client.post(
-            path + "/status",
-            base_url=ORIGIN,
-            data={**data, "csrf": "bad"},
-            headers={"Origin": ORIGIN},
-        ).status_code
-        == 403
+    response = client.post(
+        "/auth/logout", base_url=ORIGIN, data={"csrf": csrf}, headers={"Origin": ORIGIN}
     )
-    assert (
-        client.post(
-            path + "/status", base_url=ORIGIN, data=data, headers={"Origin": ORIGIN}
-        ).status_code
-        == 303
+    assert response.status_code == 302
+    assert client.get(path, base_url=ORIGIN).status_code == 302
+
+
+@pytest.mark.parametrize(
+    "origin,csrf_override", [(None, None), ("https://untrusted.example", None), (ORIGIN, "bad")]
+)
+def test_untrusted_operator_requests_leave_incident_open(
+    client, store, target, origin, csrf_override
+):
+    item = ingest(store, target)
+    csrf = authorize(client, store)
+    response = client.post(
+        f"/incidents/{item['id']}/status",
+        base_url=ORIGIN,
+        data={
+            "version": item["version"],
+            "status": "closed",
+            "csrf": csrf_override or csrf,
+        },
+        headers={"Origin": origin} if origin else {},
     )
+    assert response.status_code == 403
+    unchanged = store.incident(item["id"])
+    assert (unchanged["status"], unchanged["version"]) == ("open", item["version"])
+
+
+def test_operator_closes_incident_and_stale_changes_are_rejected(client, store, target):
+    item = ingest(store, target)
+    path = f"/incidents/{item['id']}/status"
+    data = {"version": item["version"], "status": "closed", "csrf": authorize(client, store)}
+    assert (
+        client.post(path, base_url=ORIGIN, data=data, headers={"Origin": ORIGIN}).status_code == 303
+    )
+    assert store.incident(item["id"])["status"] == "closed"
     assert (
         client.post(
-            path + "/status",
+            path,
             base_url=ORIGIN,
             data={**data, "status": "open"},
             headers={"Origin": ORIGIN},
         ).status_code
         == 409
     )
-    assert (
-        client.post(
-            "/auth/logout", base_url=ORIGIN, data={"csrf": csrf}, headers={"Origin": ORIGIN}
-        ).status_code
-        == 302
-    )
-    assert client.get(path, base_url=ORIGIN).status_code == 302
+    assert store.incident(item["id"])["status"] == "closed"
 
 
 def test_expired_and_replayed_login_requests_cannot_create_sessions(store):
@@ -94,12 +75,16 @@ def test_expired_and_replayed_login_requests_cannot_create_sessions(store):
     store.login("expired", "request", now - 1)
     with pytest.raises(Conflict):
         store.finish_login("expired", "session2", {"id": "operator"}, "csrf", now + 300, now)
+    assert store.session("session2") is None
 
 
-def test_readiness_is_content_free_and_expired_sessions_cannot_read(client, store, target):
-    ingest(store, target)
+def test_readiness_is_public_and_content_free(client):
     response = client.get("/healthz", base_url=ORIGIN)
     assert response.json == {"status": "ok", "revision": "local"}
+
+
+def test_expired_sessions_cannot_read_incidents(client, store, target):
+    ingest(store, target)
     authorize(client, store, expires=int(time.time()) - 1)
     assert client.get("/", base_url=ORIGIN).status_code == 302
     assert b"Private evidence" not in client.get("/", base_url=ORIGIN).data

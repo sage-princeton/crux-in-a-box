@@ -2,13 +2,12 @@
 
 import json
 import time
-import uuid
 
 from sqlalchemy import text
 
 from database import engine
 from lifecycle import DETECTORS, Conflict
-from review import CoverageError, digest
+from review import CoverageError
 
 
 def encoded(value):
@@ -27,18 +26,19 @@ class Store:
         with self.db.begin() as connection:
             connection.execute(text("UPDATE workloads SET state='no longer enrolled'"))
             for item in inventory:
-                key = digest(item["instance_id"])[:32]
-                item["key"] = key
-                connection.execute(
+                key = connection.execute(
                     text("""
-                    INSERT INTO workloads VALUES (:key, :instance_id, :name, :slug,
+                    INSERT INTO workloads (instance_id, name, slug, state, inventory_at, stale_seconds)
+                    VALUES (:instance_id, :name, :slug,
                         :state, :now, :stale)
-                    ON CONFLICT (key) DO UPDATE SET name=EXCLUDED.name, slug=EXCLUDED.slug,
+                    ON CONFLICT (instance_id) DO UPDATE SET name=EXCLUDED.name, slug=EXCLUDED.slug,
                         state=EXCLUDED.state, inventory_at=EXCLUDED.inventory_at,
                         stale_seconds=EXCLUDED.stale_seconds
+                    RETURNING key
                 """),
                     {**item, "now": now, "stale": stale_seconds},
-                )
+                ).scalar_one()
+                item["key"] = str(key)
 
     def fleet(self):
         with self.db.connect() as connection:
@@ -69,6 +69,7 @@ class Store:
             )
             rows = [dict(row) for row in result.mappings()]
         for row in rows:
+            row["key"] = str(row["key"])
             attempt, incident = row.pop("status_attempt") or {}, row.pop("incident_attempt") or {}
             row["latest"] = row["latest"] or {}
             row["incident_report"] = (row["incident_report"] or {}).get("report", {})
@@ -190,7 +191,6 @@ class Store:
             )
         with self.db.begin() as connection:
             for detector, anchor, finding in findings:
-                identity = str(uuid.uuid5(uuid.NAMESPACE_URL, digest([key, detector, anchor])))
                 title, summary = DETECTORS[detector]
                 detail = {
                     "title": title,
@@ -199,13 +199,15 @@ class Store:
                     "severity": finding["severity"],
                     "confidence": finding["confidence"],
                 }
-                connection.execute(
+                identity = connection.execute(
                     text("""
-                    INSERT INTO incidents VALUES (:id, :key, :detector, :anchor, 'open', 1,
-                        :end, :end, :now, CAST(:detail AS jsonb)) ON CONFLICT DO NOTHING
+                    INSERT INTO incidents (workload_key, detector, anchor, first_seen,
+                        last_seen, updated_at, detail)
+                    VALUES (:key, :detector, :anchor, :end, :end, :now, CAST(:detail AS jsonb))
+                    ON CONFLICT (workload_key, detector, anchor)
+                    DO UPDATE SET anchor=EXCLUDED.anchor RETURNING id
                 """),
                     {
-                        "id": identity,
                         "key": key,
                         "detector": detector,
                         "anchor": anchor,
@@ -213,7 +215,7 @@ class Store:
                         "now": int(time.time()),
                         "detail": encoded(detail),
                     },
-                )
+                ).scalar_one()
                 observation = {
                     "at": end,
                     "review_id": f"{key}/{end}",
@@ -254,6 +256,7 @@ class Store:
     def _incident(self, row):
         row = dict(row)
         row["id"] = str(row["id"])
+        row["workload_key"] = str(row["workload_key"])
         row.update(row.pop("detail"))
         row["observation_count"] = row["review_count"] = row.pop("observations", 0)
         return row
@@ -372,7 +375,7 @@ class Store:
 
     def summaries(self):
         with self.db.connect() as connection:
-            return [
+            rows = [
                 dict(row)
                 for row in connection.execute(
                     text("""
@@ -388,6 +391,9 @@ class Store:
             """)
                 ).mappings()
             ]
+        for row in rows:
+            row["key"] = str(row["key"])
+        return rows
 
     def login(self, token, request_id, expires_at):
         with self.db.begin() as connection:

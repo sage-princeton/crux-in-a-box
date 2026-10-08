@@ -38,7 +38,10 @@ flowchart LR
 the monitored instance. `status_review.py` and `review.py` perform their respective
 assessments. `store.py` owns SQL transactions, incident transitions, budgets and
 sessions. `database.py` creates connections using RDS-managed credentials and
-verified TLS. Alembic owns the schema.
+verified TLS. Alembic owns the schema. Every table and column has a PostgreSQL
+comment visible in database tools. PostgreSQL 18 generates UUIDv7 workload and
+incident IDs. Unique instance IDs and workload/detector/anchor tuples retain the
+same records across discovery and review retries.
 
 A status failure does not prevent the incident assessment. Each assessment has a
 separate cumulative inference budget in checked-in `monitoring.json`. Evidence

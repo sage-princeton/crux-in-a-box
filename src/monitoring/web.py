@@ -235,10 +235,9 @@ def create_app(store=None, settings=None):
             ),
         )
 
-    @app.get("/workloads/<key>/status")
+    @app.get("/workloads/<uuid:key>/status")
     def status_history(key):
-        if not re.fullmatch(r"[a-f0-9]{32}", key):
-            abort(404)
+        key = str(key)
         before = request.args.get("before")
         if before and not re.fullmatch(r"[0-9]{1,12}", before):
             abort(400, "Invalid status history cursor.")

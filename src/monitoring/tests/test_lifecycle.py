@@ -1,45 +1,14 @@
+from uuid import UUID
+
 import pytest
 from alembic import command
 from alembic.config import Config
-from conftest import ROOT
+from conftest import ROOT, ingest, report
 from sqlalchemy import text
 
 from lifecycle import Conflict, evidence_anchors, public_incident
 from review import CoverageError
 from store import Budget
-
-
-def report(anchor="observation:123"):
-    return {
-        "review_status": "completed",
-        "summary": "Review complete",
-        "coverage_gaps": [],
-        "findings": [
-            {
-                "detector_id": "unexpected_upload",
-                "anchor_id": anchor,
-                "evidence": "Private evidence",
-                "source_ids": [anchor],
-                "severity": "low",
-                "confidence": "medium",
-            }
-        ],
-    }
-
-
-def ingest(store, target, end=900):
-    key = target["key"]
-    store.save_collection(key, end, {"target": target, "sources": []})
-    result = {
-        "outcome": "completed",
-        "window_end": end,
-        "artifact_prefix": "private/review",
-        "report": report(),
-        "model": {"reported_model": "model-1"},
-    }
-    store.publish(key, end, "incident", result)
-    store.ingest(key, end, result, {"observation:123": "observation:123"})
-    return store.instance_page(target["instance_id"], None, None, 50)[0]
 
 
 def test_alembic_roundtrip(db):
@@ -52,10 +21,35 @@ def test_alembic_roundtrip(db):
         assert (
             connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0001"
         )
+        undocumented = connection.execute(
+            text("""
+                SELECT t.relname, a.attname FROM pg_class t
+                JOIN pg_namespace n ON n.oid=t.relnamespace
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped
+                WHERE n.nspname=current_schema() AND t.relkind='r'
+                    AND (COALESCE(trim(obj_description(t.oid)), '')=''
+                        OR COALESCE(trim(col_description(t.oid, a.attnum)), '')='')
+            """)
+        ).all()
+    assert undocumented == [], f"Missing database comments: {undocumented}"
+
+
+def test_workload_uuidv7_survives_renames_and_separates_replacements(store, target):
+    original = target["key"]
+    renamed = {**target, "name": "renamed", "slug": "renamed"}
+    replacement = {**renamed, "instance_id": "i-replacement"}
+    store.sync([renamed, replacement], 1800, 1800)
+    assert UUID(original).version == UUID(replacement["key"]).version == 7
+    assert renamed["key"] == original != replacement["key"]
+    assert {row["key"]: row["name"] for row in store.fleet()} == {
+        original: "renamed",
+        replacement["key"]: "renamed",
+    }
 
 
 def test_incident_identity_and_closed_state_survive_repeated_observations(store, target):
     item = ingest(store, target)
+    assert UUID(item["id"]).version == 7
     closed = store.transition(item["id"], item["version"], "closed", {"id": "operator"}, "Resolved")
     ingest(store, target, 1800)
     repeated = store.incident(item["id"])

@@ -8,6 +8,13 @@ from moto import mock_aws
 
 from worker import Runtime
 
+MODEL_CATALOG = {
+    "data": [
+        {"id": model, "pricing": {"prompt": "0.000001", "completion": "0.000001"}}
+        for model in ("anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.6")
+    ]
+}
+
 
 @pytest.fixture
 def runtime(store, target, monkeypatch):
@@ -27,15 +34,7 @@ def runtime(store, target, monkeypatch):
 
         def handler(request):
             if request.url.path == "/api/v1/models":
-                return httpx.Response(
-                    200,
-                    json={
-                        "data": [
-                            {"id": m, "pricing": {"prompt": "0.000001", "completion": "0.000001"}}
-                            for m in ("anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.6")
-                        ]
-                    },
-                )
+                return httpx.Response(200, json=MODEL_CATALOG)
             if request.url.host == "hooks.slack.com":
                 counts["slack"] += 1
                 return httpx.Response(
@@ -101,10 +100,15 @@ def test_one_collection_and_independent_assessments_survive_slack_retry(runtime)
         worker.run_target(target, 900, {}, secrets)
     assert worker.store.assessment(target["key"], 900, "status")["outcome"] == "failed"
     assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
-    assert counts == {"collection": 1, "model": 2, "slack": 1}
+    assert counts["collection"] == 1
+    assert worker.store.notice("enrollment/" + target["key"]) is None
+    initial = counts.copy()
     worker.run_target(target, 900, {}, secrets)
+    assert worker.store.notice("enrollment/" + target["key"])
+    assert counts["model"] == initial["model"] and counts["collection"] == 1
+    delivered = counts.copy()
     worker.run_target(target, 900, {}, secrets)
-    assert counts == {"collection": 1, "model": 2, "slack": 2}
+    assert counts == delivered
     assert len(worker.store.instance_page(target["instance_id"], None, None, 50)) == 1
 
 
@@ -119,20 +123,22 @@ def test_model_checkpoint_is_reused_after_database_publication_failure(runtime, 
 
     monkeypatch.setattr(worker.store, "publish", fail_status)
     worker.run_target(target, 900, {}, secrets)
-    assert counts["collection"] == 1 and counts["model"] == 2
+    initial = counts.copy()
     assert worker.store.assessment(target["key"], 900, "status") is None
     pending = worker.store.pending(1800)
     assert pending[0]["evidence"]["target"]["instance_id"] == target["instance_id"]
     monkeypatch.setattr(worker.store, "publish", publish)
+
     # Even if the run has disappeared, the saved archive is the evidence for this window.
-    worker.collector.collect = lambda *args: (_ for _ in ()).throw(
-        AssertionError("must reuse snapshot")
-    )
+    def unavailable_run(*args):
+        raise AssertionError("must reuse snapshot")
+
+    monkeypatch.setattr(worker.collector, "collect", unavailable_run)
     with pytest.raises(httpx.HTTPStatusError):
         worker.run_target(pending[0]["evidence"]["target"], 900, {}, secrets)
     worker.run_target(target, 900, {}, secrets)
     assert worker.store.pending(1800) == []
-    assert counts["model"] == 2 and counts["collection"] == 1
+    assert counts["model"] == initial["model"] and counts["collection"] == 1
 
 
 def test_successful_status_sweep_summary_and_incident_publish_independently(runtime):
@@ -141,15 +147,7 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(runt
 
     def handler(request):
         if request.url.path == "/api/v1/models":
-            return httpx.Response(
-                200,
-                json={
-                    "data": [
-                        {"id": model, "pricing": {"prompt": "0.000001", "completion": "0.000001"}}
-                        for model in ("anthropic/claude-haiku-4.5", "anthropic/claude-sonnet-4.6")
-                    ]
-                },
-            )
+            return httpx.Response(200, json=MODEL_CATALOG)
         if request.url.host == "hooks.slack.com":
             return httpx.Response(200, text="ok")
         body = json.loads(request.content)
@@ -186,8 +184,8 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(runt
     worker.http.close()
     worker.http = httpx.Client(transport=httpx.MockTransport(handler))
     worker.run_target(target, 900, {}, secrets)
-    assert counts["collection"] == 1 and len(calls) == 3
+    initial = calls.copy()
     assert worker.store.fleet()[0]["latest"]["report"]["activity"] == "alive"
     assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
     worker.run_target(target, 900, {}, secrets)
-    assert counts["collection"] == 1 and len(calls) == 3
+    assert counts["collection"] == 1 and calls == initial

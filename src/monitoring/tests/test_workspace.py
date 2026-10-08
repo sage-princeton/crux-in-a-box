@@ -130,10 +130,8 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
     archive = tmp_path / "snapshot.tar.gz"
     info = archive_workspace(root, archive)
     key = "workspaces/i-abcdef/900/workspace.tar.gz"
-    requests = []
 
     def assume_role(**request):
-        requests.append(request)
         assert json.loads(request["Policy"])["Statement"][0]["Resource"] == (
             "arn:aws:s3:::monitoring-copy-test/" + key
         )
