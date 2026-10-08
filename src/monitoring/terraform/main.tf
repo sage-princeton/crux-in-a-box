@@ -1,12 +1,22 @@
 locals {
   registry_input = jsondecode(file(var.registry_file))
+  fleet_input    = try(local.registry_input.fleet, {})
+
+  continuous_fleet = merge(local.fleet_input, {
+    exclude_names = distinct(concat(
+      try(local.fleet_input.exclude_names, []),
+      ["crux-control", "crux-monitor-worker"],
+    ))
+    langfuse_by_name = true
+  })
+
   registry = var.continuous_fleet_monitoring ? merge(local.registry_input, {
     expires_at = 0
-    fleet = merge(try(local.registry_input.fleet, {}), {
-      exclude_names    = distinct(concat(try(local.registry_input.fleet.exclude_names, []), ["crux-control", "crux-monitor-worker"]))
-      langfuse_by_name = true
-    })
+    fleet      = local.continuous_fleet
   }) : local.registry_input
+}
+
+locals {
   incident_enabled = var.enabled || var.continuous_fleet_monitoring
   own_vpc          = var.vpc_id == ""
   vpc_id           = local.own_vpc ? aws_vpc.monitoring[0].id : var.vpc_id
