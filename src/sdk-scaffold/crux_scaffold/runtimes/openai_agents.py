@@ -89,6 +89,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 model=self._model(name, spec.model), model_settings=self._settings(spec.reasoning_effort))
 
     async def __aenter__(self) -> Self:
+        # TODO(AE-247): let the AgentRuntime base class own telemetry setup for every runtime.
         trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
         for server in self.servers.values():

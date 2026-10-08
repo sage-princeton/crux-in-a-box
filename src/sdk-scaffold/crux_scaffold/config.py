@@ -113,6 +113,7 @@ def delegation_order(agents: Mapping[str, AgentConfig]) -> list[str]:
     return order
 
 
+# TODO(AE-252): validate every run's scaffold.toml in CI.
 def load_config(root: Path) -> ScaffoldConfig:
     path = root / CONFIG_FILE
     if not path.is_file():

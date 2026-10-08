@@ -21,6 +21,7 @@ def unresolved_placeholders(label: str, text: str) -> list[str]:
             for number, line in enumerate(text.splitlines(), 1) for match in PLACEHOLDER.finditer(line)]
 
 
+# TODO(AE-246): decide one drop-in directory layout shared with AgentRQ's run-harness.
 class DropInDirectory:
     def __init__(self, root: Path, config: ScaffoldConfig) -> None:
         self.root = root
@@ -50,9 +51,11 @@ class DropInDirectory:
         """A prompt file is sent verbatim; operator notes belong in OPERATOR_GUIDE.md."""
         return self.read(rel).strip()
 
+    # TODO(AE-250): deliver more of a CRUX's context as standing context, re-read as files change.
     def standing_context(self, files: list[str]) -> str:
         return "\n\n---\n\n".join(f"# Standing context: {rel}\n\n{self.read(rel).strip()}" for rel in files)
 
+    # TODO(AE-249): prepend a generated description of the scaffold to the orchestrator's instructions.
     def instructions(self, agent: str) -> str:
         spec = self.config.agents[agent]
         return "\n\n---\n\n".join(filter(None, [self.read(spec.persona).strip(), self.standing_context(spec.context)]))
