@@ -18,6 +18,9 @@ class Options(BaseModel):
 
 
 class Component:
+    """A pluggable part of the scaffold. `type_name` names the implementation in `scaffold.toml`, and `Options` is
+    its declarative configuration; `name` is the name the drop-in declared it under."""
+
     type_name: ClassVar[str]
     Options: ClassVar[type[Options]] = Options
 

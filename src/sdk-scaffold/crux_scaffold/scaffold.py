@@ -20,6 +20,8 @@ from crux_scaffold.workspace import RunContext, Sleep, Workspace
 
 
 class Scaffold:
+    """Builds every component a drop-in declares and runs its loop."""
+
     def __init__(self, drop_in: DropInDirectory, env: Mapping[str, str], *, state_dir: Path, telemetry: Telemetry,
                  sleep: Sleep = asyncio.sleep, runtime_overrides: Mapping[str, Any] | None = None) -> None:
         config = drop_in.config

@@ -33,11 +33,16 @@ class Assembly:
 
 
 class TurnOutcome(BaseModel):
+    """The orchestrator's answer to one prompt; `completed` is false when it ran out of turns."""
+
     final_output: str
     completed: bool
 
 
 class AgentRuntime(Component):
+    """The agent SDK that runs the declared agents. It builds one SDK agent per `[agents.<name>]` from the
+    `Assembly` and runs the orchestrator's turns. See docs/extending.md for the contract."""
+
     def __init__(self, name: str, options, *, assembly: Assembly) -> None:
         super().__init__(name, options)
         self.assembly = assembly

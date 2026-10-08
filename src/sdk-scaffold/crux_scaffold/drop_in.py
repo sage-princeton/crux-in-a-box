@@ -8,21 +8,20 @@ import re
 import sys
 from pathlib import Path
 
-from crux_scaffold.config import CONFIG_FILE, ScaffoldConfig, load_config
+from crux_scaffold.config import ScaffoldConfig, load_config
 from crux_scaffold.errors import InvalidDropInError
 
-PLACEHOLDER = re.compile(r"\{\{[A-Z0-9_]+(?:\|[^}]*)?\}\}")
-UNSCANNED = {"OPERATOR_GUIDE.md", "README.md"}
-SKIP_DIRS = {".git", ".state", "__pycache__"}
-
-
-def unresolved_placeholders(label: str, text: str) -> list[str]:
-    return [f"{label}:{number}: {match.group(0)}"
-            for number, line in enumerate(text.splitlines(), 1) for match in PLACEHOLDER.finditer(line)]
+_PLACEHOLDER = re.compile(r"\{\{[A-Z0-9_]+(?:\|[^}]*)?\}\}")
+_UNSCANNED = {"OPERATOR_GUIDE.md", "README.md"}
+_SKIP_DIRS = {".git", ".state", "__pycache__"}
 
 
 # TODO(AE-246): decide one drop-in directory layout shared with AgentRQ's run-harness.
 class DropInDirectory:
+    """A CRUX's input to the scaffold: `scaffold.toml`, prompts, personas, standing context and extensions. The
+    workspace, where the agents work, is one directory inside it (`workspace` in `scaffold.toml`); the agents' file
+    tools are confined to it, and the rest of the drop-in is the operator's."""
+
     def __init__(self, root: Path, config: ScaffoldConfig) -> None:
         self.root = root
         self.config = config
@@ -64,14 +63,16 @@ class DropInDirectory:
         """Operator-configured files outside the workspace, plus every standing-context file."""
         config = self.config
         files = {str(path.relative_to(self.root)) for suffix in ("*.md", "*.toml") for path in self.root.rglob(suffix)
-                 if path.name not in UNSCANNED and not SKIP_DIRS & set(path.relative_to(self.root).parts)
+                 if path.name not in _UNSCANNED and not _SKIP_DIRS & set(path.relative_to(self.root).parts)
                  and self.workspace not in path.parents}
         files |= {rel for agent in config.agents.values() for rel in agent.context}
         files |= {rel for table in config.coding_agents.values() for rel in table.get("context", [])}
         return sorted(files)
 
     def check_placeholders(self) -> None:
-        unresolved = [entry for rel in self.scanned_files() for entry in unresolved_placeholders(rel, self.read(rel))]
+        unresolved = [f"{rel}:{number}: {match.group(0)}" for rel in self.scanned_files()
+                      for number, line in enumerate(self.read(rel).splitlines(), 1)
+                      for match in _PLACEHOLDER.finditer(line)]
         if unresolved:
             raise InvalidDropInError("unresolved placeholders (see OPERATOR_GUIDE.md):\n  " + "\n  ".join(unresolved))
 
@@ -88,4 +89,4 @@ class DropInDirectory:
             spec.loader.exec_module(module)
 
 
-__all__ = ["CONFIG_FILE", "DropInDirectory", "unresolved_placeholders"]
+__all__ = ["DropInDirectory"]

@@ -19,11 +19,15 @@ from crux_scaffold.workspace import RunContext
 
 
 class CodingAgentOptions(Options):
+    """What every coding agent declares: the tool description its callers see, and its standing-context files."""
+
     description: str
     context: list[str] = []
 
 
 class CodingResult(BaseModel):
+    """One brief's result. `usage` counts as OpenAI reports it; telemetry splits it into exclusive buckets."""
+
     completed: bool
     final_response: str
     usage: TokenUsage
@@ -34,6 +38,10 @@ class CodingResult(BaseModel):
 
 
 class CodingAgent(Component):
+    """A full coding-agent harness (Codex or Claude Code) running as a subprocess, which agents delegate
+    implementation to with a brief. It brings its own tools, sandbox and context management, so it is far more
+    capable at changing code than an agent; declare one under `[coding_agents.<name>]` when the work is coding."""
+
     Options = CodingAgentOptions
 
     def __init__(self, name: str, options: CodingAgentOptions, *, developer_instructions: str = "") -> None:

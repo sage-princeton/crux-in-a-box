@@ -29,6 +29,8 @@ class IterationRecord(BaseModel):
 
 
 class RunState(BaseModel):
+    """Where the loop is and what it has done, saved after every iteration so a restarted scaffold resumes."""
+
     phase_index: int = 0
     iteration: int = 0
     next_prompt: str | None = None
@@ -53,12 +55,16 @@ class StateFile:
 
 
 class LoopOutcome(BaseModel):
+    """How the loop ended, the phase it ended in, and the orchestrator's last output."""
+
     status: Literal["completed", "iterations_exhausted", "budget_exhausted"]
     phase: str
     final_output: str
 
 
 class Loop(Component):
+    """The outer loop: decides what to prompt the orchestrator next and when the run is done, using the gates."""
+
     def __init__(self, name: str, options: Options, *, gates: Mapping[str, Gate]) -> None:
         super().__init__(name, options)
         self.gates = gates
@@ -80,6 +86,8 @@ class PhasedOptions(Options):
 
 @LOOPS.register
 class PhasedLoop(Loop):
+    """Runs phases in order, each repeated until its gates pass or it runs out of iterations."""
+
     type_name = "phased"
     Options = PhasedOptions
 

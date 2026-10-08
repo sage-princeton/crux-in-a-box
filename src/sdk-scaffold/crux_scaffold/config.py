@@ -21,6 +21,10 @@ ComponentTable = dict[str, Any]
 
 
 class AgentConfig(Options):
+    """An LLM agent the agent runtime runs in-process: a persona, standing context, scaffold tools, MCP servers and
+    delegates. Agents plan, coordinate and talk to people; delegate code changes to a coding agent, which runs a
+    full coding harness (Codex or Claude Code) and is far more capable at them."""
+
     persona: str
     context: list[str] = []
     tools: list[str] = []
@@ -31,6 +35,8 @@ class AgentConfig(Options):
 
 
 class McpServerConfig(Options):
+    """A stdio MCP server the agents that list it can use. It gets only the environment declared in `env`."""
+
     command: str
     args: list[str] = []
     env: dict[str, str] = {}
@@ -45,6 +51,8 @@ class McpServerConfig(Options):
 
 
 class PhaseConfig(Options):
+    """One phase of the `phased` loop: its first prompt, the prompt sent while its gates fail, and its limits."""
+
     name: str
     prompt: str
     continue_prompt: str
@@ -54,6 +62,9 @@ class PhaseConfig(Options):
 
 
 class ScaffoldConfig(Options):
+    """The whole of `scaffold.toml`. `agents` run in the agent runtime; `coding_agents` are coding harnesses
+    (`CodingAgent`) that agents delegate code changes to."""
+
     orchestrator: str
     workspace: str = "workspace"
     extensions: list[str] = []
