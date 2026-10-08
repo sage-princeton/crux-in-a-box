@@ -20,10 +20,6 @@ from crux_scaffold.gates import Gate, GateContext, GateResult
 from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import RunContext
 
-DEFAULT_CONTINUE_PROMPT = (
-    "Phase `$phase` is not done after iteration $iteration. The scaffold's gates reported:\n\n$feedback\n\n"
-    "Address every failure, then finish your turn.")
-
 
 class IterationRecord(BaseModel):
     phase: str
@@ -41,8 +37,10 @@ class RunState(BaseModel):
 
 
 class StateFile:
-    def __init__(self, path: Path) -> None:
-        self.path = path
+    """The run state, at `state.json` in the state directory, which it creates when it first saves."""
+
+    def __init__(self, state_dir: Path) -> None:
+        self.path = state_dir / "state.json"
 
     def load(self) -> RunState:
         return RunState.model_validate_json(self.path.read_text()) if self.path.is_file() else RunState()
@@ -135,8 +133,8 @@ class PhasedLoop(Loop):
         if written:
             return written
         feedback = "\n\n".join(f"## Gate `{result.gate}` failed\n\n{result.feedback}" for result in failed)
-        template = drop_in.read(phase.continue_prompt) if phase.continue_prompt else DEFAULT_CONTINUE_PROMPT
-        return Template(template).safe_substitute(phase=phase.name, iteration=iteration, feedback=feedback)
+        return Template(drop_in.read(phase.continue_prompt)).safe_substitute(phase=phase.name, iteration=iteration,
+                                                                             feedback=feedback)
 
     def describe(self) -> list[str]:
         return [f"phase {phase.name}: gates [{', '.join(phase.gates)}] max_iterations {phase.max_iterations}"

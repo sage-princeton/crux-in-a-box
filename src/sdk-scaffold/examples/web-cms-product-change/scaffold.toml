@@ -17,13 +17,14 @@ type = "phased"
 [[loop.phases]]
 name = "clarify"
 prompt = "PROMPT.md"
+continue_prompt = "prompts/clarify-continue.md"
 gates = ["spec_written"]
 max_iterations = 2
 
 [[loop.phases]]
 name = "implement"
 prompt = "prompts/implement.md"
-continue_prompt = "prompts/continue.md"
+continue_prompt = "prompts/implement-continue.md"
 gates = ["site_tests_pass", "verification_logged"]
 max_iterations = 3
 

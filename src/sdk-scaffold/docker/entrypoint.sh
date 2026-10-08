@@ -22,6 +22,6 @@ stage() {
 command=${1:-run}
 case $command in
   probe) shift; exec python -m crux_scaffold probe --coding-agent codex "$@" ;;
-  check|run) stage; exec python -m crux_scaffold "$command" --drop-in "$DEMO" ;;
+  check|run) stage; exec python -m crux_scaffold "$command" --drop-in "$DEMO" --state-dir "$DEMO/.state" ;;
   *) exec "$@" ;;
 esac

@@ -27,8 +27,6 @@ class AgentConfig(Options):
     mcp_servers: list[str] = []
     delegates: list[str] = []
     description: str = ""
-    model: str | None = None
-    reasoning_effort: str | None = None
     max_turns: int = Field(30, ge=1)
 
 
@@ -49,7 +47,7 @@ class McpServerConfig(Options):
 class PhaseConfig(Options):
     name: str
     prompt: str
-    continue_prompt: str | None = None
+    continue_prompt: str
     gates: list[str] = []
     max_iterations: int = Field(1, ge=1)
     interval_seconds: float = Field(0, ge=0)
@@ -61,7 +59,7 @@ class ScaffoldConfig(Options):
     extensions: list[str] = []
     runtime: ComponentTable = {"type": "openai-agents"}
     context: ComponentTable = {"type": "persistent"}
-    loop: ComponentTable = {"type": "phased", "phases": [{"name": "main", "prompt": "PROMPT.md"}]}
+    loop: ComponentTable
     budget: Budget = Budget()
     agents: dict[str, AgentConfig]
     coding_agents: dict[str, ComponentTable] = {}

@@ -52,7 +52,8 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 | Field | Use |
 |---|---|
 | `workspace` | `read_file`, `write_file` and `list_files` are confined to the workspace and raise `ToolError` outside it. `run_shell(command, timeout)` starts in the workspace but is not sandboxed. Its output is capped and prefixed with `exit_code=`. |
-| `state_dir` | The run's own state (`.state` by default). It sits outside the workspace and persists across restarts. |
+| `state_dir` | The run's own state, from `--state-dir`. It sits outside the workspace and persists across restarts. Each component creates what it writes there. |
+| `model`, `reasoning_effort` | The run's model and effort, for every agent and coding agent. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` are the only place they are set; `model` raises `InvalidDropInError` when `CRUX_MODEL` is unset. |
 | `env` | The scaffold's environment. Read configuration from here, not from `os.environ`, so tests can inject it. |
 | `usage`, `budget` | The token ledger and its limits. See [Budget and usage](#budget-and-usage). |
 | `telemetry` | See [Telemetry](#telemetry-telemetry). |
@@ -116,6 +117,8 @@ class SitePreview(Tool):
 
 First try adding phases, gates, continue prompts and `interval_seconds` to `phased` (`PhaseConfig` in `config.py`). A new loop is for a different control flow, not a different sequence of prompts.
 
+A drop-in always declares its `[loop]`; there is no default. Every phase names its `continue_prompt`, a `string.Template` with `$phase`, `$iteration` and `$feedback`.
+
 - It is constructed with the declared `gates` as a dependency. `run(runtime, drop_in, ctx, state, store) -> LoopOutcome` drives `runtime.run(prompt, workflow=…)` until it is done.
 - **Resumable:**
   - keep progress in `RunState`;
@@ -140,7 +143,7 @@ First try adding phases, gates, continue prompts and `interval_seconds` to `phas
 
 `coding_agents.py`, registry `CODING_AGENTS`. Built-in: `codex`.
 
-- **`Options`** subclasses `CodingAgentOptions`. That base has `description`, `context`, `model` and `reasoning_effort`. Before construction, the scaffold applies `with_run_defaults`, which fills the model and effort from `CRUX_MODEL` and `CRUX_REASONING_EFFORT`, so `options.model` is always set.
+- **`Options`** subclasses `CodingAgentOptions`, whose base has `description` and `context`. The model and effort are not options: use `ctx.model` and `ctx.reasoning_effort`. `codex` also gives Codex a 1M-token context window (`CONTEXT_WINDOW_TOKENS`).
 - **The constructor** must accept `developer_instructions`, the drop-in's standing context for the coding agent. Give any other dependency a default, such as `codex`'s `client_factory`, so tests can replace it.
 - **`execute(brief, ctx) -> CodingResult`** runs one brief to completion in the workspace. Each brief starts fresh: the brief is the whole task. Don't override `run`. It wraps `execute` in a telemetry `generation` and adds the usage to the ledger.
 - **`CodingResult`**:
@@ -169,8 +172,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 
 - **Agents.**
   - Build one agent per `[agents.<name>]`, with `drop_in.instructions(name)` as its instructions.
-  - The model comes from the agent's `model`, then the runtime's `model` option, then `CRUX_MODEL`. Raise `InvalidDropInError` when none is set.
-  - Reasoning effort is resolved the same way.
+  - Every agent uses `ctx.model` and `ctx.reasoning_effort`. A drop-in cannot set a model, so runs differ in model only by `CRUX_MODEL`.
 - **Tools.**
   - Expose each `Tool` with its `Arguments` schema.
   - Validate the model's arguments and call `invoke`.

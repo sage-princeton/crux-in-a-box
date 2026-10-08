@@ -8,6 +8,14 @@ FAKE_SLACK = Path(__file__).with_name("fake_slack_mcp.py")
 SCAFFOLD_TOML = '''
 orchestrator = "pm"
 
+[loop]
+type = "phased"
+
+[[loop.phases]]
+name = "main"
+prompt = "PROMPT.md"
+continue_prompt = "prompts/continue.md"
+
 [agents.pm]
 persona = "personas/pm.md"
 context = ["workspace/AGENTS.md"]
@@ -36,6 +44,7 @@ total_seconds = 90
 BASE_FILES = {
     "scaffold.toml": SCAFFOLD_TOML,
     "PROMPT.md": "Handle the request in channel C123.\n",
+    "prompts/continue.md": "Phase $phase, iteration $iteration:\n$feedback\n",
     "OPERATOR_GUIDE.md": "Resolve {{SLACK_CHANNEL_ID}} before launch.\n",
     "personas/pm.md": "You are the product manager.\n",
     "personas/reviewer.md": "You are the reviewer.\n",

@@ -4,9 +4,9 @@ implementation to. The coding agent brings its own proprietary scaffold; the dro
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from contextlib import aclosing
-from typing import Any, Literal, Self
+from typing import Any, Literal
 
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
 from openai_codex.generated.v2_all import ItemCompletedNotification
@@ -14,7 +14,6 @@ from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnComplete
 from pydantic import BaseModel
 
 from crux_scaffold.components import Component, Options, Registry
-from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
@@ -22,17 +21,6 @@ from crux_scaffold.workspace import RunContext
 class CodingAgentOptions(Options):
     description: str
     context: list[str] = []
-    model: str | None = None
-    reasoning_effort: str | None = None
-
-    def with_run_defaults(self, name: str, env: Mapping[str, str]) -> Self:
-        """Take the run's CRUX_MODEL and CRUX_REASONING_EFFORT where the drop-in sets neither, as agents do, so the
-        model is decided (and traced) by the scaffold rather than by the coding agent's own default."""
-        model = self.model or env.get("CRUX_MODEL")
-        if not model:
-            raise InvalidDropInError(f"coding agent '{name}' has no model: set CRUX_MODEL or the coding agent's model")
-        return self.model_copy(update={"model": model,
-                                       "reasoning_effort": self.reasoning_effort or env.get("CRUX_REASONING_EFFORT")})
 
 
 class CodingResult(BaseModel):
@@ -57,7 +45,7 @@ class CodingAgent(Component):
         return self.options.description
 
     async def run(self, brief: str, ctx: RunContext) -> CodingResult:
-        with ctx.telemetry.generation(self.name, self.options.model, brief) as outcome:
+        with ctx.telemetry.generation(self.name, ctx.model, brief) as outcome:
             result = await self.execute(brief, ctx)
             outcome.output, outcome.usage = result.final_response, result.usage
         ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens)
@@ -77,6 +65,7 @@ class CodexOptions(CodingAgentOptions):
 
 
 ClientFactory = Callable[[RunContext], AsyncCodex]
+CONTEXT_WINDOW_TOKENS = 1_000_000
 
 
 def codex_client(ctx: RunContext) -> AsyncCodex:
@@ -101,10 +90,11 @@ class CodexCodingAgent(CodingAgent):
             if ctx.env.get("OPENAI_API_KEY"):
                 await codex.login_api_key(ctx.env["OPENAI_API_KEY"])
             thread = await codex.thread_start(
-                cwd=str(ctx.workspace.root), model=self.options.model, sandbox=Sandbox(self.options.sandbox),
+                cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
-                developer_instructions=self.developer_instructions or None)
-            turn = await thread.turn(brief, effort=self.options.reasoning_effort)
+                developer_instructions=self.developer_instructions or None,
+                config={"model_context_window": CONTEXT_WINDOW_TOKENS})
+            turn = await thread.turn(brief, effort=ctx.reasoning_effort)
             final_response, usage, ended = "", TokenUsage(requests=1), None
             async with aclosing(turn.stream()) as events:
                 async for event in events:

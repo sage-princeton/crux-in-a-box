@@ -15,7 +15,6 @@ def test_defaults(tmp_path):
     config = load_config(write_config(tmp_path, SCAFFOLD_TOML))
     assert config.runtime == {"type": "openai-agents"}
     assert config.context == {"type": "persistent"}
-    assert config.loop == {"type": "phased", "phases": [{"name": "main", "prompt": "PROMPT.md"}]}
     assert config.budget.max_total_tokens is None
     assert config.agents["reviewer"].max_turns == 4
 
@@ -42,6 +41,8 @@ def test_missing_config_file_is_named(tmp_path):
      "names used by both an agent and a coding agent: reviewer"),
     ('persona = "personas/reviewer.md"', 'persona = "personas/reviewer.md"\ntool = ["read_file"]',
      "agents.reviewer.tool: Extra inputs are not permitted"),
+    ('[loop]\ntype = "phased"\n\n[[loop.phases]]\nname = "main"\nprompt = "PROMPT.md"\n'
+     'continue_prompt = "prompts/continue.md"\n', '', "loop: Field required"),
 ])
 def test_invalid_configs_name_the_problem(tmp_path, old, new, message):
     assert old in SCAFFOLD_TOML

@@ -85,7 +85,7 @@ flowchart LR
 ```
 scaffold.toml            the declaration (see examples/web-cms-product-change/scaffold.toml)
 PROMPT.md                first phase's prompt, sent verbatim
-prompts/*.md             later phase prompts and continue prompts
+prompts/*.md             later phase prompts, and each phase's continue prompt
 personas/*.md            one per agent
 scaffold_extensions.py   optional: the drop-in's own components
 workspace/               where agents work; AGENTS.md and other standing context live here
@@ -120,8 +120,8 @@ Gates, context strategies, coding agents, loops and runtimes extend the same way
 ## Commands
 
 ```bash
-python -m crux_scaffold check --drop-in DIR    # validate and print the assembly; no model calls
-python -m crux_scaffold run --drop-in DIR      # run the loop; resumes from DIR/.state after a restart
+python -m crux_scaffold check --drop-in DIR --state-dir STATE   # validate and print the assembly; no model calls
+python -m crux_scaffold run --drop-in DIR --state-dir STATE     # run the loop; a rerun with STATE resumes it
 python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (plus one Codex turn)
 ```
 
@@ -147,7 +147,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 | Variable | Use |
 |---|---|
 | `OPENAI_API_KEY` | Agent and Codex model calls |
-| `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The default model and effort for agents and coding agents. Overridden by `[runtime]` or by an agent's or coding agent's own settings. A run with no model for some agent or coding agent stops with a configuration error. |
+| `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The model and effort for every agent and coding agent. They are the only place these are set; a drop-in cannot override them. A run without `CRUX_MODEL` stops with a configuration error. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |

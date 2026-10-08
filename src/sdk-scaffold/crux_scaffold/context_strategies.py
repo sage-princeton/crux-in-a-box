@@ -14,6 +14,7 @@ from crux_scaffold.components import Component, Registry
 class ContextStrategy(Component):
     def session(self, session_id: str, state_dir: Path) -> Session:
         """The durable conversation store. The default survives scaffold restarts."""
+        state_dir.mkdir(parents=True, exist_ok=True)
         return SQLiteSession(session_id, state_dir / "sessions.sqlite")
 
     def select(self, items: list[Any]) -> list[Any]:

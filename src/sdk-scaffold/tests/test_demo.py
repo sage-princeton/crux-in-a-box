@@ -31,7 +31,8 @@ def test_the_pristine_demo_lists_its_placeholders(tmp_path, capsys):
 
 
 def test_the_resolved_demo_assembles(tmp_path, capsys):
-    assert main(["check", "--drop-in", str(resolved_copy(tmp_path))], env=CHECK_ENV) == 0
+    assert main(["check", "--drop-in", str(resolved_copy(tmp_path)), "--state-dir", str(tmp_path / "state")],
+                env=CHECK_ENV) == 0
     out = capsys.readouterr().out
     assert ("product_manager: tools [read_file, write_file, list_files, rest, site_tests, site_preview, "
             "budget_status, engineer] mcp [slack]") in out

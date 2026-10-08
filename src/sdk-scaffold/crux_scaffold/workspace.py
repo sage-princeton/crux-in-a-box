@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from crux_scaffold.errors import ToolError
+from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.usage import Budget, UsageLedger
 
 if TYPE_CHECKING:
@@ -90,3 +90,15 @@ class RunContext:
     budget: Budget
     telemetry: Telemetry
     sleep: Sleep = asyncio.sleep
+
+    @property
+    def model(self) -> str:
+        """The model every agent and coding agent uses. CRUX_MODEL is the only place it is set."""
+        if not self.env.get("CRUX_MODEL"):
+            raise InvalidDropInError("CRUX_MODEL is not set")
+        return self.env["CRUX_MODEL"]
+
+    @property
+    def reasoning_effort(self) -> str | None:
+        """The reasoning effort for every agent and coding agent, from CRUX_REASONING_EFFORT."""
+        return self.env.get("CRUX_REASONING_EFFORT") or None

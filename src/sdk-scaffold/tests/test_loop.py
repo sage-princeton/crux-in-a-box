@@ -15,7 +15,8 @@ from crux_scaffold.workspace import RunContext, Workspace
 from fakes import FakeRuntime, done
 
 TWO_PHASES = {"type": "phased", "phases": [
-    {"name": "clarify", "prompt": "PROMPT.md", "gates": ["spec"], "max_iterations": 2},
+    {"name": "clarify", "prompt": "PROMPT.md", "continue_prompt": "prompts/continue.md", "gates": ["spec"],
+     "max_iterations": 2},
     {"name": "build", "prompt": "prompts/build.md", "gates": ["review"], "max_iterations": 3,
      "continue_prompt": "prompts/continue.md", "interval_seconds": 7},
 ]}
@@ -24,7 +25,6 @@ PASS = [{"passed": True}]
 
 @pytest.fixture
 def loop_env(drop_in_dir, tmp_path):
-    (drop_in_dir / "prompts").mkdir()
     (drop_in_dir / "prompts/build.md").write_text("Build it.")
     (drop_in_dir / "prompts/continue.md").write_text("Iteration $iteration of $phase failed:\n$feedback")
     drop_in = DropInDirectory.load(drop_in_dir)
@@ -34,7 +34,7 @@ def loop_env(drop_in_dir, tmp_path):
         slept.append(seconds)
 
     def make(review=PASS, budget=None, state_dir=tmp_path / "state"):
-        store = StateFile(state_dir / "state.json")
+        store = StateFile(state_dir)
         state = store.load()
         ctx = RunContext(Workspace(drop_in.workspace), state_dir, {}, state.usage, budget or Budget(),
                          NullTelemetry(), sleep)
@@ -61,7 +61,7 @@ def test_failed_gates_feed_back_through_the_continue_prompt_until_iterations_run
     runtime = FakeRuntime([done("no spec"), done("still none")])
     outcome = asyncio.run(loop.run(runtime, drop_in, ctx, state, store))
     assert (outcome.status, outcome.phase) == ("iterations_exhausted", "clarify")
-    assert runtime.prompts[1].startswith("Phase `clarify` is not done after iteration 1.")
+    assert runtime.prompts[1].startswith("Iteration 1 of clarify failed:")
     assert "## Gate `spec` failed\n\n$ test -s REQUEST.md\nexit_code=1" in runtime.prompts[1]
     assert slept == []
 
@@ -104,7 +104,7 @@ def test_state_is_saved_after_every_iteration_and_a_restart_resumes(loop_env, tm
     saved = json.loads((tmp_path / "state/state.json").read_text())
     assert (saved["phase_index"], saved["iteration"], len(saved["history"])) == (0, 2, 2)
     (drop_in.workspace / "REQUEST.md").write_text("spec")
-    StateFile(tmp_path / "state/state.json").save(RunState(phase_index=1))
+    StateFile(tmp_path / "state").save(RunState(phase_index=1))
     loop, ctx, state, store = make()
     runtime = FakeRuntime([done("built")])
     assert asyncio.run(loop.run(runtime, drop_in, ctx, state, store)).status == "completed"
@@ -122,8 +122,20 @@ def test_the_budget_is_a_hard_stop_between_iterations(loop_env):
 
 def test_undefined_gates_and_duplicate_phases_are_config_errors():
     with pytest.raises(InvalidDropInError, match="phase 'a' uses undefined gate\\(s\\): tests"):
-        LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md", "gates": ["tests"]}]},
-                     gates={})
+        LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md", "continue_prompt": "C.md",
+                                                            "gates": ["tests"]}]}, gates={})
     with pytest.raises(InvalidDropInError, match="unique names"):
-        LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md"},
-                                                         {"name": "a", "prompt": "P.md"}]}, gates={})
+        LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md", "continue_prompt": "C.md"},
+                                                         {"name": "a", "prompt": "P.md", "continue_prompt": "C.md"}]},
+                     gates={})
+
+
+def test_every_phase_names_its_continue_prompt():
+    with pytest.raises(InvalidDropInError, match="phases.0.continue_prompt: Field required"):
+        LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md"}]}, gates={})
+
+
+def test_the_state_file_creates_its_directory_when_it_first_saves(tmp_path):
+    StateFile(tmp_path / "new/state").save(RunState(phase_index=1))
+    assert StateFile(tmp_path / "new/state").load().phase_index == 1
+    assert (tmp_path / "new/state/state.json").is_file()
