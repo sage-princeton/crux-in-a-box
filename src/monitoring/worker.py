@@ -19,7 +19,7 @@ from boto3.dynamodb.conditions import Key
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
-from fleet import LATE_EVIDENCE_SECONDS, deliver_summary, inventory_targets
+from fleet import LATE_EVIDENCE_SECONDS, deliver_enrollment, deliver_summary, inventory_targets
 from lifecycle import IncidentStore, evidence_anchors, sftp_anchor_positions
 from review import (
     MAX_EVIDENCE_BYTES,
@@ -238,8 +238,8 @@ def failure_message(error):
 
 
 def validate_registry(config):
-    if not isinstance(config.get("expires_at"), int) or config["expires_at"] <= 0:
-        raise ValueError("Registry requires a finite expiry epoch")
+    if not isinstance(config.get("expires_at"), int) or config["expires_at"] < 0:
+        raise ValueError("Registry expiry must be zero (continuous) or a positive timestamp")
     if not isinstance(config.get("targets"), dict) or not 0 <= len(config["targets"]) <= 200:
         raise ValueError("Register at most 200 explicit targets")
     if not config["targets"] and not config.get("fleet"):
@@ -370,6 +370,13 @@ class Runtime:
             boto3.resource("dynamodb", config=sdk).Table(os.environ["MONITORING_TABLE"])
         )
         self.incident_store = IncidentStore(self.state.table)
+        self.enrollment_status = None
+        if os.environ.get("MONITORING_STATUS_TABLE"):
+            from status_store import StatusStore
+
+            self.enrollment_status = StatusStore(
+                boto3.resource("dynamodb", config=sdk).Table(os.environ["MONITORING_STATUS_TABLE"])
+            )
         self.config = self.read_json("config/registry.json")
         validate_registry(self.config)
         self.http = httpx.Client(timeout=httpx.Timeout(180, connect=10), follow_redirects=False)
@@ -430,7 +437,7 @@ class Runtime:
 
     def discover(self):
         now = int(time.time())
-        if now >= self.config["expires_at"]:
+        if self.config["expires_at"] and now >= self.config["expires_at"]:
             return
         end = now // 300 * 300
         if self.config.get("fleet"):
@@ -679,7 +686,7 @@ class Runtime:
 
     def review(self, instance_id, end):
         now = int(time.time())
-        if now >= self.config["expires_at"]:
+        if self.config["expires_at"] and now >= self.config["expires_at"]:
             return
         targets, inventory, excluded = self.inventory()
         key, owner = f"REVIEW#{instance_id}#{end}", str(uuid.uuid4())
@@ -884,7 +891,7 @@ class Runtime:
             raise
 
     def fleet_digest(self):
-        if int(time.time()) >= self.config["expires_at"]:
+        if self.config["expires_at"] and int(time.time()) >= self.config["expires_at"]:
             return
         _, inventory = inventory_targets(self.ec2, self.config)
         self.incident_store.sync_fleet(inventory, complete=True)
@@ -892,6 +899,19 @@ class Runtime:
         def summaries():
             return self.incident_store.summaries(list(self.incident_store.all("FLEET")))
 
+        if self.enrollment_status is not None:
+            enrolled = {
+                row["instance_id"]
+                for row in self.enrollment_status.fleet()
+                if row.get("enrolled") and row.get("state") == "running"
+            }
+            for row in self.incident_store.all("FLEET"):
+                if (
+                    row["instance_id"] in enrolled
+                    and row.get("state") == "running"
+                    and row.get("review_count", 0) > 0
+                ):
+                    deliver_enrollment(self, row)
         delivery = deliver_summary(self, summaries)
         return {"notification": delivery, "instances": len(inventory)}
 

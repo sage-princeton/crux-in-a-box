@@ -350,3 +350,187 @@ def test_config_and_budget_baselines_do_not_invent_metrics(runtime):
     worker.config["summary_model"] = "openai/gpt-example"
     with pytest.raises(ValueError, match="same permitted family"):
         validate(worker.config)
+
+
+def enable_auto_registration(worker, iid):
+    worker.config.update(targets={}, auto_register_runs=True)
+    worker.ec2.create_tags(Resources=[iid], Tags=[{"Key": "MonitorWithCruxMonitor", "Value": "1"}])
+    validate(worker.config)
+
+
+def test_new_run_is_registered_and_queued_mapping_survives_termination(runtime):
+    worker, iid, end = runtime
+    enable_auto_registration(worker, iid)
+    worker.discover()
+    key = workload_key(iid, iid)
+    target = worker.store.get("JOB#" + key, str(end))["target"]
+    assert target["langfuse"] == {"environment": "project-alpha"}
+    assert target["subject_families"] == []
+    assert worker.submitted[0]["containerOverrides"]["command"][-3:] == [iid, iid, str(end)]
+    assert worker.store.fleet()[0]["enrolled"]
+    worker.ec2.terminate_instances(InstanceIds=[iid])
+    worker.discover()
+    assert worker.store.fleet()[0]["state"] == "no longer present"
+
+    def collect(registered, *args):
+        assert registered == target
+        return [
+            {"id": "observation:1", "kind": "langfuse", "data": {"model": "gpt-example"}},
+            {"id": "logs:approved-status", "kind": "logs", "data": "Two evaluations completed."},
+        ], []
+
+    worker.collect = collect
+    worker.check(iid, iid, end)
+    worker.check(iid, iid, end)
+    assert len(worker.calls) == 2
+    assert worker.store.fleet()[0]["latest"]["outcome"] == "completed"
+
+
+def test_automatic_registration_excludes_infrastructure_and_ambiguous_sources(runtime):
+    worker, iid, end = runtime
+    enable_auto_registration(worker, iid)
+    ids = {}
+    for label, name, tags in [
+        ("control", "controller", {"CruxRole": "control", "MonitorWithCruxMonitor": "1"}),
+        ("web", "web", {"CruxRole": "monitoring-web", "MonitorWithCruxMonitor": "1"}),
+        ("batch", "batch", {"MonitorWithCruxMonitor": "1", "AWSBatchServiceTag": "worker"}),
+        ("unrelated", "other", {}),
+        ("role_only", "role-only", {"CruxRole": "run"}),
+        ("disabled", "disabled", {"MonitorWithCruxMonitor": "0"}),
+        ("wrong_value", "wrong-value", {"MonitorWithCruxMonitor": "true"}),
+        ("duplicate", "project-alpha", {"MonitorWithCruxMonitor": "1"}),
+        ("stopped", "stopped", {"MonitorWithCruxMonitor": "1"}),
+    ]:
+        ids[label] = worker.ec2.run_instances(
+            ImageId="ami-12345678",
+            MinCount=1,
+            MaxCount=1,
+            TagSpecifications=[
+                {
+                    "ResourceType": "instance",
+                    "Tags": [{"Key": k, "Value": v} for k, v in {"Name": name, **tags}.items()],
+                }
+            ],
+        )["Instances"][0]["InstanceId"]
+    worker.ec2.stop_instances(InstanceIds=[ids["stopped"]])
+    worker.discover()
+    assert {r["instance_id"] for r in worker.store.fleet()} == {
+        iid,
+        ids["duplicate"],
+        ids["stopped"],
+    }
+    assert len(worker.submitted) == 2
+    for instance in (iid, ids["duplicate"]):
+        target = worker.store.get("JOB#" + workload_key(instance, instance), str(end))["target"]
+        assert "langfuse" not in target
+
+
+def test_auto_registration_preserves_overrides_and_does_not_ack_failed_submission(runtime):
+    worker, iid, end = runtime
+    worker.config["auto_register_runs"] = True
+    worker.ec2.create_tags(Resources=[iid], Tags=[{"Key": "MonitorWithCruxMonitor", "Value": "1"}])
+
+    def fail(**kwargs):
+        raise RuntimeError("Queue unavailable")
+
+    worker.batch.submit_job = fail
+    with pytest.raises(RuntimeError, match="Queue unavailable"):
+        worker.discover()
+    row = worker.store.fleet()[0]
+    assert row["workload_id"] == "experiment-1" and not row.get("enrolled")
+    assert worker.store.get("JOB#" + row["sk"], str(end))["target"]["logs"]
+
+
+@pytest.mark.parametrize("model", [None, "claude-example"])
+def test_auto_registered_checks_require_an_independent_observed_model(runtime, model):
+    worker, iid, end = runtime
+    enable_auto_registration(worker, iid)
+    worker.discover()
+    worker.collect = lambda *args: (
+        [{"id": "observation:1", "kind": "langfuse", "data": {"model": model}}],
+        [],
+    )
+    with pytest.raises(CoverageError, match="family"):
+        worker.check(iid, iid, end)
+    assert not worker.calls
+    worker.config["auto_register_runs"] = False
+    worker.check(iid, iid, end)
+    worker.check("i-00000000000000000", "unknown", end)
+    assert not worker.calls
+
+
+def test_incident_discovery_and_enrollment_notice_retry_after_both_monitors_start(
+    runtime, monkeypatch
+):
+    from worker import Runtime
+
+    status, iid, end = runtime
+    enable_auto_registration(status, iid)
+    table = boto3.resource("dynamodb").create_table(
+        TableName="incident-enrollment",
+        BillingMode="PAY_PER_REQUEST",
+        KeySchema=[
+            {"AttributeName": "pk", "KeyType": "HASH"},
+            {"AttributeName": "sk", "KeyType": "RANGE"},
+        ],
+        AttributeDefinitions=[{"AttributeName": k, "AttributeType": "S"} for k in ("pk", "sk")],
+    )
+    monkeypatch.setenv("MONITORING_TABLE", table.name)
+    monkeypatch.setenv("MONITORING_STATUS_TABLE", status.store.table.name)
+    monkeypatch.setenv("MONITORING_BUCKET", status.bucket)
+    monkeypatch.setenv("MONITORING_QUEUE", "incident-queue")
+    monkeypatch.setenv("MONITORING_REVIEW_JOB", "incident-review")
+    status.put(
+        "config/registry.json",
+        {
+            "expires_at": 0,
+            "targets": {},
+            "fleet": {"exclude_names": ["crux-control"], "langfuse_by_name": True},
+            "reviewer_models": ["anthropic/claude-example"],
+            "inference_budget_usd": 10,
+        },
+    )
+    incident = Runtime()
+    submitted, notices = [], []
+    incident.batch = SimpleNamespace(submit_job=lambda **args: submitted.append(args))
+    # The pending-job index is exercised by existing state tests.
+    incident.state.pending = lambda: []
+    incident.secrets = lambda: {
+        "MONITORING_SLACK_WEBHOOK_URL": "https://hooks.slack.com/services/test/fixture/only"
+    }
+    monkeypatch.setattr("worker.deliver_summary", lambda *args: "suppressed")
+    incident.discover()
+    assert submitted[0]["containerOverrides"]["command"][-2] == iid
+    review_end = int(submitted[0]["containerOverrides"]["command"][-1])
+    assert incident.state.get(f"REVIEW#{iid}#{review_end}")["target"]["langfuse"] == {
+        "environment": "project-alpha"
+    }
+
+    def slack(request):
+        notices.append(json.loads(request.content))
+        return httpx.Response(
+            503 if len(notices) == 1 else 200, text="busy" if len(notices) == 1 else "ok"
+        )
+
+    incident.http.close()
+    with httpx.Client(transport=httpx.MockTransport(slack)) as client:
+        incident.http = client
+        incident.fleet_digest()
+        status.discover()
+        incident.fleet_digest()
+        assert not notices  # Discovery alone does not claim incident reviews have begun.
+        table.update_item(
+            Key={"pk": "FLEET", "sk": iid},
+            UpdateExpression="SET review_count=:one",
+            ExpressionAttributeValues={":one": 1},
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            incident.fleet_digest()
+        assert not incident.state.get("NOTICE#enrollment#" + iid).get("delivered_at")
+        incident.fleet_digest()
+        incident.fleet_digest()
+        assert len(notices) == 2
+        assert iid in notices[-1]["text"] and "project-alpha" in notices[-1]["text"]
+        assert "Status checks and incident monitoring" in notices[-1]["text"]
+        assert notices[-1]["blocks"][0]["text"]["type"] == "plain_text"
+        assert incident.state.get("NOTICE#enrollment#" + iid)["delivered_at"]

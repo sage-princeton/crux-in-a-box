@@ -413,6 +413,8 @@ INSTANCE_ID="$(aws_ ec2 describe-instances \
 
 if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   warn "Reusing existing instance $INSTANCE_ID tagged Name=$SLUG"
+  aws_ ec2 create-tags --resources "$INSTANCE_ID" \
+    --tags "Key=MonitorWithCruxMonitor,Value=1"
   STATE="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
     --query 'Reservations[0].Instances[0].State.Name' --output text)"
   [ "$STATE" = "stopped" ] && { info "Starting it"; aws_ ec2 start-instances --instance-ids "$INSTANCE_ID" >/dev/null; }
@@ -424,7 +426,7 @@ else
     --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
     --metadata-options "HttpTokens=required" \
     --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT},\"DeleteOnTermination\":true}}]" \
-    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run}]" \
+    --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run},{Key=MonitorWithCruxMonitor,Value=1}]" \
     --query 'Instances[0].InstanceId' --output text)"
   ok "Launched $INSTANCE_ID"
 fi

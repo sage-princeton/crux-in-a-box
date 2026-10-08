@@ -29,13 +29,9 @@ variable "revision" {
   type    = string
   default = "unbuilt"
 }
-variable "enabled" {
-  type    = bool
-  default = false
-}
 variable "registry_file" {
   type        = string
-  description = "Local non-secret registry JSON; expires_at bounds the deployment's activity."
+  description = "Local non-secret registry JSON. Fleet discovery is always enabled and expires_at is always set to zero."
 }
 variable "secrets_parameter_arn" {
   type        = string
@@ -67,10 +63,6 @@ variable "subnet_ids" {
   type        = list(string)
   default     = []
   description = "When using an existing VPC, supply subnets with established outbound HTTPS connectivity."
-}
-variable "schedule_end" {
-  type        = string
-  description = "UTC RFC3339 scheduler end time; match registry expires_at."
 }
 variable "public_incident_log" {
   type        = bool

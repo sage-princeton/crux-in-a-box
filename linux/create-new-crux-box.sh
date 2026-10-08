@@ -486,6 +486,7 @@ if [ "$EXISTING_ID" != "None" ] && [ -n "$EXISTING_ID" ]; then
     # Tag the existing instance with API key info
     aws ec2 create-tags --resources "$INSTANCE_ID" --region "$REGION" \
       --tags \
+        "Key=MonitorWithCruxMonitor,Value=1" \
         "Key=LlmProvider,Value=$LLM_PROVIDER" \
         "Key=ApiKeySuffix,Value=$API_KEY_SUFFIX" \
         "Key=ApiSpendAtCreation,Value=$INITIAL_SPEND"
@@ -504,7 +505,7 @@ else
     --block-device-mappings \
       "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${DISK_SIZE_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT}}}]" \
     --tag-specifications \
-      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=LlmProvider,Value=$LLM_PROVIDER},{Key=ApiKeySuffix,Value=$API_KEY_SUFFIX},{Key=ApiSpendAtCreation,Value=$INITIAL_SPEND}]" \
+      "ResourceType=instance,Tags=[{Key=Name,Value=$INSTANCE_NAME},{Key=MonitorWithCruxMonitor,Value=1},{Key=LlmProvider,Value=$LLM_PROVIDER},{Key=ApiKeySuffix,Value=$API_KEY_SUFFIX},{Key=ApiSpendAtCreation,Value=$INITIAL_SPEND}]" \
     --query 'Instances[0].InstanceId' --output text)
   ok "Instance launched: $INSTANCE_ID"
 fi
