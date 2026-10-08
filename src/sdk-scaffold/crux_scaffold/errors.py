@@ -1,4 +1,4 @@
-class ConfigError(ValueError):
+class InvalidDropInError(ValueError):
     """A drop-in directory that cannot be run as declared."""
 
 

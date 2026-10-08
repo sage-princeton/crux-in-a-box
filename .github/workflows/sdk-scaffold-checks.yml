@@ -32,7 +32,7 @@ jobs:
       - run: ruff check .
       - run: python -m pytest -q
       - name: Demo site tests
-        run: python -m unittest discover -s examples/product-change/workspace/site
+        run: python -m unittest discover -s examples/web-cms-product-change/workspace/site
       - name: Lint the demo's Docker scripts
         run: shellcheck docker/*.sh
 

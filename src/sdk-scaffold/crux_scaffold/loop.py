@@ -11,18 +11,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from crux_scaffold.agent_runtimes.base import AgentRuntime
 from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.config import PhaseConfig
 from crux_scaffold.drop_in import DropInDirectory
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import Gate, GateContext, GateResult
-from crux_scaffold.runtimes.base import AgentRuntime
 from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import RunContext
-
-DEFAULT_CONTINUE_PROMPT = (
-    "Phase `$phase` is not done after iteration $iteration. The scaffold's gates reported:\n\n$feedback\n\n"
-    "Address every failure, then finish your turn.")
 
 
 class IterationRecord(BaseModel):
@@ -33,6 +29,8 @@ class IterationRecord(BaseModel):
 
 
 class RunState(BaseModel):
+    """Where the loop is and what it has done, saved after every iteration so a restarted scaffold resumes."""
+
     phase_index: int = 0
     iteration: int = 0
     next_prompt: str | None = None
@@ -41,8 +39,10 @@ class RunState(BaseModel):
 
 
 class StateFile:
-    def __init__(self, path: Path) -> None:
-        self.path = path
+    """The run state, at `state.json` in the state directory, which it creates when it first saves."""
+
+    def __init__(self, state_dir: Path) -> None:
+        self.path = state_dir / "state.json"
 
     def load(self) -> RunState:
         return RunState.model_validate_json(self.path.read_text()) if self.path.is_file() else RunState()
@@ -55,12 +55,16 @@ class StateFile:
 
 
 class LoopOutcome(BaseModel):
+    """How the loop ended, the phase it ended in, and the orchestrator's last output."""
+
     status: Literal["completed", "iterations_exhausted", "budget_exhausted"]
     phase: str
     final_output: str
 
 
 class Loop(Component):
+    """The outer loop: decides what to prompt the orchestrator next and when the run is done, using the gates."""
+
     def __init__(self, name: str, options: Options, *, gates: Mapping[str, Gate]) -> None:
         super().__init__(name, options)
         self.gates = gates
@@ -82,6 +86,8 @@ class PhasedOptions(Options):
 
 @LOOPS.register
 class PhasedLoop(Loop):
+    """Runs phases in order, each repeated until its gates pass or it runs out of iterations."""
+
     type_name = "phased"
     Options = PhasedOptions
 
@@ -89,11 +95,11 @@ class PhasedLoop(Loop):
         super().__init__(name, options, gates=gates)
         names = [phase.name for phase in options.phases]
         if len(set(names)) != len(names):
-            raise ConfigError(f"loop phases must have unique names: {', '.join(names)}")
+            raise InvalidDropInError(f"loop phases must have unique names: {', '.join(names)}")
         for phase in options.phases:
             missing = [gate for gate in phase.gates if gate not in gates]
             if missing:
-                raise ConfigError(f"phase '{phase.name}' uses undefined gate(s): {', '.join(missing)}")
+                raise InvalidDropInError(f"phase '{phase.name}' uses undefined gate(s): {', '.join(missing)}")
 
     async def run(self, runtime: AgentRuntime, drop_in: DropInDirectory, ctx: RunContext, state: RunState,
                   store: StateFile) -> LoopOutcome:
@@ -135,8 +141,8 @@ class PhasedLoop(Loop):
         if written:
             return written
         feedback = "\n\n".join(f"## Gate `{result.gate}` failed\n\n{result.feedback}" for result in failed)
-        template = drop_in.read(phase.continue_prompt) if phase.continue_prompt else DEFAULT_CONTINUE_PROMPT
-        return Template(template).safe_substitute(phase=phase.name, iteration=iteration, feedback=feedback)
+        return Template(drop_in.read(phase.continue_prompt)).safe_substitute(phase=phase.name, iteration=iteration,
+                                                                             feedback=feedback)
 
     def describe(self) -> list[str]:
         return [f"phase {phase.name}: gates [{', '.join(phase.gates)}] max_iterations {phase.max_iterations}"

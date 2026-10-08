@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import Field, ValidationError, model_validator
 
 from crux_scaffold.components import Options, describe
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import Budget
 
 CONFIG_FILE = "scaffold.toml"
@@ -21,18 +21,22 @@ ComponentTable = dict[str, Any]
 
 
 class AgentConfig(Options):
+    """An LLM agent the agent runtime runs in-process: a persona, standing context, scaffold tools, MCP servers and
+    delegates. Agents plan, coordinate and talk to people; delegate code changes to a coding agent, which runs a
+    full coding harness (Codex or Claude Code) and is far more capable at them."""
+
     persona: str
     context: list[str] = []
     tools: list[str] = []
     mcp_servers: list[str] = []
     delegates: list[str] = []
     description: str = ""
-    model: str | None = None
-    reasoning_effort: str | None = None
     max_turns: int = Field(30, ge=1)
 
 
 class McpServerConfig(Options):
+    """A stdio MCP server the agents that list it can use. It gets only the environment declared in `env`."""
+
     command: str
     args: list[str] = []
     env: dict[str, str] = {}
@@ -42,26 +46,31 @@ class McpServerConfig(Options):
         """`env` with ${VAR} references filled from the scaffold's environment; never echoes values."""
         missing = sorted({var for value in self.env.values() for var in ENV_REF.findall(value) if not env.get(var)})
         if missing:
-            raise ConfigError(f"MCP server '{name}' needs environment variable(s): {', '.join(missing)}")
+            raise InvalidDropInError(f"MCP server '{name}' needs environment variable(s): {', '.join(missing)}")
         return {key: ENV_REF.sub(lambda match: env[match.group(1)], value) for key, value in self.env.items()}
 
 
 class PhaseConfig(Options):
+    """One phase of the `phased` loop: its first prompt, the prompt sent while its gates fail, and its limits."""
+
     name: str
     prompt: str
-    continue_prompt: str | None = None
+    continue_prompt: str
     gates: list[str] = []
     max_iterations: int = Field(1, ge=1)
     interval_seconds: float = Field(0, ge=0)
 
 
 class ScaffoldConfig(Options):
+    """The whole of `scaffold.toml`. `agents` run in the agent runtime; `coding_agents` are coding harnesses
+    (`CodingAgent`) that agents delegate code changes to."""
+
     orchestrator: str
     workspace: str = "workspace"
     extensions: list[str] = []
     runtime: ComponentTable = {"type": "openai-agents"}
     context: ComponentTable = {"type": "persistent"}
-    loop: ComponentTable = {"type": "phased", "phases": [{"name": "main", "prompt": "PROMPT.md"}]}
+    loop: ComponentTable
     budget: Budget = Budget()
     agents: dict[str, AgentConfig]
     coding_agents: dict[str, ComponentTable] = {}
@@ -113,13 +122,14 @@ def delegation_order(agents: Mapping[str, AgentConfig]) -> list[str]:
     return order
 
 
+# TODO(AE-252): validate every run's scaffold.toml in CI.
 def load_config(root: Path) -> ScaffoldConfig:
     path = root / CONFIG_FILE
     if not path.is_file():
-        raise ConfigError(f"{CONFIG_FILE} not found under {root}")
+        raise InvalidDropInError(f"{CONFIG_FILE} not found under {root}")
     try:
         return ScaffoldConfig.model_validate(tomllib.loads(path.read_text()))
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"{CONFIG_FILE}: {exc}") from None
+        raise InvalidDropInError(f"{CONFIG_FILE}: {exc}") from None
     except ValidationError as exc:
-        raise ConfigError(f"{CONFIG_FILE}: {describe(exc)}") from None
+        raise InvalidDropInError(f"{CONFIG_FILE}: {describe(exc)}") from None

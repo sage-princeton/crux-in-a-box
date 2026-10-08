@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 
 from drop_ins import add_fake_slack, edit
 from scripted import ScriptedModel, call, say, tool_outputs
@@ -59,37 +59,38 @@ def test_usage_is_recorded_per_agent_and_persisted(drop_in_dir, assemble, tmp_pa
 
 def test_unknown_tool_type_is_a_config_error(drop_in_dir, assemble):
     edit(drop_in_dir, "scaffold.toml", 'tools = ["read_file", "write_file", "rest"]', 'tools = ["deploy"]')
-    with pytest.raises(ConfigError, match="unknown tool type 'deploy'"):
+    with pytest.raises(InvalidDropInError, match="unknown tool type 'deploy'"):
         assemble(drop_in_dir)
 
 
-def test_reasoning_effort_comes_from_env_unless_overridden(drop_in_dir, assemble):
-    edit(drop_in_dir, "scaffold.toml", "max_turns = 4", 'max_turns = 4\nreasoning_effort = "high"')
+def test_every_agent_takes_the_run_model_and_effort_from_the_env(drop_in_dir, assemble):
     scaffold = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "low"})
     scaffold.runtime.build()
-    agents = scaffold.runtime.agents
-    assert (agents["pm"].model, agents["pm"].model_settings.reasoning.effort) == ("gpt-test", "low")
-    assert agents["reviewer"].model_settings.reasoning.effort == "high"
+    assert {name: (agent.model, agent.model_settings.reasoning.effort)
+            for name, agent in scaffold.runtime.agents.items()} == {"pm": ("gpt-test", "low"),
+                                                                     "reviewer": ("gpt-test", "low")}
 
 
-def test_an_agent_without_a_model_is_a_config_error(drop_in_dir, assemble):
-    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "scripted"\nmodel = "gpt-codex-test"')
-    with pytest.raises(ConfigError, match="agent 'reviewer' has no model"):
+def test_a_run_without_crux_model_is_a_config_error(drop_in_dir, assemble):
+    with pytest.raises(InvalidDropInError, match="CRUX_MODEL is not set"):
         assemble(drop_in_dir, env={}).runtime.build()
 
 
-def test_coding_agents_take_the_run_model_and_effort_unless_the_drop_in_sets_them(drop_in_dir, assemble):
-    engineer = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "medium"}
-                        ).coding_agents["engineer"]
-    assert (engineer.options.model, engineer.options.reasoning_effort) == ("gpt-test", "medium")
-    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "scripted"\nmodel = "gpt-codex-test"')
-    engineer = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test"}).coding_agents["engineer"]
-    assert (engineer.options.model, engineer.options.reasoning_effort) == ("gpt-codex-test", None)
-
-
-def test_a_coding_agent_without_a_model_is_a_config_error(drop_in_dir, assemble):
-    with pytest.raises(ConfigError, match="coding agent 'engineer' has no model"):
-        assemble(drop_in_dir, env={})
+@pytest.mark.parametrize("anchor,setting", [
+    ("max_turns = 4", 'model = "gpt-other"'),
+    ("max_turns = 4", 'reasoning_effort = "high"'),
+    ('type = "scripted"', 'model = "gpt-other"'),
+    ('type = "scripted"', 'reasoning_effort = "high"'),
+    ('orchestrator = "pm"', '[runtime]\ntype = "openai-agents"\nmodel = "gpt-other"'),
+    ('orchestrator = "pm"', '[runtime]\ntype = "openai-agents"\nreasoning_effort = "high"'),
+])
+def test_a_drop_in_cannot_set_a_model_or_effort(drop_in_dir, assemble, anchor, setting):
+    if anchor.startswith("orchestrator"):
+        (drop_in_dir / "scaffold.toml").write_text((drop_in_dir / "scaffold.toml").read_text() + "\n" + setting + "\n")
+    else:
+        edit(drop_in_dir, "scaffold.toml", anchor, f"{anchor}\n{setting}")
+    with pytest.raises(InvalidDropInError, match="Extra inputs are not permitted"):
+        assemble(drop_in_dir)
 
 
 def test_mcp_server_gets_its_declared_env_but_not_the_scaffold_secrets(drop_in_dir, assemble, tmp_path, monkeypatch):

@@ -14,7 +14,7 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 | **Workspace** | The directory the agents work in, inside the drop-in directory. |
 | **Agent runtime** | The agent SDK that runs the declared agents: OpenAI Agents SDK now, Claude Agent SDK later. |
 | **Agent**, **orchestrator** | An LLM agent declared with a persona, standing context and tools. The orchestrator is the agent that receives the loop's prompts. |
-| **Coding agent** | A non-interactive coding-agent SDK session (Codex now, Claude Code later) that agents delegate implementation to. It keeps its own proprietary scaffold. |
+| **Coding agent** | A non-interactive coding-agent SDK session (Codex now, Claude Code later) that agents delegate implementation to. It runs the full coding harness as a subprocess, with its own tools, sandbox and context management, so it is far more capable at changing code than an agent. Declare an agent for planning, coordination and talking to people, and a coding agent for code changes. |
 | **Delegate** | An agent or coding agent that another agent calls as a tool. It starts from a fresh context holding only the caller's brief. |
 | **Persona**, **standing context** | Who an agent is (`personas/*.md`); what it must know for the whole run (the files in its `context`). |
 | **Toolkit**, **tool** | The functions agents can call: built-ins plus a drop-in's extensions. |
@@ -41,9 +41,9 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Observability | `Telemetry` | Langfuse, or off |
 | Resource management | `Budget`, `budget_status` | token limits |
 
-`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
+`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
-The product-change demo in this design, as a C4 container view:
+The web-cms-product-change demo in this design, as a C4 container view:
 
 ```mermaid
 flowchart LR
@@ -83,9 +83,9 @@ flowchart LR
 ## A drop-in directory
 
 ```
-scaffold.toml            the declaration (see examples/product-change/scaffold.toml)
+scaffold.toml            the declaration (see examples/web-cms-product-change/scaffold.toml)
 PROMPT.md                first phase's prompt, sent verbatim
-prompts/*.md             later phase prompts and continue prompts
+prompts/*.md             later phase prompts, and each phase's continue prompt
 personas/*.md            one per agent
 scaffold_extensions.py   optional: the drop-in's own components
 workspace/               where agents work; AGENTS.md and other standing context live here
@@ -120,8 +120,8 @@ Gates, context strategies, coding agents, loops and runtimes extend the same way
 ## Commands
 
 ```bash
-python -m crux_scaffold check --drop-in DIR    # validate and print the assembly; no model calls
-python -m crux_scaffold run --drop-in DIR      # run the loop; resumes from DIR/.state after a restart
+python -m crux_scaffold check --drop-in DIR --state-dir STATE   # validate and print the assembly; no model calls
+python -m crux_scaffold run --drop-in DIR --state-dir STATE     # run the loop; a rerun with STATE resumes it
 python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (plus one Codex turn)
 ```
 
@@ -147,16 +147,16 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 | Variable | Use |
 |---|---|
 | `OPENAI_API_KEY` | Agent and Codex model calls |
-| `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The default model and effort for agents and coding agents. Overridden by `[runtime]` or by an agent's or coding agent's own settings. A run with no model for some agent or coding agent stops with a configuration error. |
+| `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The model and effort for every agent and coding agent. They are the only place these are set; a drop-in cannot override them. A run without `CRUX_MODEL` stops with a configuration error. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |
 
 ## Run the demo in Docker
 
-`docker/demo.sh` builds an image holding the scaffold, the demo drop-in and the Slack MCP server, then runs it. The container stages the drop-in once in the volume `crux-sdk-scaffold-demo` at `/work/product-change`, so a rerun resumes the run there.
+`docker/demo.sh` builds an image holding the scaffold, the demo drop-in and the Slack MCP server, then runs it. The container stages the drop-in once in the volume `crux-sdk-scaffold-demo` at `/work/web-cms-product-change`, so a rerun resumes the run there.
 
-1. **Slack.** Create the app from [`examples/product-change/slack-app-manifest.yaml`](examples/product-change/slack-app-manifest.yaml), then install it, invite the bot to a channel and copy the channel ID. See the demo's [OPERATOR_GUIDE.md](examples/product-change/OPERATOR_GUIDE.md), section 1.
+1. **Slack.** Create the app from [`examples/web-cms-product-change/slack-app-manifest.yaml`](examples/web-cms-product-change/slack-app-manifest.yaml), then install it, invite the bot to a channel and copy the channel ID. See the demo's [OPERATOR_GUIDE.md](examples/web-cms-product-change/OPERATOR_GUIDE.md), section 1.
 2. **Secrets.** Export them in the shell that runs `demo.sh`. `read -rs` keeps them off the screen and out of shell history:
 
    ```bash
@@ -179,7 +179,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 
    Before `run`, post the request in the channel as yourself, as a top-level message: *"Can events show where they're happening?"* Then answer the agent's question in the thread. The demo's OPERATOR_GUIDE.md, sections 3 and 4, describes the run and what success looks like.
 4. **Inspect, stop, reset.**
-   - `docker/demo.sh bash` opens a shell in the volume. `REQUEST.md`, `LOG.md` and `site/` are in `/work/product-change/workspace`, and the loop state is in `/work/product-change/.state`.
+   - `docker/demo.sh bash` opens a shell in the volume. `REQUEST.md`, `LOG.md` and `site/` are in `/work/web-cms-product-change/workspace`, and the loop state is in `/work/web-cms-product-change/.state`.
    - Ctrl-C or `docker stop` ends the run cleanly (exit 130 or 143). `docker/demo.sh run` resumes it.
    - `docker/demo.sh reset` deletes the volume so the next run starts fresh.
 

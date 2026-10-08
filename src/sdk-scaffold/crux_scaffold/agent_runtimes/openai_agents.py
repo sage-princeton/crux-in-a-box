@@ -27,19 +27,17 @@ from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import Field, ValidationError
 
+from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
 from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.errors import ConfigError, ToolError
-from crux_scaffold.runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
+from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool
 from crux_scaffold.usage import UsageLedger
 
 
 class OpenAIAgentsOptions(Options):
-    model: str | None = None
-    reasoning_effort: str | None = None
     max_turns: int = Field(50, ge=1)
 
 
@@ -86,9 +84,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
             self.agents[name] = Agent(
                 name=name, instructions=self.assembly.drop_in.instructions(name), tools=tools,
                 mcp_servers=[self.servers[server] for server in spec.mcp_servers],
-                model=self._model(name, spec.model), model_settings=self._settings(spec.reasoning_effort))
+                model=self._model(name), model_settings=self._settings())
 
     async def __aenter__(self) -> Self:
+        # TODO(AE-247): let the AgentRuntime base class own telemetry setup for every runtime.
         trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
         for server in self.servers.values():
@@ -121,23 +120,19 @@ class OpenAIAgentsRuntime(AgentRuntime):
         trace_agents_sdk(telemetry)
         model = env.get("CRUX_MODEL")
         if not model:
-            raise ConfigError("CRUX_MODEL is not set")
+            raise InvalidDropInError("CRUX_MODEL is not set")
         effort = env.get("CRUX_REASONING_EFFORT")
         settings = ModelSettings(reasoning=Reasoning(effort=effort)) if effort else ModelSettings()
         agent = Agent(name="probe", instructions="Reply with exactly the text you are asked for.", model=model,
                       model_settings=settings)
         return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
 
-    def _model(self, agent: str, override: str | None) -> str | Model:
-        if agent in self.models:
-            return self.models[agent]
-        model = override or self.options.model or self.assembly.context.env.get("CRUX_MODEL")
-        if not model:
-            raise ConfigError(f"agent '{agent}' has no model: set CRUX_MODEL, [runtime] model, or the agent's model")
-        return model
+    def _model(self, agent: str) -> str | Model:
+        """The run's model; tests substitute scripted models per agent through `models`."""
+        return self.models[agent] if agent in self.models else self.assembly.context.model
 
-    def _settings(self, override: str | None) -> ModelSettings:
-        effort = override or self.options.reasoning_effort or self.assembly.context.env.get("CRUX_REASONING_EFFORT")
+    def _settings(self) -> ModelSettings:
+        effort = self.assembly.context.reasoning_effort
         return ModelSettings(reasoning=Reasoning(effort=effort)) if effort else ModelSettings()
 
     def _select_input(self, data: CallModelData[Any]) -> ModelInputData:

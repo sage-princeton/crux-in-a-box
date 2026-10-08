@@ -9,13 +9,13 @@ from crux_scaffold.config import load_config
 from drop_ins import FAKE_SLACK
 from scripted import ScriptedModel, call, say
 
-DEMO = Path(__file__).resolve().parents[1] / "examples" / "product-change"
+DEMO = Path(__file__).resolve().parents[1] / "examples" / "web-cms-product-change"
 CHECK_ENV = {"CRUX_MODEL": "gpt-test", "SLACK_BOT_TOKEN": "xoxb-test"}
 THREAD = "1700000000.000100"
 
 
 def resolved_copy(tmp_path: Path) -> Path:
-    root = tmp_path / "product-change"
+    root = tmp_path / "web-cms-product-change"
     shutil.copytree(DEMO, root)
     for rel in ("PROMPT.md", "scaffold.toml", "workspace/AGENTS.md"):
         path = root / rel
@@ -31,7 +31,8 @@ def test_the_pristine_demo_lists_its_placeholders(tmp_path, capsys):
 
 
 def test_the_resolved_demo_assembles(tmp_path, capsys):
-    assert main(["check", "--drop-in", str(resolved_copy(tmp_path))], env=CHECK_ENV) == 0
+    assert main(["check", "--drop-in", str(resolved_copy(tmp_path)), "--state-dir", str(tmp_path / "state")],
+                env=CHECK_ENV) == 0
     out = capsys.readouterr().out
     assert ("product_manager: tools [read_file, write_file, list_files, rest, site_tests, site_preview, "
             "budget_status, engineer] mcp [slack]") in out

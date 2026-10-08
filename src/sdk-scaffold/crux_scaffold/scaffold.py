@@ -7,25 +7,26 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import crux_scaffold.runtimes.openai_agents  # noqa: F401  registers the built-in runtime
+import crux_scaffold.agent_runtimes.openai_agents  # noqa: F401  registers the built-in runtime
+from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS, LoopOutcome, StateFile
-from crux_scaffold.runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import TOOLS, Tool
 from crux_scaffold.workspace import RunContext, Sleep, Workspace
 
 
 class Scaffold:
+    """Builds every component a drop-in declares and runs its loop."""
+
     def __init__(self, drop_in: DropInDirectory, env: Mapping[str, str], *, state_dir: Path, telemetry: Telemetry,
                  sleep: Sleep = asyncio.sleep, runtime_overrides: Mapping[str, Any] | None = None) -> None:
         config = drop_in.config
-        state_dir.mkdir(parents=True, exist_ok=True)
         self.drop_in = drop_in
-        self.store = StateFile(state_dir / "state.json")
+        self.store = StateFile(state_dir)
         self.state = self.store.load()
         self.context = RunContext(Workspace(drop_in.workspace), state_dir, env, self.state.usage, config.budget,
                                   telemetry, sleep)
@@ -45,7 +46,6 @@ class Scaffold:
         agents = {}
         for name, table in self.drop_in.config.coding_agents.items():
             cls, options = CODING_AGENTS.resolve(name, table)
-            options = options.with_run_defaults(name, self.context.env)
             agents[name] = cls(name, options, developer_instructions=self.drop_in.standing_context(options.context))
         return agents
 

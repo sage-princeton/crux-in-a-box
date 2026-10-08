@@ -5,9 +5,9 @@ from typing import Self
 
 from pydantic import BaseModel
 
+from crux_scaffold.agent_runtimes.base import AgentRuntime, TurnOutcome
 from crux_scaffold.components import Component, Options
 from crux_scaffold.gates import GATES, Gate, GateContext, GateResult
-from crux_scaffold.runtimes.base import AgentRuntime, TurnOutcome
 
 
 class FakeRuntime(AgentRuntime):
