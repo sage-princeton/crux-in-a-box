@@ -133,6 +133,7 @@ def plan(directory, bucket, report):
                 key: value
                 for key, value in config.items()
                 if not key.startswith("status_")
+                # FIXME: Remove this filter once saved S3 inputs no longer contain these retired settings.
                 and key not in {"enabled", "continuous_fleet_monitoring", "schedule_end"}
             }
             # Preserve deployed image digests/revision: PR infrastructure plans
