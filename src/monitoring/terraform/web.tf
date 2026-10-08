@@ -72,6 +72,8 @@ resource "aws_iam_role_policy" "web" {
     { Effect = "Allow", Action = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"], Resource = aws_ecr_repository.monitoring.arn },
     { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = ["arn:aws:ssm:${var.region}:${var.account_id}:parameter/crux/monitoring/env", "arn:aws:ssm:${var.region}:${var.account_id}:parameter/crux/monitoring/web"] },
     { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_db_instance.monitoring.master_user_secret[0].secret_arn },
+    # S3 returns NoSuchKey for absent checkpoints only when the caller can list this bucket.
+    { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.evidence.arn },
     { Effect = "Allow", Action = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"], Resource = "${aws_s3_bucket.evidence.arn}/*" },
     { Effect = "Allow", Action = ["ssm:SendCommand"], Resource = aws_ssm_document.workspace.arn },
     { Effect = "Allow", Action = ["ssm:SendCommand"], Resource = "arn:aws:ec2:${var.region}:${var.account_id}:instance/*" },
