@@ -5,6 +5,7 @@ variable "account_id" { type = string }
 variable "name" { type = string }
 variable "vpc_id" { type = string }
 variable "web_subnet_id" { type = string }
+variable "workspace_roles" { type = set(string) }
 variable "web_image_digest" {
   type = string
   validation {

@@ -205,3 +205,42 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
             == []
         )
         collector.http.close()
+
+
+def test_busy_telemetry_is_archived_while_context_stays_bounded(monkeypatch):
+    import boto3
+    import httpx
+    from moto import mock_aws
+
+    from collection import Collector
+    from review import encoded, input_size, select_reviewer
+
+    telemetry = [
+        {
+            "id": "observation:" + str(index),
+            "kind": "langfuse",
+            "data": {"model": "gpt-example", "input": "x" * 8_000},
+        }
+        for index in range(600)
+    ]
+    telemetry.append(
+        {"id": "observation:last", "kind": "langfuse", "data": {"model": "claude-example"}}
+    )
+    monkeypatch.setattr("collection.collect_langfuse", lambda *args: telemetry)
+    with mock_aws(), httpx.Client() as http:
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="busy-test")
+        collector = Collector(None, None, s3, http, "busy-test", None, None, None)
+        monkeypatch.setattr(collector, "workspace", lambda *args: ([], {}, [], []))
+        evidence = collector.collect(
+            {"instance_id": "i-test", "state": "running", "langfuse": {"environment": "test"}},
+            900,
+            {},
+        )
+        saved = s3.get_object(Bucket="busy-test", Key=evidence["langfuse_key"])["Body"].read()
+        assert json.loads(saved) == telemetry
+        assert input_size(evidence) < 128 * 1024 and evidence["gaps"]
+        assert len(encoded(evidence["sources"])) < 66 * 1024
+        # An omitted later model must still prevent a reviewer from evaluating its own family.
+        with pytest.raises(CoverageError, match="different model family"):
+            select_reviewer(["anthropic/claude-example"], evidence["sources"], [])

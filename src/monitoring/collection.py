@@ -190,24 +190,32 @@ class Collector:
             ServerSideEncryption="AES256",
         )
         sources.extend(telemetry)
-        view = []
+        view, omitted, models = [], 0, set()
         for source in sources:
             source = scrub(source, secrets.values())
+            model = source["data"].get("model") if source["kind"] == "langfuse" else None
             if len(encoded([*view, source])) <= 64 * 1024:
                 view.append(source)
             else:
-                if source["kind"] == "langfuse":
+                # Preserve every observed model family without a placeholder per event.
+                if model and model not in models:
                     view.append(
                         {
                             "id": source["id"],
                             "kind": "langfuse",
                             "truncated": True,
-                            "data": {"model": source["data"].get("model")},
+                            "data": {"model": model},
                         }
                     )
-                gaps.append(
-                    source["id"] + ": exceeds model context; inspect saved workspace/telemetry."
-                )
+                omitted += 1
+            if model:
+                models.add(model)
+        if omitted:
+            gaps.append(
+                f"{omitted} sources exceed model context; inspect saved workspace/telemetry."
+            )
+        if any(source.get("coverage_gap") for source in telemetry):
+            gaps.append("Langfuse inputs/outputs exceeded the archive limit and were omitted.")
         if len(encoded(view)) > MAX_EVIDENCE_BYTES:
             raise CoverageError("Evidence view exceeds its bound")
         return {

@@ -157,9 +157,12 @@ resource "aws_ssm_document" "workspace" {
     }]
   })
 }
-resource "aws_iam_role_policy_attachment" "run_ssm" {
-  role       = "crux-system-role"
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+resource "aws_iam_role_policy" "run_ssm" {
+  for_each = toset(var.workspace_roles)
+  name     = "monitoring-workspace-agent"
+  role     = each.value
+  # Agent registration and command transport grant no additional parameter reads.
+  policy = file("${path.module}/../ci/workspace-agent-policy.json")
 }
 resource "aws_iam_role" "workspace_upload" {
   name                 = "${var.name}-workspace-upload"

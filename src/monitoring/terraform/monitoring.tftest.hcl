@@ -51,6 +51,10 @@ run "private_postgres_with_managed_credentials_and_backups" {
 run "whole_workspace_copy_and_migrations_before_startup" {
   command = apply
   assert {
+    condition     = toset([for policy in aws_iam_role_policy.run_ssm : policy.role]) == var.workspace_roles
+    error_message = "Every configured workspace role needs SSM management for full workspace copies."
+  }
+  assert {
     condition     = jsondecode(aws_ssm_document.workspace.content).parameters.Credentials.interpolationType == "ENV_VAR" && strcontains(jsondecode(aws_ssm_document.workspace.content).mainSteps[0].inputs.runCommand[1], "archive.add(root, arcname=\"workspace\")")
     error_message = "Workspace exports must archive the whole directory and pass URLs through environment variables."
   }

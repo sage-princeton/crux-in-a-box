@@ -17,7 +17,8 @@ manifest, and derives bounded text excerpts for model context. The archive itsel
 is never truncated. Collected Langfuse data is also saved before context limits
 are applied. Excerpts are scrubbed; the complete private workspace archive keeps
 its original contents. Collection failures and missing telemetry remain explicit
-coverage gaps.
+coverage gaps. Langfuse windows allow up to 32 MiB across 100 pages; the model
+context stays bounded separately and retains every observed model family.
 
 ```mermaid
 flowchart LR

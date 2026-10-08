@@ -39,7 +39,8 @@
         "arn:aws:iam::881004720495:role/crux-monitoring-ae211*",
         "arn:aws:iam::881004720495:role/crux-incident-web",
         "arn:aws:iam::881004720495:role/crux-monitoring-plan",
-        "arn:aws:iam::881004720495:role/crux-system-role"
+        "arn:aws:iam::881004720495:role/crux-system-role",
+        "arn:aws:iam::881004720495:role/crux-run-crux-web-pilot3"
       ]
     },
     {

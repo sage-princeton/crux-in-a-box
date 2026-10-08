@@ -10,9 +10,10 @@ from urllib.parse import urlparse
 import jsonschema
 
 MAX_EVIDENCE_BYTES = 512 * 1024
+MAX_LANGFUSE_BYTES = 32 * 1024 * 1024
 MAX_INPUT_BYTES = 128 * 1024
 MAX_OUTPUT_TOKENS = 6000
-MAX_PAGES = 10
+MAX_PAGES = 100
 PROMPT = Path(__file__).with_name("prompts").joinpath("reviewer.md").read_text()
 TEXT = {"type": "string", "maxLength": 4000}
 SCHEMA = {
@@ -185,15 +186,15 @@ def collect_langfuse(client, config, secrets, start, end):
     else:
         params["environment"] = [config["environment"]]
     auth = (secrets["MONITORING_LANGFUSE_PUBLIC_KEY"], secrets["MONITORING_LANGFUSE_SECRET_KEY"])
-    result, cursors = [], set()
+    result, cursors, size = [], set(), 0
     for _ in range(MAX_PAGES):
         try:
-            page = get_json(client, url, params=params, auth=auth)
+            page = get_json(client, url, max_bytes=MAX_LANGFUSE_BYTES, params=params, auth=auth)
         except EvidenceLimitError:
             if "io" not in params["fields"].split(","):
                 raise
             params["fields"] = "core,basic,metadata,model,trace_context"
-            page = get_json(client, url, params=params, auth=auth)
+            page = get_json(client, url, max_bytes=MAX_LANGFUSE_BYTES, params=params, auth=auth)
         for item in page["data"]:
             if config.get("session_id") and item.get("sessionId") != config["session_id"]:
                 raise CoverageError("Langfuse returned an unexpected session")
@@ -206,7 +207,9 @@ def collect_langfuse(client, config, secrets, start, end):
                     coverage_gap="Langfuse inputs/outputs were omitted because the full page exceeded the evidence limit; content-level review is incomplete.",
                 )
             result.append(source)
-        if len(encoded(result)) > MAX_EVIDENCE_BYTES:
+            size += len(encoded(source)) + 1
+        # Archive capacity is independent of the much smaller inference context.
+        if size > MAX_LANGFUSE_BYTES:
             raise CoverageError("Langfuse window exceeds evidence limit; narrow the window")
         cursor = page.get("meta", {}).get("cursor")
         if not cursor:
