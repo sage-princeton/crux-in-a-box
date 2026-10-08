@@ -39,6 +39,14 @@ class TurnOutcome(BaseModel):
     completed: bool
 
 
+class Verdict(BaseModel):
+    """A judge's structured answer."""
+
+    passed: bool
+    feedback: str
+    next_prompt: str | None
+
+
 class AgentRuntime(Component):
     """The agent SDK that runs the declared agents. It builds one SDK agent per `[agents.<name>]` from the
     `Assembly` and runs the orchestrator's turns. See docs/extending.md for the contract."""
@@ -57,6 +65,11 @@ class AgentRuntime(Component):
     @abstractmethod
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         """Send one prompt to the orchestrator, continuing its session. `workflow` names the turn in traces."""
+
+    @abstractmethod
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+        """Ask an isolated judge agent for a verdict. It has the named scaffold tools and no session, so it sees
+        only the rubric, the evidence and what it checks itself. Out of turns is a failing verdict, not an error."""
 
     @abstractmethod
     def describe(self) -> list[str]:

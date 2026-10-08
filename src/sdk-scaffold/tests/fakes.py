@@ -5,20 +5,21 @@ from typing import Self
 
 from pydantic import BaseModel
 
-from crux_scaffold.agent_runtimes.base import AgentRuntime, TurnOutcome
+from crux_scaffold.agent_runtimes.base import AgentRuntime, TurnOutcome, Verdict
 from crux_scaffold.components import Component, Options
 from crux_scaffold.gates import GATES, Gate, GateContext, GateResult
 
 
 class FakeRuntime(AgentRuntime):
-    """Replays scripted turn outcomes and records the prompts the loop sent."""
+    """Replays scripted turn outcomes and verdicts; records the prompts and judge requests."""
 
     type_name = "fake"
 
-    def __init__(self, outputs: list[TurnOutcome]) -> None:
+    def __init__(self, outputs: list[TurnOutcome], verdicts: list[Verdict] | None = None) -> None:
         Component.__init__(self, "runtime", Options())
-        self.outputs = list(outputs)
+        self.outputs, self.verdicts = list(outputs), list(verdicts or [])
         self.prompts: list[str] = []
+        self.judged: list[tuple[str, str, list[str], int]] = []
 
     async def __aenter__(self) -> Self:
         return self
@@ -29,6 +30,10 @@ class FakeRuntime(AgentRuntime):
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self.prompts.append(prompt)
         return self.outputs.pop(0)
+
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+        self.judged.append((rubric, evidence, tools, max_turns))
+        return self.verdicts.pop(0)
 
     def describe(self) -> list[str]:
         return []

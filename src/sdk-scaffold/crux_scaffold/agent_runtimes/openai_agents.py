@@ -27,7 +27,7 @@ from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import Field, ValidationError
 
-from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
+from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
 from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
@@ -35,6 +35,8 @@ from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool
 from crux_scaffold.usage import UsageLedger
+
+JUDGE = "judge"
 
 
 class OpenAIAgentsOptions(Options):
@@ -93,7 +95,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         for server in self.servers.values():
             await self._stack.enter_async_context(server)
         self.session = self.assembly.context_strategy.session(
-            self.assembly.drop_in.config.orchestrator, self.assembly.context.state_dir)
+            self.assembly.drop_in.config.orchestrator, self.assembly.context)
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
@@ -108,6 +110,18 @@ class OpenAIAgentsRuntime(AgentRuntime):
         except MaxTurnsExceeded:
             return TurnOutcome(final_output="", completed=False)
         return TurnOutcome(final_output=str(result.final_output), completed=True)
+
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+        agent = Agent(name=f"{JUDGE}:{name}", instructions=rubric, output_type=Verdict, model=self._model(JUDGE),
+                      model_settings=self._settings(),
+                      tools=[self._function_tool(self.assembly.tools[tool]) for tool in tools])
+        try:
+            result = await Runner.run(agent, evidence, context=self.assembly.context, max_turns=max_turns,
+                                      hooks=self.hooks, run_config=RunConfig(workflow_name=f"{JUDGE}:{name}"))
+        except MaxTurnsExceeded:
+            return Verdict(passed=False, next_prompt=None,
+                           feedback=f"The judge ran out of turns ({max_turns}) before reaching a verdict.")
+        return result.final_output
 
     def describe(self) -> list[str]:
         self.build()

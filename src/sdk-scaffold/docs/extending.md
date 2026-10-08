@@ -1,6 +1,6 @@
 # Extending `crux_scaffold`
 
-This guide is for contributors who are changing the scaffold. For terminology, the design overview and how to run a drop-in, see the [README](../README.md).
+This guide is for contributors who are changing the scaffold. For terminology, the design overview and how to run a drop-in, see the [README](../README.md). The README's [Adapting the demo](../README.md#adapting-the-demo) section shows the built-ins swapped in by configuration alone.
 
 Every pluggable part of the scaffold is a **component**: an implementation of one interface, registered under a type name and configured by a table in `scaffold.toml`. Most new behavior is a new component, or no code at all. This guide describes each extension point: its contract, what it receives, and how to test it.
 
@@ -61,7 +61,7 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 
 ## Tools (`Tool`)
 
-`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `command`, `rest`, `budget_status`.
+`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `run_shell`, `command`, `rest`, `budget_status`. `run_shell` runs any command the model asks for. `command` runs one fixed command that the drop-in declares, and takes no arguments.
 
 ```python
 class PreviewArguments(Arguments):
@@ -94,12 +94,13 @@ class SitePreview(Tool):
 
 ## Gates (`Gate`)
 
-`gates.py`, registry `GATES`. Built-in: `command`.
+`gates.py`, registry `GATES`. Built-ins: `command`, `llm_judge`.
 
 - **`evaluate(ctx: GateContext) -> GateResult`** decides whether the phase may end. Don't override `check`: it calls `evaluate` and records the result as an `evaluator` observation.
 - **`GateContext`** carries:
   - `run`, the `RunContext`;
   - `drop_in`;
+  - `runtime`, for gates that ask a model;
   - `phase` and `iteration`;
   - `last_output`, the orchestrator's final output for the iteration.
 - **`GateResult`** has:
@@ -108,6 +109,8 @@ class SitePreview(Tool):
   - an optional `next_prompt`, which replaces the continue prompt.
 
   Cap long feedback, as `command` does with `MAX_FEEDBACK_CHARS`.
+- **A judgment gate asks the runtime.** `llm_judge` calls `ctx.runtime.judge(...)`, an isolated agent with no session. It sees the rubric and the evidence the gate assembles, and checks the work with the scaffold tools the gate names. A new judgment gate also calls `judge`, rather than an SDK, so gates stay SDK-neutral.
+- **`tools`** lists the scaffold tools a gate's checks call, by declared name. The scaffold builds them along with the agents' tools. The default is none; `llm_judge` returns its `tools` option (`read_file` and `list_files` unless declared).
 - **A gate's definition comes from the drop-in,** never from files the agents can edit. That is what lets a gate judge the agents' work.
 - **Declare** it under `[gates.<name>]` and list it in a phase's `gates`.
 
@@ -132,9 +135,13 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 
 ## Context strategies (`ContextStrategy`)
 
-`context_strategies.py`, registry `CONTEXT_STRATEGIES`. Built-in: `persistent`.
+`context_strategies.py`, registry `CONTEXT_STRATEGIES`. Built-ins:
 
-- **`session(session_id, state_dir)`** returns the orchestrator's durable conversation store. The default is SQLite in `state_dir`, which survives restarts.
+- `persistent` keeps and sends everything.
+- `trim_recent` overrides `select`. It sends only recent items, starting at a user message so that a tool call is never separated from its result.
+- `openai_compaction` overrides `session`. It wraps the default session in the Agents SDK's compaction session, using `ctx.model`, which must be an OpenAI model. Each compaction call is added to `ctx.usage` as `compaction:<session>` and traced as a generation, through `MeteredCompactClient`.
+
+- **`session(session_id, ctx)`** returns the orchestrator's durable conversation store. The default is SQLite in `ctx.state_dir`, which survives restarts. A strategy that calls a model itself uses `ctx.model` and adds its usage to `ctx.usage`.
 - **`select(items)`** returns the items sent on the next model call. The runtime applies it to every model call, delegated agents included. The stored history is unchanged.
 - **Standing context is never trimmed.** Personas and standing context are the agents' instructions, not conversation items, so `select` never sees them.
 - **Strategies use the runtime's types.** Items and `Session` are OpenAI Agents SDK types today, so a strategy targets the `openai-agents` runtime. A second runtime decides whether to adapt them or to take strategies of its own.
@@ -165,6 +172,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 |---|---|
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
+| `judge(name, rubric, evidence, *, tools, max_turns)` | Run an isolated judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). Running out of turns returns a failing `Verdict`; don't raise. Count its usage like an agent's. The judge uses `ctx.model`, like every agent. |
 | `describe()` | One line per agent, printed by `check`. |
 | `probe(env, prompt, telemetry)` (classmethod) | One traced model call outside any drop-in, which provisioning uses to prove the runtime works. |
 
