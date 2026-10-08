@@ -4,12 +4,11 @@ import secrets
 import time
 from urllib.parse import urlsplit
 
-from botocore.exceptions import ClientError
 from flask import abort, g, redirect, request
 from onelogin.saml2.auth import OneLogin_Saml2_Auth
 from onelogin.saml2.settings import OneLogin_Saml2_Settings
 
-from lifecycle import conditional
+from lifecycle import Conflict
 from review import digest
 
 SESSION_COOKIE = "__Host-crux-session"
@@ -63,7 +62,7 @@ def install_auth(app, store, settings):
         g.actor, g.csrf = None, None
         token = request.cookies.get(SESSION_COOKIE)
         if token and len(token) < 200:
-            item = store.get("SESSION#" + digest(token), "STATE")
+            item = store.session(digest(token))
             if item and item["expires_at"] > time.time():
                 g.actor, g.csrf = item["actor"], item["csrf"]
 
@@ -79,14 +78,7 @@ def install_auth(app, store, settings):
         auth = saml()
         nonce = secrets.token_urlsafe(32)
         url = auth.login(return_to=nonce)
-        store.put_once(
-            {
-                "pk": "LOGIN#" + digest(nonce),
-                "sk": "STATE",
-                "request_id": auth.get_last_request_id(),
-                "expires_at": int(time.time()) + 300,
-            }
-        )
+        store.login(digest(nonce), auth.get_last_request_id(), int(time.time()) + 300)
         response = redirect(url)
         # SAML returns a cross-site POST. Only this short-lived binding cookie needs SameSite=None.
         response.set_cookie(
@@ -114,8 +106,7 @@ def install_auth(app, store, settings):
                 bool(relay),
             )
             abort(403, "Sign-in expired. Start sign-in again.")
-        key = {"pk": "LOGIN#" + digest(nonce), "sk": "STATE"}
-        pending = store.get(**key)
+        pending = store.pending_login(digest(nonce))
         now = int(time.time())
         if not pending or pending["expires_at"] <= now:
             app.logger.warning("SAML denied: login request missing or expired")
@@ -159,31 +150,11 @@ def install_auth(app, store, settings):
         if expires <= now:
             abort(403, "Sign-in expired.")
         actor = {"id": auth.get_nameid(), "issuer": settings["idp"]["entityId"]}
-        item = {
-            "pk": "SESSION#" + digest(token),
-            "sk": "STATE",
-            "actor": actor,
-            "csrf": secrets.token_urlsafe(32),
-            "expires_at": expires,
-        }
+        csrf = secrets.token_urlsafe(32)
         try:
-            store.transaction(
-                [
-                    {
-                        "Delete": {
-                            "TableName": store.table.name,
-                            "Key": key,
-                            "ConditionExpression": "expires_at > :now",
-                            "ExpressionAttributeValues": {":now": now},
-                        }
-                    },
-                    store.put(item, ConditionExpression="attribute_not_exists(pk)"),
-                ]
-            )
-        except ClientError as error:
-            if conditional(error):
-                abort(403, "Sign-in already used or expired.")
-            raise
+            store.finish_login(digest(nonce), digest(token), actor, csrf, expires, now)
+        except Conflict as error:
+            abort(403, str(error))
         response = redirect("/")
         delete_cookie(response, LOGIN_COOKIE)
         response.set_cookie(
@@ -200,9 +171,7 @@ def install_auth(app, store, settings):
     @app.post("/auth/logout")
     def logout():
         require_operator(origin)
-        store.table.delete_item(
-            Key={"pk": "SESSION#" + digest(request.cookies[SESSION_COOKIE]), "sk": "STATE"}
-        )
+        store.logout(digest(request.cookies[SESSION_COOKIE]))
         response = redirect("/")
         delete_cookie(response, SESSION_COOKIE)
         return response

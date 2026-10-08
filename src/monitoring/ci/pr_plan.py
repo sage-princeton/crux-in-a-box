@@ -119,25 +119,16 @@ def plan(directory, bucket, report):
         with tempfile.TemporaryDirectory(prefix="monitoring-plan-") as temporary:
             temporary = Path(temporary)
             s3 = boto3.client("s3")
-            config = json.loads(
-                s3.get_object(Bucket=bucket, Key="config/deployment.json")["Body"].read()
-            )
-            if config["account_id"] != boto3.client("sts").get_caller_identity()["Account"]:
+            desired = json.loads((directory / "production.auto.tfvars.json").read_text())
+            if desired["account_id"] != boto3.client("sts").get_caller_identity()["Account"]:
                 raise ValueError("Unexpected planning account")
-            registry = temporary / "registry.json"
-            s3.download_file(bucket, "config/registry.json", str(registry))
-            config["registry_file"] = str(registry)
-            # Status settings come from the candidate's status.auto.tfvars.json.
-            # Legacy S3 inputs must not override the configuration under review.
+            release = json.loads(
+                s3.get_object(Bucket=bucket, Key="config/release.json")["Body"].read()
+            )
+            # Only release identity comes from AWS; desired settings come from the candidate.
             config = {
-                key: value
-                for key, value in config.items()
-                if not key.startswith("status_")
-                # FIXME: Remove this filter once saved S3 inputs no longer contain these retired settings.
-                and key not in {"enabled", "continuous_fleet_monitoring", "schedule_end"}
+                key: release[key] for key in ("revision", "web_image_digest", "proxy_image_digest")
             }
-            # Preserve deployed image digests/revision: PR infrastructure plans
-            # must not manufacture an application release on every code change.
             variables = temporary / "inputs.tfvars.json"
             variables.write_text(json.dumps(config))
             binary = temporary / "plan.bin"
@@ -245,7 +236,7 @@ def render(report, sha, url):
             ]
     lines += [
         "",
-        "Speculative plan using deployed inputs and a read-only state snapshot. "
+        "Speculative plan using checked-in settings, deployed image digests and a read-only state snapshot. "
         "No apply was run. Deployment creates a fresh plan. Attribute values are omitted.",
     ]
     return "\n".join(lines) + "\n"

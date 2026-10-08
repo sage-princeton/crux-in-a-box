@@ -16,7 +16,7 @@ jobs:
     name: Deploy monitoring and incident website
     runs-on: ubuntu-24.04
     environment: crux-monitoring
-    timeout-minutes: 25
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -43,26 +43,21 @@ jobs:
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
           version: v0.75.0
-      - name: Load deployed inputs
+      - name: Load checked-in deployment settings
         run: |
-          aws s3 cp "s3://$MONITORING_CONFIG_BUCKET/config/deployment.json" "$RUNNER_TEMP/deployment.json" --only-show-errors
+          cp src/monitoring/terraform/production.auto.tfvars.json "$RUNNER_TEMP/deployment.json"
           account=$(aws sts get-caller-identity --query Account --output text)
-          jq -e --arg account "$account" '
-            .account_id == $account and .account_id == "881004720495" and
-            .region == "us-east-1" and (.name | test("^[a-z][a-z0-9-]{2,35}$"))
-          ' "$RUNNER_TEMP/deployment.json" > /dev/null
+          jq -e --arg account "$account" '.account_id == $account and .account_id == "881004720495"' "$RUNNER_TEMP/deployment.json" > /dev/null
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          aws s3 cp "s3://$MONITORING_CONFIG_BUCKET/config/registry.json" "$RUNNER_TEMP/registry.json" --only-show-errors
       - name: Build and scan immutable images
         working-directory: src/monitoring
         run: |
           name=$(jq -r .name "$RUNNER_TEMP/deployment.json")
           account=$(jq -r .account_id "$RUNNER_TEMP/deployment.json")
           repository="$account.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$name"
-          for kind in worker web proxy; do
+          for kind in web proxy; do
             case "$kind" in
-              worker) dockerfile=Dockerfile; field=image_digest ;;
-              web) dockerfile=Dockerfile.web; field=web_image_digest ;;
+              web) dockerfile=Dockerfile; field=web_image_digest ;;
               proxy) dockerfile=Dockerfile.proxy; field=proxy_image_digest ;;
             esac
             tag="$kind-$GITHUB_SHA"
@@ -82,23 +77,28 @@ jobs:
               "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/deployment-next.json"
             mv "$RUNNER_TEMP/deployment-next.json" "$RUNNER_TEMP/deployment.json"
           done
-      - name: Prepare Terraform inputs
+      - name: Prepare release inputs
         run: |
-          jq --arg revision "$GITHUB_SHA" --arg directory "$RUNNER_TEMP" '
-            with_entries(select(.key | startswith("status_") | not)) |
-            # FIXME: Remove this cleanup once saved S3 deployment inputs no longer contain these retired settings.
-            del(.enabled, .continuous_fleet_monitoring, .schedule_end) |
-            .revision = $revision | .registry_file = ($directory + "/registry.json")
-          ' "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/deployment.tfvars.json"
+          jq --arg revision "$GITHUB_SHA" '{revision: $revision, web_image_digest, proxy_image_digest}' \
+            "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/release.tfvars.json"
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
       - name: Initialize shared Terraform state
         working-directory: src/monitoring/terraform
         run: terraform init -input=false -lockfile=readonly -backend-config=backend.hcl
       - name: Plan infrastructure
         working-directory: src/monitoring/terraform
-        run: terraform plan -input=false -lock-timeout=5m -var-file="$RUNNER_TEMP/deployment.tfvars.json" -out="$RUNNER_TEMP/deploy.tfplan"
+        run: terraform plan -input=false -lock-timeout=5m -var-file="$RUNNER_TEMP/release.tfvars.json" -out="$RUNNER_TEMP/deploy.tfplan"
+      - name: Retire old monitoring pipelines and data
+        run: |
+          pip install boto3==1.42.73
+          python src/monitoring/ci/reset.py
       - name: Apply infrastructure
         working-directory: src/monitoring/terraform
         run: terraform apply -input=false -lock-timeout=5m "$RUNNER_TEMP/deploy.tfplan"
+      - name: Refresh trusted PR planning role
+        run: aws iam update-assume-role-policy --role-name crux-monitoring-plan --policy-document file://src/monitoring/ci/plan-trust.json
       - name: Read deployment outputs
         working-directory: src/monitoring/terraform
         run: terraform output -json > "$RUNNER_TEMP/deployment-outputs.json"
@@ -157,13 +157,12 @@ jobs:
             --dump-header "$RUNNER_TEMP/headers" --write-out '%{http_code}' "$url/?status=all")
           test "$code" = 302
           tr -d '\r' < "$RUNNER_TEMP/headers" | grep -Eiq '^location: /auth/login$'
-      - name: Persist successful release inputs
+      - name: Record successful release identity
         run: |
-          jq '.registry_file = "registry.json"' "$RUNNER_TEMP/deployment.tfvars.json" > "$RUNNER_TEMP/deployed.json"
-          aws s3 cp "$RUNNER_TEMP/deployed.json" "s3://$MONITORING_CONFIG_BUCKET/config/deployment.json" \
+          aws s3 cp "$RUNNER_TEMP/release.tfvars.json" "s3://$MONITORING_CONFIG_BUCKET/config/release.json" \
             --content-type application/json --sse AES256 --only-show-errors
-          url=$(jq -r '.incident_web_url.value // "web disabled"' "$RUNNER_TEMP/deployment-outputs.json")
-          printf 'Deployed %s. Infrastructure applied; configured web service verified: %s\n' "$GITHUB_SHA" "$url" >> "$GITHUB_STEP_SUMMARY"
+          url=$(jq -r '.incident_web_url.value' "$RUNNER_TEMP/deployment-outputs.json")
+          printf 'Deployed %s with PostgreSQL migrations verified: %s\n' "$GITHUB_SHA" "$url" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload deployment security reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

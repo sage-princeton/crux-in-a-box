@@ -7,7 +7,6 @@ from review import (
     MAX_EVIDENCE_BYTES,
     CoverageError,
     collect_langfuse,
-    collect_sftp,
     evaluate,
     scrub,
     select_reviewer,
@@ -91,14 +90,6 @@ def test_disallowed_reviewers_fail_before_network_access(model):
 def test_large_reviewer_input_fails_before_network_access():
     with pytest.raises(CoverageError, match="128 KiB"):
         evaluate(None, "anthropic/claude-example", "fixture", {"data": "x" * (128 * 1024)})
-
-
-def test_unverified_or_escaping_sftp_sources_fail_before_connecting():
-    with pytest.raises(CoverageError):
-        collect_sftp({"boundary_verified": False}, "127.0.0.1", "")
-    for path in ["/etc/passwd", "/exports/../private", "/exports/.env"]:
-        with pytest.raises(ValueError):
-            collect_sftp({"boundary_verified": True, "paths": [path]}, "127.0.0.1", "")
 
 
 def test_reviewer_cannot_invent_citations_or_acquire_tools():

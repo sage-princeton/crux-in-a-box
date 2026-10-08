@@ -68,7 +68,7 @@ def chunks(sources):
     return result[:MAX_CHUNKS], gaps
 
 
-def reserve(store, client, model, size, budget):
+def reserve(store, client, model, size, budget, max_output=MAX_OUTPUT):
     models = get_json(client, "https://openrouter.ai/api/v1/models", max_bytes=8 * 1024 * 1024)[
         "data"
     ]
@@ -85,7 +85,7 @@ def reserve(store, client, model, size, budget):
     amount = max(
         1,
         math.ceil(
-            (size * rates["prompt"] + MAX_OUTPUT * rates["completion"] + rates["request"])
+            (size * rates["prompt"] + max_output * rates["completion"] + rates["request"])
             * 1_000_000
         ),
     )
