@@ -185,7 +185,6 @@ def test_compact_fleet_counts_retries_once_and_preserves_latest_review(store, mo
             "slug": "test",
             "state": "running",
             "review_count": 100,
-            "review_windows": {"old-" + str(n) for n in range(100)},
         }
     )
     store.sync_fleet([{"instance_id": "i-test", "slug": "test", "state": "running"}])
@@ -194,7 +193,6 @@ def test_compact_fleet_counts_retries_once_and_preserves_latest_review(store, mo
     ingest(store, 300)
     row = store.get("FLEET", "i-test")
     assert row["review_count"] == 102 and row["last_review"] == 900
-    assert "review_windows" not in row
     monkeypatch.setattr(store.table, "scan", lambda **kwargs: pytest.fail("History table scan"))
     assert store.summaries(list(store.all("FLEET")))[0]["incident_count"] == 1
     store.sync_fleet([], complete=True)

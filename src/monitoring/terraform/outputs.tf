@@ -6,6 +6,3 @@ output "review_job" { value = try(aws_batch_job_definition.review[0].arn, null) 
 output "discovery_job" { value = try(aws_batch_job_definition.discover[0].arn, null) }
 output "inspection_security_group" { value = aws_security_group.monitoring.id }
 output "operations_queue" { value = aws_sqs_queue.operations.url }
-output "incident_log_url" {
-  value = null
-}

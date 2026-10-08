@@ -197,10 +197,9 @@ class IncidentStore:
                 if field in row:
                     values[":" + field] = row[field]
                     update += f", {field}=if_not_exists({field},:{field})"
-            # Remove the large legacy deduplication set even on existing rows.
             self.table.update_item(
                 Key={"pk": "FLEET", "sk": row["instance_id"]},
-                UpdateExpression=update + " REMOVE review_windows",
+                UpdateExpression=update,
                 ExpressionAttributeNames=names,
                 ExpressionAttributeValues=values,
             )
@@ -242,7 +241,7 @@ class IncidentStore:
         try:
             self.table.update_item(
                 Key={"pk": "FLEET", "sk": instance},
-                UpdateExpression="SET last_review=:end, last_updated=:end, review_status=:status, health_fingerprint=:health REMOVE review_windows",
+                UpdateExpression="SET last_review=:end, last_updated=:end, review_status=:status, health_fingerprint=:health",
                 ConditionExpression="attribute_not_exists(last_review) OR last_review <= :end",
                 ExpressionAttributeValues={
                     ":end": end,
