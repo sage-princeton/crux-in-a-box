@@ -1,5 +1,7 @@
 import secrets
 import time
+from datetime import UTC, datetime
+from decimal import Decimal
 
 import pytest
 from lxml import html
@@ -41,6 +43,35 @@ def authorize(client, store, expires=None):
     )
     client.set_cookie(SESSION_COOKIE, token, domain="incidents.example.test")
     return csrf
+
+
+@pytest.mark.parametrize(
+    ("elapsed", "label"),
+    [
+        (0, "just now"),
+        (1, "1 second ago"),
+        (59, "59 seconds ago"),
+        (60, "1 minute ago"),
+        (3599, "59 minutes ago"),
+        (3600, "1 hour ago"),
+        (86400, "1 day ago"),
+        (30 * 86400, "1 month ago"),
+        (365 * 86400, "1 year ago"),
+        (-120, "in 2 minutes"),
+    ],
+)
+def test_timestamp_keeps_absolute_date_and_adds_relative_label(client, monkeypatch, elapsed, label):
+    now = 1791475200
+    monkeypatch.setattr(time, "time", lambda: now)
+    value = Decimal(now - elapsed)  # DynamoDB returns numbers as Decimal.
+    with client.application.test_request_context():
+        component = client.application.jinja_env.get_template("components/timestamp.html")
+        element = html.fromstring(component.module.timestamp(value))
+    assert datetime.fromisoformat(element.get("datetime")) == datetime.fromtimestamp(
+        int(value), UTC
+    )
+    assert "ET" in element.text_content()
+    assert element.text_content().endswith(f"({label})")
 
 
 def test_filtered_pages_are_full_and_running_instances_precede_history(client, store):

@@ -4,7 +4,8 @@ import base64
 import json
 import os
 import re
-from datetime import datetime
+import time
+from datetime import UTC, datetime
 from urllib.parse import quote, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -64,6 +65,28 @@ def create_app(store=None, settings=None, status_store=None):
         return datetime.fromtimestamp(int(value), ZoneInfo("America/New_York")).strftime(
             "%b %d, %Y · %H:%M ET"
         )
+
+    @app.template_filter("isostamp")
+    def isostamp(value):
+        return datetime.fromtimestamp(int(value), UTC).isoformat()
+
+    @app.template_filter("relative_time")
+    def relative_time(value):
+        elapsed = g.setdefault("timestamp_now", int(time.time())) - int(value)
+        if elapsed == 0:
+            return "just now"
+        for seconds, unit in (
+            (365 * 86400, "year"),
+            (30 * 86400, "month"),
+            (86400, "day"),
+            (3600, "hour"),
+            (60, "minute"),
+            (1, "second"),
+        ):
+            count = abs(elapsed) // seconds
+            if count:
+                label = f"{count} {unit}{'s' if count != 1 else ''}"
+                return f"{label} ago" if elapsed > 0 else f"in {label}"
 
     @app.after_request
     def headers(response):
