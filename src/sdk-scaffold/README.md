@@ -121,7 +121,7 @@ Gates, context strategies, coding agents, loops and runtimes extend the same way
 
 A CRUX with different needs changes declarations, not code. The same drop-in could, for example:
 
-- **Judge the outcome, not just the tests.** Add an isolated `llm_judge` gate to the `implement` phase. The judge sees only its rubric, the orchestrator's final output, and the workspace files listed in `inspect`. It can write the next prompt itself.
+- **Judge the outcome, not just the tests.** Add an isolated `llm_judge` gate to the `implement` phase. The judge is an agent with no access to the orchestrator's conversation. It starts from its rubric, the orchestrator's final output and the workspace files listed in `inspect`, then verifies the work with its `tools`: `read_file` and `list_files` by default, plus any declared tool, such as a `command` tool that runs the tests. Running out of `max_turns` fails the gate. Have the rubric ask the judge to cite what it checked. It can write the next prompt itself.
   ```toml
   [[loop.phases]]
   name = "implement"
@@ -130,7 +130,9 @@ A CRUX with different needs changes declarations, not code. The same drop-in cou
   [gates.request_met]
   type = "llm_judge"
   rubric = "prompts/judge_request.md"
-  inspect = ["REQUEST.md", "site/sitegen.py", "site/test_sitegen.py"]
+  inspect = ["REQUEST.md"]
+  tools = ["read_file", "list_files", "site_tests"]
+  max_turns = 20
   ```
 - **Bound the context of a long run.** Send only recent history, cut at a user message so tool calls keep their results. The full history stays in the session.
   ```toml

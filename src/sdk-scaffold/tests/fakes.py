@@ -19,7 +19,7 @@ class FakeRuntime(AgentRuntime):
         Component.__init__(self, "runtime", Options())
         self.outputs, self.verdicts = list(outputs), list(verdicts or [])
         self.prompts: list[str] = []
-        self.judged: list[tuple[str, str]] = []
+        self.judged: list[tuple[str, str, list[str], int]] = []
 
     async def __aenter__(self) -> Self:
         return self
@@ -31,8 +31,8 @@ class FakeRuntime(AgentRuntime):
         self.prompts.append(prompt)
         return self.outputs.pop(0)
 
-    async def judge(self, name: str, rubric: str, evidence: str) -> Verdict:
-        self.judged.append((rubric, evidence))
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+        self.judged.append((rubric, evidence, tools, max_turns))
         return self.verdicts.pop(0)
 
     def describe(self) -> list[str]:

@@ -111,10 +111,16 @@ class OpenAIAgentsRuntime(AgentRuntime):
             return TurnOutcome(final_output="", completed=False)
         return TurnOutcome(final_output=str(result.final_output), completed=True)
 
-    async def judge(self, name: str, rubric: str, evidence: str) -> Verdict:
-        agent = Agent(name=f"{JUDGE}:{name}", instructions=rubric, output_type=Verdict,
-                      model=self._model(JUDGE))
-        result = await Runner.run(agent, evidence, max_turns=2, hooks=self.hooks)
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+        agent = Agent(name=f"{JUDGE}:{name}", instructions=rubric, output_type=Verdict, model=self._model(JUDGE),
+                      model_settings=self._settings(),
+                      tools=[self._function_tool(self.assembly.tools[tool]) for tool in tools])
+        try:
+            result = await Runner.run(agent, evidence, context=self.assembly.context, max_turns=max_turns,
+                                      hooks=self.hooks, run_config=RunConfig(workflow_name=f"{JUDGE}:{name}"))
+        except MaxTurnsExceeded:
+            return Verdict(passed=False, next_prompt=None,
+                           feedback=f"The judge ran out of turns ({max_turns}) before reaching a verdict.")
         return result.final_output
 
     def describe(self) -> list[str]:

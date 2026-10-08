@@ -67,8 +67,9 @@ class AgentRuntime(Component):
         """Send one prompt to the orchestrator, continuing its session. `workflow` names the turn in traces."""
 
     @abstractmethod
-    async def judge(self, name: str, rubric: str, evidence: str) -> Verdict:
-        """Ask an isolated judge, with no tools and no session, for a verdict."""
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+        """Ask an isolated judge agent for a verdict. It has the named scaffold tools and no session, so it sees
+        only the rubric, the evidence and what it checks itself. Out of turns is a failing verdict, not an error."""
 
     @abstractmethod
     def describe(self) -> list[str]:

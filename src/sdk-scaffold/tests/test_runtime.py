@@ -109,13 +109,34 @@ def test_mcp_server_gets_its_declared_env_but_not_the_scaffold_secrets(drop_in_d
     assert entries[1]["payload"] == "Which pages?"
 
 
-def test_judge_is_an_isolated_agent_returning_a_structured_verdict(drop_in_dir, assemble):
-    verdict = Verdict(passed=False, feedback="no tests", next_prompt="Add tests.")
-    judge = ScriptedModel(say(verdict.model_dump_json()))
+def test_the_judge_is_an_isolated_agent_that_checks_the_work_with_its_tools(drop_in_dir, assemble):
+    verdict = Verdict(passed=False, feedback="AGENTS.md says nothing about tests", next_prompt="Add tests.")
+    judge = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "j1"), say(verdict.model_dump_json()))
+    pm = ScriptedModel()
+    scaffold = assemble(drop_in_dir, {"judge": judge, "pm": pm})
+    scaffold.runtime.build()
+    result = asyncio.run(scaffold.runtime.judge("request_met", "Pass if tested.", "The evidence.",
+                                                tools=["read_file"], max_turns=4))
+    assert result == verdict
+    assert judge.instructions == ["Pass if tested.", "Pass if tested."]
+    assert "The evidence." in str(judge.inputs[0])
+    assert tool_outputs(judge.inputs[1]) == ["PM standing context.\n"]
+    assert scaffold.context.usage.by_source["judge:request_met"].requests == 2
+    assert pm.inputs == []
+
+
+def test_a_judge_that_runs_out_of_turns_fails_with_the_reason(drop_in_dir, assemble):
+    judge = ScriptedModel(*[call("read_file", {"path": "AGENTS.md"}, f"j{i}") for i in range(3)])
     scaffold = assemble(drop_in_dir, {"judge": judge})
     scaffold.runtime.build()
-    result = asyncio.run(scaffold.runtime.judge("request_met", "Pass if tested.", "The evidence."))
-    assert result == verdict
-    assert judge.instructions == ["Pass if tested."]
-    assert "The evidence." in str(judge.inputs[0])
-    assert scaffold.context.usage.by_source["judge:request_met"].requests == 1
+    result = asyncio.run(scaffold.runtime.judge("request_met", "rubric", "evidence", tools=["read_file"],
+                                                max_turns=2))
+    assert (result.passed, result.next_prompt) == (False, None)
+    assert "judge ran out of turns (2)" in result.feedback
+
+
+def test_the_scaffold_builds_the_tools_a_judge_names(drop_in_dir, assemble):
+    (drop_in_dir / "rubric.md").write_text("Judge it.")
+    with (drop_in_dir / "scaffold.toml").open("a") as toml:
+        toml.write('\n[gates.review]\ntype = "llm_judge"\nrubric = "rubric.md"\ntools = ["list_files"]\n')
+    assert "list_files" in assemble(drop_in_dir).runtime.assembly.tools

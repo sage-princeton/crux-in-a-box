@@ -7,7 +7,7 @@ from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.workspace import RunContext
@@ -52,6 +52,11 @@ class Gate(Component):
                                  {"phase": ctx.phase, "iteration": ctx.iteration}, result.model_dump())
         return result
 
+    @property
+    def tools(self) -> list[str]:
+        """Scaffold tools this gate's checks call; the scaffold builds them along with the agents' tools."""
+        return []
+
     @abstractmethod
     async def evaluate(self, ctx: GateContext) -> GateResult: ...
 
@@ -80,18 +85,26 @@ class CommandGate(Gate):
 class JudgeOptions(Options):
     rubric: str
     inspect: list[str] = []
+    tools: list[str] = ["read_file", "list_files"]
+    max_turns: int = Field(20, ge=1)
 
 
 @GATES.register
 class LlmJudgeGate(Gate):
-    """An isolated judge model scores the iteration against a rubric file, seeing only the final output and the
-    workspace files listed in `inspect`. It may also write the next prompt."""
+    """An isolated judge agent scores the iteration against a rubric file. It starts from the orchestrator's final
+    output and the workspace files listed in `inspect`, and verifies the work with its `tools` (read-only by
+    default; add a `command` tool to let it run checks). It may also write the next prompt."""
 
     type_name = "llm_judge"
     Options = JudgeOptions
 
+    @property
+    def tools(self) -> list[str]:
+        return list(self.options.tools)
+
     async def evaluate(self, ctx: GateContext) -> GateResult:
-        verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx))
+        verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx),
+                                          tools=self.tools, max_turns=self.options.max_turns)
         return GateResult(gate=self.name, **verdict.model_dump())
 
     def evidence(self, ctx: GateContext) -> str:

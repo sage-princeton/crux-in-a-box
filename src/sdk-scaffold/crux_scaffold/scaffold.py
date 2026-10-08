@@ -39,7 +39,8 @@ class Scaffold:
 
     def _tools(self) -> dict[str, Tool]:
         config = self.drop_in.config
-        names = set(config.tools) | {tool for agent in config.agents.values() for tool in agent.tools}
+        names = (set(config.tools) | {tool for agent in config.agents.values() for tool in agent.tools}
+                 | {tool for gate in self.loop.gates.values() for tool in gate.tools})
         return {name: TOOLS.create(name, config.tools.get(name, {})) for name in sorted(names)}
 
     def _coding_agents(self) -> dict[str, CodingAgent]:

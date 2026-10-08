@@ -56,9 +56,24 @@ def test_llm_judge_sees_the_rubric_output_and_inspected_files_only(drop_in_dir):
     gate = GATES.create("request_met", {"type": "llm_judge", "rubric": "rubric.md",
                                         "inspect": ["REQUEST.md", "missing.md"]})
     result = asyncio.run(gate.check(gate_context(drop_in_dir, runtime=runtime)))
-    rubric, evidence = runtime.judged[0]
+    rubric, evidence, tools, max_turns = runtime.judged[0]
+    assert (tools, max_turns) == (["read_file", "list_files"], 20)
     assert rubric == "Pass if the spec is met."
     assert "iteration 2: the agent's final output\n\nI added the field." in evidence
     assert "# Workspace file `REQUEST.md`\n\n- [ ] show location" in evidence
     assert "# Workspace file `missing.md`\n\n(missing)" in evidence
     assert (result.passed, result.feedback, result.next_prompt) == (False, "location missing", "Add location.")
+
+
+def test_llm_judge_gets_the_tools_and_turns_the_drop_in_declares(drop_in_dir):
+    (drop_in_dir / "rubric.md").write_text("Run the tests before passing.")
+    runtime = FakeRuntime([], [Verdict(passed=True, feedback="tests pass", next_prompt=None)])
+    gate = GATES.create("request_met", {"type": "llm_judge", "rubric": "rubric.md",
+                                        "tools": ["read_file", "site_tests"], "max_turns": 8})
+    assert gate.tools == ["read_file", "site_tests"]
+    asyncio.run(gate.check(gate_context(drop_in_dir, runtime=runtime)))
+    assert runtime.judged[0][2:] == (["read_file", "site_tests"], 8)
+
+
+def test_a_command_gate_uses_no_tools():
+    assert GATES.create("tests", {"type": "command", "command": "true"}).tools == []
