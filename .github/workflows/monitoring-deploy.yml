@@ -53,9 +53,6 @@ jobs:
           ' "$RUNNER_TEMP/deployment.json" > /dev/null
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           aws s3 cp "s3://$MONITORING_CONFIG_BUCKET/config/registry.json" "$RUNNER_TEMP/registry.json" --only-show-errors
-          if jq -e '.status_provisioned == true' "$RUNNER_TEMP/deployment.json" > /dev/null; then
-            aws s3 cp "s3://$MONITORING_CONFIG_BUCKET/config/status.json" "$RUNNER_TEMP/status.json" --only-show-errors
-          fi
       - name: Build and scan immutable images
         working-directory: src/monitoring
         run: |
@@ -88,8 +85,8 @@ jobs:
       - name: Prepare Terraform inputs
         run: |
           jq --arg revision "$GITHUB_SHA" --arg directory "$RUNNER_TEMP" '
-            .revision = $revision | .registry_file = ($directory + "/registry.json") |
-            if .status_provisioned == true then .status_registry_file = ($directory + "/status.json") else . end
+            with_entries(select(.key | startswith("status_") | not)) |
+            .revision = $revision | .registry_file = ($directory + "/registry.json")
           ' "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/deployment.tfvars.json"
       - name: Initialize shared Terraform state
         working-directory: src/monitoring/terraform
@@ -160,9 +157,7 @@ jobs:
           tr -d '\r' < "$RUNNER_TEMP/headers" | grep -Eiq '^location: /auth/login$'
       - name: Persist successful release inputs
         run: |
-          jq '.registry_file = "registry.json" |
-            if .status_provisioned == true then .status_registry_file = "status.json" else . end
-          ' "$RUNNER_TEMP/deployment.tfvars.json" > "$RUNNER_TEMP/deployed.json"
+          jq '.registry_file = "registry.json"' "$RUNNER_TEMP/deployment.tfvars.json" > "$RUNNER_TEMP/deployed.json"
           aws s3 cp "$RUNNER_TEMP/deployed.json" "s3://$MONITORING_CONFIG_BUCKET/config/deployment.json" \
             --content-type application/json --sse AES256 --only-show-errors
           url=$(jq -r '.incident_web_url.value // "web disabled"' "$RUNNER_TEMP/deployment-outputs.json")

@@ -98,6 +98,8 @@ run "immutable_workers_remain_disabled" {
 }
 
 variables {
+  status_provisioned    = false
+  status_registry_file  = ""
   account_id            = "123456789012"
   registry_file         = "../registry.json.example"
   secrets_parameter_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/monitoring/env"
@@ -216,4 +218,23 @@ run "status_provisioning_requires_complete_configuration" {
     image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
   expect_failures = [terraform_data.status_configuration[0]]
+}
+
+run "production_status_runs_continuously_in_a_separate_table" {
+  command = apply
+  variables {
+    account_id                   = "881004720495"
+    status_provisioned           = true
+    status_registry_file         = "../status.production.json"
+    status_secrets_parameter_arn = "arn:aws:ssm:us-east-1:881004720495:parameter/crux/status/env"
+    image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+  assert {
+    condition     = aws_scheduler_schedule.status[0].state == "ENABLED" && aws_scheduler_schedule.status[0].end_date == null && aws_scheduler_schedule.status[0].schedule_expression == "rate(15 minutes)"
+    error_message = "Production status must run every 15 minutes without an automatic stop date."
+  }
+  assert {
+    condition     = aws_dynamodb_table.status[0].name != aws_dynamodb_table.incidents.name && length(local.status_config.targets) == 2
+    error_message = "Both configured workloads must use independent status storage."
+  }
 }

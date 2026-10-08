@@ -1,7 +1,7 @@
 variable "status_provisioned" {
   type        = bool
   default     = false
-  description = "Provision independent status infrastructure with an operator-reviewed apply. Provisioned status checks are always enabled."
+  description = "Provision independent status infrastructure through the normal Terraform deployment. Provisioned status checks are always enabled."
 }
 variable "status_registry_file" {
   type        = string
@@ -33,7 +33,7 @@ locals {
     { enabled = true }
   )
   status_active = var.status_provisioned && local.active
-  status_end    = local.status_config.expires_at > 0 ? timeadd("1970-01-01T00:00:00Z", "${local.status_config.expires_at}s") : "2030-01-01T00:00:00Z"
+  status_end    = local.status_config.expires_at > 0 ? timeadd("1970-01-01T00:00:00Z", "${local.status_config.expires_at}s") : null
   status_env = var.status_provisioned ? [
     { name = "AWS_DEFAULT_REGION", value = var.region },
     { name = "STATUS_TABLE", value = aws_dynamodb_table.status[0].name },
@@ -51,11 +51,11 @@ resource "terraform_data" "status_configuration" {
       error_message = "Provisioning requires a dedicated status credentials parameter."
     }
     precondition {
-      condition = (local.status_active && local.status_config.expires_at > 0 &&
-        timecmp(local.status_end, timestamp()) > 0 && length(local.status_config.targets) > 0 &&
+      condition = (local.status_active && local.status_config.expires_at >= 0 &&
+        (local.status_config.expires_at == 0 ? true : timecmp(local.status_end, timestamp()) > 0) && length(local.status_config.targets) > 0 &&
         local.status_config.inference_budget_usd > 0 && local.status_config.inference_budget_usd <= 500 &&
       local.status_config.sweep_model != "" && local.status_config.summary_model != "")
-      error_message = "Status activation requires its infrastructure, image, future expiry, targets, model pair and bounded budget."
+      error_message = "Status activation requires its infrastructure, image, targets, model pair and bounded budget; expiry must be zero (continuous) or in the future."
     }
     precondition {
       condition     = local.status_config.interval_seconds >= 300 && local.status_config.interval_seconds <= 3600 && local.status_config.interval_seconds % 60 == 0 && local.status_config.stale_seconds >= local.status_config.interval_seconds

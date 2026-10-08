@@ -32,8 +32,11 @@ from status_store import StatusStore, workload_key
 def validate(config):
     if config.get("enabled") is not True:
         return
-    if not 0 < config.get("expires_at", 0) or not 0 < config.get("inference_budget_usd", 0) <= 500:
-        raise ValueError("Status checks need an expiry and separate bounded budget")
+    expiry = config.get("expires_at", 0)
+    if not isinstance(expiry, (int, float)) or not math.isfinite(expiry) or expiry < 0:
+        raise ValueError("Status expiry must be zero (continuous) or a positive timestamp")
+    if not 0 < config.get("inference_budget_usd", 0) <= 500:
+        raise ValueError("Status checks need a separate bounded budget")
     interval = config.get("interval_seconds", 900)
     if not isinstance(interval, int) or not 300 <= interval <= 3600 or interval % 60:
         raise ValueError("Status interval must be whole minutes between 5 and 60")
@@ -124,7 +127,8 @@ class StatusRuntime:
         )
 
     def active(self, now):
-        return self.config.get("enabled") is True and now < self.config["expires_at"]
+        expiry = self.config.get("expires_at", 0)
+        return self.config.get("enabled") is True and (expiry == 0 or now < expiry)
 
     def discover(self):
         now = int(time.time())
@@ -147,7 +151,7 @@ class StatusRuntime:
             target = {
                 **configured,
                 "instance_id": iid,
-                "slug": found.get("slug", iid),
+                "slug": found.get("slug", configured.get("name", iid)),
                 "state": found.get("instance_state", "no longer present"),
             }
             seen.add(key)
