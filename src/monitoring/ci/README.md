@@ -18,7 +18,8 @@ trust requirements.
 
 Production enables `auto_register_runs` in `status.production.json`. Each status
 discovery (every 15 minutes, plus Batch startup) registers EC2 instances tagged
-`CruxRole=run`; the workspace provisioner already applies this tag. Control,
+`CruxRole=run`; both the workspace provisioner and `linux/create-new-crux-box.sh`
+apply this tag (including boxes reused through the Linux launcher). Control,
 monitoring web and Batch hosts are excluded. Explicit status targets override
 automatic mappings. New automatic targets use the instance ID as their stable
 workload identity, so replacing a box with the same name creates separate history.
