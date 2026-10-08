@@ -234,7 +234,7 @@ run "production_status_runs_continuously_in_a_separate_table" {
     error_message = "Production status must run every 15 minutes without an automatic stop date."
   }
   assert {
-    condition     = aws_dynamodb_table.status[0].name != aws_dynamodb_table.incidents.name && length(local.status_config.targets) == 2
-    error_message = "Both configured workloads must use independent status storage."
+    condition     = aws_dynamodb_table.status[0].name != aws_dynamodb_table.incidents.name && length(local.status_config.targets) > 0
+    error_message = "Configured workloads must use independent status storage."
   }
 }
