@@ -1,0 +1,45 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:ListBucket"
+      ],
+      "Resource": "arn:aws:s3:::sage-terraform-state-869937524494",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "crux/monitoring/terraform.tfstate",
+            "crux/monitoring/workspaces/*"
+          ]
+        }
+      }
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject"
+      ],
+      "Resource": "arn:aws:s3:::sage-terraform-state-869937524494/crux/monitoring/terraform.tfstate"
+    },
+    {
+      "Effect": "Allow",
+      "Action": [
+        "kms:Decrypt"
+      ],
+      "Resource": "arn:aws:kms:us-east-1:869937524494:key/a87e0216-053f-48e4-8887-0aecb4d31c7f",
+      "Condition": {
+        "StringEquals": {
+          "kms:ViaService": "s3.us-east-1.amazonaws.com"
+        },
+        "StringLike": {
+          "kms:EncryptionContext:aws:s3:arn": [
+            "arn:aws:s3:::sage-terraform-state-869937524494/crux/monitoring/terraform.tfstate",
+            "arn:aws:s3:::sage-terraform-state-869937524494"
+          ]
+        }
+      }
+    }
+  ]
+}
