@@ -74,7 +74,7 @@ run "immutable_workers_remain_disabled" {
   command = apply
   variables {
     image_digest  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    registry_file = "../registry.json"
+    registry_file = "../tests/fixtures/expired-registry.json"
   }
   assert {
     condition     = length(terraform_data.status_configuration) == 0 && length(aws_dynamodb_table.status) == 0 && length(aws_batch_job_definition.status) == 0
@@ -238,7 +238,7 @@ run "production_status_runs_continuously_in_a_separate_table" {
     status_secrets_parameter_arn = "arn:aws:ssm:us-east-1:881004720495:parameter/crux/status/env"
     image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     continuous_fleet_monitoring  = true
-    registry_file                = "../registry.json"
+    registry_file                = "../tests/fixtures/expired-registry.json"
     schedule_end                 = "2026-10-02T19:33:56Z"
   }
   assert {
