@@ -136,6 +136,19 @@
       }
     },
     {
+      "Sid": "DecryptMonitoringTables",
+      "Effect": "Allow",
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:us-east-1:881004720495:key/*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceTag/Project": "crux-monitoring",
+          "kms:CallerAccount": "881004720495",
+          "kms:ViaService": "dynamodb.us-east-1.amazonaws.com"
+        }
+      }
+    },
+    {
       "Sid": "ServiceLinkedRoles",
       "Effect": "Allow",
       "Action": [
