@@ -5,11 +5,14 @@
 Terraform and the deployment workflow do not manage this role's own permissions.
 Merging a policy edit does **not** update the live role.
 
-The role needs `kms:Decrypt` through DynamoDB to configure tables encrypted with
-customer-managed keys, including enabling TTL. The permission is restricted to
-monitoring-tagged keys, the deployment account, and DynamoDB in `us-east-1`.
-It does not allow direct KMS decryption or decryption through other services.
-See [DynamoDB's KMS usage notes](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/encryption.usagenotes.html).
+The deployment policy grants full administrator permissions (`Action: "*"`,
+`Resource: "*"`) without service, resource, tag, or region conditions. This
+deliberately allows deployment changes throughout the account, including IAM
+and KMS administration, without a per-service allowlist.
+The role's trust policy still controls who can assume it. AWS organization
+policies, permission boundaries, and resource policies can still limit effective
+access; this identity policy does not override explicit denies or cross-account
+trust requirements.
 
 ## Recover the failed status activation
 
