@@ -129,7 +129,12 @@ def plan(directory, bucket, report):
             config["registry_file"] = str(registry)
             # Status settings come from the candidate's status.auto.tfvars.json.
             # Legacy S3 inputs must not override the configuration under review.
-            config = {key: value for key, value in config.items() if not key.startswith("status_")}
+            config = {
+                key: value
+                for key, value in config.items()
+                if not key.startswith("status_")
+                and key not in {"enabled", "continuous_fleet_monitoring", "schedule_end"}
+            }
             # Preserve deployed image digests/revision: PR infrastructure plans
             # must not manufacture an application release on every code change.
             variables = temporary / "inputs.tfvars.json"

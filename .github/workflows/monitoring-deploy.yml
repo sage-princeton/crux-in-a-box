@@ -86,6 +86,7 @@ jobs:
         run: |
           jq --arg revision "$GITHUB_SHA" --arg directory "$RUNNER_TEMP" '
             with_entries(select(.key | startswith("status_") | not)) |
+            del(.enabled, .continuous_fleet_monitoring, .schedule_end) |
             .revision = $revision | .registry_file = ($directory + "/registry.json")
           ' "$RUNNER_TEMP/deployment.json" > "$RUNNER_TEMP/deployment.tfvars.json"
       - name: Initialize shared Terraform state

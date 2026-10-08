@@ -28,13 +28,15 @@ or missing names enroll with a coverage gap rather than reading another run's
 traces. Observed models must be recognized and different from the configured
 reviewer family; missing telemetry remains unknown.
 
-`monitoring.auto.tfvars.json` enables continuous incident fleet discovery every
-five minutes. Terraform retains the deployed registry's explicit targets,
+Incident fleet discovery always runs every five minutes once its worker image is
+deployed. Terraform retains the deployed registry's explicit targets,
 exclusions, models and budget, enables name-based Langfuse discovery, and removes
 the registry and scheduler expiry. This repairs the October 2 expiration that
 otherwise prevents incident discovery. Both inference budgets remain cumulative
-and bounded; enrollment does not reset them. To stop continuous incident discovery,
-set `continuous_fleet_monitoring=false` and `enabled=false` in the deployment inputs.
+and bounded; enrollment does not reset them. There are no incident activation
+switches or schedule end date. Deployment and PR planning discard the retired
+`enabled`, `continuous_fleet_monitoring`, and `schedule_end` inputs from older
+deployment snapshots.
 
 The incident digest sends “Monitoring has begun” after a running instance has a
 queued status check and at least one recorded incident review attempt (including

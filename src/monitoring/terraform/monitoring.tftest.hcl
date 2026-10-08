@@ -70,7 +70,7 @@ run "web_service_and_operator_state_are_separate_from_workers" {
   }
 }
 
-run "immutable_workers_remain_disabled" {
+run "deployed_workers_always_monitor_continuously" {
   command = apply
   variables {
     image_digest  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -81,12 +81,12 @@ run "immutable_workers_remain_disabled" {
     error_message = "Ordinary releases must not create status infrastructure before operator bootstrap."
   }
   assert {
-    condition     = aws_scheduler_schedule.monitoring[0].state == "DISABLED"
-    error_message = "Adding an image must not implicitly activate monitoring."
+    condition     = aws_scheduler_schedule.monitoring[0].state == "ENABLED"
+    error_message = "Deploying an image must enable incident monitoring without an activation switch."
   }
   assert {
-    condition     = timecmp(aws_scheduler_schedule.monitoring[0].start_date, aws_scheduler_schedule.monitoring[0].end_date) < 0
-    error_message = "A disabled schedule needs an explicit start before its end so expired runs remain updateable."
+    condition     = aws_scheduler_schedule.monitoring[0].start_date == null && aws_scheduler_schedule.monitoring[0].end_date == null
+    error_message = "Incident monitoring must run continuously without a start or end cutoff."
   }
   assert {
     condition     = jsondecode(aws_batch_job_definition.review[0].container_properties).readonlyRootFilesystem
@@ -99,13 +99,11 @@ run "immutable_workers_remain_disabled" {
 }
 
 variables {
-  continuous_fleet_monitoring = false
-  status_provisioned          = false
-  status_registry_file        = ""
-  account_id                  = "123456789012"
-  registry_file               = "../registry.json.example"
-  secrets_parameter_arn       = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/monitoring/env"
-  schedule_end                = "2030-01-01T00:00:00Z"
+  status_provisioned    = false
+  status_registry_file  = ""
+  account_id            = "123456789012"
+  registry_file         = "../tests/fixtures/expired-registry.json"
+  secrets_parameter_arn = "arn:aws:ssm:us-east-1:123456789012:parameter/crux/monitoring/env"
 }
 
 run "bootstrap_without_workers" {
@@ -128,9 +126,12 @@ run "bootstrap_without_workers" {
   }
 }
 
-run "activation_requires_image_and_registry" {
+run "deployed_workers_require_reviewer_models" {
   command = plan
-  variables { enabled = true }
+  variables {
+    image_digest  = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    registry_file = "../registry.json.example"
+  }
   expect_failures = [terraform_data.configuration]
 }
 
@@ -195,8 +196,8 @@ run "status_has_its_own_storage_roles_queue_and_enabled_schedule" {
     error_message = "Status needs a separate protected table and recovery policy."
   }
   assert {
-    condition     = aws_scheduler_schedule.status[0].state == "ENABLED" && jsondecode(aws_s3_object.status_registry[0].content).enabled && aws_scheduler_schedule.monitoring[0].state == "DISABLED" && aws_batch_job_queue.status[0].name != aws_batch_job_queue.monitoring.name
-    error_message = "Provisioned status must enable its schedule and worker config even when the input says disabled, independently of incident scheduling."
+    condition     = aws_scheduler_schedule.status[0].state == "ENABLED" && jsondecode(aws_s3_object.status_registry[0].content).enabled && aws_scheduler_schedule.monitoring[0].state == "ENABLED" && aws_batch_job_queue.status[0].name != aws_batch_job_queue.monitoring.name
+    error_message = "Provisioned status and incident schedules must be enabled and use separate queues."
   }
   assert {
     condition     = alltrue([for s in jsondecode(aws_iam_role_policy.status_job["check"].policy).Statement : s.Resource == aws_dynamodb_table.status[0].arn if contains(s.Action, "dynamodb:UpdateItem")]) && !strcontains(aws_iam_role_policy.status_job["check"].policy, "ssm:SendCommand") && !strcontains(aws_iam_role_policy.status_job["check"].policy, "batch:SubmitJob")
@@ -237,9 +238,7 @@ run "production_status_runs_continuously_in_a_separate_table" {
     status_registry_file         = "../status.production.json"
     status_secrets_parameter_arn = "arn:aws:ssm:us-east-1:881004720495:parameter/crux/status/env"
     image_digest                 = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    continuous_fleet_monitoring  = true
     registry_file                = "../tests/fixtures/expired-registry.json"
-    schedule_end                 = "2026-10-02T19:33:56Z"
   }
   assert {
     condition     = aws_scheduler_schedule.status[0].state == "ENABLED" && aws_scheduler_schedule.status[0].end_date == null && aws_scheduler_schedule.status[0].schedule_expression == "rate(15 minutes)"
