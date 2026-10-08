@@ -102,6 +102,7 @@
       "Effect": "Allow",
       "Action": [
         "ssm:DescribeDocument",
+        "ssm:DescribeDocumentPermission",
         "ssm:GetDocument",
         "ssm:ListTagsForResource"
       ],
