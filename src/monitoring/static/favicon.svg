@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>CRUX</title>
+  <rect width="32" height="32" rx="7" fill="#2166e8"/>
+  <path d="M24 8H13L7 14v4l6 6h11v-5H15l-3-3 3-3h9Z" fill="#fff"/>
+</svg>

@@ -1,0 +1,128 @@
+name: Monitor Terraform plan
+
+on:
+  # Bootstrap validation for PR #21; remove with the temporary branch IAM trust.
+  push:
+    branches: [ae-211-ec2-monitoring]
+  # AWS checks the PR subject together with the main ref and trusted workflow name.
+  # Keep automation on the base branch; ordinary pull_request refs are not trusted.
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pull_request:
+        description: Same-repository PR number to plan (also supports pre-merge validation)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: monitoring-plan-${{ github.event.pull_request.number || inputs.pull_request || '21' }}
+  cancel-in-progress: true
+
+jobs:
+  context:
+    name: Identify trusted PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
+      sha: ${{ steps.pr.outputs.sha }}
+      eligible: ${{ steps.pr.outputs.eligible }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request || '21' }}
+        run: python3 src/monitoring/ci/pr_plan.py context
+
+  plan:
+    name: Plan live monitoring infrastructure
+    needs: context
+    if: needs.context.outputs.eligible == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: automation
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.context.outputs.sha }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: '1.14.8'
+          terraform_wrapper: false
+      - run: pip install boto3==1.42.73
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.MONITORING_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+          allowed-account-ids: '881004720495'
+          role-session-name: monitoring-plan-${{ github.run_id }}
+          role-duration-seconds: 1800
+      - name: Plan using deployed inputs and read-only remote state
+        env:
+          MONITORING_CONFIG_BUCKET: ${{ vars.MONITORING_CONFIG_BUCKET }}
+          PLAN_DIRECTORY: candidate/src/monitoring/terraform
+          PLAN_REPORT: ${{ runner.temp }}/plan-report/report.json
+        run: python automation/src/monitoring/ci/pr_plan.py plan
+      - name: Save resource addresses and actions only
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: monitoring-plan-summary
+          path: ${{ runner.temp }}/plan-report/report.json
+          retention-days: 7
+          if-no-files-found: ignore
+
+  report:
+    name: Report Terraform resource changes
+    needs: [context, plan]
+    if: ${{ always() && !cancelled() && needs.context.outputs.eligible == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+      statuses: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Download sanitized report from this run
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" -n monitoring-plan-summary -D "$RUNNER_TEMP/plan-report"
+      - name: Update PR comment and commit status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.context.outputs.number }}
+          PR_SHA: ${{ needs.context.outputs.sha }}
+          PLAN_JOB_RESULT: ${{ needs.plan.result }}
+          PLAN_REPORT: ${{ runner.temp }}/plan-report/report.json
+        run: python3 src/monitoring/ci/pr_plan.py report
