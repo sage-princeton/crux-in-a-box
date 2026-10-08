@@ -1,0 +1,3 @@
+{% macro timestamp(value) -%}
+<time datetime="{{ value|isostamp }}">{{ value|stamp }} <span class="inline-block font-normal text-muted">({{ value|relative_time }})</span></time>
+{%- endmacro %}
