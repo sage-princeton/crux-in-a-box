@@ -13,13 +13,16 @@ from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.workspace import RunContext
 
 if TYPE_CHECKING:
+    from crux_scaffold.agent_runtimes.base import AgentRuntime
     from crux_scaffold.drop_in import DropInDirectory
-    from crux_scaffold.runtimes.base import AgentRuntime
 
 MAX_FEEDBACK_CHARS = 4_000
 
 
 class GateResult(BaseModel):
+    """A gate's verdict. `feedback` goes into the continue prompt when the gate fails, and `next_prompt`, when
+    set, replaces the continue prompt."""
+
     gate: str
     passed: bool
     feedback: str
@@ -28,6 +31,8 @@ class GateResult(BaseModel):
 
 @dataclass
 class GateContext:
+    """What a gate sees: the run, the drop-in, where the loop is, and the orchestrator's last output."""
+
     run: RunContext
     drop_in: DropInDirectory
     runtime: AgentRuntime
@@ -37,8 +42,12 @@ class GateContext:
 
 
 class Gate(Component):
+    """A check the loop runs after each iteration to decide whether the phase is done. Its definition comes from
+    the drop-in, never from files the agents can edit, so the agents cannot author their own verdict."""
+
     async def check(self, ctx: GateContext) -> GateResult:
         result = await self.evaluate(ctx)
+        # "evaluator" is a Langfuse observation type, not part of a formal or versioned spec yet (AE-247).
         ctx.run.telemetry.record(f"gate:{self.name}", "evaluator",
                                  {"phase": ctx.phase, "iteration": ctx.iteration}, result.model_dump())
         return result

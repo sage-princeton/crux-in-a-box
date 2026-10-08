@@ -1,7 +1,7 @@
 import pytest
 
 from crux_scaffold.config import McpServerConfig, delegation_order, load_config
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 
 from drop_ins import SCAFFOLD_TOML
 
@@ -15,7 +15,6 @@ def test_defaults(tmp_path):
     config = load_config(write_config(tmp_path, SCAFFOLD_TOML))
     assert config.runtime == {"type": "openai-agents"}
     assert config.context == {"type": "persistent"}
-    assert config.loop == {"type": "phased", "phases": [{"name": "main", "prompt": "PROMPT.md"}]}
     assert config.budget.max_total_tokens is None
     assert config.agents["reviewer"].max_turns == 4
 
@@ -26,7 +25,7 @@ def test_delegation_order_puts_delegates_first(tmp_path):
 
 
 def test_missing_config_file_is_named(tmp_path):
-    with pytest.raises(ConfigError, match="scaffold.toml not found"):
+    with pytest.raises(InvalidDropInError, match="scaffold.toml not found"):
         load_config(tmp_path)
 
 
@@ -42,10 +41,12 @@ def test_missing_config_file_is_named(tmp_path):
      "names used by both an agent and a coding agent: reviewer"),
     ('persona = "personas/reviewer.md"', 'persona = "personas/reviewer.md"\ntool = ["read_file"]',
      "agents.reviewer.tool: Extra inputs are not permitted"),
+    ('[loop]\ntype = "phased"\n\n[[loop.phases]]\nname = "main"\nprompt = "PROMPT.md"\n'
+     'continue_prompt = "prompts/continue.md"\n', '', "loop: Field required"),
 ])
 def test_invalid_configs_name_the_problem(tmp_path, old, new, message):
     assert old in SCAFFOLD_TOML
-    with pytest.raises(ConfigError) as error:
+    with pytest.raises(InvalidDropInError) as error:
         load_config(write_config(tmp_path, SCAFFOLD_TOML.replace(old, new, 1)))
     assert message in str(error.value)
 
@@ -57,7 +58,7 @@ def test_mcp_env_is_filled_from_the_environment():
 
 def test_missing_mcp_env_names_the_variable_without_values():
     server = McpServerConfig(command="npx", env={"TOKEN": "${SLACK_BOT_TOKEN}", "LOG": "${LOG_PATH}"})
-    with pytest.raises(ConfigError) as error:
+    with pytest.raises(InvalidDropInError) as error:
         server.resolved_env("slack", {"LOG_PATH": "/private/path"})
     assert "MCP server 'slack' needs environment variable(s): SLACK_BOT_TOKEN" in str(error.value)
     assert "/private/path" not in str(error.value)

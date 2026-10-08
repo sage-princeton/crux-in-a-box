@@ -10,10 +10,10 @@ from collections.abc import Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.drop_in import DropInDirectory
-from crux_scaffold.errors import ConfigError
-from crux_scaffold.runtimes.base import RUNTIMES
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity, Telemetry, telemetry_from_env
 from crux_scaffold.usage import Budget, UsageLedger
@@ -40,7 +40,8 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
                             ("run", "run the drop-in's loop, resuming from its state directory")):
         command = commands.add_parser(name, help=help_text)
         command.add_argument("--drop-in", type=Path, required=True)
-        command.add_argument("--state-dir", type=Path, help="default: <drop-in>/.state")
+        command.add_argument("--state-dir", type=Path, required=True,
+                             help="where the run's state is kept; a rerun with the same directory resumes the run")
     probe = commands.add_parser("probe", help="one traced model call, and optionally one coding-agent turn")
     probe.add_argument("--runtime", default="openai-agents")
     probe.add_argument("--coding-agent", help="coding agent type to probe too, e.g. codex")
@@ -51,7 +52,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         if args.command == "probe":
             return asyncio.run(run_probe(args.runtime, args.coding_agent, env, telemetry))
         drop_in = DropInDirectory.load(args.drop_in)
-        scaffold = Scaffold(drop_in, env, state_dir=args.state_dir or drop_in.root / ".state", telemetry=telemetry,
+        scaffold = Scaffold(drop_in, env, state_dir=args.state_dir, telemetry=telemetry,
                             sleep=sleep, runtime_overrides=runtime_overrides)
         if args.command == "check":
             print("\n".join(scaffold.describe()))
@@ -59,7 +60,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         if not isinstance(telemetry, LangfuseTelemetry):
             print("tracing off: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are not set", file=sys.stderr)
         outcome = asyncio.run(until_stopped(scaffold.run()))
-    except ConfigError as exc:
+    except InvalidDropInError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return EXIT_CONFIG
     except Stopped as stop:
@@ -123,7 +124,7 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
 
 async def probe_coding_agent(type_name: str, env: Mapping[str, str], telemetry: Telemetry, request: str) -> str:
     cls, options = CODING_AGENTS.resolve("probe", {"type": type_name, "description": "provisioning probe"})
-    agent = cls("probe", options.with_run_defaults("probe", env))
+    agent = cls("probe", options)
     with tempfile.TemporaryDirectory() as tmp:
         ctx = RunContext(Workspace(Path(tmp)), Path(tmp) / ".state", env, UsageLedger(), Budget(), telemetry)
         return (await agent.run(request, ctx)).final_response

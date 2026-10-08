@@ -33,11 +33,11 @@ Don't add special cases for one drop-in to the package. Don't add an extension p
 - **`scaffold.py` is the only composition root.** Components receive their dependencies and never build one another.
 - **Agent SDKs stay in their modules.**
   - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK.
-  - The OpenAI Agents SDK stays in `runtimes/openai_agents.py` and `context_strategies.py`.
+  - The OpenAI Agents SDK stays in `agent_runtimes/openai_agents.py` and `context_strategies.py`.
   - Codex stays in `coding_agents.py`.
 - **Configuration is declarative and strict.**
   - Options models forbid unknown keys.
-  - A drop-in that cannot run fails with `ConfigError` before any model call.
+  - A drop-in that cannot run fails with `InvalidDropInError` before any model call.
   - Read configuration from `RunContext.env`, never from `os.environ`.
 - **Every model call is accounted for.** Add its tokens to `ctx.usage` so the budget holds, and make sure it reaches telemetry.
 - **Secrets never enter the repo or the logs.** An MCP server gets only the environment it declares.
@@ -71,8 +71,8 @@ If the change is user-facing, update the README in the same change. That include
   ```bash
   cd src/sdk-scaffold
   .venv/bin/ruff check . && .venv/bin/python -m pytest -q
-  .venv/bin/python -m unittest discover -s examples/product-change/workspace/site
+  .venv/bin/python -m unittest discover -s examples/web-cms-product-change/workspace/site
   shellcheck docker/*.sh
   docker build --tag crux-sdk-scaffold-demo --file docker/Dockerfile .   # when docker/ or dependencies change
   ```
-- If you change the demo drop-in (`examples/product-change/`), keep `tests/test_demo.py` passing and update its `OPERATOR_GUIDE.md`.
+- If you change the demo drop-in (`examples/web-cms-product-change/`), keep `tests/test_demo.py` passing and update its `OPERATOR_GUIDE.md`.

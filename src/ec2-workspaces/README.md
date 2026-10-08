@@ -271,7 +271,7 @@ For an SDK box:
 
 - **Base config:** set `AGENT_PLATFORM=openai-agents`, `OPENAI_AGENTS_MODEL`,
   `OPENAI_AGENTS_REASONING_EFFORT`, and `DROP_IN_PATH` (e.g.
-  `src/sdk-scaffold/examples/product-change`). The drop-in must be committed,
+  `src/sdk-scaffold/examples/web-cms-product-change`). The drop-in must be committed,
   because provisioning stages `HEAD`.
 - **Base secrets:** `OPENAI_API_KEY`, plus any keys the drop-in's MCP servers
   read, such as `SLACK_BOT_TOKEN`. Like every non-provider key in the base

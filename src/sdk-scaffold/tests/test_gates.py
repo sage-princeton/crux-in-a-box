@@ -1,9 +1,9 @@
 import asyncio
 from pathlib import Path
 
+from crux_scaffold.agent_runtimes.base import Verdict
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.gates import GATES, GateContext
-from crux_scaffold.runtimes.base import Verdict
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.usage import Budget, UsageLedger
 from crux_scaffold.workspace import RunContext, Workspace

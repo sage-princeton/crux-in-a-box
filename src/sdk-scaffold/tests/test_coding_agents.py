@@ -106,15 +106,15 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
     fake = FakeCodex([item(COMMAND), usage(1200, 300, cached=900, cache_write=200, reasoning=40), item(ANSWER),
                       completed()], log)
     telemetry = RecordingTelemetry(log)
-    cls, options = CODING_AGENTS.resolve("engineer", {"type": "codex", "description": "Implements specs.",
-                                                      "model": "gpt-codex-test", "reasoning_effort": "high"})
+    cls, options = CODING_AGENTS.resolve("engineer", {"type": "codex", "description": "Implements specs."})
     agent = cls("engineer", options, developer_instructions="# Standing context", client_factory=lambda ctx: fake)
-    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"OPENAI_API_KEY": "sk-test"}, UsageLedger(), Budget(),
-                     telemetry)
+    env = {"OPENAI_API_KEY": "sk-test", "CRUX_MODEL": "gpt-codex-test", "CRUX_REASONING_EFFORT": "high"}
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(), telemetry)
     result = asyncio.run(agent.run("TASK: add location", ctx))
     assert fake.logins == ["sk-test"]
     assert fake.starts == [{"cwd": str(tmp_path), "model": "gpt-codex-test", "sandbox": Sandbox.workspace_write,
-                            "approval_mode": ApprovalMode.deny_all, "developer_instructions": "# Standing context"}]
+                            "approval_mode": ApprovalMode.deny_all, "developer_instructions": "# Standing context",
+                            "config": {"model_context_window": 1_000_000}}]
     assert fake.thread.turns == [("TASK: add location", {"effort": "high"})]
     assert log == ["stream:ItemCompletedNotification", "record:codex:commandExecution:tool",
                    "stream:ThreadTokenUsageUpdatedNotification",
@@ -131,7 +131,8 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
 def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):
     fake = FakeCodex([completed(status="failed", error={"message": "sandbox denied"})])
     agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"}, client_factory=lambda ctx: fake)
-    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {}, UsageLedger(), Budget(), NullTelemetry())
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
+                     NullTelemetry())
     result = asyncio.run(agent.run("TASK", ctx))
     assert fake.logins == []
     assert result.as_tool_output() == "[coding agent did not complete]\nsandbox denied"

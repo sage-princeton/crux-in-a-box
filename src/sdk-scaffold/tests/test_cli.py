@@ -3,8 +3,8 @@ import signal
 import pytest
 
 from crux_scaffold import cli
+from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.cli import main
-from crux_scaffold.runtimes.base import RUNTIMES
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity
 
 from drop_ins import edit
@@ -43,9 +43,10 @@ def test_run_prints_the_outcome_and_warns_when_tracing_is_off(drop_in_dir, tmp_p
 
 
 def test_a_loop_that_does_not_complete_exits_3(drop_in_dir, tmp_path, capsys):
+    edit(drop_in_dir, "scaffold.toml", 'continue_prompt = "prompts/continue.md"\n',
+         'continue_prompt = "prompts/continue.md"\ngates = ["never"]\n')
     with (drop_in_dir / "scaffold.toml").open("a") as toml:
-        toml.write('\n[loop]\ntype = "phased"\n\n[[loop.phases]]\nname = "main"\nprompt = "PROMPT.md"\n'
-                   'gates = ["never"]\n\n[gates.never]\ntype = "command"\ncommand = "false"\n')
+        toml.write('\n[gates.never]\ntype = "command"\ncommand = "false"\n')
     assert run_cli(drop_in_dir, tmp_path, {"pm": ScriptedModel(say("tried"))}) == 3
     assert capsys.readouterr().out.startswith("loop iterations_exhausted in phase main")
 
@@ -92,3 +93,11 @@ def test_probe_passes_only_when_every_probed_agent_answers(monkeypatch, probe_te
     monkeypatch.setattr(cli, "probe_coding_agent", coding_answer)
     assert main(["probe", "--coding-agent", "codex"], env={}, telemetry=probe_telemetry) == 1
     assert "codex did not answer SCAFFOLD-PROBE" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("command", ["check", "run"])
+def test_the_state_directory_is_required(drop_in_dir, command, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main([command, "--drop-in", str(drop_in_dir)], env={"CRUX_MODEL": "unscripted"})
+    assert exit_info.value.code == 2
+    assert "--state-dir" in capsys.readouterr().err

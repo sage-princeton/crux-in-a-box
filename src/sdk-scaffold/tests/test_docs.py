@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 
 import crux_scaffold.scaffold  # noqa: F401  registers every built-in
+from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.components import Registry
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS
-from crux_scaffold.runtimes.base import RUNTIMES
 from crux_scaffold.tools import TOOLS
 
 DOC = Path(__file__).resolve().parents[1] / "docs" / "extending.md"

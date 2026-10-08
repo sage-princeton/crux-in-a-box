@@ -19,6 +19,8 @@ class Arguments(BaseModel):
 
 
 class Tool(Component):
+    """A function the agents call. `description` and `Arguments` are what the model sees."""
+
     description: ClassVar[str]
     Arguments: ClassVar[type[Arguments]] = Arguments
 

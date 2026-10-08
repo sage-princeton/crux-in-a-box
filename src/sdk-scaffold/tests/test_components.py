@@ -1,7 +1,7 @@
 import pytest
 
 from crux_scaffold.components import Component, Options, Registry
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 
 
 class GreeterOptions(Options):
@@ -34,13 +34,13 @@ def test_explicit_type_and_options():
 
 def test_unknown_type_lists_the_registered_types():
     registry, _ = make_registry()
-    with pytest.raises(ConfigError, match="unknown greeter type 'waver'; registered: greeter"):
+    with pytest.raises(InvalidDropInError, match="unknown greeter type 'waver'; registered: greeter"):
         registry.create("wave", {"type": "waver"})
 
 
 def test_unknown_option_is_rejected_with_its_location():
     registry, _ = make_registry()
-    with pytest.raises(ConfigError, match="greeter 'greeter': greting: Extra inputs are not permitted"):
+    with pytest.raises(InvalidDropInError, match="greeter 'greeter': greting: Extra inputs are not permitted"):
         registry.create("greeter", {"greting": "hi"})
 
 
@@ -50,7 +50,7 @@ def test_a_different_class_cannot_take_a_registered_name():
     class Impostor(Component):
         type_name = "greeter"
 
-    with pytest.raises(ConfigError, match="already registered"):
+    with pytest.raises(InvalidDropInError, match="already registered"):
         registry.register(Impostor)
 
 

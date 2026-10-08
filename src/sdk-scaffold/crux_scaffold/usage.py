@@ -37,6 +37,7 @@ class UsageLedger(BaseModel):
         return sum(usage.total_tokens for usage in self.by_source.values())
 
 
+# TODO(AE-248): give agents their budget, time and resource usage on every turn.
 class Budget(Options):
     """Hard limits the loop enforces deterministically between iterations."""
 

@@ -54,6 +54,7 @@ class GenerationOutcome:
     usage: TokenUsage | None = None
 
 
+# TODO(AE-247): standardize and version the Langfuse export schema.
 class Telemetry(ABC):
     """Langfuse v4 never updates an observation it has stored, so each one is sent once, when it ends. Short
     observations under short traces keep a run visible while it progresses; an observation still open when the

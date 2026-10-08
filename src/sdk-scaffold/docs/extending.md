@@ -32,17 +32,17 @@ Prefer the first option that works:
 
 - **`Component`** has a class-level `type_name` and an `Options` model. It is constructed as `cls(name, options, **dependencies)`. `name` is the declared name, such as `site_tests`. `type_name` is the implementation, such as `command`.
 - **`Options`** is a frozen pydantic model with `extra="forbid"`, so a misspelled key in `scaffold.toml` fails at load time. A component with no configuration keeps the empty base `Options`.
-- **`Registry`** maps type names to classes of one kind. `@REGISTRY.register` adds a class. Re-registering the same class is allowed, because a drop-in extension can be imported twice. Registering a different class under a taken name is a `ConfigError`. `create(name, table)` looks up `table["type"]`, which defaults to the declared name, and validates the rest of the table against the class's `Options`.
+- **`Registry`** maps type names to classes of one kind. `@REGISTRY.register` adds a class. Re-registering the same class is allowed, because a drop-in extension can be imported twice. Registering a different class under a taken name is a `InvalidDropInError`. `create(name, table)` looks up `table["type"]`, which defaults to the declared name, and validates the rest of the table against the class's `Options`.
 
 Built-in components register themselves when their module is imported. `scaffold.py` imports every built-in module. A drop-in lists its own modules under `extensions`. `DropInDirectory.import_extensions` imports each one as `crux_drop_in.<stem>`, and its classes register themselves with the same registries.
 
 **`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. A new dependency between components is passed in there, as a constructor keyword or through `Assembly`; components do not build one another.
 
-**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
+**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
 
 **Errors have two kinds:**
 
-- **`ConfigError`**: the drop-in cannot run as declared. Raise it while assembling, before any model call. The CLI exits 2 and prints the message.
+- **`InvalidDropInError`**: the drop-in cannot run as declared. Raise it while assembling, before any model call. The CLI exits 2 and prints the message.
 - **`ToolError`**: a mistake the model should correct, such as a bad path. The runtime returns it to the model as `error: …` and the run continues.
 
 ### `RunContext`
@@ -52,7 +52,8 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 | Field | Use |
 |---|---|
 | `workspace` | `read_file`, `write_file` and `list_files` are confined to the workspace and raise `ToolError` outside it. `run_shell(command, timeout)` starts in the workspace but is not sandboxed. Its output is capped and prefixed with `exit_code=`. |
-| `state_dir` | The run's own state (`.state` by default). It sits outside the workspace and persists across restarts. |
+| `state_dir` | The run's own state, from `--state-dir`. It sits outside the workspace and persists across restarts. Each component creates what it writes there. |
+| `model`, `reasoning_effort` | The run's model and effort, for every agent and coding agent. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` are the only place they are set; `model` raises `InvalidDropInError` when `CRUX_MODEL` is unset. |
 | `env` | The scaffold's environment. Read configuration from here, not from `os.environ`, so tests can inject it. |
 | `usage`, `budget` | The token ledger and its limits. See [Budget and usage](#budget-and-usage). |
 | `telemetry` | See [Telemetry](#telemetry-telemetry). |
@@ -88,7 +89,7 @@ class SitePreview(Tool):
 `[mcp_servers.<name>]` in `scaffold.toml`, with `McpServerConfig` in `config.py`. These are not components. Any stdio MCP server becomes a set of tools for the agents whose `mcp_servers` list names it. A steering channel, such as the demo's Slack integration, is an MCP server, so adding a channel normally needs no scaffold code.
 
 - `command`, `args` and `timeout_seconds` start the server.
-- The server receives only its declared `env`, plus a minimal `PATH` and `HOME`. A `${VAR}` reference is filled from the scaffold's environment. A missing variable is a `ConfigError`, and the value is never echoed.
+- The server receives only its declared `env`, plus a minimal `PATH` and `HOME`. A `${VAR}` reference is filled from the scaffold's environment. A missing variable is a `InvalidDropInError`, and the value is never echoed.
 - Restrict a server with its own settings, as the demo does with `SLACK_MCP_ADD_MESSAGE_TOOL`, rather than trusting the persona to stay within limits.
 
 ## Gates (`Gate`)
@@ -118,6 +119,8 @@ class SitePreview(Tool):
 
 First try adding phases, gates, continue prompts and `interval_seconds` to `phased` (`PhaseConfig` in `config.py`). A new loop is for a different control flow, not a different sequence of prompts.
 
+A drop-in always declares its `[loop]`; there is no default. Every phase names its `continue_prompt`, a `string.Template` with `$phase`, `$iteration` and `$feedback`.
+
 - It is constructed with the declared `gates` as a dependency. `run(runtime, drop_in, ctx, state, store) -> LoopOutcome` drives `runtime.run(prompt, workflow=…)` until it is done.
 - **Resumable:**
   - keep progress in `RunState`;
@@ -146,7 +149,7 @@ First try adding phases, gates, continue prompts and `interval_seconds` to `phas
 
 `coding_agents.py`, registry `CODING_AGENTS`. Built-in: `codex`.
 
-- **`Options`** subclasses `CodingAgentOptions`. That base has `description`, `context`, `model` and `reasoning_effort`. Before construction, the scaffold applies `with_run_defaults`, which fills the model and effort from `CRUX_MODEL` and `CRUX_REASONING_EFFORT`, so `options.model` is always set.
+- **`Options`** subclasses `CodingAgentOptions`, whose base has `description` and `context`. The model and effort are not options: use `ctx.model` and `ctx.reasoning_effort`. `codex` also gives Codex a 1M-token context window (`CONTEXT_WINDOW_TOKENS`).
 - **The constructor** must accept `developer_instructions`, the drop-in's standing context for the coding agent. Give any other dependency a default, such as `codex`'s `client_factory`, so tests can replace it.
 - **`execute(brief, ctx) -> CodingResult`** runs one brief to completion in the workspace. Each brief starts fresh: the brief is the whole task. Don't override `run`. It wraps `execute` in a telemetry `generation` and adds the usage to the ledger.
 - **`CodingResult`**:
@@ -158,7 +161,7 @@ First try adding phases, gates, continue prompts and `interval_seconds` to `phas
 
 ## Agent runtimes (`AgentRuntime`)
 
-`runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `runtimes/openai_agents.py`.
+`agent_runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `agent_runtimes/openai_agents.py`.
 
 A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, and the context strategy. `runtime_overrides` add further keyword arguments, such as the test models that `openai-agents` takes. A new runtime module must be imported by `scaffold.py` so it registers. Its SDK stays inside that module.
 
@@ -168,7 +171,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 |---|---|
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
-| `judge(name, rubric, evidence)` | Ask an isolated judge, with no tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). Count its usage like an agent's. `openai-agents` takes the judge's model from its `judge_model` option, then its `model`, then `CRUX_MODEL`. |
+| `judge(name, rubric, evidence)` | Ask an isolated judge, with no tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). Count its usage like an agent's. The judge uses `ctx.model`, like every agent. |
 | `describe()` | One line per agent, printed by `check`. |
 | `probe(env, prompt, telemetry)` (classmethod) | One traced model call outside any drop-in, which provisioning uses to prove the runtime works. |
 
@@ -176,8 +179,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 
 - **Agents.**
   - Build one agent per `[agents.<name>]`, with `drop_in.instructions(name)` as its instructions.
-  - The model comes from the agent's `model`, then the runtime's `model` option, then `CRUX_MODEL`. Raise `ConfigError` when none is set.
-  - Reasoning effort is resolved the same way.
+  - Every agent uses `ctx.model` and `ctx.reasoning_effort`. A drop-in cannot set a model, so runs differ in model only by `CRUX_MODEL`.
 - **Tools.**
   - Expose each `Tool` with its `Arguments` schema.
   - Validate the model's arguments and call `invoke`.
