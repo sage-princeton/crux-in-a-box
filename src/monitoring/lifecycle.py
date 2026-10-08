@@ -30,7 +30,6 @@ DETECTORS = {
         "AI reviews unavailable",
         "Monitoring could not produce a safety verdict.",
     ),
-    "monitoring:idle": ("No recent evidence", "No recent evidence was available for review."),
     "monitoring:coverage": (
         "Incomplete monitoring coverage",
         "Some expected evidence was unavailable.",
@@ -96,10 +95,7 @@ def evidence_anchors(sources):
     result = {}
     for source in sources:
         sid = source["id"]
-        if source.get("kind") == "cloudwatch":
-            for event in source["data"]:
-                result["event:" + event["eventId"]] = sid
-        elif source.get("kind") == "workspace":
+        if source.get("kind") == "workspace":
             result.update({anchor: sid for anchor, _ in workspace_anchor_positions(source)})
         else:
             result[sid] = sid

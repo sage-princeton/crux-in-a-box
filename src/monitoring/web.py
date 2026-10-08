@@ -129,7 +129,7 @@ def create_app(store=None, settings=None):
         status_error = incident_error
         coverage = coverage_rows(incident_rows)
         selected = request.args.get("workload", "")
-        if selected and selected not in {row["sk"] for row in coverage}:
+        if selected and selected not in {row["key"] for row in coverage}:
             if not status_error:
                 abort(404, "Workload not found.")
         try:
@@ -140,7 +140,7 @@ def create_app(store=None, settings=None):
             abort(400, "Invalid coverage page.")
         active_coverage = [row for row in coverage if row.get("state") == "running"]
         shown = (
-            [row for row in coverage if row["sk"] == selected]
+            [row for row in coverage if row["key"] == selected]
             if selected
             else active_coverage[(coverage_page - 1) * 5 : coverage_page * 5]
         )

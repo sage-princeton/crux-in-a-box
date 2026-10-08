@@ -12,7 +12,7 @@
     <label for="workload" class="text-xs text-muted">Workload</label>
     <select id="workload" name="workload" class="min-w-0 max-w-full flex-1 rounded border border-line bg-white p-1.5 text-sm min-[701px]:max-w-80">
       <option value="">Running workloads</option>
-      {% for row in coverage %}<option value="{{ row.sk }}" {% if row.sk == selected %}selected{% endif %}>{{ row.slug }}{% if row.workload_id %} · {{ row.workload_id }}{% endif %} · {{ row.state }}</option>{% endfor %}
+      {% for row in coverage %}<option value="{{ row.key }}" {% if row.key == selected %}selected{% endif %}>{{ row.slug }}{% if row.instance_id %} · {{ row.instance_id }}{% endif %} · {{ row.state }}</option>{% endfor %}
     </select>
     <button class="rounded border border-line px-3 py-1.5 text-sm hover:bg-paper">Show</button>
   </form>
@@ -21,9 +21,9 @@
   <article class="workload-status border-b border-line px-4 py-4 last:border-b-0 min-[701px]:px-6" aria-label="{{ row.slug }} project status">
     <div class="mb-2 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
       <h3 class="m-0 text-base font-semibold wrap-anywhere">{{ row.slug }} <span class="text-xs font-normal text-muted">{{ row.state|capitalize }}</span></h3>
-      <a href="{{ url_for('status_history', key=row.sk) }}" class="text-xs text-accent hover:underline">Status history</a>
+      <a href="{{ url_for('status_history', key=row.key) }}" class="text-xs text-accent hover:underline">Status history</a>
     </div>
-    {% if row.workload_id %}<p class="mb-2 text-xs text-muted wrap-anywhere">{{ row.workload_id }} · {{ row.instance_id }}</p>{% endif %}
+    {% if row.instance_id %}<p class="mb-2 text-xs text-muted wrap-anywhere">{{ row.instance_id }}</p>{% endif %}
     {% if row.get('latest') %}
       <p class="mb-3 text-xs text-muted">Checked {{ timestamp(row.latest.checked_at) }}<br class="min-[701px]:hidden"> · Evidence {{ timestamp(row.latest.evidence_at) }}{% if row.stale %} · <strong class="text-amber-800">Stale evidence</strong>{% endif %}</p>
     {% endif %}
@@ -38,5 +38,5 @@
   </article>
   {% else %}<p class="px-4 py-5 text-sm text-muted">No running workloads discovered.</p>{% endfor %}
   {% if not selected and (coverage_page > 1 or coverage_more) %}<nav aria-label="Coverage pages" class="flex gap-5 border-t border-line px-4 py-3 text-sm">{% if coverage_page > 1 %}<a class="text-accent hover:underline" href="{{ url_for('index', status=status, coverage_page=coverage_page-1) }}#coverage">← Previous workloads</a>{% endif %}{% if coverage_more %}<a class="text-accent hover:underline" href="{{ url_for('index', status=status, coverage_page=coverage_page+1) }}#coverage">More workloads →</a>{% endif %}</nav>{% endif %}
-  {% if coverage|rejectattr('state', 'equalto', 'running')|list %}<details class="border-t border-line px-4 py-3 text-sm"><summary class="cursor-pointer text-muted">Stopped workloads and history</summary><ul class="mt-2 space-y-2">{% for row in coverage if row.state != 'running' %}<li><a class="text-accent hover:underline" href="{{ url_for('index', status=status, workload=row.sk) }}#coverage">{{ row.slug }}{% if row.workload_id %} · {{ row.workload_id }}{% endif %}</a> <span class="text-xs text-muted">{{ row.state }}</span></li>{% endfor %}</ul></details>{% endif %}
+  {% if coverage|rejectattr('state', 'equalto', 'running')|list %}<details class="border-t border-line px-4 py-3 text-sm"><summary class="cursor-pointer text-muted">Stopped workloads and history</summary><ul class="mt-2 space-y-2">{% for row in coverage if row.state != 'running' %}<li><a class="text-accent hover:underline" href="{{ url_for('index', status=status, workload=row.key) }}#coverage">{{ row.slug }}{% if row.instance_id %} · {{ row.instance_id }}{% endif %}</a> <span class="text-xs text-muted">{{ row.state }}</span></li>{% endfor %}</ul></details>{% endif %}
 </section>

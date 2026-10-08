@@ -44,7 +44,7 @@ class Store:
         with self.db.connect() as connection:
             result = connection.execute(
                 text("""
-                SELECT w.*, w.key AS sk, w.instance_id AS workload_id,
+                SELECT w.*,
                     last_status.result AS status_attempt, latest.result AS latest,
                     last_incident.result AS incident_attempt, previous_incident.result AS incident_report,
                     (SELECT count(*) FROM assessments a WHERE a.workload_key=w.key
@@ -159,7 +159,7 @@ class Store:
     def ingest(self, key, end, result, anchors):
         report, prefix = result["report"], result["artifact_prefix"]
         status = report["review_status"]
-        if status not in ("completed", "idle", "failed"):
+        if status not in ("completed", "failed"):
             raise ValueError("Invalid review status")
         findings = []
         for finding in report["findings"]:
@@ -172,8 +172,6 @@ class Store:
         health = (
             "unavailable"
             if status == "failed"
-            else "idle"
-            if status == "idle"
             else ("coverage" if report["coverage_gaps"] else None)
         )
         if health:
@@ -265,7 +263,7 @@ class Store:
             row = (
                 connection.execute(
                     text("""
-                SELECT i.*, w.slug AS workload_label, w.instance_id, w.instance_id AS workload_id,
+                SELECT i.*, w.slug AS workload_label, w.instance_id,
                     (SELECT count(*) FROM observations o WHERE o.incident_id=i.id) AS observations
                 FROM incidents i JOIN workloads w ON w.key=i.workload_key WHERE i.id=:id
             """),
