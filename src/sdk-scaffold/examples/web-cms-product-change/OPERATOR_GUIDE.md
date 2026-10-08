@@ -1,4 +1,4 @@
-# Operator Guide — product-change demo (AE-230)
+# Operator Guide — web-cms-product-change demo (AE-230)
 
 This demo exercises the scaffold end to end, in two phases:
 

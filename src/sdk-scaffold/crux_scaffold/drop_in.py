@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from crux_scaffold.config import CONFIG_FILE, ScaffoldConfig, load_config
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 
 PLACEHOLDER = re.compile(r"\{\{[A-Z0-9_]+(?:\|[^}]*)?\}\}")
 UNSCANNED = {"OPERATOR_GUIDE.md", "README.md"}
@@ -33,7 +33,7 @@ class DropInDirectory:
         drop_in = cls(root, load_config(root))
         drop_in.check_placeholders()
         if not drop_in.workspace.is_dir():
-            raise ConfigError(f"workspace directory {drop_in.config.workspace} not found under {root}")
+            raise InvalidDropInError(f"workspace directory {drop_in.config.workspace} not found under {root}")
         drop_in.import_extensions()
         return drop_in
 
@@ -44,7 +44,7 @@ class DropInDirectory:
     def read(self, rel: str) -> str:
         path = self.root / rel
         if not path.is_file():
-            raise ConfigError(f"{rel} not found under {self.root}")
+            raise InvalidDropInError(f"{rel} not found under {self.root}")
         return path.read_text()
 
     def prompt(self, rel: str) -> str:
@@ -73,14 +73,14 @@ class DropInDirectory:
     def check_placeholders(self) -> None:
         unresolved = [entry for rel in self.scanned_files() for entry in unresolved_placeholders(rel, self.read(rel))]
         if unresolved:
-            raise ConfigError("unresolved placeholders (see OPERATOR_GUIDE.md):\n  " + "\n  ".join(unresolved))
+            raise InvalidDropInError("unresolved placeholders (see OPERATOR_GUIDE.md):\n  " + "\n  ".join(unresolved))
 
     def import_extensions(self) -> None:
         """Import the drop-in's Python modules; they register their components with the scaffold's registries."""
         for rel in self.config.extensions:
             path = self.root / rel
             if not path.is_file():
-                raise ConfigError(f"extension {rel} not found under {self.root}")
+                raise InvalidDropInError(f"extension {rel} not found under {self.root}")
             name = f"crux_drop_in.{path.stem}"
             spec = importlib.util.spec_from_file_location(name, path)
             module = importlib.util.module_from_spec(spec)

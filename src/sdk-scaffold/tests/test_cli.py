@@ -3,8 +3,8 @@ import signal
 import pytest
 
 from crux_scaffold import cli
+from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.cli import main
-from crux_scaffold.runtimes.base import RUNTIMES
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity
 
 from drop_ins import edit

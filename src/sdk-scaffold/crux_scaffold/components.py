@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 
 
 class Options(BaseModel):
@@ -37,7 +37,8 @@ class Registry[C: Component]:
         existing = self._types.get(cls.type_name)
         # Re-importing a drop-in extension replaces its classes; a different class taking the name is a conflict.
         if existing is not None and (existing.__module__, existing.__qualname__) != (cls.__module__, cls.__qualname__):
-            raise ConfigError(f"{self.kind} type '{cls.type_name}' is already registered by {existing.__qualname__}")
+            raise InvalidDropInError(
+                f"{self.kind} type '{cls.type_name}' is already registered by {existing.__qualname__}")
         self._types[cls.type_name] = cls
         return cls
 
@@ -49,7 +50,7 @@ class Registry[C: Component]:
             return self._types[type_name]
         except KeyError:
             known = ", ".join(self.names())
-            raise ConfigError(f"unknown {self.kind} type '{type_name}'; registered: {known}") from None
+            raise InvalidDropInError(f"unknown {self.kind} type '{type_name}'; registered: {known}") from None
 
     def resolve(self, name: str, table: Mapping[str, Any]) -> tuple[type[C], Options]:
         """The class and validated options for a declared component; `type` defaults to the component's name."""
@@ -58,7 +59,7 @@ class Registry[C: Component]:
         try:
             return cls, cls.Options.model_validate(spec)
         except ValidationError as exc:
-            raise ConfigError(f"{self.kind} '{name}': {describe(exc)}") from None
+            raise InvalidDropInError(f"{self.kind} '{name}': {describe(exc)}") from None
 
     def create(self, name: str, table: Mapping[str, Any], **dependencies: Any) -> C:
         cls, options = self.resolve(name, table)

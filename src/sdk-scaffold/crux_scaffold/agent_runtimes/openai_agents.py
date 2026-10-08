@@ -27,11 +27,11 @@ from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import Field, ValidationError
 
+from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
 from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.errors import ConfigError, ToolError
-from crux_scaffold.runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
+from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool
 from crux_scaffold.usage import UsageLedger
@@ -122,7 +122,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         trace_agents_sdk(telemetry)
         model = env.get("CRUX_MODEL")
         if not model:
-            raise ConfigError("CRUX_MODEL is not set")
+            raise InvalidDropInError("CRUX_MODEL is not set")
         effort = env.get("CRUX_REASONING_EFFORT")
         settings = ModelSettings(reasoning=Reasoning(effort=effort)) if effort else ModelSettings()
         agent = Agent(name="probe", instructions="Reply with exactly the text you are asked for.", model=model,
@@ -134,7 +134,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
             return self.models[agent]
         model = override or self.options.model or self.assembly.context.env.get("CRUX_MODEL")
         if not model:
-            raise ConfigError(f"agent '{agent}' has no model: set CRUX_MODEL, [runtime] model, or the agent's model")
+            raise InvalidDropInError(
+                f"agent '{agent}' has no model: set CRUX_MODEL, [runtime] model, or the agent's model")
         return model
 
     def _settings(self, override: str | None) -> ModelSettings:

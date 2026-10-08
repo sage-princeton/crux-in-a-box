@@ -12,7 +12,7 @@ from typing import Any
 from pydantic import Field, ValidationError, model_validator
 
 from crux_scaffold.components import Options, describe
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import Budget
 
 CONFIG_FILE = "scaffold.toml"
@@ -42,7 +42,7 @@ class McpServerConfig(Options):
         """`env` with ${VAR} references filled from the scaffold's environment; never echoes values."""
         missing = sorted({var for value in self.env.values() for var in ENV_REF.findall(value) if not env.get(var)})
         if missing:
-            raise ConfigError(f"MCP server '{name}' needs environment variable(s): {', '.join(missing)}")
+            raise InvalidDropInError(f"MCP server '{name}' needs environment variable(s): {', '.join(missing)}")
         return {key: ENV_REF.sub(lambda match: env[match.group(1)], value) for key, value in self.env.items()}
 
 
@@ -117,10 +117,10 @@ def delegation_order(agents: Mapping[str, AgentConfig]) -> list[str]:
 def load_config(root: Path) -> ScaffoldConfig:
     path = root / CONFIG_FILE
     if not path.is_file():
-        raise ConfigError(f"{CONFIG_FILE} not found under {root}")
+        raise InvalidDropInError(f"{CONFIG_FILE} not found under {root}")
     try:
         return ScaffoldConfig.model_validate(tomllib.loads(path.read_text()))
     except tomllib.TOMLDecodeError as exc:
-        raise ConfigError(f"{CONFIG_FILE}: {exc}") from None
+        raise InvalidDropInError(f"{CONFIG_FILE}: {exc}") from None
     except ValidationError as exc:
-        raise ConfigError(f"{CONFIG_FILE}: {describe(exc)}") from None
+        raise InvalidDropInError(f"{CONFIG_FILE}: {describe(exc)}") from None

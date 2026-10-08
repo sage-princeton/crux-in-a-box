@@ -11,12 +11,12 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from crux_scaffold.agent_runtimes.base import AgentRuntime
 from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.config import PhaseConfig
 from crux_scaffold.drop_in import DropInDirectory
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import Gate, GateContext, GateResult
-from crux_scaffold.runtimes.base import AgentRuntime
 from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import RunContext
 
@@ -89,11 +89,11 @@ class PhasedLoop(Loop):
         super().__init__(name, options, gates=gates)
         names = [phase.name for phase in options.phases]
         if len(set(names)) != len(names):
-            raise ConfigError(f"loop phases must have unique names: {', '.join(names)}")
+            raise InvalidDropInError(f"loop phases must have unique names: {', '.join(names)}")
         for phase in options.phases:
             missing = [gate for gate in phase.gates if gate not in gates]
             if missing:
-                raise ConfigError(f"phase '{phase.name}' uses undefined gate(s): {', '.join(missing)}")
+                raise InvalidDropInError(f"phase '{phase.name}' uses undefined gate(s): {', '.join(missing)}")
 
     async def run(self, runtime: AgentRuntime, drop_in: DropInDirectory, ctx: RunContext, state: RunState,
                   store: StateFile) -> LoopOutcome:

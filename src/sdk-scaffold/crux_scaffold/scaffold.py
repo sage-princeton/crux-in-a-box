@@ -7,13 +7,13 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import crux_scaffold.runtimes.openai_agents  # noqa: F401  registers the built-in runtime
+import crux_scaffold.agent_runtimes.openai_agents  # noqa: F401  registers the built-in runtime
+from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS, LoopOutcome, StateFile
-from crux_scaffold.runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import TOOLS, Tool
 from crux_scaffold.workspace import RunContext, Sleep, Workspace

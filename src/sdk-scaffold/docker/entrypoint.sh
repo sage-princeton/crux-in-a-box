@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Container entrypoint: stage the demo drop-in in /work once, resolve its placeholder, then run the scaffold on it.
-# /work is a volume, so a restarted container resumes the run from /work/product-change/.state.
+# /work is a volume, so a restarted container resumes the run from /work/web-cms-product-change/.state.
 set -euo pipefail
 
-DEMO=/work/product-change
+DEMO=/work/web-cms-product-change
 
 stage() {
   [[ -d $DEMO ]] && return
@@ -11,7 +11,7 @@ stage() {
     echo "set SLACK_CHANNEL_ID to the request channel's ID (C…)" >&2
     exit 2
   fi
-  cp -R /opt/crux-sdk-scaffold/examples/product-change "$DEMO"
+  cp -R /opt/crux-sdk-scaffold/examples/web-cms-product-change "$DEMO"
   sed -i "s/{{SLACK_CHANNEL_ID}}/$SLACK_CHANNEL_ID/g" "$DEMO/PROMPT.md" "$DEMO/scaffold.toml" "$DEMO/workspace/AGENTS.md"
   # Codex's Linux sandbox (bubblewrap) cannot create namespaces in an unprivileged container, so the container is
   # the boundary here: a non-root user whose only writable volume is /work.

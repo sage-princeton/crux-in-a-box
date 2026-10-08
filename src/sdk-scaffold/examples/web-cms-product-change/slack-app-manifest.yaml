@@ -1,6 +1,6 @@
 display_information:
   name: CRUX Product Manager
-  description: Product manager agent for the CRUX product-change demo. Clarifies change requests in their threads.
+  description: Product manager agent for the CRUX web-cms-product-change demo. Clarifies change requests in their threads.
 features:
   bot_user:
     display_name: crux-pm

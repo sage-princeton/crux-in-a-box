@@ -3,11 +3,11 @@ import json
 
 import pytest
 
+from crux_scaffold.agent_runtimes.base import TurnOutcome
 from crux_scaffold.drop_in import DropInDirectory
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS, RunState, StateFile
-from crux_scaffold.runtimes.base import TurnOutcome
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.usage import Budget
 from crux_scaffold.workspace import RunContext, Workspace
@@ -121,9 +121,9 @@ def test_the_budget_is_a_hard_stop_between_iterations(loop_env):
 
 
 def test_undefined_gates_and_duplicate_phases_are_config_errors():
-    with pytest.raises(ConfigError, match="phase 'a' uses undefined gate\\(s\\): tests"):
+    with pytest.raises(InvalidDropInError, match="phase 'a' uses undefined gate\\(s\\): tests"):
         LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md", "gates": ["tests"]}]},
                      gates={})
-    with pytest.raises(ConfigError, match="unique names"):
+    with pytest.raises(InvalidDropInError, match="unique names"):
         LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md"},
                                                          {"name": "a", "prompt": "P.md"}]}, gates={})

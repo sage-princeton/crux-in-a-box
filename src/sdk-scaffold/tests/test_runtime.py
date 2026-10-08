@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 
 from drop_ins import add_fake_slack, edit
 from scripted import ScriptedModel, call, say, tool_outputs
@@ -59,7 +59,7 @@ def test_usage_is_recorded_per_agent_and_persisted(drop_in_dir, assemble, tmp_pa
 
 def test_unknown_tool_type_is_a_config_error(drop_in_dir, assemble):
     edit(drop_in_dir, "scaffold.toml", 'tools = ["read_file", "write_file", "rest"]', 'tools = ["deploy"]')
-    with pytest.raises(ConfigError, match="unknown tool type 'deploy'"):
+    with pytest.raises(InvalidDropInError, match="unknown tool type 'deploy'"):
         assemble(drop_in_dir)
 
 
@@ -74,7 +74,7 @@ def test_reasoning_effort_comes_from_env_unless_overridden(drop_in_dir, assemble
 
 def test_an_agent_without_a_model_is_a_config_error(drop_in_dir, assemble):
     edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "scripted"\nmodel = "gpt-codex-test"')
-    with pytest.raises(ConfigError, match="agent 'reviewer' has no model"):
+    with pytest.raises(InvalidDropInError, match="agent 'reviewer' has no model"):
         assemble(drop_in_dir, env={}).runtime.build()
 
 
@@ -88,7 +88,7 @@ def test_coding_agents_take_the_run_model_and_effort_unless_the_drop_in_sets_the
 
 
 def test_a_coding_agent_without_a_model_is_a_config_error(drop_in_dir, assemble):
-    with pytest.raises(ConfigError, match="coding agent 'engineer' has no model"):
+    with pytest.raises(InvalidDropInError, match="coding agent 'engineer' has no model"):
         assemble(drop_in_dir, env={})
 
 

@@ -14,7 +14,7 @@ from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnComplete
 from pydantic import BaseModel
 
 from crux_scaffold.components import Component, Options, Registry
-from crux_scaffold.errors import ConfigError
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
@@ -30,7 +30,7 @@ class CodingAgentOptions(Options):
         model is decided (and traced) by the scaffold rather than by the coding agent's own default."""
         model = self.model or env.get("CRUX_MODEL")
         if not model:
-            raise ConfigError(f"coding agent '{name}' has no model: set CRUX_MODEL or the coding agent's model")
+            raise InvalidDropInError(f"coding agent '{name}' has no model: set CRUX_MODEL or the coding agent's model")
         return self.model_copy(update={"model": model,
                                        "reasoning_effort": self.reasoning_effort or env.get("CRUX_REASONING_EFFORT")})
 
