@@ -22,7 +22,11 @@ set -euo pipefail
 # it launches (e.g. so Payload's S3 storage adapter can use instance
 # credentials) — every such role is capped by a crux-app-boundary
 # permissions boundary the agent cannot alter or remove, and can only be
-# passed to EC2.
+# passed to EC2. With PROVISION_EC2 the agent can also reach any instance in
+# the account via EC2 Instance Connect or SSM, so it can get into instances a
+# previous run left behind (see teardown-workspace-aws-resources.sh --keep-aux).
+# If crux-agent-devops still trusts a previous run's role, trust is handed to
+# this run and the previous run's main-account role is removed.
 # AUX_RESOURCE_PROFILE names the AWS CLI profile/credentials for the
 # isolated account. See README.md.
 
@@ -36,7 +40,7 @@ CONFIG_FILE=""; DRY_RUN=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
-    -h|--help) sed -n '4,27p' "$0"; exit 0 ;;
+    -h|--help) sed -n '4,31p' "$0"; exit 0 ;;
     -*) die "Unknown flag: $1" ;;
     *) [ -z "$CONFIG_FILE" ] || die "Only one config file"; CONFIG_FILE="$1"; shift ;;
   esac
@@ -88,6 +92,22 @@ AUX_PROFILE="$(cfg AUX_RESOURCE_PROFILE)"
 RUN_ROLE="crux-run-$SLUG"
 AUX_ROLE="crux-agent-devops"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+POLICY_DIR="$SCRIPT_DIR/aux-aws-policies"
+
+# render_policy FILE KEY=VALUE... — print aux-aws-policies/FILE as compact JSON
+# with each {{KEY}} replaced by VALUE; dies on a leftover {{token}}.
+render_policy() {
+  local file="$POLICY_DIR/$1" doc kv; shift
+  [ -f "$file" ] || die "Policy template not found: $file"
+  doc="$(<"$file")"
+  for kv in "$@"; do
+    doc="${doc//"{{${kv%%=*}}}"/"${kv#*=}"}"
+  done
+  case "$doc" in *'{{'*) die "Unresolved {{token}} in $file" ;; esac
+  printf '%s' "$doc" | jq -c .
+}
+
 if [ -n "$PROFILE" ]; then MAIN_PROFILE_ARGS=(--profile "$PROFILE"); else MAIN_PROFILE_ARGS=(); fi
 AUX_PROFILE_ARGS=(--profile "$AUX_PROFILE")
 aws_main_()     { aws "${MAIN_PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
@@ -131,6 +151,10 @@ if [ "$DRY_RUN" = 1 ]; then
       $( [ "$FLAG_ACM" = 1 ] && echo "AWSCertificateManagerFullAccess (PROVISION_ACM=1)" )
       $( [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ] && echo "crux-app-boundary managed policy created/refreshed (caps crux-app-* roles: S3 in this account + CloudWatch Logs)" )
       $( [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ] && echo "inline policy create-app-roles (crux-app-* roles only, always boundary-capped, pass-role to EC2 only)" )
+      $( [ "$FLAG_EC2" = 1 ] && echo "inline policy instance-access (EC2 Instance Connect + SSM sessions/commands on this account's instances)" )
+  if $AUX_ROLE currently trusts another run's crux-run-* role (a retained
+  previous run), trust is handed to $RUN_ROLE and the previous run's main-account
+  role is deleted, unless an instance still uses its instance profile.
   config written to $CONFIG_FILE:
     AUX_RESOURCE_ACCOUNT_ID=$AUX_ACCOUNT_ID
     AUX_RESOURCE_ROLE_ARN=$AUX_ROLE_ARN
@@ -146,14 +170,14 @@ if aws_main_iam_ get-role --role-name "$RUN_ROLE" >/dev/null 2>&1; then
 else
   aws_main_iam_ create-role --role-name "$RUN_ROLE" \
     --description "CRUX run box $SLUG - baseline system access plus aux-resource devops" \
-    --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' >/dev/null
+    --assume-role-policy-document "$(render_policy run-role-trust.json)" >/dev/null
   ok "Created role"
 fi
 aws_main_iam_ put-role-policy --role-name "$RUN_ROLE" --policy-name "read-system-env" \
-  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"ssm:GetParameter\"],\"Resource\":\"arn:aws:ssm:${REGION}:${MAIN_ACCOUNT_ID}:parameter/crux/system/env\"}]}" >/dev/null
+  --policy-document "$(render_policy run-read-system-env.json "REGION=$REGION" "MAIN_ACCOUNT_ID=$MAIN_ACCOUNT_ID")" >/dev/null
 ok "Inline policy: ssm:GetParameter on /crux/system/env"
 aws_main_iam_ put-role-policy --role-name "$RUN_ROLE" --policy-name "assume-aux-resource-role" \
-  --policy-document "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"sts:AssumeRole\",\"Resource\":\"$AUX_ROLE_ARN\"}]}" >/dev/null
+  --policy-document "$(render_policy run-assume-aux-role.json "AUX_ROLE_ARN=$AUX_ROLE_ARN")" >/dev/null
 ok "Inline policy: sts:AssumeRole on $AUX_ROLE_ARN only"
 
 if aws_main_iam_ get-instance-profile --instance-profile-name "$RUN_ROLE" >/dev/null 2>&1; then
@@ -169,19 +193,57 @@ fi
 
 # ====== ISOLATED ACCOUNT: crux-agent-devops role ======
 info "IAM role '$AUX_ROLE' (isolated account $AUX_ACCOUNT_ID)"
-TRUST_POLICY="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"$RUN_ROLE_ARN\"},\"Action\":\"sts:AssumeRole\"}]}"
+TRUST_POLICY="$(render_policy aux-role-trust.json "RUN_ROLE_ARN=$RUN_ROLE_ARN")"
+PREVIOUS_RUN_ROLE_ARN=""
 if aws_aux_iam_ get-role --role-name "$AUX_ROLE" >/dev/null 2>&1; then
   CURRENT_TRUSTED_ARN="$(aws_aux_iam_ get-role --role-name "$AUX_ROLE" \
     --query 'Role.AssumeRolePolicyDocument.Statement[0].Principal.AWS' --output text 2>/dev/null || true)"
   case "$CURRENT_TRUSTED_ARN" in
     *"/crux-run-"*)
       if [ "$CURRENT_TRUSTED_ARN" != "$RUN_ROLE_ARN" ]; then
-        warn "$AUX_ROLE currently trusts $CURRENT_TRUSTED_ARN — handing off to $RUN_ROLE_ARN. The isolated account is single-tenant, so the previous run loses its aux-resource access now."
+        warn "$AUX_ROLE currently trusts $CURRENT_TRUSTED_ARN — handing off to $RUN_ROLE_ARN. The isolated account is single-tenant, so the previous run loses its aux-resource access now; the resources it left in the account stay and are now this run's."
+        PREVIOUS_RUN_ROLE_ARN="$CURRENT_TRUSTED_ARN"
       fi
       ;;
   esac
   aws_aux_iam_ update-assume-role-policy --role-name "$AUX_ROLE" --policy-document "$TRUST_POLICY" >/dev/null
   ok "Role exists; trust policy set to $RUN_ROLE_ARN only"
+
+  # Ownership moves with the trust policy. Leaving the previous run's role
+  # behind would let its teardown config (which still finds that role)
+  # sweep resources that now belong to this run.
+  if [ -n "$PREVIOUS_RUN_ROLE_ARN" ]; then
+    PREVIOUS_ROLE_NAME="${PREVIOUS_RUN_ROLE_ARN##*/}"
+    if [ "$PREVIOUS_RUN_ROLE_ARN" != "arn:aws:iam::${MAIN_ACCOUNT_ID}:role/${PREVIOUS_ROLE_NAME}" ]; then
+      warn "Previous run role $PREVIOUS_RUN_ROLE_ARN is not in the main account $MAIN_ACCOUNT_ID — leaving it alone."
+    else
+      PREVIOUS_PROFILE_ARN="arn:aws:iam::${MAIN_ACCOUNT_ID}:instance-profile/${PREVIOUS_ROLE_NAME}"
+      PREVIOUS_LIVE_INSTANCES="$(aws_main_ ec2 describe-instances \
+        --filters "Name=iam-instance-profile.arn,Values=$PREVIOUS_PROFILE_ARN" \
+                  "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+        --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)"
+      if [ -n "$PREVIOUS_LIVE_INSTANCES" ] && [ "$PREVIOUS_LIVE_INSTANCES" != "None" ]; then
+        warn "Previous run role $PREVIOUS_ROLE_NAME is still in use by instance(s) $PREVIOUS_LIVE_INSTANCES — leaving it in place. Tear that workspace down (teardown-workspace-aws-resources.sh --keep-aux), then delete the role by hand."
+      else
+        info "Removing previous run's role $PREVIOUS_ROLE_NAME (main account); its aux resources are kept"
+        if aws_main_iam_ get-instance-profile --instance-profile-name "$PREVIOUS_ROLE_NAME" >/dev/null 2>&1; then
+          aws_main_iam_ remove-role-from-instance-profile --instance-profile-name "$PREVIOUS_ROLE_NAME" --role-name "$PREVIOUS_ROLE_NAME" >/dev/null 2>&1 || true
+          aws_main_iam_ delete-instance-profile --instance-profile-name "$PREVIOUS_ROLE_NAME" >/dev/null
+        fi
+        PREVIOUS_POLICY_NAMES="$(aws_main_iam_ list-role-policies --role-name "$PREVIOUS_ROLE_NAME" --query 'PolicyNames' --output text 2>/dev/null || true)"
+        if [ -n "$PREVIOUS_POLICY_NAMES" ] && [ "$PREVIOUS_POLICY_NAMES" != "None" ]; then
+          for policy_name in $PREVIOUS_POLICY_NAMES; do
+            aws_main_iam_ delete-role-policy --role-name "$PREVIOUS_ROLE_NAME" --policy-name "$policy_name" >/dev/null
+          done
+        fi
+        if aws_main_iam_ delete-role --role-name "$PREVIOUS_ROLE_NAME" >/dev/null 2>&1; then
+          ok "Removed $PREVIOUS_ROLE_NAME"
+        else
+          warn "Could not delete $PREVIOUS_ROLE_NAME — remove it by hand"
+        fi
+      fi
+    fi
+  fi
 else
   aws_aux_iam_ create-role --role-name "$AUX_ROLE" \
     --description "CRUX agent devops access, scoped to the currently opted-in run" \
@@ -193,7 +255,7 @@ fi
 # enabled, the agent can also see what it's spending. Cost Explorer's read
 # actions don't support resource-level scoping — Resource must be "*".
 aws_aux_iam_ put-role-policy --role-name "$AUX_ROLE" --policy-name "read-cost-explorer" \
-  --policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["ce:GetCostAndUsage","ce:GetCostForecast","ce:GetUsageForecast","ce:GetDimensionValues","ce:GetTags"],"Resource":"*"}]}' >/dev/null
+  --policy-document "$(render_policy aux-read-cost-explorer.json)" >/dev/null
 ok "Inline policy: read-only Cost Explorer access (ce:Get*) — baseline, not tied to a flag"
 
 # ====== APP ROLES (EC2 + S3 only): let the agent give its own instances an
@@ -207,7 +269,7 @@ ok "Inline policy: read-only Cost Explorer access (ce:Get*) — baseline, not ti
 BOUNDARY_POLICY_ARN="arn:aws:iam::${AUX_ACCOUNT_ID}:policy/crux-app-boundary"
 if [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ]; then
   info "Managed policy 'crux-app-boundary' (isolated account) — caps any crux-app-* role"
-  BOUNDARY_DOC="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"AppMediaInThisAccountOnly\",\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\",\"s3:PutObjectAcl\",\"s3:ListBucket\",\"s3:GetBucketLocation\"],\"Resource\":\"*\",\"Condition\":{\"StringEquals\":{\"aws:ResourceAccount\":\"$AUX_ACCOUNT_ID\"}}},{\"Sid\":\"AppLogs\",\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogGroup\",\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":\"*\"}]}"
+  BOUNDARY_DOC="$(render_policy crux-app-boundary.json "AUX_ACCOUNT_ID=$AUX_ACCOUNT_ID")"
   if aws_aux_iam_ get-policy --policy-arn "$BOUNDARY_POLICY_ARN" >/dev/null 2>&1; then
     # A policy can hold at most 5 versions; prune the non-default ones before
     # adding a new one, matching the script's rebuild-from-scratch style.
@@ -229,7 +291,7 @@ if [ "$FLAG_EC2" = 1 ] && [ "$FLAG_S3" = 1 ]; then
   fi
 
   info "Inline policy 'create-app-roles' on $AUX_ROLE — crux-app-* only, boundary enforced, pass-role to EC2 only"
-  APP_ROLE_POLICY_DOC="{\"Version\":\"2012-10-17\",\"Statement\":[{\"Sid\":\"CreateAppRolesOnlyWithBoundary\",\"Effect\":\"Allow\",\"Action\":[\"iam:CreateRole\",\"iam:PutRolePermissionsBoundary\"],\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:role/crux-app-*\",\"Condition\":{\"StringEquals\":{\"iam:PermissionsBoundary\":\"$BOUNDARY_POLICY_ARN\"}}},{\"Sid\":\"ManageAppRoles\",\"Effect\":\"Allow\",\"Action\":[\"iam:GetRole\",\"iam:DeleteRole\",\"iam:TagRole\",\"iam:UpdateAssumeRolePolicy\",\"iam:PutRolePolicy\",\"iam:GetRolePolicy\",\"iam:DeleteRolePolicy\",\"iam:ListRolePolicies\"],\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:role/crux-app-*\"},{\"Sid\":\"ManageAppInstanceProfiles\",\"Effect\":\"Allow\",\"Action\":[\"iam:CreateInstanceProfile\",\"iam:DeleteInstanceProfile\",\"iam:GetInstanceProfile\",\"iam:AddRoleToInstanceProfile\",\"iam:RemoveRoleFromInstanceProfile\",\"iam:TagInstanceProfile\"],\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:instance-profile/crux-app-*\"},{\"Sid\":\"PassAppRolesToEc2Only\",\"Effect\":\"Allow\",\"Action\":\"iam:PassRole\",\"Resource\":\"arn:aws:iam::${AUX_ACCOUNT_ID}:role/crux-app-*\",\"Condition\":{\"StringEquals\":{\"iam:PassedToService\":\"ec2.amazonaws.com\"}}}]}"
+  APP_ROLE_POLICY_DOC="$(render_policy aux-create-app-roles.json "AUX_ACCOUNT_ID=$AUX_ACCOUNT_ID" "BOUNDARY_POLICY_ARN=$BOUNDARY_POLICY_ARN")"
   aws_aux_iam_ put-role-policy --role-name "$AUX_ROLE" --policy-name "create-app-roles" \
     --policy-document "$APP_ROLE_POLICY_DOC" >/dev/null
   ok "Inline policy: create-app-roles"
@@ -237,6 +299,20 @@ else
   # Reconcile away: if either flag was on before and one is now off, the
   # agent must lose the ability to create/manage crux-app-* roles.
   aws_aux_iam_ delete-role-policy --role-name "$AUX_ROLE" --policy-name "create-app-roles" >/dev/null 2>&1 || true
+fi
+
+# ====== INSTANCE ACCESS (EC2): reach instances without their original SSH
+# key — a retained instance's key pair and credentials died with the box of
+# the run that created it. EC2 Instance Connect pushes a throwaway public
+# key; SSM Session Manager/Run Command need the SSM agent on the instance,
+# whose crux-app-* role is permitted that traffic by crux-app-boundary.
+if [ "$FLAG_EC2" = 1 ]; then
+  info "Inline policy 'instance-access' on $AUX_ROLE — EC2 Instance Connect + SSM on this account's instances"
+  aws_aux_iam_ put-role-policy --role-name "$AUX_ROLE" --policy-name "instance-access" \
+    --policy-document "$(render_policy aux-instance-access.json "AUX_ACCOUNT_ID=$AUX_ACCOUNT_ID")" >/dev/null
+  ok "Inline policy: instance-access"
+else
+  aws_aux_iam_ delete-role-policy --role-name "$AUX_ROLE" --policy-name "instance-access" >/dev/null 2>&1 || true
 fi
 
 info "Reconciling managed policy attachments to the current PROVISION_* flags"
@@ -255,7 +331,7 @@ for name in $ATTACHED; do
     AmazonRDSFullAccess|AmazonS3FullAccess|AmazonEC2FullAccess|AmazonRoute53FullAccess|AmazonRoute53DomainsFullAccess|CloudFrontFullAccess|AWSCertificateManagerFullAccess)
       if [ -z "${WANT_POLICIES[$name]:-}" ]; then
         aws_aux_iam_ detach-role-policy --role-name "$AUX_ROLE" --policy-arn "arn:aws:iam::aws:policy/$name" >/dev/null
-        ok "Detached $name (no longer enabled)"
+        warn "Detached $name (no longer enabled) — any resources of that type already in the account can no longer be managed by the agent"
       fi
       ;;
   esac
