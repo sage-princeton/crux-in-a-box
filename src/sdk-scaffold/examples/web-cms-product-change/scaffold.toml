@@ -1,0 +1,71 @@
+orchestrator = "product_manager"
+extensions = ["scaffold_extensions.py"]
+
+[runtime]
+type = "openai-agents"
+max_turns = 60
+
+[context]
+type = "persistent"
+
+[budget]
+max_total_tokens = 3_000_000
+
+[loop]
+type = "phased"
+
+[[loop.phases]]
+name = "clarify"
+prompt = "PROMPT.md"
+continue_prompt = "prompts/clarify-continue.md"
+gates = ["spec_written"]
+max_iterations = 2
+
+[[loop.phases]]
+name = "implement"
+prompt = "prompts/implement.md"
+continue_prompt = "prompts/implement-continue.md"
+gates = ["site_tests_pass", "verification_logged"]
+max_iterations = 3
+
+[gates.spec_written]
+type = "command"
+command = "test -s REQUEST.md && grep -q '^- \\[' REQUEST.md"
+
+[gates.site_tests_pass]
+type = "command"
+command = "python3 -m unittest discover -s site"
+
+[gates.verification_logged]
+type = "command"
+command = "grep -q '— Verification' LOG.md"
+
+[agents.product_manager]
+persona = "personas/product_manager.md"
+context = ["workspace/AGENTS.md"]
+tools = ["read_file", "write_file", "list_files", "rest", "site_tests", "site_preview", "budget_status"]
+mcp_servers = ["slack"]
+delegates = ["engineer"]
+
+[coding_agents.engineer]
+type = "codex"
+description = "A Codex coding agent that implements one written change in site/. It sees only your brief, so include the task, the acceptance criteria verbatim and the files in scope. It returns what it changed."
+context = ["workspace/ENGINEERING.md"]
+sandbox = "workspace-write"
+
+[tools.rest]
+min_seconds = 30
+max_seconds = 300
+total_seconds = 1800
+
+[tools.site_tests]
+type = "command"
+description = "Run the site's unittest suite. Returns the exit code and output."
+command = "python3 -m unittest discover -s site -v"
+timeout_seconds = 300
+
+[mcp_servers.slack]
+command = "npx"
+args = ["-y", "slack-mcp-server@1.3.0", "--transport", "stdio"]
+timeout_seconds = 60
+env = { SLACK_MCP_XOXB_TOKEN = "${SLACK_BOT_TOKEN}", SLACK_MCP_ADD_MESSAGE_TOOL = "{{SLACK_CHANNEL_ID}}" }
