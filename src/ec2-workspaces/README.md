@@ -209,6 +209,17 @@ agent mid-turn and the gateway then moves on to the next queued task instead of
 resuming the run. `sudo needrestart -b` lists the gateway once it is running on
 stale libraries; restart it by hand between runs, never while a turn is in flight.
 
+`install-run.sh` patches the gateway after installing it, with
+`acp-gateway-patches/<ACP_GATEWAY_VERSION>.patch`. Unpatched, the gateway starts
+waiting for a permission verdict only once AgentRQ has acknowledged the request,
+but AgentRQ can send an auto-approval before that; the verdict is dropped and the
+turn is cancelled after 30 minutes. A version with no patch, or a patch that does
+not apply, stops provisioning. Moving `ACP_GATEWAY_VERSION` means porting the
+patch first; `tests/acp-gateway-patch` installs the pinned version from npm and
+checks the patch applies and fixes the race. A re-run of `install-run.sh` on a
+live box needs `apply-acp-gateway-patch.sh` and the patch beside it in `/tmp`, and
+the running gateway only picks the patch up when it next restarts.
+
 On Codex boxes the tracing plugin uploads a turn to Langfuse from Codex's `Stop`
 hook, which fires only when the turn ends. A turn cut off by a gateway stop,
 crash or reboot never gets one, so the gateway unit runs

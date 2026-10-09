@@ -4,14 +4,19 @@ set -euo pipefail
 # Install workspace software as root. This phase contains no secrets.
 # Use configure-run.sh for credentials and per-run settings.
 #
-# Required: ACP_GATEWAY_VERSION and the selected platform's CLI and ACP pins.
+# Required: ACP_GATEWAY_VERSION, ACP_GATEWAY_PATCH (that version's file from
+# acp-gateway-patches/) and the selected platform's CLI and ACP pins.
+# apply-acp-gateway-patch.sh must sit beside this script.
 # AGENT_PLATFORM defaults to codex.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-: "${ACP_GATEWAY_VERSION:?}"
+: "${ACP_GATEWAY_VERSION:?}" "${ACP_GATEWAY_PATCH:?}"
+APPLY_GATEWAY_PATCH="$(dirname "$0")/apply-acp-gateway-patch.sh"
+[ -f "$ACP_GATEWAY_PATCH" ] || die "No acp-gateway patch at $ACP_GATEWAY_PATCH"
+[ -f "$APPLY_GATEWAY_PATCH" ] || die "$APPLY_GATEWAY_PATCH is missing; copy it beside this script."
 AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
 case "$AGENT_PLATFORM" in
   codex) : "${CODEX_VERSION:?}" "${CODEX_ACP_VERSION:?}" ;;
@@ -26,7 +31,7 @@ RUN_HOME="/home/$RUN_USER"
 info "Base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl unzip jq git ca-certificates >/dev/null
+apt-get install -y -qq curl unzip jq git ca-certificates patch >/dev/null
 ok "apt packages in"
 
 # ====== NEEDRESTART ======
@@ -131,6 +136,16 @@ npm install -g \
   "@agentrq/acp-gateway@${ACP_GATEWAY_VERSION}" >/dev/null 2>&1 \
   || die "npm install of the pinned agent packages failed"
 ok "installed"
+
+# ====== ACP GATEWAY PATCH ======
+# acp-gateway registers its wait for a permission verdict only after the
+# request has been acknowledged. AgentRQ auto-approves while handling the
+# request, so its verdict can arrive first; the gateway drops it and cancels
+# the turn when the 30-minute wait runs out. The patch registers the wait
+# first. npm rewrites the package on every install, so it is re-applied here
+# each time, and a version it does not fit stops the install.
+info "Patching acp-gateway@$ACP_GATEWAY_VERSION"
+bash "$APPLY_GATEWAY_PATCH" "$(npm root -g)/@agentrq/acp-gateway" "$ACP_GATEWAY_PATCH"
 
 # ====== VERIFY ======
 info "Verifying"
