@@ -18,6 +18,12 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 TLS_EMAIL="${TLS_EMAIL:-}"
 
 DATA_DIR=/srv/agentrq
+# Pinned by digest, not :latest, so a restart or rebuild cannot change the
+# control plane under a live run. This is the image crux-control was running
+# when it was pinned (tag 45c3692, pushed 2026-09-14). Moving it is a
+# deliberate change: check what the new image does to the run boxes' gateway,
+# ideally between runs.
+AGENTRQ_IMAGE=agentrq/agentrq@sha256:a488cbf140991379114c96014fab010de4c2c88cd0d6e67a4db1f3714fe27a6a
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 
 # ====== PACKAGES ======
@@ -103,7 +109,7 @@ ExecStart=/usr/bin/docker run --rm --name agentrq \\
   --env-file ${ENV_FILE} \\
   -v ${DATA_DIR}/_storage:/_storage \\
   -v ${DATA_DIR}/_certs:/_certs \\
-  agentrq/agentrq:latest
+  ${AGENTRQ_IMAGE}
 ExecStop=/usr/bin/docker stop agentrq
 
 [Install]
@@ -111,7 +117,7 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-docker pull -q agentrq/agentrq:latest >/dev/null
+docker pull -q "$AGENTRQ_IMAGE" >/dev/null
 systemctl enable agentrq >/dev/null
 systemctl restart agentrq
 ok "Service enabled and started"
