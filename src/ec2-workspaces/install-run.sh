@@ -4,19 +4,15 @@ set -euo pipefail
 # Install workspace software as root. This phase contains no secrets.
 # Use configure-run.sh for credentials and per-run settings.
 #
-# Required: ACP_GATEWAY_VERSION, ACP_GATEWAY_PATCH (that version's file from
-# acp-gateway-patches/) and the selected platform's CLI and ACP pins.
-# apply-acp-gateway-patch.sh must sit beside this script.
+# Required: ACP_GATEWAY_VERSION, ACP_GATEWAY_TARBALL_URL, ACP_GATEWAY_SHA256
+# and the selected platform's CLI and ACP pins.
 # AGENT_PLATFORM defaults to codex.
 
 info() { printf "\033[1;34m  ▸ %s\033[0m\n" "$*"; }
 ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-: "${ACP_GATEWAY_VERSION:?}" "${ACP_GATEWAY_PATCH:?}"
-APPLY_GATEWAY_PATCH="$(dirname "$0")/apply-acp-gateway-patch.sh"
-[ -f "$ACP_GATEWAY_PATCH" ] || die "No acp-gateway patch at $ACP_GATEWAY_PATCH"
-[ -f "$APPLY_GATEWAY_PATCH" ] || die "$APPLY_GATEWAY_PATCH is missing; copy it beside this script."
+: "${ACP_GATEWAY_VERSION:?}" "${ACP_GATEWAY_TARBALL_URL:?}" "${ACP_GATEWAY_SHA256:?}"
 AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
 case "$AGENT_PLATFORM" in
   codex) : "${CODEX_VERSION:?}" "${CODEX_ACP_VERSION:?}" ;;
@@ -31,7 +27,7 @@ RUN_HOME="/home/$RUN_USER"
 info "Base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl unzip jq git ca-certificates patch >/dev/null
+apt-get install -y -qq curl unzip jq git ca-certificates >/dev/null
 ok "apt packages in"
 
 # ====== NEEDRESTART ======
@@ -130,22 +126,31 @@ else
 fi
 
 # ====== PINNED AGENT PACKAGES ======
+# The gateway is installed from a release tarball checked against a pinned
+# sha256, not from npm by version: the CRUX build (sage-princeton/
+# agentrq-acp-gateway) carries a fix upstream lacks. Upstream starts waiting
+# for a permission verdict only once AgentRQ has acknowledged the request, but
+# AgentRQ can send an auto-approval before that; the verdict is dropped and the
+# turn is cancelled after 30 minutes. A tarball that does not match the hash is
+# never installed.
 info "$AGENT_BIN@$AGENT_VERSION and acp-gateway@$ACP_GATEWAY_VERSION"
+GW_DIR="$(mktemp -d)"
+GW_TARBALL="$GW_DIR/acp-gateway.tgz"
+curl -fsSL "$ACP_GATEWAY_TARBALL_URL" -o "$GW_TARBALL" \
+  || die "Could not download $ACP_GATEWAY_TARBALL_URL"
+GW_SHA256="$(sha256sum "$GW_TARBALL" | awk '{print $1}')"
+[ "$GW_SHA256" = "$ACP_GATEWAY_SHA256" ] \
+  || die "$ACP_GATEWAY_TARBALL_URL has sha256 $GW_SHA256, but ACP_GATEWAY_SHA256 pins $ACP_GATEWAY_SHA256. Not installing it."
+GW_HAVE="$(tar -xOzf "$GW_TARBALL" package/package.json \
+  | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0)).version)')"
+[ "$GW_HAVE" = "$ACP_GATEWAY_VERSION" ] \
+  || die "The pinned acp-gateway tarball is version $GW_HAVE, not ACP_GATEWAY_VERSION=$ACP_GATEWAY_VERSION. Not installing it."
 npm install -g \
   "$AGENT_PACKAGE@$AGENT_VERSION" \
-  "@agentrq/acp-gateway@${ACP_GATEWAY_VERSION}" >/dev/null 2>&1 \
+  "$GW_TARBALL" >/dev/null 2>&1 \
   || die "npm install of the pinned agent packages failed"
+rm -rf "$GW_DIR"
 ok "installed"
-
-# ====== ACP GATEWAY PATCH ======
-# acp-gateway registers its wait for a permission verdict only after the
-# request has been acknowledged. AgentRQ auto-approves while handling the
-# request, so its verdict can arrive first; the gateway drops it and cancels
-# the turn when the 30-minute wait runs out. The patch registers the wait
-# first. npm rewrites the package on every install, so it is re-applied here
-# each time, and a version it does not fit stops the install.
-info "Patching acp-gateway@$ACP_GATEWAY_VERSION"
-bash "$APPLY_GATEWAY_PATCH" "$(npm root -g)/@agentrq/acp-gateway" "$ACP_GATEWAY_PATCH"
 
 # ====== VERIFY ======
 info "Verifying"

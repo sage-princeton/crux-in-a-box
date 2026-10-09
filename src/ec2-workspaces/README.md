@@ -209,16 +209,22 @@ agent mid-turn and the gateway then moves on to the next queued task instead of
 resuming the run. `sudo needrestart -b` lists the gateway once it is running on
 stale libraries; restart it by hand between runs, never while a turn is in flight.
 
-`install-run.sh` patches the gateway after installing it, with
-`acp-gateway-patches/<ACP_GATEWAY_VERSION>.patch`. Unpatched, the gateway starts
+The gateway is not installed from npm. Upstream `@agentrq/acp-gateway` starts
 waiting for a permission verdict only once AgentRQ has acknowledged the request,
 but AgentRQ can send an auto-approval before that; the verdict is dropped and the
-turn is cancelled after 30 minutes. A version with no patch, or a patch that does
-not apply, stops provisioning. Moving `ACP_GATEWAY_VERSION` means porting the
-patch first; `tests/acp-gateway-patch` installs the pinned version from npm and
-checks the patch applies and fixes the race. A re-run of `install-run.sh` on a
-live box needs `apply-acp-gateway-patch.sh` and the patch beside it in `/tmp`, and
-the running gateway only picks the patch up when it next restarts.
+turn is cancelled after 30 minutes. Boxes run a CRUX build with the fix instead:
+`crux/*` branches of
+[sage-princeton/agentrq-acp-gateway](https://github.com/sage-princeton/agentrq-acp-gateway)
+are released by CI (typecheck, tests, `npm pack`) as a tarball plus its sha256.
+`install-run.sh` downloads `ACP_GATEWAY_TARBALL_URL`, refuses it unless it
+matches `ACP_GATEWAY_SHA256`, and checks the installed version is
+`ACP_GATEWAY_VERSION`. `tests/acp-gateway-release` installs the pinned tarball
+the same way and replays the race against it. To move the pin, cut a new
+`crux-v<version>` release and copy its URL and `.sha256`; once upstream ships
+the fix, point the URL at its npm tarball
+(`https://registry.npmjs.org/@agentrq/acp-gateway/-/acp-gateway-<version>.tgz`)
+and pin that hash. A re-installed gateway only takes effect when it next
+restarts, which must be between turns.
 
 On Codex boxes the tracing plugin uploads a turn to Langfuse from Codex's `Stop`
 hook, which fires only when the turn ends. A turn cut off by a gateway stop,

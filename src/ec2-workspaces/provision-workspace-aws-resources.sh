@@ -68,7 +68,8 @@ load_agent_config all
 
 MISSING=()
 for k in AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE \
-         ROOT_DISK_GB KEY_NAME ACP_GATEWAY_VERSION; do
+         ROOT_DISK_GB KEY_NAME ACP_GATEWAY_VERSION ACP_GATEWAY_TARBALL_URL \
+         ACP_GATEWAY_SHA256; do
   [ -n "${CFG[$k]:-}" ] || MISSING+=("$k")
 done
 [ ${#MISSING[@]} -eq 0 ] || die "Missing required key(s) in $CONFIG_FILE: ${MISSING[*]}"
@@ -107,11 +108,10 @@ CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]:-}"
 CODEX_VERSION="${CFG[CODEX_VERSION]:-}"
 CODEX_ACP_VERSION="${CFG[CODEX_ACP_VERSION]:-}"
 ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]}"
-# install-run.sh patches the gateway and stops on a version with no patch.
-# Checked here too, before anything billable exists.
-ACP_GATEWAY_PATCH="$SCRIPT_DIR/acp-gateway-patches/$ACP_GATEWAY_VERSION.patch"
-[ -f "$ACP_GATEWAY_PATCH" ] \
-  || die "No acp-gateway patch for ACP_GATEWAY_VERSION=$ACP_GATEWAY_VERSION (expected $ACP_GATEWAY_PATCH). Port the patch before moving the pin: tests/acp-gateway-patch checks it."
+ACP_GATEWAY_TARBALL_URL="${CFG[ACP_GATEWAY_TARBALL_URL]}"
+ACP_GATEWAY_SHA256="${CFG[ACP_GATEWAY_SHA256]}"
+[[ "$ACP_GATEWAY_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+  || die "ACP_GATEWAY_SHA256 must be the tarball's sha256 as 64 lowercase hex characters."
 CLAUDE_MODEL="${CFG[CLAUDE_MODEL]:-}"
 CLAUDE_EFFORT="${CFG[CLAUDE_EFFORT]:-}"
 CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
@@ -316,7 +316,7 @@ $EIP_PLAN_LINE
                                              deleted there after configure
   dials             $CONTROL_MCP_BASE
   agent             $AGENT_PLATFORM, $MODEL, effort $EFFORT
-  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION (patched)
+  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION (sha256 ${ACP_GATEWAY_SHA256:0:12}…)
 teardown-workspace-aws-resources.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
 the hour, so leaking one is the easy way to pay for a box you deleted. An ELASTIC_IP_ADDRESS override is
 never released by teardown, so it can be reused by the next workspace.
@@ -520,10 +520,10 @@ ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before lau
 
 # ====== INSTALL (software, bakeable) ======
 info "install-run.sh — software"
-scp -q "$SCRIPT_DIR/install-run.sh" "$SCRIPT_DIR/apply-acp-gateway-patch.sh" "$SLUG:/tmp/"
-scp -q "$ACP_GATEWAY_PATCH" "$SLUG:/tmp/acp-gateway.patch"
+scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
 ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
-  AGENT_PLATFORM='$AGENT_PLATFORM' ACP_GATEWAY_PATCH=/tmp/acp-gateway.patch \
+  AGENT_PLATFORM='$AGENT_PLATFORM' \
+  ACP_GATEWAY_TARBALL_URL='$ACP_GATEWAY_TARBALL_URL' ACP_GATEWAY_SHA256='$ACP_GATEWAY_SHA256' \
   CLAUDE_VERSION='$CLAUDE_VERSION' CLAUDE_ACP_VERSION='$CLAUDE_ACP_VERSION' \
   CODEX_VERSION='$CODEX_VERSION' \
   CODEX_ACP_VERSION='$CODEX_ACP_VERSION' ACP_GATEWAY_VERSION='$ACP_GATEWAY_VERSION' \
