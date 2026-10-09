@@ -30,6 +30,7 @@ CONTROL_DIR="$(cd "$SCRIPT_DIR/../ec2-control" && pwd)"
 # shellcheck source=src/ec2-workspaces/agent-config.sh
 source "$SCRIPT_DIR/agent-config.sh"
 
+AUX_FLAG_PATTERN='^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2|PROVISION_CLOUDFRONT|PROVISION_ACM)=1$'
 BASE_CONFIG="$SCRIPT_DIR/placeholders-base.txt"
 BASE_SECRETS="$SCRIPT_DIR/run-secrets-base.json"
 
@@ -136,7 +137,7 @@ ok "Key pair, /crux/system/env, crux-system-profile and crux-run-sg all present"
 # provisioned before the instance launches (see step 4 below) — but that's
 # long after the workspace is minted. Validate AUX_RESOURCE_PROFILE here too,
 # so a bad/expired profile costs nothing rather than a stranded workspace.
-if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1$' "$BASE_CONFIG"; then
+if grep -qE "$AUX_FLAG_PATTERN" "$BASE_CONFIG"; then
   AUX_PROFILE_CFG="$(cfg AUX_RESOURCE_PROFILE)"
   [ -n "$AUX_PROFILE_CFG" ] \
     || die "A PROVISION_* flag is set in $(basename "$BASE_CONFIG") but AUX_RESOURCE_PROFILE is not. It must name the AWS CLI profile for the isolated account these resources are granted in."
@@ -234,7 +235,7 @@ chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 
 # ====== 4. AUX AWS RESOURCES (opt-in) ======
-if grep -qE '^(PROVISION_POSTGRES|PROVISION_S3|PROVISION_DNS|PROVISION_EC2)=1$' "$CONFIG"; then
+if grep -qE "$AUX_FLAG_PATTERN" "$CONFIG"; then
   info "Aux AWS resource flag(s) set — granting access before instance launch"
   "$SCRIPT_DIR/provision-aux-aws-resources.sh" "$CONFIG"
   printf '\n'

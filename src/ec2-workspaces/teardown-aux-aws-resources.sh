@@ -10,7 +10,9 @@ set -euo pipefail
 # Domains has no delete API, so those are left registered with auto-renew
 # disabled instead. The account is single-tenant at a time, so
 # "everything found" and "everything this run created" are the same set.
-# No-ops cleanly if this slug never had aux resources provisioned.
+# No-ops cleanly if this slug never had aux resources provisioned. If another
+# run has since taken the account over (crux-agent-devops trusts its role),
+# the account is left alone and only this slug's main-account role is deleted.
 #
 # Usage: ./teardown-aux-aws-resources.sh CONFIG_FILE [--yes]
 
@@ -42,6 +44,26 @@ if [ -n "$PROFILE" ]; then MAIN_PROFILE_ARGS=(--profile "$PROFILE"); else MAIN_P
 aws_main_()     { aws "${MAIN_PROFILE_ARGS[@]}" --region "$REGION" "$@"; }
 aws_main_iam_() { aws "${MAIN_PROFILE_ARGS[@]}" iam "$@"; }
 
+delete_main_run_role() {
+  info "IAM role $RUN_ROLE (main account)"
+  if aws_main_iam_ get-instance-profile --instance-profile-name "$RUN_ROLE" >/dev/null 2>&1; then
+    aws_main_iam_ remove-role-from-instance-profile --instance-profile-name "$RUN_ROLE" --role-name "$RUN_ROLE" >/dev/null
+    aws_main_iam_ delete-instance-profile --instance-profile-name "$RUN_ROLE" >/dev/null
+  fi
+  local policy_names policy_name
+  policy_names="$(aws_main_iam_ list-role-policies --role-name "$RUN_ROLE" --query 'PolicyNames' --output text 2>/dev/null || true)"
+  if [ -n "$policy_names" ] && [ "$policy_names" != "None" ]; then
+    for policy_name in $policy_names; do
+      aws_main_iam_ delete-role-policy --role-name "$RUN_ROLE" --policy-name "$policy_name" >/dev/null
+    done
+  fi
+  if aws_main_iam_ delete-role --role-name "$RUN_ROLE" >/dev/null 2>&1; then
+    ok "Deleted"
+  else
+    warn "Already gone"
+  fi
+}
+
 # Nothing to do if this slug never had aux resources provisioned.
 if ! aws_main_iam_ get-role --role-name "$RUN_ROLE" >/dev/null 2>&1; then
   ok "No per-workspace role $RUN_ROLE in the main account — aux resources were never provisioned for '$SLUG'. Nothing to do."
@@ -72,6 +94,34 @@ MAIN_ACCOUNT_ID="$(aws_main_ sts get-caller-identity --query Account --output te
 RECORDED_AUX_ACCOUNT_ID="$(cfg AUX_RESOURCE_ACCOUNT_ID)"
 if [ -n "$RECORDED_AUX_ACCOUNT_ID" ] && [ "$RECORDED_AUX_ACCOUNT_ID" != "$AUX_ACCOUNT_ID" ]; then
   die "AUX_RESOURCE_PROFILE '$AUX_PROFILE' now resolves to account $AUX_ACCOUNT_ID, but $CONFIG_FILE recorded AUX_RESOURCE_ACCOUNT_ID=$RECORDED_AUX_ACCOUNT_ID at provisioning time. The profile's underlying credentials appear to have changed since then. Refusing to run destructive teardown against a different account than was provisioned."
+fi
+
+# The account sweep is account-wide, so it must only run for the run that
+# currently owns the account. If crux-agent-devops trusts a different run's
+# role, that run took over (provision-aux-aws-resources.sh hands trust off) and
+# the resources here are now its own; only this slug's main-account role goes.
+CURRENT_TRUSTED_ARN="$(aws_aux_iam_ get-role --role-name "$AUX_ROLE" \
+  --query 'Role.AssumeRolePolicyDocument.Statement[0].Principal.AWS' --output text 2>/dev/null || true)"
+OWNED_BY_ANOTHER_RUN=0
+case "$CURRENT_TRUSTED_ARN" in
+  *"/crux-run-"*)
+    [ "$CURRENT_TRUSTED_ARN" = "arn:aws:iam::${MAIN_ACCOUNT_ID}:role/${RUN_ROLE}" ] || OWNED_BY_ANOTHER_RUN=1
+    ;;
+esac
+if [ "$OWNED_BY_ANOTHER_RUN" = 1 ]; then
+  echo
+  warn "Isolated account $AUX_ACCOUNT_ID now belongs to another run ($CURRENT_TRUSTED_ARN)."
+  echo "Its resources are NOT swept. Only this slug's main-account role $RUN_ROLE is deleted."
+  echo
+  if [ "$ASSUME_YES" != 1 ]; then
+    printf "Type the slug to confirm: "
+    read -r reply
+    [ "$reply" = "$SLUG" ] || die "Did not match. Nothing was deleted."
+  fi
+  delete_main_run_role
+  echo
+  ok "Left the isolated account untouched; '$SLUG' no longer has a run role."
+  exit 0
 fi
 
 echo
@@ -284,22 +334,7 @@ else
   warn "Already gone"
 fi
 
-info "IAM role $RUN_ROLE (main account)"
-if aws_main_iam_ get-instance-profile --instance-profile-name "$RUN_ROLE" >/dev/null 2>&1; then
-  aws_main_iam_ remove-role-from-instance-profile --instance-profile-name "$RUN_ROLE" --role-name "$RUN_ROLE" >/dev/null
-  aws_main_iam_ delete-instance-profile --instance-profile-name "$RUN_ROLE" >/dev/null
-fi
-MAIN_POLICY_NAMES="$(aws_main_iam_ list-role-policies --role-name "$RUN_ROLE" --query 'PolicyNames' --output text 2>/dev/null || true)"
-if [ -n "$MAIN_POLICY_NAMES" ] && [ "$MAIN_POLICY_NAMES" != "None" ]; then
-  for policy_name in $MAIN_POLICY_NAMES; do
-    aws_main_iam_ delete-role-policy --role-name "$RUN_ROLE" --policy-name "$policy_name" >/dev/null
-  done
-fi
-if aws_main_iam_ delete-role --role-name "$RUN_ROLE" >/dev/null 2>&1; then
-  ok "Deleted"
-else
-  warn "Already gone"
-fi
+delete_main_run_role
 
 echo
 ok "Aux AWS resources for '$SLUG' are gone."

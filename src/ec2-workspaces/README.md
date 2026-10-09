@@ -263,6 +263,9 @@ and the AgentRQ workspace, which outlives its box. If `ELASTIC_IP_ADDRESS` was s
 box's config, that address is left allocated (just disassociated) so the next workspace
 can reuse it — set the same `ELASTIC_IP_ADDRESS` for that one.
 
+Add `--keep-aux` to leave a run's [auxiliary AWS resources](#auxiliary-aws-resources-opt-in-per-run)
+in place — see [Keeping aux resources across workspaces](#keeping-aux-resources-across-workspaces).
+
 ### Auxiliary AWS resources (opt-in, per run)
 
 Some runs need their agent to provision its own infrastructure — Postgres/RDS,
@@ -348,4 +351,54 @@ Run standalone: `./provision-aux-aws-resources.sh [--dry-run] CONFIG_FILE`.
 `teardown-aux-aws-resources.sh` automatically, which deletes everything found
 in the isolated account (it's single-tenant per run) plus both IAM roles —
 except a registered domain name, which it can only disable auto-renew on
-(see above). A slug that never opted in is a no-op.
+(see above). A slug that never opted in is a no-op. The sweep only runs for
+the run that currently owns the account: if `crux-agent-devops` trusts a
+different run's role (a later workspace took over), the account is left
+untouched and only the old slug's own `crux-run-$SLUG` role is deleted.
+
+#### Reaching instances the agent (or an earlier agent) created
+
+With `PROVISION_EC2`, the agent role also gets an inline `instance-access`
+policy for instances in the isolated account: EC2 Instance Connect
+(`SendSSHPublicKey`, to push a throwaway key) and SSM Session Manager / Run
+Command. That means an agent can get into an instance without the SSH key
+pair it was launched with — which matters when the agent that launched it is
+long gone. Instance Connect needs the instance's security group to allow port
+22 from where the agent connects. SSM needs the SSM agent on the instance and
+an instance role carrying the SSM agent's permissions; `crux-app-boundary`
+permits that traffic (`ssm`/`ssmmessages`/`ec2messages`), and the agent can add
+it to an existing `crux-app-*` role with `iam:PutRolePolicy`.
+
+#### Keeping aux resources across workspaces
+
+To end one run and start a follow-up that continues with what the first built
+(for example a CMS site the next agent has to keep maintaining):
+
+1. `./teardown-workspace-aws-resources.sh --keep-aux placeholders-<old>.txt`
+   terminates the old box, releases its Elastic IP and removes its ssh alias,
+   but skips the aux sweep. Everything in the isolated account stays — RDS, S3,
+   EC2, Route53, CloudFront, ACM, `crux-agent-devops` with its policies, the
+   `crux-app-*` roles and `crux-app-boundary` — and so does the old slug's
+   `crux-run-<old>` role. **Kept resources keep billing.**
+2. Create the follow-up with `make-new-workspace.sh`, keeping the same
+   `PROVISION_*` flags and `AUX_RESOURCE_PROFILE` in `placeholders-base.txt`.
+   `provision-aux-aws-resources.sh` re-trusts `crux-agent-devops` to the new
+   slug's role, then deletes `crux-run-<old>` (unless an instance still uses
+   its instance profile), so ownership moves cleanly and the old slug's
+   teardown can no longer sweep the new run's account. The new agent finds
+   the existing resources through the same role.
+3. When the follow-up is torn down without `--keep-aux`, it sweeps everything.
+   If no follow-up ever starts, run the old teardown again without
+   `--keep-aux` to delete it all.
+
+Turning a `PROVISION_*` flag off for the follow-up detaches the matching
+managed policy (with a warning), so the new agent can no longer manage
+resources of that type that the first run left behind.
+
+The IAM documents provisioning applies are JSON templates in
+`aux-aws-policies/` with `{{TOKEN}}` placeholders that
+`provision-aux-aws-resources.sh` fills in — edit those files, not the script,
+to change what the roles can do.
+
+Offline tests for the aux scripts (stubbed `aws`, nothing touches an account):
+`tests/aux-aws/test_aux_aws_scripts.sh`.

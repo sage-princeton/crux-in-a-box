@@ -7,7 +7,14 @@ set -euo pipefail
 # never released — it's shared across workspaces. CONFIG_FILE is the only place
 # this is read from, so it's always consistent with what provisioning used.
 #
-# Usage: ./teardown-workspace-aws-resources.sh CONFIG_FILE [--yes]
+# By default this also sweeps the run's aux AWS resources (see
+# teardown-aux-aws-resources.sh). --keep-aux skips that: the resources in the
+# isolated account, its crux-agent-devops/crux-app-* roles and this slug's
+# crux-run-$SLUG role all stay, so a later workspace can pick the work up
+# (provision-aux-aws-resources.sh hands the account over to it). Kept
+# resources keep billing; run this without --keep-aux to finish the cleanup.
+#
+# Usage: ./teardown-workspace-aws-resources.sh CONFIG_FILE [--yes] [--keep-aux]
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -16,15 +23,16 @@ ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m! %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-CONFIG_FILE=""; ASSUME_YES=0
+CONFIG_FILE=""; ASSUME_YES=0; KEEP_AUX=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) ASSUME_YES=1; shift ;;
+    --keep-aux) KEEP_AUX=1; shift ;;
     -*) die "Unknown flag: $1" ;;
     *) CONFIG_FILE="$1"; shift ;;
   esac
 done
-[ -n "$CONFIG_FILE" ] || die "Usage: $0 CONFIG_FILE [--yes]"
+[ -n "$CONFIG_FILE" ] || die "Usage: $0 CONFIG_FILE [--yes] [--keep-aux]"
 [ -f "$CONFIG_FILE" ] || die "Config file not found: $CONFIG_FILE"
 
 cfg() { sed -nE "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*([^#[:space:]]*).*/\1/p" "$CONFIG_FILE" | head -1; }
@@ -72,20 +80,30 @@ if [ -n "$ALLOC_ID" ] && [ "$ALLOC_ID" != "None" ]; then
     echo "  release Elastic IP   $ALLOC_ID"
   fi
 fi
-if [ "$AUX_PROVISIONED" = 1 ]; then
+if [ "$AUX_PROVISIONED" = 1 ] && [ "$KEEP_AUX" = 1 ]; then
+  echo "  KEEP aux AWS resources for '$SLUG' in the isolated account (--keep-aux):"
+  echo "  every RDS instance, S3 bucket, EC2 instance, Route53 zone and domain,"
+  echo "  CloudFront distribution and ACM certificate, plus crux-agent-devops,"
+  echo "  the crux-app-* roles, crux-app-boundary and $RUN_ROLE. They keep"
+  echo "  billing until a later teardown; the next workspace's"
+  echo "  provision-aux-aws-resources.sh takes the account over."
+elif [ "$AUX_PROVISIONED" = 1 ]; then
   echo "  also sweep aux AWS resources for '$SLUG' in the isolated account:"
   echo "  every RDS instance, S3 bucket, EC2 instance, public Route53 zone,"
   echo "  CloudFront distribution, and ACM certificate found there, plus"
   echo "  $RUN_ROLE and crux-agent-devops (registered domain names are not"
   echo "  deleted — see teardown-aux-aws-resources.sh)"
+elif [ "$KEEP_AUX" = 1 ]; then
+  echo "  (--keep-aux: no aux AWS resources were provisioned for '$SLUG'; nothing to keep)"
 fi
 echo "  remove ~/.ssh/config entry for $SLUG"
 echo
 echo "Keeping (shared): crux-run-sg, the key pair, crux-system-role/profile,"
-echo "/crux/system/env, and the control box. If aux AWS resources were"
-echo "enabled for this slug, its per-workspace crux-run-\$SLUG role and the"
-echo "isolated-account crux-agent-devops role are deleted by the step above,"
-echo "not kept."
+echo "/crux/system/env, and the control box."
+if [ "$AUX_PROVISIONED" = 1 ] && [ "$KEEP_AUX" != 1 ]; then
+  echo "This slug's per-workspace crux-run-\$SLUG role and the isolated-account"
+  echo "crux-agent-devops role are deleted by the aux step, not kept."
+fi
 echo
 
 if [ "$ASSUME_YES" != 1 ]; then
@@ -105,8 +123,15 @@ fi
 # creating aux-account resources while the sweep runs, and detaching the
 # per-workspace instance profile from a still-running instance is bad
 # practice even though AWS technically allows it.
-info "Aux AWS resources (no-op if never provisioned for this slug)"
-"$SCRIPT_DIR/teardown-aux-aws-resources.sh" "$CONFIG_FILE" --yes
+if [ "$KEEP_AUX" = 1 ]; then
+  if [ "$AUX_PROVISIONED" = 1 ]; then
+    warn "Kept aux AWS resources, roles and policies for '$SLUG' (--keep-aux) — still running and billing in the isolated account."
+    warn "Start the follow-up workspace to take them over, or re-run this script without --keep-aux to delete them."
+  fi
+else
+  info "Aux AWS resources (no-op if never provisioned for this slug)"
+  "$SCRIPT_DIR/teardown-aux-aws-resources.sh" "$CONFIG_FILE" --yes
+fi
 
 # Release the Elastic IP after terminating the instance — unless it's a
 # shared override, in which case terminating the instance already
@@ -141,4 +166,8 @@ PY
 fi
 
 echo
-ok "Run box '$SLUG' is gone. Nothing is still billing for it."
+if [ "$KEEP_AUX" = 1 ] && [ "$AUX_PROVISIONED" = 1 ]; then
+  ok "Run box '$SLUG' is gone. Its aux AWS resources are still running (and billing) in the isolated account."
+else
+  ok "Run box '$SLUG' is gone. Nothing is still billing for it."
+fi
