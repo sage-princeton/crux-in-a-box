@@ -51,6 +51,17 @@ MODEL_PROVIDER=direct
 CLAUDE_VERSION=2.1.272
 CLAUDE_ACP_VERSION=0.77.0
 
+# For the SDK scaffold (src/sdk-scaffold), set AGENT_PLATFORM=openai-agents and:
+# OPENAI_AGENTS_MODEL=<explicit-model-id>
+# OPENAI_AGENTS_REASONING_EFFORT=medium
+# Effort: minimal | low | medium | high. MODEL_PROVIDER must stay direct. It
+# needs no AgentRQ workspace, control box settings or CLI/ACP pins.
+
+# The drop-in directory staged at /srv/crux-run/run-harness, as a repo-relative
+# path. Default: run-harness. openai-agents needs one with a scaffold.toml,
+# e.g. src/sdk-scaffold/examples/web-cms-product-change.
+# DROP_IN_PATH=run-harness
+
 CODEX_MODEL=
 CODEX_REASONING_EFFORT=
 

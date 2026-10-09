@@ -203,11 +203,13 @@ An OpenRouter preset can enforce `provider.only=["google-vertex"]` and
 as the model. The BYOK key's shared-capacity fallback setting is still required.
 
 Boxes keep Ubuntu's daily unattended security upgrades, and needrestart still
-restarts the services they touch, except `crux-acp-gateway`: `install-run.sh`
-excludes it via `/etc/needrestart/conf.d/crux.conf`, because a restart kills the
-agent mid-turn and the gateway then moves on to the next queued task instead of
-resuming the run. `sudo needrestart -b` lists the gateway once it is running on
-stale libraries; restart it by hand between runs, never while a turn is in flight.
+restarts the services they touch, except the run services `crux-acp-gateway`
+and `crux-sdk-run`: `install-run.sh` excludes them via
+`/etc/needrestart/conf.d/crux.conf`, because a restart kills the agent mid-turn.
+The gateway then moves on to the next queued task instead of resuming the run;
+the SDK scaffold resumes but reruns the interrupted iteration. `sudo needrestart
+-b` lists either service once it is running on stale libraries; restart it by
+hand between runs, never while a turn is in flight.
 
 On Codex boxes the tracing plugin uploads a turn to Langfuse from Codex's `Stop`
 hook, which fires only when the turn ends. A turn cut off by a gateway stop,
@@ -249,6 +251,45 @@ Codex rollout format; the turn model, the Langfuse observation schema, the ledge
 of sent ids and the OTLP sink are shared. Tracing another agent means one more
 `TranscriptSource` subclass and entry point; `live_trace/__init__.py` describes
 the design.
+
+### SDK scaffold boxes (`AGENT_PLATFORM=openai-agents`)
+
+Each platform declares a scaffold module in `scaffolds/` and the environment
+features it needs (`SCAFFOLD_MODULE`, `SCAFFOLD_NEEDS` in `agent-config.sh`).
+The laptop scripts handle the shared parts: AWS, SSH, secrets delivery, and
+staging the drop-in directory. They create an AgentRQ workspace and route to
+the control box only for platforms that need AgentRQ. On the box,
+`install-run.sh` and `configure-run.sh` do the shared setup, then call the
+module's hooks:
+
+| Module | Platforms | Needs | Box |
+|---|---|---|---|
+| `scaffolds/acp.sh` | `codex`, `claude` | `agentrq` | CLI, ACP adapter, `crux-acp-gateway.service` taking AgentRQ tasks |
+| `scaffolds/sdk.sh` | `openai-agents` | nothing | `crux_scaffold` venv at `/opt/crux-sdk-scaffold`, `crux-sdk-run.service` |
+
+For an SDK box:
+
+- **Base config:** set `AGENT_PLATFORM=openai-agents`, `OPENAI_AGENTS_MODEL`,
+  `OPENAI_AGENTS_REASONING_EFFORT`, and `DROP_IN_PATH` (e.g.
+  `src/sdk-scaffold/examples/web-cms-product-change`). The drop-in must be committed,
+  because provisioning stages `HEAD`.
+- **Base secrets:** `OPENAI_API_KEY`, plus any keys the drop-in's MCP servers
+  read, such as `SLACK_BOT_TOKEN`. Like every non-provider key in the base
+  secrets, it reaches the run's environment.
+- **Provisioning** writes `/etc/crux-run.env`, then runs `crux_scaffold probe
+  --coding-agent codex`: one traced model call and one Codex turn. It then
+  installs `crux-sdk-run.service`, but does not start it.
+- **Launching:** resolve the drop-in's placeholders on the box (see its
+  `OPERATOR_GUIDE.md`), then run `sudo systemctl start crux-sdk-run`. Watch it
+  with `journalctl -u crux-sdk-run -f`.
+- **Resuming:** loop state and sessions live in `/srv/crux-run/state`. A crash
+  restarts the unit and resumes the run. A configuration error (exit 2) or a
+  loop that stopped early (exit 3) does not restart. `sudo systemctl stop
+  crux-sdk-run` stops the run cleanly: open traces are flushed and marked
+  stopped, and `systemctl start` resumes the unfinished iteration.
+
+See [`../sdk-scaffold/README.md`](../sdk-scaffold/README.md) for the scaffold
+itself.
 
 ### Teardown a workspace
 
