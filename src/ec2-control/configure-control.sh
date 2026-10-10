@@ -18,12 +18,18 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 TLS_EMAIL="${TLS_EMAIL:-}"
 
 DATA_DIR=/srv/agentrq
-# Pinned by digest, not :latest, so a restart or rebuild cannot change the
-# control plane under a live run. This is the image crux-control was running
-# when it was pinned (tag 45c3692, pushed 2026-09-14). Moving it is a
-# deliberate change: check what the new image does to the run boxes' gateway,
-# ideally between runs.
-AGENTRQ_IMAGE=agentrq/agentrq@sha256:a488cbf140991379114c96014fab010de4c2c88cd0d6e67a4db1f3714fe27a6a
+# The control plane is the CRUX build of AgentRQ, not agentrq/agentrq:latest:
+# upstream 45c3692 (the image crux-control ran from 2026-09-14) plus a fix
+# upstream lacks. Upstream saves a task together with every tool call it has
+# made, in one statement SQLite refuses past 4,095 rows, so a long task can no
+# longer be replied to or completed and keeps the workspace's ongoing slot.
+# Released from sage-princeton/agentrq (crux/* branches) as a docker save
+# tarball, loaded only if its sha256 matches; tests/agentrq-release checks this
+# pin. Moving it is a deliberate change: check what the new image does to the
+# run boxes' gateway, ideally between runs.
+AGENTRQ_IMAGE=agentrq-crux:0.6.3-45c3692-crux.1
+AGENTRQ_IMAGE_URL=https://github.com/sage-princeton/agentrq/releases/download/crux-v0.6.3-45c3692-crux.1/agentrq-crux-0.6.3-45c3692-crux.1-linux-amd64.tar.gz
+AGENTRQ_IMAGE_SHA256=817499c087b981c3a1eb00b8d4620073988853a8c7318ba7b55d00dcf717c19a
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 
 # ====== PACKAGES ======
@@ -117,7 +123,18 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-docker pull -q "$AGENTRQ_IMAGE" >/dev/null
+IMG_DIR="$(mktemp -d)"
+IMG_TARBALL="$IMG_DIR/agentrq-image.tar.gz"
+curl -fsSL "$AGENTRQ_IMAGE_URL" -o "$IMG_TARBALL" \
+  || die "Could not download $AGENTRQ_IMAGE_URL"
+IMG_SHA256="$(sha256sum "$IMG_TARBALL" | awk '{print $1}')"
+[ "$IMG_SHA256" = "$AGENTRQ_IMAGE_SHA256" ] \
+  || die "$AGENTRQ_IMAGE_URL has sha256 $IMG_SHA256, but AGENTRQ_IMAGE_SHA256 pins $AGENTRQ_IMAGE_SHA256. Not loading it."
+docker load -q -i "$IMG_TARBALL" >/dev/null || die "docker load of $AGENTRQ_IMAGE_URL failed"
+rm -rf "$IMG_DIR"
+docker image inspect "$AGENTRQ_IMAGE" >/dev/null 2>&1 \
+  || die "The pinned tarball did not load as $AGENTRQ_IMAGE. Not starting it."
+ok "Loaded $AGENTRQ_IMAGE (sha256 ${AGENTRQ_IMAGE_SHA256:0:12}…)"
 systemctl enable agentrq >/dev/null
 systemctl restart agentrq
 ok "Service enabled and started"
