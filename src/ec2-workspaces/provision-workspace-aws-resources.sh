@@ -68,7 +68,8 @@ load_agent_config all
 
 MISSING=()
 for k in AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE \
-         ROOT_DISK_GB KEY_NAME ACP_GATEWAY_VERSION; do
+         ROOT_DISK_GB KEY_NAME ACP_GATEWAY_VERSION ACP_GATEWAY_TARBALL_URL \
+         ACP_GATEWAY_SHA256; do
   [ -n "${CFG[$k]:-}" ] || MISSING+=("$k")
 done
 [ ${#MISSING[@]} -eq 0 ] || die "Missing required key(s) in $CONFIG_FILE: ${MISSING[*]}"
@@ -107,6 +108,10 @@ CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]:-}"
 CODEX_VERSION="${CFG[CODEX_VERSION]:-}"
 CODEX_ACP_VERSION="${CFG[CODEX_ACP_VERSION]:-}"
 ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]}"
+ACP_GATEWAY_TARBALL_URL="${CFG[ACP_GATEWAY_TARBALL_URL]}"
+ACP_GATEWAY_SHA256="${CFG[ACP_GATEWAY_SHA256]}"
+[[ "$ACP_GATEWAY_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+  || die "ACP_GATEWAY_SHA256 must be the tarball's sha256 as 64 lowercase hex characters."
 CLAUDE_MODEL="${CFG[CLAUDE_MODEL]:-}"
 CLAUDE_EFFORT="${CFG[CLAUDE_EFFORT]:-}"
 CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
@@ -311,7 +316,7 @@ $EIP_PLAN_LINE
                                              deleted there after configure
   dials             $CONTROL_MCP_BASE
   agent             $AGENT_PLATFORM, $MODEL, effort $EFFORT
-  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION
+  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION (sha256 ${ACP_GATEWAY_SHA256:0:12}…)
 teardown-workspace-aws-resources.sh releases the Elastic IP: an allocated-but-unassociated EIP bills by
 the hour, so leaking one is the easy way to pay for a box you deleted. An ELASTIC_IP_ADDRESS override is
 never released by teardown, so it can be reused by the next workspace.
@@ -518,6 +523,7 @@ info "install-run.sh — software"
 scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
 ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
   AGENT_PLATFORM='$AGENT_PLATFORM' \
+  ACP_GATEWAY_TARBALL_URL='$ACP_GATEWAY_TARBALL_URL' ACP_GATEWAY_SHA256='$ACP_GATEWAY_SHA256' \
   CLAUDE_VERSION='$CLAUDE_VERSION' CLAUDE_ACP_VERSION='$CLAUDE_ACP_VERSION' \
   CODEX_VERSION='$CODEX_VERSION' \
   CODEX_ACP_VERSION='$CODEX_ACP_VERSION' ACP_GATEWAY_VERSION='$ACP_GATEWAY_VERSION' \

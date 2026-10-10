@@ -29,7 +29,7 @@ load_agent_config() {
   EFFORT="$(cfg "$EFFORT_KEY")"
   local key value keys="$MODEL_KEY $EFFORT_KEY"
   if [ "${1:-}" != settings ]; then
-    keys="$keys ACP_GATEWAY_VERSION $PLATFORM_KEYS"
+    keys="$keys ACP_GATEWAY_VERSION ACP_GATEWAY_TARBALL_URL ACP_GATEWAY_SHA256 $PLATFORM_KEYS"
   fi
   for key in $keys; do
     value="$(cfg "$key")"

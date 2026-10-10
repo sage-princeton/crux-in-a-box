@@ -1,0 +1,35 @@
+name: AgentRQ release
+
+on:
+  pull_request:
+    paths:
+      - 'src/ec2-control/configure-control.sh'
+      - 'tests/agentrq-release/**'
+      - '.github/workflows/agentrq-release.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentrq-release-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Pinned control-plane image matches its hash and survives a task past 4,095 tool calls
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Install test dependencies
+        run: python3 -m pip install -r tests/agentrq-release/requirements.txt
+      - name: Run tests
+        run: python3 -m pytest tests/agentrq-release -v
