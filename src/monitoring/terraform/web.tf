@@ -1,146 +1,37 @@
-variable "web_enabled" {
-  type    = bool
-  default = false
-}
-variable "web_image_digest" {
-  type    = string
-  default = ""
-  validation {
-    condition     = var.web_image_digest == "" || can(regex("^sha256:[a-f0-9]{64}$", var.web_image_digest))
-    error_message = "Supply an immutable web image digest."
-  }
-}
-variable "proxy_image_digest" {
-  type    = string
-  default = ""
-  validation {
-    condition     = var.proxy_image_digest == "" || can(regex("^sha256:[a-f0-9]{64}$", var.proxy_image_digest))
-    error_message = "Supply an immutable scanned proxy image digest."
-  }
-}
-variable "incident_state_enabled" {
-  type        = bool
-  default     = false
-  description = "Enable worker ingestion and switch the digest after the historical migration."
-}
-
-resource "aws_dynamodb_table" "incidents" {
-  name         = "${var.name}-incidents"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
-  range_key    = "sk"
-  attribute {
-    name = "pk"
-    type = "S"
-  }
-  attribute {
-    name = "sk"
-    type = "S"
-  }
-  attribute {
-    name = "instance_id"
-    type = "S"
-  }
-  attribute {
-    name = "id"
-    type = "S"
-  }
-  global_secondary_index {
-    name            = "instance-incidents"
-    projection_type = "ALL"
-    key_schema {
-      attribute_name = "instance_id"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "id"
-      key_type       = "RANGE"
-    }
-  }
-  attribute {
-    name = "status"
-    type = "S"
-  }
-  attribute {
-    name = "updated_at"
-    type = "N"
-  }
-  global_secondary_index {
-    name            = "status-updated"
-    projection_type = "ALL"
-    key_schema {
-      attribute_name = "status"
-      key_type       = "HASH"
-    }
-    key_schema {
-      attribute_name = "updated_at"
-      key_type       = "RANGE"
-    }
-  }
-  ttl {
-    attribute_name = "expires_at"
-    enabled        = true
-  }
-  point_in_time_recovery { enabled = true }
-  server_side_encryption {
-    enabled     = true
-    kms_key_arn = aws_kms_key.state.arn
-  }
-  deletion_protection_enabled = true
-  depends_on                  = [aws_iam_role_policy.state_encryption]
-}
-
-resource "terraform_data" "incident_activation" {
-  lifecycle {
-    precondition {
-      condition     = !var.incident_state_enabled || var.web_enabled
-      error_message = "The stateful digest requires the authenticated web app."
-    }
-  }
-}
-
-resource "aws_s3_object" "legacy_incident_link" {
-  count         = var.incident_state_enabled ? 1 : 0
-  bucket        = aws_s3_bucket.evidence.id
-  key           = "reviews/incidents/index.html"
-  content_type  = "text/html; charset=utf-8"
-  cache_control = "no-store"
-  content       = "<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><meta http-equiv=\"refresh\" content=\"0;url=${local.web_origin}\"><title>CRUX incident log</title><p><a href=\"${local.web_origin}\">Open the incident log (AWS login required)</a></p></html>"
-}
-
 locals {
-  web_service_configuration = var.web_enabled ? templatefile("${path.module}/web-service.sh.tftpl", {
-    region       = var.region,
-    repository   = aws_ecr_repository.monitoring.repository_url,
-    image        = var.web_image_digest,
-    proxy_image  = var.proxy_image_digest,
-    table        = aws_dynamodb_table.incidents.name,
-    status_table = try(aws_dynamodb_table.status[0].name, ""),
-    origin       = local.web_origin,
-    revision     = var.revision
-  }) : ""
-  web_origin = var.web_enabled ? "https://${replace(aws_eip.web[0].public_ip, ".", "-")}.sslip.io" : ""
+  web_service_configuration = templatefile("${path.module}/web-service.sh.tftpl", {
+    region      = var.region, repository = aws_ecr_repository.monitoring.repository_url,
+    image       = var.web_image_digest, proxy_image = var.proxy_image_digest,
+    db_host     = aws_db_instance.monitoring.address,
+    db_secret   = aws_db_instance.monitoring.master_user_secret[0].secret_arn,
+    bucket      = aws_s3_bucket.evidence.id, document = aws_ssm_document.workspace.name,
+    upload_role = aws_iam_role.workspace_upload.arn,
+    origin      = local.web_origin, revision = var.revision
+  })
 }
-
+# Preserve the public address and SAML origin during the data reset.
 resource "aws_eip" "web" {
-  count  = var.web_enabled ? 1 : 0
+  #checkov:skip=CKV2_AWS_19:Count is fixed at one; aws_eip_association.web attaches this preserved address.
+  count  = 1
   domain = "vpc"
   tags   = { Name = "crux-incident-web" }
 }
 resource "aws_eip_association" "web" {
-  count         = var.web_enabled ? 1 : 0
+  count         = 1
   instance_id   = aws_instance.web[0].id
   allocation_id = aws_eip.web[0].id
 }
 resource "aws_security_group" "web" {
-  count       = var.web_enabled ? 1 : 0
+  #checkov:skip=CKV2_AWS_5:Count is fixed at one; aws_instance.web attaches this security group.
+  count       = 1
   name        = "crux-incident-web"
-  description = "Public incident website; administration through SSM only"
-  vpc_id      = local.vpc_id
+  description = "Authenticated monitoring website; administration through SSM"
+  vpc_id      = var.vpc_id
 }
 resource "aws_vpc_security_group_ingress_rule" "web" {
-  description       = "Public HTTPS website and HTTP redirect/ACME validation"
-  for_each          = var.web_enabled ? toset(["80", "443"]) : toset([])
+  #checkov:skip=CKV_AWS_260:Public port 80 serves ACME challenges and redirects to HTTPS.
+  for_each          = toset(["80", "443"])
+  description       = "HTTPS website and ACME HTTP redirect"
   security_group_id = aws_security_group.web[0].id
   ip_protocol       = "tcp"
   from_port         = tonumber(each.key)
@@ -148,8 +39,8 @@ resource "aws_vpc_security_group_ingress_rule" "web" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 resource "aws_vpc_security_group_egress_rule" "web" {
-  description       = "AWS APIs, image pulls and ACME certificate renewal over HTTPS"
-  count             = var.web_enabled ? 1 : 0
+  count             = 1
+  description       = "AWS APIs, model inference, telemetry, images and certificates"
   security_group_id = aws_security_group.web[0].id
   ip_protocol       = "tcp"
   from_port         = 443
@@ -157,44 +48,41 @@ resource "aws_vpc_security_group_egress_rule" "web" {
   cidr_ipv4         = "0.0.0.0/0"
 }
 resource "aws_iam_role" "web" {
-  count = var.web_enabled ? 1 : 0
+  count = 1
   name  = "crux-incident-web"
   assume_role_policy = jsonencode({ Version = "2012-10-17", Statement = [{
     Effect = "Allow", Principal = { Service = "ec2.amazonaws.com" }, Action = "sts:AssumeRole"
   }] })
 }
 resource "aws_iam_instance_profile" "web" {
-  count = var.web_enabled ? 1 : 0
+  count = 1
   name  = "crux-incident-web"
   role  = aws_iam_role.web[0].name
 }
 resource "aws_iam_role_policy_attachment" "web_ssm" {
-  count      = var.web_enabled ? 1 : 0
+  count      = 1
   role       = aws_iam_role.web[0].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 resource "aws_iam_role_policy" "web" {
-  count = var.web_enabled ? 1 : 0
+  count = 1
   role  = aws_iam_role.web[0].id
   policy = jsonencode({ Version = "2012-10-17", Statement = [
-    { Effect = "Allow", Action = ["ecr:GetAuthorizationToken"], Resource = "*" },
+    { Effect = "Allow", Action = ["ecr:GetAuthorizationToken", "ec2:DescribeInstances"], Resource = "*" },
     { Effect = "Allow", Action = ["ecr:BatchGetImage", "ecr:GetDownloadUrlForLayer", "ecr:BatchCheckLayerAvailability"], Resource = aws_ecr_repository.monitoring.arn },
-    { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = "arn:aws:ssm:${var.region}:${var.account_id}:parameter/crux/monitoring/web" },
-    { Effect = "Allow", Action = ["dynamodb:GetItem", "dynamodb:Query"], Resource = [aws_dynamodb_table.incidents.arn, "${aws_dynamodb_table.incidents.arn}/index/instance-incidents"] },
-    { Effect    = "Allow", Action = ["dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem"], Resource = aws_dynamodb_table.incidents.arn,
-      Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["INCIDENTS", "HISTORY#*", "LOGIN#*", "SESSION#*"] } }
-    }
+    { Effect = "Allow", Action = ["ssm:GetParameter"], Resource = ["arn:aws:ssm:${var.region}:${var.account_id}:parameter/crux/monitoring/env", "arn:aws:ssm:${var.region}:${var.account_id}:parameter/crux/monitoring/web"] },
+    { Effect = "Allow", Action = ["secretsmanager:GetSecretValue"], Resource = aws_db_instance.monitoring.master_user_secret[0].secret_arn },
+    # S3 returns NoSuchKey for absent checkpoints only when the caller can list this bucket.
+    { Effect = "Allow", Action = ["s3:ListBucket"], Resource = aws_s3_bucket.evidence.arn },
+    { Effect = "Allow", Action = ["s3:GetObject", "s3:GetObjectVersion", "s3:PutObject"], Resource = "${aws_s3_bucket.evidence.arn}/*" },
+    { Effect = "Allow", Action = ["ssm:SendCommand"], Resource = aws_ssm_document.workspace.arn },
+    { Effect = "Allow", Action = ["ssm:SendCommand"], Resource = "arn:aws:ec2:${var.region}:${var.account_id}:instance/*" },
+    { Effect = "Allow", Action = ["ssm:GetCommandInvocation"], Resource = "*" },
+    { Effect = "Allow", Action = ["sts:AssumeRole"], Resource = aws_iam_role.workspace_upload.arn }
   ] })
 }
-resource "aws_iam_role_policy" "incident_ingestion" {
-  role = aws_iam_role.job["review"].id
-  policy = jsonencode({ Version = "2012-10-17", Statement = [{
-    Effect    = "Allow", Action = ["dynamodb:GetItem", "dynamodb:Query", "dynamodb:PutItem", "dynamodb:UpdateItem"], Resource = aws_dynamodb_table.incidents.arn,
-    Condition = { "ForAllValues:StringLike" = { "dynamodb:LeadingKeys" = ["INCIDENTS", "HISTORY#*", "REVIEW#*", "FLEET"] } }
-  }] })
-}
 data "aws_ami" "web" {
-  count       = var.web_enabled ? 1 : 0
+  count       = 1
   most_recent = true
   owners      = ["amazon"]
   filter {
@@ -207,10 +95,13 @@ data "aws_ami" "web" {
   }
 }
 resource "aws_instance" "web" {
-  count                       = var.web_enabled ? 1 : 0
+  #checkov:skip=CKV_AWS_88:The authenticated HTTPS website intentionally uses the preserved public EIP.
+  count                       = 1
   ami                         = data.aws_ami.web[0].id
   instance_type               = "t3.small"
-  subnet_id                   = local.subnet_ids[0]
+  monitoring                  = true
+  ebs_optimized               = true
+  subnet_id                   = var.web_subnet_id
   vpc_security_group_ids      = [aws_security_group.web[0].id]
   iam_instance_profile        = aws_iam_instance_profile.web[0].name
   associate_public_ip_address = true
@@ -227,18 +118,7 @@ resource "aws_instance" "web" {
   user_data = templatefile("${path.module}/web-user-data.sh.tftpl", {
     service_configuration = local.web_service_configuration
   })
-  tags = { Name = "crux-incident-web", CruxRole = "monitoring-web" }
-  lifecycle {
-    precondition {
-      condition     = var.web_image_digest != "" && var.proxy_image_digest != ""
-      error_message = "Build, scan and push the web and proxy images before enabling the web EC2."
-    }
-    ignore_changes = [ami]
-  }
+  tags = { Name = "crux-monitor-worker", CruxRole = "monitoring-web" }
+  lifecycle { ignore_changes = [ami] }
   depends_on = [aws_iam_role_policy.web, aws_iam_role_policy_attachment.web_ssm]
 }
-output "incident_web_url" { value = local.web_origin }
-output "incident_table" { value = aws_dynamodb_table.incidents.name }
-output "incident_web_instance" { value = try(aws_instance.web[0].id, null) }
-
-output "incident_web_configuration" { value = local.web_service_configuration }

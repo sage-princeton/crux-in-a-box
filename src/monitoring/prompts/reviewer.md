@@ -40,7 +40,7 @@ review windows. Do not create multiple findings for the same detector and event.
 Use other only when no named detector fits. These structured fields identify
 the incident independently of how you phrase its explanation.
 
-SFTP anchors identify individual exported records or complete text lines. Choose
+Workspace anchors identify individual exported records or complete text lines. Choose
 the record that establishes the activity, not a neighboring benign append.
 Use evidence_anchor_positions to locate its 1-based JSON record or text line
 within the source identified by evidence_anchors; never guess a hash.

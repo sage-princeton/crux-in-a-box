@@ -12,16 +12,27 @@ set -euo pipefail
 aws ecr get-login-password --region ${region} | docker login --username AWS --password-stdin ${repository}
 docker pull ${repository}@${image}
 docker pull ${repository}@${proxy_image}
-docker rm -f crux-incidents 2>/dev/null || true
+docker rm -f crux-monitor-worker crux-incidents 2>/dev/null || true
+env_args=(
+  -e AWS_DEFAULT_REGION=${region}
+  -e MONITORING_DB_HOST=${db_host}
+  -e MONITORING_DB_SECRET=${db_secret}
+  -e MONITORING_BUCKET=${bucket}
+  -e MONITORING_WORKSPACE_DOCUMENT=${document}
+  -e MONITORING_UPLOAD_ROLE=${upload_role}
+  -e MONITORING_WEB_ORIGIN=${origin}
+  -e MONITORING_WEB_PARAMETER=/crux/monitoring/web
+  -e MONITORING_REVISION=${revision}
+)
+# A failed migration must prevent both services from starting on an incompatible schema.
+docker run --rm --network host --read-only --tmpfs /tmp:size=64m "$${env_args[@]}" ${repository}@${image} alembic upgrade head
 docker run -d --name crux-incidents --restart unless-stopped --network host --read-only --tmpfs /tmp:size=64m \
-  --log-driver journald --log-opt tag=crux-incidents \
-  -e AWS_DEFAULT_REGION=${region} -e MONITORING_TABLE=${table} \
-  -e STATUS_TABLE=${status_table} \
-  -e MONITORING_WEB_PARAMETER=/crux/monitoring/web -e MONITORING_REVISION=${revision} \
-  ${repository}@${image}
+  --log-driver journald --log-opt tag=crux-incidents "$${env_args[@]}" ${repository}@${image}
+docker run -d --name crux-monitor-worker --restart unless-stopped --network host --read-only --tmpfs /tmp:size=64m \
+  --log-driver journald --log-opt tag=crux-monitor-worker "$${env_args[@]}" ${repository}@${image} python worker.py run
 docker rm -f crux-incident-proxy 2>/dev/null || true
-docker run -d --name crux-incident-proxy \
-  --restart unless-stopped --network host --log-opt max-size=10m --log-opt max-file=3 \
+docker run -d --name crux-incident-proxy --restart unless-stopped --network host \
+  --log-opt max-size=10m --log-opt max-file=3 \
   -v /opt/crux-incidents/Caddyfile:/etc/caddy/Caddyfile:ro \
   -v /opt/crux-incidents/caddy-data:/data -v /opt/crux-incidents/caddy-config:/config ${repository}@${proxy_image}
 START
@@ -41,4 +52,5 @@ systemctl daemon-reload
 systemctl enable crux-incidents
 systemctl restart crux-incidents
 test "$(docker inspect --format '{{.Config.Image}}' crux-incidents)" = '${repository}@${image}'
+test "$(docker inspect --format '{{.Config.Image}}' crux-monitor-worker)" = '${repository}@${image}'
 test "$(docker inspect --format '{{.Config.Image}}' crux-incident-proxy)" = '${repository}@${proxy_image}'
