@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import http.cookiejar
 import json
+import os
 import re
 import shutil
 import socket
@@ -81,11 +82,12 @@ class Server:
             self.port = s.getsockname()[1]
         self.base = f"http://127.0.0.1:{self.port}/api/v1"
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-        data.chmod(0o777)
 
     def start(self):
         subprocess.run(["docker", "rm", "-f", self.name], capture_output=True)
+        # As this user rather than the image's nobody, so the test can write the database the server created.
         subprocess.run(["docker", "run", "-d", "--platform", "linux/amd64", "--name", self.name,
+                        "--user", f"{os.getuid()}:{os.getgid()}",
                         "-p", f"127.0.0.1:{self.port}:3000", "-v", f"{self.data}:/_storage",
                         "-e", "AGENTRQ_SQLITE_DSN=/_storage/agentrq.db",
                         "-e", "AGENTRQ_AUTH_ROOT_LOGIN_ENABLED=true",
