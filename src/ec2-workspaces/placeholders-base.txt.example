@@ -35,7 +35,8 @@ KEY_NAME=crux-acp
 ELASTIC_IP_ADDRESS=34.201.10.20
 
 # Agent settings. Model and effort are required for the selected platform.
-# Codex effort: minimal | low | medium | high. An omitted platform selects Codex.
+# Codex effort: none | low | medium | high | xhigh | max. An omitted platform
+# selects Codex. Support varies by model; see the effort table in agent-config.sh.
 AGENT_PLATFORM=codex
 
 # Optional gateway: direct (default) | openrouter. OpenRouter requires an
@@ -47,7 +48,7 @@ MODEL_PROVIDER=direct
 # CLAUDE_MODEL=<explicit-model-id>
 # CLAUDE_EFFORT=high
 # Claude effort: low | medium | high | xhigh | max.
-# Model support for effort levels varies; the probe checks model availability.
+# Support varies by model; see the effort table in agent-config.sh.
 CLAUDE_VERSION=2.1.272
 CLAUDE_ACP_VERSION=0.77.0
 

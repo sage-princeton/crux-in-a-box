@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
-# Shared preflight for both local entry points. Callers provide cfg KEY and die.
+# Shared preflight for both local entry points. Callers provide cfg KEY, warn and die.
 # An omitted AGENT_PLATFORM selects Codex.
 load_agent_config() {
   AGENT_PLATFORM="$(cfg AGENT_PLATFORM)"
@@ -42,11 +42,37 @@ load_agent_config() {
     [[ "$value" =~ ^[a-zA-Z0-9._:/+@-]+(\[[a-zA-Z0-9]+\])?$ ]] \
       || die "$key contains unsupported characters."
   done
-  case "$AGENT_PLATFORM:$EFFORT" in
-    codex:minimal|codex:low|codex:medium|codex:high) ;;
-    claude:low|claude:medium|claude:high|claude:xhigh|claude:max) ;;
-    codex:*) die "CODEX_REASONING_EFFORT must be minimal|low|medium|high (got '$EFFORT')." ;;
-    claude:*) die "CLAUDE_EFFORT must be low|medium|high|xhigh|max (got '$EFFORT')." ;;
+  case "$EFFORT" in
+    none|low|medium|high|xhigh|max) ;;
+    *) die "$EFFORT_KEY must be none|low|medium|high|xhigh|max (got '$EFFORT')." ;;
+  esac
+
+  # Effort levels per supported model, recorded 2026-10-01. Neither harness
+  # rejects a level the model lacks: Codex sends model_reasoning_effort to the
+  # API as-is.
+  # - Codex: OpenAI's model docs (developers.openai.com/api/docs/models). The
+  #   pinned @openai/codex 0.154.0 catalog (`codex debug models --bundled`)
+  #   lists only gpt-6-astra; 0.160.0 lists all three, without gpt-6-luna's
+  #   `none`, and adds `ultra`, which OpenAI's docs don't list.
+  # - Claude: Anthropic's effort docs (platform.claude.com/docs/en/build-with-claude/effort);
+  #   check with GET /v1/models/{id} (capabilities.effort.<level>.supported).
+  # UPDATE THIS TABLE when changing the models used for runs or bumping
+  # CODEX_VERSION or CLAUDE_VERSION. Other models (e.g. OpenRouter IDs) only
+  # get a warning.
+  local supported
+  case "$AGENT_PLATFORM:${MODEL%%\[*}" in
+    codex:gpt-6-astra|codex:gpt-6.1-sol|\
+    claude:claude-fable-5-1|claude:claude-opus-5-5|claude:claude-sonnet-5-5)
+      supported="low medium high xhigh max" ;;
+    codex:gpt-6-luna)
+      supported="none low medium high xhigh max" ;;
+    *)
+      warn "$MODEL is not in agent-config.sh's effort table; $EFFORT_KEY=$EFFORT is unchecked for it."
+      return ;;
+  esac
+  case " $supported " in
+    *" $EFFORT "*) ;;
+    *) die "$MODEL does not support $EFFORT_KEY=$EFFORT (supported: ${supported// /|})." ;;
   esac
 }
 
