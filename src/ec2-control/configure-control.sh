@@ -24,12 +24,11 @@ DATA_DIR=/srv/agentrq
 # made, in one statement SQLite refuses past 4,095 rows, so a long task can no
 # longer be replied to or completed and keeps the workspace's ongoing slot.
 # Released from sage-princeton/agentrq (crux/* branches) as a docker save
-# tarball, loaded only if its sha256 matches; tests/agentrq-release checks this
-# pin. Moving it is a deliberate change: check what the new image does to the
-# run boxes' gateway, ideally between runs.
+# tarball, loaded only if its sha256 matches. Moving it is a deliberate change:
+# check what the new image does to the run boxes' gateway, ideally between runs.
 AGENTRQ_IMAGE=agentrq-crux:0.6.3-45c3692-crux.1
 AGENTRQ_IMAGE_URL=https://github.com/sage-princeton/agentrq/releases/download/crux-v0.6.3-45c3692-crux.1/agentrq-crux-0.6.3-45c3692-crux.1-linux-amd64.tar.gz
-AGENTRQ_IMAGE_SHA256=817499c087b981c3a1eb00b8d4620073988853a8c7318ba7b55d00dcf717c19a
+AGENTRQ_IMAGE_SHA256=dccbce43c95669066527cf60a9b960ab97ac2d88e6b4e39e78af8d289802c071
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 
 # ====== PACKAGES ======

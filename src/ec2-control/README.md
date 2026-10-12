@@ -23,12 +23,11 @@ with every tool call it has made, in one statement that SQLite refuses past
 keeps the workspace's one ongoing slot. The control box runs a CRUX build
 with the fix instead: `crux/*` branches of
 [sage-princeton/agentrq](https://github.com/sage-princeton/agentrq) are
-released by CI (backend tests, `docker build` for `linux/amd64`) as a
+built by hand for `linux/amd64` and uploaded there as a GitHub release: the
 `docker save` tarball plus its sha256. `configure-control.sh` downloads
 `AGENTRQ_IMAGE_URL`, refuses it unless it matches `AGENTRQ_IMAGE_SHA256`,
-loads it and runs `AGENTRQ_IMAGE`. `tests/agentrq-release` loads the pinned
-tarball the same way and replays the frozen task against it. To move the pin,
-cut a new `crux-v<version>` release and copy its URL, `.sha256` and image tag;
+loads it and runs `AGENTRQ_IMAGE`. To move the pin, release a new
+`crux-v<version>` from the fork and copy its URL, `.sha256` and image tag;
 once upstream ships the fix, go back to `docker pull` of an
-`agentrq/agentrq@sha256:…` digest. A new image only takes effect when `configure-control.sh` restarts
-the service, which must be between runs.
+`agentrq/agentrq@sha256:…` digest. A new image only takes effect when
+`configure-control.sh` restarts the service, which must be between runs.

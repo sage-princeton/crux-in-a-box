@@ -215,12 +215,11 @@ but AgentRQ can send an auto-approval before that; the verdict is dropped and th
 turn is cancelled after 30 minutes. Boxes run a CRUX build with the fix instead:
 `crux/*` branches of
 [sage-princeton/agentrq-acp-gateway](https://github.com/sage-princeton/agentrq-acp-gateway)
-are released by CI (typecheck, tests, `npm pack`) as a tarball plus its sha256.
-`install-run.sh` downloads `ACP_GATEWAY_TARBALL_URL`, refuses it unless it
-matches `ACP_GATEWAY_SHA256`, and checks the installed version is
-`ACP_GATEWAY_VERSION`. `tests/acp-gateway-release` installs the pinned tarball
-the same way and replays the race against it. To move the pin, cut a new
-`crux-v<version>` release and copy its URL and `.sha256`; once upstream ships
+are built by hand and uploaded there as a GitHub release: the `npm pack`
+tarball plus its sha256. `install-run.sh` downloads `ACP_GATEWAY_TARBALL_URL`,
+refuses it unless it matches `ACP_GATEWAY_SHA256`, and checks the installed
+version is `ACP_GATEWAY_VERSION`. To move the pin, release a new
+`crux-v<version>` from the fork and copy its URL and `.sha256`; once upstream ships
 the fix, point the URL at its npm tarball
 (`https://registry.npmjs.org/@agentrq/acp-gateway/-/acp-gateway-<version>.tgz`)
 and pin that hash. A re-installed gateway only takes effect when it next
