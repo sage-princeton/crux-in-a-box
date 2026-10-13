@@ -171,6 +171,8 @@ def observations_for(agent: str, thread: Thread, turn: Turn, placement: Placemen
         if not step.complete and end is None:
             continue
         output: dict[str, object] = {"role": "assistant", "content": "\n".join(step.text)}
+        if step.reasoning_summary:
+            output["reasoning_summary"] = "\n".join(step.reasoning_summary)
         if step.calls:
             output["tool_calls"] = [{"name": c.name, "arguments": c.arguments} for c in step.calls]
         out.append(Observation(ids.step(step.index), ids.root(), names.generation, Kind.GENERATION, step.started,

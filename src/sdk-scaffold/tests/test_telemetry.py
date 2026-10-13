@@ -6,6 +6,7 @@ import pytest
 from agents import set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from openai.types.responses import ResponseReasoningItem
 
 from crux_scaffold import cli
 from crux_scaffold.cli import main
@@ -140,6 +141,21 @@ def test_a_long_conversation_keeps_every_generation_in_the_run_session(langfuse,
         assert span.attributes["session.id"] == "Demo-Slug"
         assert span.attributes["llm.token_count.prompt"] == 10
         assert "input.value" in span.attributes and "output.value" in span.attributes
+
+
+def test_openai_agents_reasoning_summary_is_exported_in_the_sdk_response(langfuse, drop_in_dir, assemble):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    set_tracing_disabled(False)
+    summary = "I compared the alternatives before selecting the implementation."
+    reasoning = ResponseReasoningItem(
+        id="rs_reasoning", type="reasoning",
+        summary=[{"type": "summary_text", "text": summary}], status="completed")
+    asyncio.run(assemble(drop_in_dir, {"pm": ScriptedModel(reasoning, say("done"))}, env=ENV,
+                         telemetry=telemetry).run())
+    responses = [span.attributes.get("output.value", "") for span in exporter.get_finished_spans()
+                 if span.attributes.get("openinference.span.kind") == "LLM"]
+    assert any(summary in response for response in responses)
 
 
 def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, monkeypatch):

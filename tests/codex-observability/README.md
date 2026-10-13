@@ -40,6 +40,11 @@ Known gaps in plugin 0.4.0, recorded in its expectations:
 - A model step's generation starts at its first assistant message or tool call. A step that goes straight from reasoning to a tool call therefore still reports about 0s.
 - A turn that hasn't finished is never uploaded, so the only way to see a long turn is for it to end. The gateway's flush uploads a killed turn once the gateway exits.
 
+The live exporter captures Codex's `reasoning.summary` text and includes it as
+`reasoning_summary` in the corresponding Langfuse generation output. Workspace
+configuration requests `model_reasoning_summary = "detailed"`. The Stop-hook
+plugin mode does not currently export these summaries.
+
 ## Running locally
 
 Needs Python 3.12+, Node 22 and npm (the plugin is fetched with `npm pack`).

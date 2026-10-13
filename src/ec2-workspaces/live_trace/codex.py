@@ -90,7 +90,7 @@ class AssistantMessage:
 
 @dataclass(frozen=True)
 class Reasoning:
-    pass
+    summary: str
 
 
 @dataclass(frozen=True)
@@ -189,8 +189,8 @@ def _decode_item(item: dict) -> Event | None:
             return AssistantMessage(_text(content))
         case {"type": "message"}:
             return None
-        case {"type": "reasoning"}:
-            return Reasoning()
+        case {"type": "reasoning"} as item:
+            return Reasoning(_text(item.get("summary"))[:CLIP])
         case {"type": str(kind), "call_id": str(call_id)} if kind.endswith("_output"):
             return ToolReturned(call_id, _text_or_raw(item.get("output")))
         case {"type": str(kind), "call_id": str(call_id)} if kind.endswith("_call"):
@@ -331,8 +331,9 @@ class RolloutReader:
             case ToolReturned(call_id=call_id, output=output):
                 if call := turn.tool_calls.get(call_id):
                     call.finished, call.output = at, clip(output)
-            case Reasoning():
-                self._model_output(turn, at)
+            case Reasoning(summary=summary):
+                if summary:
+                    self._model_output(turn, at).reasoning_summary.append(summary)
             case AssistantMessage(text=text):
                 self._model_output(turn, at).text.append(text)
             case InstantCall(call_id=call_id, name=name, arguments=arguments):

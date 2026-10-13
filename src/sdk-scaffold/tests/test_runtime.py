@@ -66,9 +66,9 @@ def test_unknown_tool_type_is_a_config_error(drop_in_dir, assemble):
 def test_every_agent_takes_the_run_model_and_effort_from_the_env(drop_in_dir, assemble):
     scaffold = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "low"})
     scaffold.runtime.build()
-    assert {name: (agent.model, agent.model_settings.reasoning.effort)
-            for name, agent in scaffold.runtime.agents.items()} == {"pm": ("gpt-test", "low"),
-                                                                     "reviewer": ("gpt-test", "low")}
+    assert {name: (agent.model, agent.model_settings.reasoning.effort, agent.model_settings.reasoning.summary)
+            for name, agent in scaffold.runtime.agents.items()} == {"pm": ("gpt-test", "low", "detailed"),
+                                                                     "reviewer": ("gpt-test", "low", "detailed")}
 
 
 def test_a_run_without_crux_model_is_a_config_error(drop_in_dir, assemble):

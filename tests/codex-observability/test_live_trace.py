@@ -127,6 +127,17 @@ def test_model_responses_carry_their_tool_calls_and_usage(rollouts, home, live):
     assert all(json.loads(g.attributes["langfuse.observation.usage_details"])["input"] > 0 for g in generations)
 
 
+def test_model_responses_export_reasoning_summaries_separately(rollouts, home, live):
+    scenario = rollouts.long_turn()
+    with Collector() as collector:
+        passes(scenario.main, home, collector, live, [len(scenario.main.lines)])
+    generations = [s for s in collector.spans if s.type == "generation"]
+    outputs = [json.loads(g.output) for g in generations]
+    assert len(outputs) == len(scenario.turns[0].steps)
+    assert all(output["reasoning_summary"] == "Fixture reasoning summary." for output in outputs)
+    assert all(output["content"] != output["reasoning_summary"] for output in outputs)
+
+
 def test_subagent_turns_nest_under_the_turn_that_spawned_them(rollouts, home, live):
     scenario = rollouts.subagents()
     [turn] = scenario.turns

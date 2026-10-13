@@ -82,9 +82,11 @@ class RecordingTelemetry(NullTelemetry):
     def __init__(self, log):
         self.log = log
         self.generations = []
+        self.records = []
 
     def record(self, name, kind, input, output):
         self.log.append(f"record:{name}:{kind}")
+        self.records.append((name, kind, input, output))
 
     def generation(self, name, model, input):
         telemetry = self
@@ -114,7 +116,8 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
     assert fake.logins == ["sk-test"]
     assert fake.starts == [{"cwd": str(tmp_path), "model": "gpt-codex-test", "sandbox": Sandbox.workspace_write,
                             "approval_mode": ApprovalMode.deny_all, "developer_instructions": "# Standing context",
-                            "config": {"model_context_window": 1_000_000}}]
+                            "config": {"model_context_window": 1_000_000,
+                                       "model_reasoning_summary": "detailed"}}]
     assert fake.thread.turns == [("TASK: add location", {"effort": "high"})]
     assert log == ["stream:ItemCompletedNotification", "record:codex:commandExecution:tool",
                    "stream:ThreadTokenUsageUpdatedNotification",
@@ -126,6 +129,23 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
             result.usage.reasoning_output_tokens) == (900, 200, 40)
     assert telemetry.generations == [("engineer", "gpt-codex-test", "TASK: add location",
                                       "Added location; 6 tests pass.", 1500)]
+
+
+def test_codex_reasoning_summary_is_sent_to_telemetry(tmp_path):
+    summary = "I compared the alternatives before selecting the implementation."
+    reasoning = item({"type": "reasoning", "id": "r1", "summary": [summary], "content": ["private content"]})
+    fake = FakeCodex([reasoning, item(ANSWER), completed()])
+    telemetry = RecordingTelemetry([])
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
+                                 client_factory=lambda ctx: fake)
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"},
+                     UsageLedger(), Budget(), telemetry)
+
+    asyncio.run(agent.run("TASK", ctx))
+
+    reasoning_records = [record for record in telemetry.records if record[0] == "codex:reasoning"]
+    assert len(reasoning_records) == 1
+    assert reasoning_records[0][3] == {"summary": [summary]}
 
 
 def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):
