@@ -53,6 +53,8 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
+      - name: Check incident-selection JavaScript
+        run: node --check src/monitoring/static/incidents.js
       - name: Verify compiled Tailwind stylesheet
         working-directory: src/monitoring
         run: |

@@ -2,6 +2,7 @@
 
 import json
 import time
+from uuid import UUID
 
 from sqlalchemy import text
 
@@ -320,42 +321,59 @@ class Store:
         ) > 50 else None
 
     def transition(self, identity, version, status, actor, note):
+        if not self.transition_many([(identity, version)], status, actor, note):
+            raise Conflict("Incident changed; reload before trying again.")
+        return self.incident(identity)
+
+    def transition_many(self, selections, status, actor, note):
         if status not in ("open", "closed") or not actor or len(note) > 4000:
             raise ValueError("Invalid incident transition")
+        if not 1 <= len(selections) <= 50:
+            raise ValueError("Select between 1 and 50 incidents")
+        versions = {str(UUID(identity)): int(version) for identity, version in selections}
+        if len(versions) != len(selections) or any(version < 1 for version in versions.values()):
+            raise ValueError("Invalid or duplicate incident selection")
         now = int(time.time())
         with self.db.begin() as connection:
-            row = (
+            rows = (
                 connection.execute(
-                    text("SELECT status, version FROM incidents WHERE id=:id FOR UPDATE"),
-                    {"id": identity},
+                    text("""
+                    SELECT id, status, version FROM incidents
+                    WHERE id=ANY(CAST(:ids AS uuid[])) ORDER BY id FOR UPDATE
+                """),
+                    {"ids": list(versions)},
                 )
                 .mappings()
-                .first()
+                .all()
             )
-            if not row:
-                raise KeyError(identity)
-            if row["version"] != int(version) or row["status"] == status:
-                raise Conflict("Incident changed; reload before trying again.")
-            connection.execute(
-                text(
-                    "UPDATE incidents SET status=:status, version=version+1, "
-                    "updated_at=:now WHERE id=:id"
-                ),
-                {"id": identity, "status": status, "now": now},
-            )
-            event = {
-                "at": now,
-                "from_status": row["status"],
-                "status": status,
-                "actor": actor,
-                "note": note,
-                "version": int(version) + 1,
-            }
-            connection.execute(
-                text("INSERT INTO incident_events VALUES (:id, :version, CAST(:event AS jsonb))"),
-                {"id": identity, "version": event["version"], "event": encoded(event)},
-            )
-        return self.incident(identity)
+            if len(rows) != len(versions):
+                raise KeyError("Unknown incident")
+            if any(row["version"] != versions[str(row["id"])] for row in rows):
+                raise Conflict("One or more incidents changed; reload before trying again.")
+            changed = [row for row in rows if row["status"] != status]
+            for row in changed:
+                connection.execute(
+                    text(
+                        "UPDATE incidents SET status=:status, version=version+1, "
+                        "updated_at=:now WHERE id=:id"
+                    ),
+                    {"id": row["id"], "status": status, "now": now},
+                )
+                event = {
+                    "at": now,
+                    "from_status": row["status"],
+                    "status": status,
+                    "actor": actor,
+                    "note": note,
+                    "version": row["version"] + 1,
+                }
+                connection.execute(
+                    text(
+                        "INSERT INTO incident_events VALUES (:id, :version, CAST(:event AS jsonb))"
+                    ),
+                    {"id": row["id"], "version": event["version"], "event": encoded(event)},
+                )
+        return len(changed)
 
     def acknowledge_incidents(self, key, through):
         with self.db.begin() as connection:
