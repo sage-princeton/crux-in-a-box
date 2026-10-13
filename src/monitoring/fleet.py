@@ -1,9 +1,10 @@
 """EC2 run discovery and acknowledged Slack notifications."""
 
+import html
 import re
 from collections import Counter
 
-from review import CoverageError, digest, https_url
+from review import CoverageError, https_url
 
 DEFAULT_AUTHORIZATION = (
     "Passively review this EC2 run's Langfuse telemetry and whole workspace snapshot. "
@@ -47,25 +48,36 @@ def inventory_targets(ec2):
     return enrolled
 
 
-def notify(http, store, webhook, key, message, fingerprint=None):
-    fingerprint = fingerprint or digest(message)
-    if store.notice(key) == fingerprint:
-        return "suppressed"
+def notify_incidents(http, store, webhook, origin):
+    pending = store.new_incidents()
+    if not pending:
+        return 0
     url = https_url(webhook)
     if not url.startswith("https://hooks.slack.com/services/"):
         raise ValueError("Only Slack incoming webhooks are supported")
-    response = http.post(
-        url,
-        json={
-            "text": message,
-            "blocks": [{"type": "section", "text": {"type": "plain_text", "text": message}}],
-            "mrkdwn": False,
-            "unfurl_links": False,
-            "unfurl_media": False,
-        },
-    )
-    response.raise_for_status()
-    if response.text.strip() != "ok":
-        raise CoverageError("Slack did not acknowledge delivery")
-    store.acknowledge(key, fingerprint)
-    return "sent"
+    origin = https_url(origin).rstrip("/")
+    for row in pending:
+        count = row["new_incidents"]
+        noun = "incident" if count == 1 else "incidents"
+        label = html.escape(row["slug"], quote=False)
+        link = f"{origin}/?workload={row['key']}#incident-table"
+        message = f"*{count} new {noun}* :warning: on {label}\n<{link}|View incidents>"
+        response = http.post(
+            url,
+            json={
+                "text": message,
+                "blocks": [
+                    {
+                        "type": "section",
+                        "text": {"type": "mrkdwn", "text": message, "verbatim": True},
+                    }
+                ],
+                "unfurl_links": False,
+                "unfurl_media": False,
+            },
+        )
+        response.raise_for_status()
+        if response.text.strip() != "ok":
+            raise CoverageError("Slack did not acknowledge delivery")
+        store.acknowledge_incidents(row["key"], row["through"])
+    return len(pending)

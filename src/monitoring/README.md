@@ -31,7 +31,7 @@ flowchart LR
   Status --> SQL[(RDS PostgreSQL)]
   Incidents --> SQL
   SQL --> Web[Authenticated website]
-  Worker --> Slack[Enrollment notices and incident digest]
+  Worker --> Slack[New incident notifications]
 ```
 
 `worker.py` coordinates discovery, saved checkpoints and publication.
@@ -50,10 +50,11 @@ and assessment checkpoints survive publication failures, so a retry uses saved
 artifacts without collecting the run or charging for inference again. A
 PostgreSQL advisory lock prevents concurrent worker passes.
 
-“Monitoring has begun” confirms that both assessment attempts are recorded; it
-does not promise successful telemetry or inference. Successful Slack deliveries
-are acknowledged in SQL; failed deliveries retry. An ambiguous network failure
-after Slack accepts a message can cause a duplicate.
+Slack announces only newly created incidents, with a count, workload name and
+clickable incident-list link. Repeated observations and status changes send no
+message. SQL delivery cursors advance after Slack accepts a message; failures
+retry. The migration skips existing incident history. An ambiguous network
+failure after Slack accepts a message can cause a duplicate.
 
 A unique EC2 Name maps to the matching Langfuse environment. Missing or duplicate
 names do not borrow another run's telemetry. Incident reviewers must come from a

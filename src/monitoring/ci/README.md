@@ -57,5 +57,5 @@ Terraform's deployment backend keeps its existing cross-account state role.
 After rollout, verify `/healthz` reports the merged revision, sign in and check
 that running EC2 instances appear with both assessment results or explicit
 coverage gaps. Verify a whole workspace object contains hidden and binary files,
-and that Slack acknowledges enrollment. RDS automated backups cover seven days;
-monitoring snapshots and collection rows expire after 90 days.
+and that Slack acknowledges new incident notifications. RDS automated backups
+cover seven days; monitoring snapshots and collection rows expire after 90 days.

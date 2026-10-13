@@ -357,42 +357,33 @@ class Store:
             )
         return self.incident(identity)
 
-    def notice(self, key):
-        with self.db.connect() as connection:
-            return connection.execute(
-                text("SELECT fingerprint FROM notices WHERE key=:key"), {"key": key}
-            ).scalar()
-
-    def acknowledge(self, key, fingerprint):
+    def acknowledge_incidents(self, key, through):
         with self.db.begin() as connection:
             connection.execute(
                 text("""
-                INSERT INTO notices VALUES (:key, :fingerprint, :now) ON CONFLICT (key)
-                DO UPDATE SET fingerprint=EXCLUDED.fingerprint, delivered_at=EXCLUDED.delivered_at
+                UPDATE workloads SET slack_incident_cursor=GREATEST(slack_incident_cursor,
+                    CAST(:through AS uuid)) WHERE key=:key
             """),
-                {"key": key, "fingerprint": fingerprint, "now": int(time.time())},
+                {"key": key, "through": through},
             )
 
-    def summaries(self):
+    def new_incidents(self):
         with self.db.connect() as connection:
             rows = [
                 dict(row)
                 for row in connection.execute(
                     text("""
-                SELECT w.key, w.instance_id, w.slug,
-                    (SELECT count(*) FROM incidents i WHERE i.workload_key=w.key
-                        AND i.status='open') AS open_incidents,
-                    (SELECT count(*) FROM incidents i WHERE i.workload_key=w.key) AS total_incidents,
-                    (SELECT count(*) FROM assessments a WHERE a.workload_key=w.key
-                        AND kind='incident') AS reviews,
-                    (SELECT max(window_end) FROM assessments a WHERE a.workload_key=w.key
-                        AND kind='incident') AS last_review
-                FROM workloads w WHERE w.state='running' ORDER BY w.slug, w.key
+                SELECT w.key, w.slug, count(*) AS new_incidents,
+                    (array_agg(i.id ORDER BY i.id DESC))[1] AS through
+                FROM workloads w JOIN incidents i ON i.workload_key=w.key
+                WHERE w.slack_incident_cursor IS NULL OR i.id>w.slack_incident_cursor
+                GROUP BY w.key, w.slug ORDER BY w.slug, w.key
             """)
                 ).mappings()
             ]
         for row in rows:
             row["key"] = str(row["key"])
+            row["through"] = str(row["through"])
         return rows
 
     def login(self, token, request_id, expires_at):

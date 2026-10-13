@@ -19,7 +19,7 @@ def test_alembic_roundtrip(db):
     command.upgrade(config, "head")
     with db.connect() as connection:
         assert (
-            connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0001"
+            connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
         )
         undocumented = connection.execute(
             text("""
@@ -32,6 +32,19 @@ def test_alembic_roundtrip(db):
             """)
         ).all()
     assert undocumented == [], f"Missing database comments: {undocumented}"
+
+
+def test_slack_cursor_migration_skips_existing_incidents_without_losing_history(store, target):
+    original = ingest(store, target)
+    config = Config(str(ROOT / "alembic.ini"))
+    command.downgrade(config, "0001")
+    command.upgrade(config, "head")
+    assert store.new_incidents() == []
+    assert store.incident(original["id"])["status"] == "open"
+    new = ingest(store, target, 450, anchor="observation:late")
+    assert store.new_incidents() == [
+        {"key": target["key"], "slug": target["slug"], "new_incidents": 1, "through": new["id"]}
+    ]
 
 
 def test_workload_uuidv7_survives_renames_and_separates_replacements(store, target):
