@@ -6,6 +6,7 @@ import httpx
 import pytest
 from moto import mock_aws
 
+from fleet import notify_incidents
 from worker import Runtime
 
 MODEL_CATALOG = {
@@ -22,6 +23,7 @@ def runtime(store, target, monkeypatch):
         monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
         monkeypatch.setenv("MONITORING_BUCKET", "monitoring-test")
         monkeypatch.setenv("MONITORING_WORKSPACE_DOCUMENT", "copy-workspace")
+        monkeypatch.setenv("MONITORING_WEB_ORIGIN", "https://incidents.example.test")
         monkeypatch.setenv(
             "MONITORING_UPLOAD_ROLE", "arn:aws:iam::123456789012:role/workspace-upload"
         )
@@ -60,6 +62,9 @@ def runtime(store, target, monkeypatch):
                         "evidence": "Test-only evidence",
                         "source_ids": ["observation:123"],
                         "benign_explanation": "Fixture",
+                        "what_happened": "Test-only evidence",
+                        "why_it_happened": "A fixture reported this activity.",
+                        "next_steps": "Inspect the test fixture.",
                     }
                 ],
                 "coverage_gaps": [],
@@ -100,14 +105,21 @@ def test_one_collection_and_independent_assessments_survive_slack_retry(runtime)
         worker.run_target(target, 900, {}, secrets)
     assert worker.store.assessment(target["key"], 900, "status")["outcome"] == "failed"
     assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
-    assert counts["collection"] == 1
-    assert worker.store.notice("enrollment/" + target["key"]) is None
+    assert counts["collection"] == 1 and counts["slack"] == 1
+    args = (
+        worker.http,
+        worker.store,
+        secrets["MONITORING_SLACK_WEBHOOK_URL"],
+        "https://incidents.example.test",
+    )
     initial = counts.copy()
     worker.run_target(target, 900, {}, secrets)
     assert worker.store.notice("enrollment/" + target["key"])
+    assert notify_incidents(*args) == 1
     assert counts["model"] == initial["model"] and counts["collection"] == 1
     delivered = counts.copy()
     worker.run_target(target, 900, {}, secrets)
+    assert notify_incidents(*args) == 0
     assert counts == delivered
     assert len(worker.store.instance_page(target["instance_id"], None, None, 50)) == 1
 

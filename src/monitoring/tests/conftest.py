@@ -89,16 +89,20 @@ def report(anchor="observation:123"):
     }
 
 
-def ingest(store, target, end=900):
+def ingest(store, target, end=900, anchor="observation:123"):
     key = target["key"]
     store.save_collection(key, end, {"target": target, "sources": []})
     result = {
         "outcome": "completed",
         "window_end": end,
         "artifact_prefix": "private/review",
-        "report": report(),
+        "report": report(anchor),
         "model": {"reported_model": "model-1"},
     }
     store.publish(key, end, "incident", result)
-    store.ingest(key, end, result, {"observation:123": "observation:123"})
-    return store.instance_page(target["instance_id"], None, None, 50)[0]
+    store.ingest(key, end, result, {anchor: anchor})
+    return next(
+        item
+        for item in store.instance_page(target["instance_id"], None, None, 50)
+        if item["anchor"] == anchor
+    )

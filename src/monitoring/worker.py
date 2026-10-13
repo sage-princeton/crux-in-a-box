@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 from sqlalchemy import text
 
 from collection import Collector
-from fleet import inventory_targets, notify
+from fleet import inventory_targets, notify_enrollment, notify_incidents
 from lifecycle import evidence_anchors, review_anchors
 from review import (
     MAX_OUTPUT_TOKENS,
@@ -220,16 +220,13 @@ class Runtime:
                     flush=True,
                 )
         if all(self.store.assessment(key, end, kind) for kind in ("status", "incident")):
-            notice_key = "enrollment/" + key
-            if not self.store.notice(notice_key):
-                notify(
-                    self.http,
-                    self.store,
-                    secrets["MONITORING_SLACK_WEBHOOK_URL"],
-                    notice_key,
-                    f"Monitoring has begun on {target['slug']} ({target['instance_id']}). "
-                    "Status checks and incident monitoring are enrolled.",
-                )
+            notify_enrollment(
+                self.http,
+                self.store,
+                secrets["MONITORING_SLACK_WEBHOOK_URL"],
+                target,
+                os.environ["MONITORING_WEB_ORIGIN"],
+            )
 
     def tick(self):
         now = int(time.time())
@@ -270,26 +267,12 @@ class Runtime:
                             f"{target['instance_id']}: saved pass failed ({type(error).__name__}).",
                             flush=True,
                         )
-                rows = self.store.summaries()
-                # Review timestamps do not cause a digest every sweep.
-                fingerprint = digest(
-                    [{k: r[k] for k in ("key", "open_incidents", "total_incidents")} for r in rows]
+                notify_incidents(
+                    self.http,
+                    self.store,
+                    secrets["MONITORING_SLACK_WEBHOOK_URL"],
+                    os.environ["MONITORING_WEB_ORIGIN"],
                 )
-                if rows and self.store.notice("fleet") != fingerprint:
-                    message = "\n".join(
-                        f"{r['slug']}: {r['open_incidents']} open incidents "
-                        f"based on {r['reviews']} reviews."
-                        for r in rows
-                    )
-                    message += "\n" + os.environ.get("MONITORING_WEB_ORIGIN", "")
-                    notify(
-                        self.http,
-                        self.store,
-                        secrets["MONITORING_SLACK_WEBHOOK_URL"],
-                        "fleet",
-                        message,
-                        fingerprint,
-                    )
                 self.store.prune(now - 90 * 86400)
             finally:
                 lock.execute(text("SELECT pg_advisory_unlock(21145)"))

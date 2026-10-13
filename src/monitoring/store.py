@@ -6,7 +6,7 @@ import time
 from sqlalchemy import text
 
 from database import engine
-from lifecycle import DETECTORS, Conflict
+from lifecycle import DETECTORS, Conflict, incident_detail
 from review import CoverageError
 
 
@@ -191,14 +191,7 @@ class Store:
             )
         with self.db.begin() as connection:
             for detector, anchor, finding in findings:
-                title, summary = DETECTORS[detector]
-                detail = {
-                    "title": title,
-                    "summary": summary,
-                    "kind": "monitoring" if detector.startswith("monitoring:") else "finding",
-                    "severity": finding["severity"],
-                    "confidence": finding["confidence"],
-                }
+                detail = incident_detail(detector, finding)
                 identity = connection.execute(
                     text("""
                     INSERT INTO incidents (workload_key, detector, anchor, first_seen,
@@ -258,6 +251,9 @@ class Store:
         row["id"] = str(row["id"])
         row["workload_key"] = str(row["workload_key"])
         row.update(row.pop("detail"))
+        finding = row.pop("latest_finding")
+        if finding:
+            row.update(incident_detail(row["detector"], finding))
         row["observation_count"] = row["review_count"] = row.pop("observations", 0)
         return row
 
@@ -267,6 +263,8 @@ class Store:
                 connection.execute(
                     text("""
                 SELECT i.*, w.slug AS workload_label, w.instance_id,
+                    (SELECT o.detail->'finding' FROM observations o WHERE o.incident_id=i.id
+                        ORDER BY o.window_end DESC LIMIT 1) AS latest_finding,
                     (SELECT count(*) FROM observations o WHERE o.incident_id=i.id) AS observations
                 FROM incidents i JOIN workloads w ON w.key=i.workload_key WHERE i.id=:id
             """),
@@ -282,6 +280,8 @@ class Store:
             rows = connection.execute(
                 text("""
                 SELECT i.*, w.slug AS workload_label, w.instance_id,
+                    (SELECT o.detail->'finding' FROM observations o WHERE o.incident_id=i.id
+                        ORDER BY o.window_end DESC LIMIT 1) AS latest_finding,
                     (SELECT count(*) FROM observations o WHERE o.incident_id=i.id) AS observations
                 FROM incidents i JOIN workloads w ON w.key=i.workload_key
                 WHERE w.instance_id=:instance AND (CAST(:status AS text) IS NULL OR i.status=:status)
@@ -357,6 +357,16 @@ class Store:
             )
         return self.incident(identity)
 
+    def acknowledge_incidents(self, key, through):
+        with self.db.begin() as connection:
+            connection.execute(
+                text("""
+                UPDATE workloads SET slack_incident_cursor=GREATEST(slack_incident_cursor,
+                    CAST(:through AS uuid)) WHERE key=:key
+            """),
+                {"key": key, "through": through},
+            )
+
     def notice(self, key):
         with self.db.connect() as connection:
             return connection.execute(
@@ -367,32 +377,31 @@ class Store:
         with self.db.begin() as connection:
             connection.execute(
                 text("""
-                INSERT INTO notices VALUES (:key, :fingerprint, :now) ON CONFLICT (key)
-                DO UPDATE SET fingerprint=EXCLUDED.fingerprint, delivered_at=EXCLUDED.delivered_at
+                INSERT INTO notices (key, fingerprint, delivered_at)
+                VALUES (:key, :fingerprint, :now)
+                ON CONFLICT (key) DO UPDATE SET fingerprint=EXCLUDED.fingerprint,
+                    delivered_at=EXCLUDED.delivered_at
             """),
                 {"key": key, "fingerprint": fingerprint, "now": int(time.time())},
             )
 
-    def summaries(self):
+    def new_incidents(self):
         with self.db.connect() as connection:
             rows = [
                 dict(row)
                 for row in connection.execute(
                     text("""
-                SELECT w.key, w.instance_id, w.slug,
-                    (SELECT count(*) FROM incidents i WHERE i.workload_key=w.key
-                        AND i.status='open') AS open_incidents,
-                    (SELECT count(*) FROM incidents i WHERE i.workload_key=w.key) AS total_incidents,
-                    (SELECT count(*) FROM assessments a WHERE a.workload_key=w.key
-                        AND kind='incident') AS reviews,
-                    (SELECT max(window_end) FROM assessments a WHERE a.workload_key=w.key
-                        AND kind='incident') AS last_review
-                FROM workloads w WHERE w.state='running' ORDER BY w.slug, w.key
+                SELECT w.key, w.slug, count(*) AS new_incidents,
+                    (array_agg(i.id ORDER BY i.id DESC))[1] AS through
+                FROM workloads w JOIN incidents i ON i.workload_key=w.key
+                WHERE i.id>w.slack_incident_cursor
+                GROUP BY w.key, w.slug ORDER BY w.slug, w.key
             """)
                 ).mappings()
             ]
         for row in rows:
             row["key"] = str(row["key"])
+            row["through"] = str(row["through"])
         return rows
 
     def login(self, token, request_id, expires_at):

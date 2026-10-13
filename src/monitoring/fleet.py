@@ -1,5 +1,6 @@
 """EC2 run discovery and acknowledged Slack notifications."""
 
+import html
 import re
 from collections import Counter
 
@@ -47,10 +48,7 @@ def inventory_targets(ec2):
     return enrolled
 
 
-def notify(http, store, webhook, key, message, fingerprint=None):
-    fingerprint = fingerprint or digest(message)
-    if store.notice(key) == fingerprint:
-        return "suppressed"
+def send_slack(http, webhook, message):
     url = https_url(webhook)
     if not url.startswith("https://hooks.slack.com/services/"):
         raise ValueError("Only Slack incoming webhooks are supported")
@@ -58,8 +56,12 @@ def notify(http, store, webhook, key, message, fingerprint=None):
         url,
         json={
             "text": message,
-            "blocks": [{"type": "section", "text": {"type": "plain_text", "text": message}}],
-            "mrkdwn": False,
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": message, "verbatim": True},
+                }
+            ],
             "unfurl_links": False,
             "unfurl_media": False,
         },
@@ -67,5 +69,36 @@ def notify(http, store, webhook, key, message, fingerprint=None):
     response.raise_for_status()
     if response.text.strip() != "ok":
         raise CoverageError("Slack did not acknowledge delivery")
-    store.acknowledge(key, fingerprint)
-    return "sent"
+
+
+def notify_enrollment(http, store, webhook, target, origin):
+    key = "enrollment/" + target["key"]
+    if store.notice(key):
+        return 0
+    origin = https_url(origin)
+    label = html.escape(target["slug"], quote=False)
+    instance = html.escape(target["instance_id"], quote=False)
+    message = (
+        f"Monitoring has begun on {label} ({instance}). "
+        "Status checks and incident monitoring are enrolled.\n"
+        f"<{origin}/?workload={target['key']}|View workload>"
+    )
+    send_slack(http, webhook, message)
+    store.acknowledge(key, digest(message))
+    return 1
+
+
+def notify_incidents(http, store, webhook, origin):
+    pending = store.new_incidents()
+    if not pending:
+        return 0
+    origin = https_url(origin)
+    for row in pending:
+        count = row["new_incidents"]
+        noun = "incident" if count == 1 else "incidents"
+        label = html.escape(row["slug"], quote=False)
+        link = f"{origin}/?workload={row['key']}#incident-table"
+        message = f"*{count} new {noun}* :warning: on {label}\n<{link}|View incidents>"
+        send_slack(http, webhook, message)
+        store.acknowledge_incidents(row["key"], row["through"])
+    return len(pending)

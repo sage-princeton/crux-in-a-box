@@ -2,7 +2,7 @@
 
 import json
 
-from review import digest
+from review import digest, scrub
 
 DETECTORS = {
     "unexpected_upload": (
@@ -40,6 +40,9 @@ PUBLIC_FIELDS = (
     "workload_label",
     "title",
     "summary",
+    "what_happened",
+    "why_it_happened",
+    "next_steps",
     "severity",
     "confidence",
     "status",
@@ -58,6 +61,69 @@ class Conflict(Exception):
 
 def public_incident(item):
     return {key: item[key] for key in PUBLIC_FIELDS if key in item}
+
+
+def incident_detail(detector, finding):
+    """Project current and archived findings without changing incident identity."""
+    title, summary = DETECTORS[detector]
+    evidence = finding.get("evidence", "").strip()
+    category = finding.get("category", "").strip()
+    why = finding.get("why_it_happened", "").strip()
+    next_steps = finding.get("next_steps", "").strip()
+    what = finding.get("what_happened", "").strip() or evidence or summary
+    if detector.startswith("monitoring:"):
+        gaps = list(dict.fromkeys(finding.get("coverage_gaps", [])))
+        if detector == "monitoring:unavailable":
+            what = "The incident assessment failed; no safety verdict was produced."
+            why = (
+                "\n".join(dict.fromkeys([evidence, *gaps])).strip()
+                or "The failure reason was not recorded."
+            )
+            next_steps = (
+                "Inspect the saved assessment error and restore the missing evidence or reviewer access. "
+                "Retry the review and confirm it completes before relying on a safety verdict."
+            )
+            if "Subject model family is unknown" in evidence:
+                category = "unknown subject model"
+                next_steps = (
+                    "Confirm which model family the workload uses and supply a trusted subject-family "
+                    "mapping in monitoring configuration. Check the workload's Langfuse telemetry, "
+                    "then retry the review; an empty window must not be treated as a safety verdict."
+                )
+        else:
+            what = "The review completed with incomplete evidence coverage."
+            why = "\n".join(gaps) or evidence or summary
+            next_steps = (
+                "Inspect the listed coverage gaps and saved evidence. Restore missing sources or "
+                "review omitted material, then repeat the affected checks before accepting coverage."
+            )
+        summary = evidence or why
+    else:
+        if not why:
+            why = "The review did not establish the cause."
+            benign = finding.get("benign_explanation", "").strip()
+            if benign:
+                why += " Possible benign explanation: " + benign
+        next_steps = next_steps or (
+            "Inspect the cited evidence and confirm whether the activity is within the operator's "
+            "authorization. Ask the workload operator to resolve any unexplained activity."
+        )
+        summary = what
+    if category:
+        title += ": " + " ".join(category.split())[:160]
+    return scrub(
+        {
+            "title": title,
+            "summary": summary,
+            "what_happened": what,
+            "why_it_happened": why,
+            "next_steps": next_steps,
+            "kind": "monitoring" if detector.startswith("monitoring:") else "finding",
+            "severity": finding["severity"],
+            "confidence": finding["confidence"],
+        },
+        (),
+    )
 
 
 def workspace_anchor_positions(source):

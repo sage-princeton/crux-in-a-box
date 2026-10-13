@@ -118,6 +118,11 @@ def test_private_evidence_and_operator_text_are_escaped(client, store, target):
     authorize(client, store)
     page = client.get(f"/incidents/{item['id']}", base_url=ORIGIN)
     assert b"&lt;script&gt;" in page.data and b"<script>" not in page.data
+    assert all(
+        label in page.data
+        for label in [b"What happened", b"Why did it happen?", b"What needs to be done now?"]
+    )
+    assert b"Private evidence" in page.data
     listing = client.get("/?status=all", base_url=ORIGIN)
     assert b"Private evidence" not in listing.data
     assert b"not registered for this workload" not in listing.data

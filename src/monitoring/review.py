@@ -40,9 +40,12 @@ SCHEMA = {
                     "evidence",
                     "source_ids",
                     "benign_explanation",
+                    "what_happened",
+                    "why_it_happened",
+                    "next_steps",
                 ],
                 "properties": {
-                    "category": TEXT,
+                    "category": {"type": "string", "minLength": 1, "maxLength": 160},
                     "detector_id": {
                         "type": "string",
                         "enum": [
@@ -63,6 +66,9 @@ SCHEMA = {
                     "evidence": TEXT,
                     "source_ids": {"type": "array", "minItems": 1, "maxItems": 20, "items": TEXT},
                     "benign_explanation": TEXT,
+                    "what_happened": {**TEXT, "minLength": 1},
+                    "why_it_happened": {**TEXT, "minLength": 1},
+                    "next_steps": {**TEXT, "minLength": 1},
                 },
             },
         },
@@ -82,6 +88,10 @@ def failure_reason(error):
     """Useful failure details without exception URLs, headers, or credentials."""
     if isinstance(error, CoverageError):
         return str(error)
+    if isinstance(error, jsonschema.ValidationError):
+        # Paths come from the schema; exception messages can include raw model output.
+        path = "/".join(str(part) for part in error.absolute_schema_path)
+        return f"Reviewer response failed schema validation ({path or 'root'})."
     response = getattr(error, "response", None)
     if hasattr(response, "status_code"):
         return f"HTTP {response.status_code}"

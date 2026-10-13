@@ -3,9 +3,10 @@ import json
 import boto3
 import httpx
 import pytest
+from conftest import ingest
 from moto import mock_aws
 
-from fleet import inventory_targets, notify
+from fleet import inventory_targets, notify_enrollment, notify_incidents
 from review import CoverageError, collect_langfuse
 
 
@@ -38,7 +39,97 @@ def test_every_ec2_is_enrolled_except_the_two_named_monitoring_exclusions():
         )
 
 
-def test_slack_failures_retry_and_success_is_acknowledged(store):
+@pytest.mark.parametrize(
+    "failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)]
+)
+def test_slack_only_announces_new_incidents_with_links_and_retries(store, target, failure):
+    attempts = []
+
+    def handler(request):
+        attempts.append(json.loads(request.content))
+        status, body = failure[:2] if len(attempts) == 1 else (200, "ok")
+        return httpx.Response(status, text=body)
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        args = (
+            http,
+            store,
+            "https://hooks.slack.com/services/test/fixture/only",
+            "https://incidents.example.test",
+        )
+        assert notify_incidents(*args) == 0 and attempts == []
+        item = ingest(store, target)
+        with pytest.raises(failure[2]):
+            notify_incidents(*args)
+        assert store.new_incidents()[0]["new_incidents"] == 1
+        assert notify_incidents(*args) == 1
+        assert attempts[0] == attempts[1]
+        message = attempts[-1]["blocks"][0]["text"]
+        assert message["type"] == "mrkdwn"
+        assert message["text"] == (
+            "*1 new incident* :warning: on experiment\n"
+            f"<https://incidents.example.test/?workload={target['key']}#incident-table|View incidents>"
+        )
+        store.transition(item["id"], item["version"], "closed", {"id": "operator"}, "Resolved")
+        ingest(store, target, 1800)
+        assert notify_incidents(*args) == 0 and len(attempts) == 2
+        # Late evidence creates a new incident even when its review window is older.
+        ingest(store, target, 450, anchor="observation:late")
+        assert notify_incidents(*args) == 1
+        ingest(store, target, 2700, anchor="observation:second")
+        ingest(store, target, 3600, anchor="observation:third")
+        assert notify_incidents(*args) == 1
+        assert attempts[-1]["text"].startswith("*2 new incidents* :warning: on experiment\n")
+        assert notify_incidents(*args) == 0 and len(attempts) == 4
+
+
+def test_slack_does_not_parse_workload_names_as_mentions(store, target):
+    renamed = {**target, "slug": "<@U123>"}
+    store.sync([renamed], 1800, 1800)
+    ingest(store, renamed)
+    attempts = []
+
+    def handler(request):
+        attempts.append(json.loads(request.content))
+        return httpx.Response(200, text="ok")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        notify_incidents(
+            http,
+            store,
+            "https://hooks.slack.com/services/test/fixture/only",
+            "https://incidents.example.test",
+        )
+    assert "on &lt;@U123&gt;" in attempts[0]["text"] and "<@U123>" not in attempts[0]["text"]
+
+
+def test_incident_created_during_slack_delivery_is_not_skipped(store, target):
+    ingest(store, target)
+    attempts = []
+
+    def handler(request):
+        attempts.append(json.loads(request.content))
+        if len(attempts) == 1:
+            ingest(store, target, 1800, anchor="observation:arrived-during-delivery")
+        return httpx.Response(200, text="ok")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        args = (
+            http,
+            store,
+            "https://hooks.slack.com/services/test/fixture/only",
+            "https://incidents.example.test",
+        )
+        assert notify_incidents(*args) == 1
+        assert store.new_incidents()[0]["new_incidents"] == 1
+        assert notify_incidents(*args) == 1
+        assert notify_incidents(*args) == 0
+    assert len(attempts) == 2 and all(
+        item["text"].startswith("*1 new incident*") for item in attempts
+    )
+
+
+def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(store, target):
     attempts = []
 
     def handler(request):
@@ -52,16 +143,22 @@ def test_slack_failures_retry_and_success_is_acknowledged(store):
             http,
             store,
             "https://hooks.slack.com/services/test/fixture/only",
-            "enrollment/test",
-            "Monitoring has begun on @here",
+            target,
+            "https://incidents.example.test",
         )
         with pytest.raises(httpx.HTTPStatusError):
-            notify(*args)
-        assert store.notice("enrollment/test") is None
-        assert notify(*args) == "sent"
-        assert notify(*args) == "suppressed"
-    assert len(attempts) == 2
-    assert attempts[-1]["blocks"][0]["text"]["type"] == "plain_text"
+            notify_enrollment(*args)
+        assert not store.notice("enrollment/" + target["key"])
+        assert notify_enrollment(*args) == 1
+        assert notify_enrollment(*args) == 0
+        assert attempts[0] == attempts[1]
+        assert (
+            f"<https://incidents.example.test/?workload={target['key']}|View workload>"
+            in attempts[1]["text"]
+        )
+        # Legacy deployments stored a fingerprint of the old message without a link.
+        store.acknowledge("enrollment/" + target["key"], "legacy-fingerprint")
+        assert notify_enrollment(*args) == 0 and len(attempts) == 2
 
 
 def test_langfuse_does_not_accept_another_runs_observations():
