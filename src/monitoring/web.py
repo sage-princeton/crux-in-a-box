@@ -96,7 +96,7 @@ def create_app(store=None, settings=None):
                 "Referrer-Policy": "same-origin",
                 "X-Frame-Options": "DENY",
                 "Strict-Transport-Security": "max-age=31536000",
-                "Content-Security-Policy": "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
             }
         )
         return response
@@ -117,6 +117,21 @@ def create_app(store=None, settings=None):
         status = request.args.get("status", "open")
         if status not in ("open", "closed", "all"):
             abort(400, "Unknown incident status.")
+        bulk_result = None
+        if "updated" in request.args:
+            try:
+                updated = int(request.args["updated"])
+                bulk_status = request.args["bulk_status"]
+                if not 0 <= updated <= 50 or bulk_status not in ("open", "closed"):
+                    raise ValueError()
+            except (KeyError, ValueError):
+                abort(400, "Invalid bulk result.")
+            action = "Closed" if bulk_status == "closed" else "Reopened"
+            bulk_result = (
+                f"{action} {updated} incident{'s' if updated != 1 else ''}."
+                if updated
+                else f"No changes needed. Selected incidents are already {bulk_status}."
+            )
         cursor = request.args.get("cursor")
         if cursor and len(cursor) > 200:
             abort(400)
@@ -220,6 +235,8 @@ def create_app(store=None, settings=None):
         return render_template(
             "index.html",
             incidents=[public_incident(i) for i in items],
+            incident_versions={i["id"]: i["version"] for i in items},
+            bulk_result=bulk_result,
             status=status,
             next_cursor=next_cursor,
             fleet=fleet,
@@ -303,5 +320,36 @@ def create_app(store=None, settings=None):
         except Conflict as error:
             abort(409, str(error))
         return redirect(url_for("detail", incident_id=incident_id), code=303)
+
+    @app.post("/incidents/status")
+    def bulk_transition():
+        require_operator(origin)
+        try:
+            view_status = request.form.get("view_status", "open")
+            if view_status not in ("open", "closed", "all"):
+                raise ValueError()
+            workload = request.form.get("workload", "")
+            if workload:
+                workload = str(UUID(workload))
+            selections = [value.rsplit(":", 1) for value in request.form.getlist("selection")]
+            status = request.form["status"]
+            updated = store.transition_many(
+                selections, status, g.actor, request.form.get("note", "")
+            )
+        except (ValueError, KeyError):
+            abort(400, "Select up to 50 distinct incidents with valid status changes.")
+        except Conflict as error:
+            abort(409, str(error))
+        return redirect(
+            url_for(
+                "index",
+                status=view_status,
+                workload=workload or None,
+                updated=updated,
+                bulk_status=status,
+                _anchor="incident-table",
+            ),
+            code=303,
+        )
 
     return app

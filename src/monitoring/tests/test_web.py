@@ -3,7 +3,7 @@ import json
 import time
 
 import pytest
-from conftest import ORIGIN, authorize, ingest
+from conftest import ORIGIN, authorize, ingest, report
 from lxml import html
 
 from lifecycle import Conflict
@@ -25,24 +25,162 @@ def test_private_pages_require_signin_after_logout(client, store, target):
 @pytest.mark.parametrize(
     "origin,csrf_override", [(None, None), ("https://untrusted.example", None), (ORIGIN, "bad")]
 )
+@pytest.mark.parametrize("bulk", [False, True])
 def test_untrusted_operator_requests_leave_incident_open(
-    client, store, target, origin, csrf_override
+    client, store, target, origin, csrf_override, bulk
 ):
     item = ingest(store, target)
     csrf = authorize(client, store)
     response = client.post(
-        f"/incidents/{item['id']}/status",
+        "/incidents/status" if bulk else f"/incidents/{item['id']}/status",
         base_url=ORIGIN,
         data={
             "version": item["version"],
             "status": "closed",
             "csrf": csrf_override or csrf,
+            "selection": [f"{item['id']}:{item['version']}"],
         },
         headers={"Origin": origin} if origin else {},
     )
     assert response.status_code == 403
     unchanged = store.incident(item["id"])
     assert (unchanged["status"], unchanged["version"]) == ("open", item["version"])
+
+
+def test_bulk_selection_closes_and_reopens_only_selected_incidents_with_audit_history(
+    client, store, target
+):
+    items = [ingest(store, target, anchor=f"observation:{index}") for index in range(3)]
+    store.acknowledge_incidents(target["key"], items[-1]["id"])
+    csrf = authorize(client, store)
+    page = client.get("/?status=all", base_url=ORIGIN)
+    tree = html.fromstring(page.data)
+    values = tree.xpath('//input[@name="selection"]/@value')
+    assert values == [f"{item['id']}:{item['version']}" for item in items]
+    assert "script-src 'self'" in page.headers["Content-Security-Policy"]
+    assert "unsafe-inline" not in page.headers["Content-Security-Policy"]
+    data = {
+        "csrf": csrf,
+        "selection": values[:2],
+        "status": "closed",
+        "view_status": "all",
+        "note": "Reviewed together",
+    }
+    result = client.post(
+        "/incidents/status", base_url=ORIGIN, data=data, headers={"Origin": ORIGIN}
+    )
+    assert result.status_code == 303
+    assert b"Closed 2 incidents." in client.get(result.location, base_url=ORIGIN).data
+    assert [store.incident(item["id"])["status"] for item in items] == ["closed", "closed", "open"]
+    for item in items[:2]:
+        events, _ = store.incident_history(item["id"], "events", None)
+        assert len(events) == 1 and events[0]["note"] == "Reviewed together"
+        assert events[0]["actor"]["id"] == "operator"
+    # A mixed selection leaves incidents already in the requested state unchanged.
+    current = [store.incident(item["id"]) for item in items]
+    data.update(selection=[f"{item['id']}:{item['version']}" for item in current], status="open")
+    result = client.post(
+        "/incidents/status", base_url=ORIGIN, data=data, headers={"Origin": ORIGIN}
+    )
+    assert result.status_code == 303
+    assert b"Reopened 2 incidents." in client.get(result.location, base_url=ORIGIN).data
+    assert [store.incident(item["id"])["status"] for item in items] == ["open"] * 3
+    assert store.incident(items[2]["id"])["version"] == items[2]["version"]
+    assert store.incident_history(items[2]["id"], "events", None)[0] == []
+    assert store.new_incidents() == []
+    data.update(
+        selection=[f"{item['id']}:{store.incident(item['id'])['version']}" for item in items]
+    )
+    result = client.post(
+        "/incidents/status", base_url=ORIGIN, data=data, headers={"Origin": ORIGIN}
+    )
+    assert result.status_code == 303
+    assert b"No changes needed" in client.get(result.location, base_url=ORIGIN).data
+
+
+def test_bulk_stale_selection_rolls_back_every_incident(client, store, target):
+    first = ingest(store, target, anchor="observation:first")
+    second = ingest(store, target, anchor="observation:second")
+    csrf = authorize(client, store)
+    ingest(store, target, 1800, anchor="observation:second")
+    response = client.post(
+        "/incidents/status",
+        base_url=ORIGIN,
+        headers={"Origin": ORIGIN},
+        data={
+            "csrf": csrf,
+            "status": "closed",
+            "selection": [f"{item['id']}:{item['version']}" for item in (first, second)],
+        },
+    )
+    assert response.status_code == 409
+    assert b"One or more incidents changed" in response.data
+    assert store.incident(first["id"])["version"] == first["version"]
+    for item in (first, second):
+        assert store.incident(item["id"])["status"] == "open"
+        assert store.incident_history(item["id"], "events", None)[0] == []
+
+
+def test_bulk_selection_is_limited_to_the_current_incident_page(client, store, target):
+    items = [ingest(store, target, anchor=f"observation:{index}") for index in range(50)]
+    anchor = "observation:next-page"
+    store.ingest(
+        target["key"],
+        900,
+        {"report": report(anchor), "artifact_prefix": "private"},
+        {anchor: anchor},
+    )
+    authorize(client, store)
+    page = html.fromstring(client.get("/", base_url=ORIGIN).data)
+    values = page.xpath('//input[@name="selection"]/@value')
+    assert len(values) == 50
+    assert values == [f"{item['id']}:{item['version']}" for item in items[:50]]
+    assert "Select all 50 on this page" in page.text_content()
+    assert page.xpath('//a[contains(text(), "Next page")]')
+
+
+@pytest.mark.parametrize(
+    "invalid", ["empty", "duplicate", "unknown", "uuid", "version", "missing_version", "limit"]
+)
+def test_invalid_bulk_selections_do_not_change_incidents(client, store, target, invalid):
+    item = ingest(store, target)
+    selection = f"{item['id']}:{item['version']}"
+    values = {
+        "empty": [],
+        "duplicate": [selection, selection],
+        "unknown": [selection, "00000000-0000-0000-0000-000000000000:1"],
+        "uuid": ["invalid:1"],
+        "version": [f"{item['id']}:0"],
+        "missing_version": [item["id"]],
+        "limit": [selection] * 51,
+    }[invalid]
+    response = client.post(
+        "/incidents/status",
+        base_url=ORIGIN,
+        headers={"Origin": ORIGIN},
+        data={
+            "csrf": authorize(client, store),
+            "status": "closed",
+            "selection": values,
+        },
+    )
+    assert response.status_code == 400
+    assert store.incident(item["id"])["status"] == "open"
+    assert store.incident_history(item["id"], "events", None)[0] == []
+
+
+def test_signed_out_bulk_requests_are_denied(client, store, target):
+    item = ingest(store, target)
+    response = client.post(
+        "/incidents/status",
+        base_url=ORIGIN,
+        headers={"Origin": ORIGIN},
+        data={
+            "selection": [f"{item['id']}:{item['version']}"],
+            "status": "closed",
+        },
+    )
+    assert response.status_code == 401 and store.incident(item["id"])["status"] == "open"
 
 
 def test_operator_closes_incident_and_stale_changes_are_rejected(client, store, target):
