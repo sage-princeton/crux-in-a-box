@@ -141,7 +141,7 @@ class Runtime:
             previous,
             evidence["gaps"],
         )
-        report["budget"] = "Project spend and deadline are not supplied."
+        report["budget"] = "Configured project spend and deadline are not supplied."
         stamps = [
             int(s["mtime"])
             for s in evidence["sources"]

@@ -203,8 +203,10 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
                 "alert": "",
                 "recommendation": "Continue.",
                 "progress": "Work is active. " * (20 if verbose else 1),
-                "quality": "Not established.",
-                "milestones": "Unknown.",
+                "quality": ["Not established."],
+                "milestones": [],
+                "details": [],
+                "reported_budget": "Workspace ledger reports $200.49 spent against a $200 limit.",
                 "source_ids": allowed,
             }
         else:
@@ -231,6 +233,9 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
     status = worker.store.assessment(target["key"], 900, "status")
     assert len(status["report"]["source_ids"]) == 14
     assert status["report"]["progress"] == "Work is active. " * (20 if verbose else 1)
+    assert status["report"]["quality"] == ["Not established."]
+    assert status["report"]["reported_budget"].startswith("Workspace ledger reports")
+    assert status["report"]["budget"] == "Configured project spend and deadline are not supplied."
     incident = worker.store.assessment(target["key"], 900, "incident")
     assert incident["outcome"] == "completed"
     assert any("workspace event anchors" in gap for gap in incident["report"]["coverage_gaps"])

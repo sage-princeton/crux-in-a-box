@@ -16,6 +16,7 @@ MAX_OUTPUT = 1800
 # do not enforce per-field length/count limits, which rejected valid citations.
 SOURCE_IDS = {"type": "array", "items": {"type": "string"}}
 TEXT = {"type": "string"}
+TEXT_LIST = {"type": "array", "items": TEXT}
 SWEEP_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -32,6 +33,8 @@ REPORT_SCHEMA = {
         "progress",
         "quality",
         "milestones",
+        "details",
+        "reported_budget",
         "source_ids",
     ],
     "properties": {
@@ -39,8 +42,10 @@ REPORT_SCHEMA = {
         "alert": TEXT,
         "recommendation": TEXT,
         "progress": TEXT,
-        "quality": TEXT,
-        "milestones": TEXT,
+        "quality": TEXT_LIST,
+        "milestones": TEXT_LIST,
+        "details": TEXT_LIST,
+        "reported_budget": TEXT,
         "source_ids": SOURCE_IDS,
     },
 }
