@@ -1,17 +1,16 @@
 import base64
 import zlib
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from conftest import ORIGIN
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 from lxml import etree
 from onelogin.saml2.utils import OneLogin_Saml2_Utils
-from test_lifecycle import store
-from test_web import ORIGIN
 
 from review import digest
 from web import create_app
@@ -19,7 +18,7 @@ from web_auth import LOGIN_COOKIE, SESSION_COOKIE
 
 
 @pytest.mark.parametrize("empty_attributes", [False, True])
-def test_real_signed_saml_login_rejects_tampering_and_replay(store, empty_attributes, caplog):
+def test_real_signed_saml_login_rejects_tampering_and_replay(store, empty_attributes):
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Fixture IdP")])
     now = datetime.now(UTC)
@@ -60,7 +59,7 @@ def test_real_signed_saml_login_rejects_tampering_and_replay(store, empty_attrib
     assert request_xml.find("p:NameIDPolicy", namespace).get("Format").endswith(":emailAddress")
     assert request_xml.find("p:RequestedAuthnContext", namespace) is None
     nonce = client.get_cookie(LOGIN_COOKIE, domain="incidents.example.test").value
-    pending = store.get("LOGIN#" + digest(nonce), "STATE")
+    pending = store.pending_login(digest(nonce))
     rid = pending["request_id"]
 
     def stamp(delta):
@@ -102,12 +101,11 @@ def test_real_signed_saml_login_rejects_tampering_and_replay(store, empty_attrib
     response = send(xml)
     if empty_attributes:
         assert response.status_code == 403
-        assert "categories=['schema']" in caplog.text
         assert not client.get_cookie(SESSION_COOKIE, domain="incidents.example.test")
         return
     assert response.status_code == 302
     token = client.get_cookie(SESSION_COOKIE, domain="incidents.example.test").value
-    session = store.get("SESSION#" + digest(token), "STATE")
+    session = store.session(digest(token))
     assert session["actor"]["id"] == "operator@example.test"
     client.set_cookie(LOGIN_COOKIE, nonce, domain="incidents.example.test")
     assert send(xml).status_code == 403

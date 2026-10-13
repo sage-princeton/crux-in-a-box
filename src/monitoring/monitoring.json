@@ -1,0 +1,13 @@
+{
+  "interval_seconds": 900,
+  "stale_seconds": 1800,
+  "incident": {
+    "inference_budget_usd": 100,
+    "reviewer_models": ["anthropic/claude-sonnet-4.6"]
+  },
+  "status": {
+    "inference_budget_usd": 25,
+    "sweep_model": "anthropic/claude-haiku-4.5",
+    "summary_model": "anthropic/claude-sonnet-4.6"
+  }
+}

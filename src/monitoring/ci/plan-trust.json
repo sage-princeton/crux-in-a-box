@@ -10,10 +10,7 @@
       "Condition": {
         "StringEquals": {
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
-          "token.actions.githubusercontent.com:sub": [
-            "repo:sage-princeton@292236392/crux-in-a-box@1314254060:ref:refs/heads/main",
-            "repo:sage-princeton@292236392/crux-in-a-box@1314254060:ref:refs/heads/ae-211-ec2-monitoring"
-          ]
+          "token.actions.githubusercontent.com:sub": "repo:sage-princeton@292236392/crux-in-a-box@1314254060:ref:refs/heads/main"
         }
       }
     },
@@ -28,10 +25,7 @@
           "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
           "token.actions.githubusercontent.com:sub": "repo:sage-princeton@292236392/crux-in-a-box@1314254060:pull_request",
           "token.actions.githubusercontent.com:ref": "refs/heads/main",
-          "token.actions.githubusercontent.com:workflow": [
-            "Monitoring PR plan",
-            "Monitor Terraform plan"
-          ]
+          "token.actions.githubusercontent.com:workflow": "Monitor Terraform plan"
         }
       }
     }

@@ -7,20 +7,21 @@ import re
 import time
 from datetime import UTC, datetime
 from urllib.parse import quote, urlsplit
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 import boto3
-from botocore.exceptions import BotoCoreError, ClientError
 from flask import Flask, abort, g, redirect, render_template, request, url_for
+from sqlalchemy.exc import SQLAlchemyError
 from werkzeug.exceptions import HTTPException
 
-from lifecycle import Conflict, IncidentStore, public_incident
-from status_store import StatusStore
+from lifecycle import Conflict, public_incident
 from status_view import coverage_rows
+from store import Store
 from web_auth import install_auth, require_operator
 
 
-def create_app(store=None, settings=None, status_store=None):
+def create_app(store=None, settings=None):
     if settings is None:
         parameter = boto3.client("ssm").get_parameter(
             Name=os.environ["MONITORING_WEB_PARAMETER"], WithDecryption=True
@@ -36,15 +37,12 @@ def create_app(store=None, settings=None, status_store=None):
         or parsed.username
     ):
         raise ValueError("Web origin must be an HTTPS origin")
-    store = store or IncidentStore(boto3.resource("dynamodb").Table(os.environ["MONITORING_TABLE"]))
+    store = store or Store()
     app = Flask(__name__)
     app.config.update(
         PUBLIC_ORIGIN=origin, TRUSTED_HOSTS=[parsed.hostname], MAX_CONTENT_LENGTH=128 * 1024
     )
     app.extensions["incidents"] = store
-    if status_store is None and os.environ.get("STATUS_TABLE"):
-        status_store = StatusStore(boto3.resource("dynamodb").Table(os.environ["STATUS_TABLE"]))
-    app.extensions["status"] = status_store
     install_auth(app, store, settings)
 
     @app.before_request
@@ -111,7 +109,7 @@ def create_app(store=None, settings=None, status_store=None):
 
     @app.get("/healthz")
     def health():
-        store.get("META", "SCHEMA")
+        store.health()
         return {"status": "ok", "revision": os.environ.get("MONITORING_REVISION", "local")}
 
     @app.get("/")
@@ -124,18 +122,14 @@ def create_app(store=None, settings=None, status_store=None):
             abort(400)
         incident_error, status_error = False, False
         try:
-            incident_rows = list(store.all("FLEET"))
-        except (BotoCoreError, ClientError):
+            incident_rows = store.fleet()
+        except SQLAlchemyError:
             incident_rows, incident_error = [], True
             app.logger.warning("Incident coverage read unavailable")
-        try:
-            status_rows = status_store.fleet() if status_store else []
-        except (BotoCoreError, ClientError):
-            status_rows, status_error = [], True
-            app.logger.warning("Project status read unavailable")
-        coverage = coverage_rows(status_rows, incident_rows)
+        status_error = incident_error
+        coverage = coverage_rows(incident_rows)
         selected = request.args.get("workload", "")
-        if selected and selected not in {row["sk"] for row in coverage}:
+        if selected and selected not in {row["key"] for row in coverage}:
             if not status_error:
                 abort(404, "Workload not found.")
         try:
@@ -146,7 +140,7 @@ def create_app(store=None, settings=None, status_store=None):
             abort(400, "Invalid coverage page.")
         active_coverage = [row for row in coverage if row.get("state") == "running"]
         shown = (
-            [row for row in coverage if row["sk"] == selected]
+            [row for row in coverage if row["key"] == selected]
             if selected
             else active_coverage[(coverage_page - 1) * 5 : coverage_page * 5]
         )
@@ -180,6 +174,8 @@ def create_app(store=None, settings=None, status_store=None):
                     start_id, (str, type(None))
                 ):
                     raise ValueError()
+                if start_id is not None:
+                    start_id = str(UUID(start_id))
             except (ValueError, TypeError, UnicodeError):
                 abort(400, "Invalid page cursor.")
             if not incident_error and start_instance not in {row["instance_id"] for row in fleet}:
@@ -188,13 +184,13 @@ def create_app(store=None, settings=None, status_store=None):
             if start_instance and row["instance_id"] != start_instance:
                 continue
             try:
-                page, _ = store.instance_page(
+                page = store.instance_page(
                     row["instance_id"],
                     None if status == "all" else status,
                     start_id,
                     limit=51 - len(items),
                 )
-            except (BotoCoreError, ClientError):
+            except SQLAlchemyError:
                 items, next_cursor, incident_error = [], None, True
                 app.logger.warning("Incident list read unavailable")
                 break
@@ -234,23 +230,21 @@ def create_app(store=None, settings=None, status_store=None):
             coverage_more=len(active_coverage) > coverage_page * 5,
             incident_error=incident_error,
             status_error=status_error,
-            status_configured=status_store is not None,
             groups=sorted(
                 groups.values(), key=lambda group: (group["label"].casefold(), group["instance_id"])
             ),
         )
 
-    @app.get("/workloads/<key>/status")
+    @app.get("/workloads/<uuid:key>/status")
     def status_history(key):
-        if not re.fullmatch(r"[a-f0-9]{32}", key) or status_store is None:
-            abort(404)
+        key = str(key)
         before = request.args.get("before")
-        if before and not re.fullmatch(r"WINDOW#[0-9]{12}", before):
+        if before and not re.fullmatch(r"[0-9]{1,12}", before):
             abort(400, "Invalid status history cursor.")
         try:
-            row = status_store.get("FLEET", key)
-            history, next_cursor = status_store.history(key, before)
-        except (BotoCoreError, ClientError):
+            row = next((row for row in store.fleet() if row["key"] == key), None)
+            history, next_cursor = store.history(key, before)
+        except SQLAlchemyError:
             abort(503, "Status history is temporarily unavailable.")
         if not row:
             abort(404)
@@ -261,14 +255,18 @@ def create_app(store=None, settings=None, status_store=None):
     @app.get("/incidents/<uuid:incident_id>")
     def detail(incident_id):
         incident_id = str(incident_id)
+        for name in ("events", "observations"):
+            cursor = request.args.get(name)
+            if cursor and not re.fullmatch(r"[0-9]{1,12}", cursor):
+                abort(400, "Invalid incident history cursor.")
         item = store.incident(incident_id)
         if item is None:
             abort(404)
-        events, event_cursor = store.page(
-            "HISTORY#" + incident_id, prefix="EVENT#", cursor=request.args.get("events")
+        events, event_cursor = store.incident_history(
+            incident_id, "events", request.args.get("events")
         )
-        observations, observation_cursor = store.page(
-            "HISTORY#" + incident_id, prefix="OBS#", cursor=request.args.get("observations")
+        observations, observation_cursor = store.incident_history(
+            incident_id, "observations", request.args.get("observations")
         )
         for observation in observations:
             prefix = observation.get("artifact_prefix", "")

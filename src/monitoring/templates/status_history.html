@@ -3,9 +3,9 @@
 {% from 'status_report.html' import report_lines %}
 {% block title %}{{ workload.slug }} status history{% endblock %}
 {% block content %}
-<a class="text-sm text-accent hover:underline" href="{{ url_for('index', workload=workload.sk) }}#coverage">← Workload coverage</a>
+<a class="text-sm text-accent hover:underline" href="{{ url_for('index', workload=workload.key) }}#coverage">← Workload coverage</a>
 <h1 class="my-4 text-2xl font-semibold">{{ workload.slug }} · Status history</h1>
-<p class="mb-5 text-sm text-muted">{{ workload.workload_id }} · {{ workload.instance_id }}</p>
+<p class="mb-5 text-sm text-muted">{{ workload.instance_id }}</p>
 {% for result in history %}
 <article class="mb-4 border border-line bg-white p-4 min-[701px]:p-6">
   <h2 class="mb-3 text-sm font-semibold">{{ timestamp(result.checked_at) }} · {{ result.outcome|capitalize }}</h2>
@@ -16,5 +16,5 @@
   {% else %}<p class="text-sm text-amber-800">{{ result.error }}</p>{% endif %}
 </article>
 {% else %}<p class="text-muted">No status checks recorded yet.</p>{% endfor %}
-{% if next_cursor %}<a class="text-accent hover:underline" href="{{ url_for('status_history', key=workload.sk, before=next_cursor) }}">Older checks →</a>{% endif %}
+{% if next_cursor %}<a class="text-accent hover:underline" href="{{ url_for('status_history', key=workload.key, before=next_cursor) }}">Older checks →</a>{% endif %}
 {% endblock %}

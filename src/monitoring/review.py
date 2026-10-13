@@ -1,24 +1,19 @@
 """Bounded evidence collection and tool-free, passive review."""
 
-import base64
 import hashlib
-import io
 import json
-import posixpath
 import re
-import stat
 from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlparse
 
 import jsonschema
-import paramiko
 
-MAX_FILE_BYTES = 64 * 1024
 MAX_EVIDENCE_BYTES = 512 * 1024
+MAX_LANGFUSE_BYTES = 32 * 1024 * 1024
 MAX_INPUT_BYTES = 128 * 1024
 MAX_OUTPUT_TOKENS = 6000
-MAX_PAGES = 10
+MAX_PAGES = 100
 PROMPT = Path(__file__).with_name("prompts").joinpath("reviewer.md").read_text()
 TEXT = {"type": "string", "maxLength": 4000}
 SCHEMA = {
@@ -83,6 +78,18 @@ class EvidenceLimitError(CoverageError):
     pass
 
 
+def failure_reason(error):
+    """Useful failure details without exception URLs, headers, or credentials."""
+    if isinstance(error, CoverageError):
+        return str(error)
+    response = getattr(error, "response", None)
+    if hasattr(response, "status_code"):
+        return f"HTTP {response.status_code}"
+    if isinstance(response, dict):
+        return response.get("Error", {}).get("Code", type(error).__name__)
+    return type(error).__name__
+
+
 def encoded(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":")).encode()
 
@@ -96,7 +103,38 @@ def iso(epoch):
 
 
 def scrub(value, secrets):
-    """Defense in depth; source exports must already be approved and scrubbed."""
+    """Redact credentials in the model view; private raw workspace archives stay complete."""
+    sensitive = re.compile(r"api.?key|password|secret|authorization|(?:^|_)token$", re.I)
+
+    def clean(item):
+        if isinstance(item, dict):
+            return {
+                key: "[REDACTED]" if sensitive.search(key) else clean(value)
+                for key, value in item.items()
+            }
+        if isinstance(item, list):
+            return [clean(value) for value in item]
+        if not isinstance(item, str):
+            return item
+        try:
+            parsed = json.loads(item)
+        except ValueError:
+            parsed = None
+        if isinstance(parsed, (dict, list)):
+            return json.dumps(clean(parsed))
+        item = re.sub(
+            r"([?&](?:token|api_key|access_token|password)=)[^&\s\"']+",
+            r"\1[REDACTED]",
+            item,
+            flags=re.I,
+        )
+        return re.sub(
+            r"(?im)(\b[A-Z_]*(?:API_KEY|PASSWORD|SECRET_ACCESS_KEY|TOKEN)\s*=\s*)[^\n]+",
+            r"\1[REDACTED]",
+            item,
+        )
+
+    value = clean(value)
     text = json.dumps(value, ensure_ascii=True)
     for secret in sorted(
         (s for s in secrets if isinstance(s, str) and len(s) >= 8), key=len, reverse=True
@@ -121,7 +159,7 @@ def https_url(url):
     return url.rstrip("/")
 
 
-def get_json(client, url, max_bytes=MAX_EVIDENCE_BYTES, **kwargs):
+def get_json(client, url, max_bytes, **kwargs):
     # Streaming bounds apply before JSON parsing, including to error responses.
     with client.stream("GET", url, **kwargs) as response:
         response.raise_for_status()
@@ -148,15 +186,15 @@ def collect_langfuse(client, config, secrets, start, end):
     else:
         params["environment"] = [config["environment"]]
     auth = (secrets["MONITORING_LANGFUSE_PUBLIC_KEY"], secrets["MONITORING_LANGFUSE_SECRET_KEY"])
-    result, cursors = [], set()
+    result, cursors, size = [], set(), 0
     for _ in range(MAX_PAGES):
         try:
-            page = get_json(client, url, params=params, auth=auth)
+            page = get_json(client, url, max_bytes=MAX_LANGFUSE_BYTES, params=params, auth=auth)
         except EvidenceLimitError:
             if "io" not in params["fields"].split(","):
                 raise
             params["fields"] = "core,basic,metadata,model,trace_context"
-            page = get_json(client, url, params=params, auth=auth)
+            page = get_json(client, url, max_bytes=MAX_LANGFUSE_BYTES, params=params, auth=auth)
         for item in page["data"]:
             if config.get("session_id") and item.get("sessionId") != config["session_id"]:
                 raise CoverageError("Langfuse returned an unexpected session")
@@ -169,7 +207,9 @@ def collect_langfuse(client, config, secrets, start, end):
                     coverage_gap="Langfuse inputs/outputs were omitted because the full page exceeded the evidence limit; content-level review is incomplete.",
                 )
             result.append(source)
-        if len(encoded(result)) > MAX_EVIDENCE_BYTES:
+            size += len(encoded(source)) + 1
+        # Archive capacity is independent of the much smaller inference context.
+        if size > MAX_LANGFUSE_BYTES:
             raise CoverageError("Langfuse window exceeds evidence limit; narrow the window")
         cursor = page.get("meta", {}).get("cursor")
         if not cursor:
@@ -179,91 +219,6 @@ def collect_langfuse(client, config, secrets, start, end):
         cursors.add(cursor)
         params["cursor"] = cursor
     raise CoverageError("Langfuse pagination limit reached; window is incomplete")
-
-
-def collect_sftp(config, private_ip, private_key):
-    if config.get("boundary_verified") is not True:
-        raise CoverageError("Read-only SFTP boundary has not been independently verified")
-    paths = config["paths"]
-    if not 1 <= len(paths) <= 8:
-        raise ValueError("SFTP requires 1–8 explicitly approved export paths")
-    for path in paths:
-        if not path.startswith("/exports/") or posixpath.normpath(path) != path or "/." in path:
-            raise ValueError("Only normalized, non-hidden export paths are allowed")
-    ssh = paramiko.SSHClient()
-    key_type, key_data = config["host_key"].split()
-    host_key = paramiko.PKey.from_type_string(key_type, base64.b64decode(key_data, validate=True))
-    port = config.get("port", 22)
-    pinned_host = private_ip if port == 22 else f"[{private_ip}]:{port}"
-    ssh.get_host_keys().add(pinned_host, key_type, host_key)
-    ssh.set_missing_host_key_policy(paramiko.RejectPolicy())
-    key = paramiko.Ed25519Key.from_private_key(io.StringIO(private_key))
-    result = []
-    try:
-        ssh.connect(
-            private_ip,
-            port=port,
-            username="crux-inspect",
-            pkey=key,
-            look_for_keys=False,
-            allow_agent=False,
-            timeout=10,
-            auth_timeout=10,
-            banner_timeout=10,
-        )
-        with ssh.open_sftp() as sftp:
-            sftp.get_channel().settimeout(15)
-            for path in paths:
-                info = sftp.lstat(path)
-                if not stat.S_ISREG(info.st_mode) or sftp.normalize(path) != path:
-                    raise CoverageError("Export must be a regular file without symlink traversal")
-                with sftp.open(path, "rb") as handle:
-                    data = handle.read(MAX_FILE_BYTES + 1)
-                result.append(
-                    {
-                        "id": "file:" + path,
-                        "kind": "sftp",
-                        "mtime": info.st_mtime,
-                        "truncated": len(data) > MAX_FILE_BYTES,
-                        "data": data[:MAX_FILE_BYTES].decode("utf-8", errors="replace"),
-                    }
-                )
-    finally:
-        ssh.close()
-    return result
-
-
-def collect_logs(client, sources, start, end):
-    result = []
-    for source in sources:
-        events, token = [], None
-        for _ in range(MAX_PAGES):
-            args = {
-                "logGroupName": source["group"],
-                "logStreamNames": source["streams"],
-                "startTime": start * 1000,
-                "endTime": end * 1000,
-                "limit": 100,
-            }
-            if token:
-                args["nextToken"] = token
-            page = client.filter_log_events(**args)
-            events.extend(
-                {"eventId": e["eventId"], "timestamp": e["timestamp"], "message": e["message"]}
-                for e in page["events"]
-            )
-            if len(encoded(events)) > MAX_EVIDENCE_BYTES:
-                raise CoverageError("CloudWatch window exceeds evidence limit")
-            next_token = page.get("nextToken")
-            if not next_token:
-                break
-            if next_token == token:
-                raise CoverageError("CloudWatch pagination did not advance")
-            token = next_token
-        else:
-            raise CoverageError("CloudWatch pagination limit reached")
-        result.append({"id": "logs:" + source["group"], "kind": "cloudwatch", "data": events})
-    return result
 
 
 def model_family(model):
@@ -311,7 +266,7 @@ def select_reviewer(models, sources, declared_families):
     raise CoverageError("No configured reviewer is from a different model family")
 
 
-def evaluate(client, model, secret, payload, record_response=None):
+def evaluate(client, model, secret, payload, record_response):
     reviewer_family(model)
     input_size(payload)
     response = client.post(
@@ -334,8 +289,7 @@ def evaluate(client, model, secret, payload, record_response=None):
     )
     response.raise_for_status()
     body = response.json()
-    if record_response:
-        record_response(body)
+    record_response(body)
     if body["choices"][0].get("finish_reason") != "stop":
         raise CoverageError("Reviewer response was incomplete")
     report = json.loads(body["choices"][0]["message"]["content"])
