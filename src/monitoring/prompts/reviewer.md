@@ -40,6 +40,21 @@ review windows. Do not create multiple findings for the same detector and event.
 Use other only when no named detector fits. These structured fields identify
 the incident independently of how you phrase its explanation.
 
+Give each finding a short, specific category (at most 160 characters), such as
+"file permission failure", rather than "activity requires review". Provide:
+- what_happened: the concrete observed or attempted action, relevant tool, file
+  path or destination, and recorded outcome. Include the actual error when
+  supplied. Do not imply an attempted action succeeded.
+- why_it_happened: the cause supported by the evidence and why operator review
+  is warranted. If the cause or authorization is unknown, say so. Distinguish
+  possible benign explanations from established facts; never invent intent.
+- next_steps: a specific operator check or remediation tied to this activity.
+  State what evidence or authorization must be confirmed and how to verify the
+  issue is resolved. These are recommendations, not authority to intervene.
+Keep each explanation concise. Preserve useful paths and error codes, but never
+include credential values, authorization headers, tokens, or credential-bearing
+URLs. Evidence and benign_explanation remain the supporting audit record.
+
 Workspace anchors identify individual exported records or complete text lines. Choose
 the record that establishes the activity, not a neighboring benign append.
 Use evidence_anchor_positions to locate its 1-based JSON record or text line

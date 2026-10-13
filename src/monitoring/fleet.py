@@ -4,7 +4,7 @@ import html
 import re
 from collections import Counter
 
-from review import CoverageError, https_url
+from review import CoverageError, digest, https_url
 
 DEFAULT_AUTHORIZATION = (
     "Passively review this EC2 run's Langfuse telemetry and whole workspace snapshot. "
@@ -48,36 +48,57 @@ def inventory_targets(ec2):
     return enrolled
 
 
+def send_slack(http, webhook, message):
+    url = https_url(webhook)
+    if not url.startswith("https://hooks.slack.com/services/"):
+        raise ValueError("Only Slack incoming webhooks are supported")
+    response = http.post(
+        url,
+        json={
+            "text": message,
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": message, "verbatim": True},
+                }
+            ],
+            "unfurl_links": False,
+            "unfurl_media": False,
+        },
+    )
+    response.raise_for_status()
+    if response.text.strip() != "ok":
+        raise CoverageError("Slack did not acknowledge delivery")
+
+
+def notify_enrollment(http, store, webhook, target, origin):
+    key = "enrollment/" + target["key"]
+    if store.notice(key):
+        return 0
+    origin = https_url(origin)
+    label = html.escape(target["slug"], quote=False)
+    instance = html.escape(target["instance_id"], quote=False)
+    message = (
+        f"Monitoring has begun on {label} ({instance}). "
+        "Status checks and incident monitoring are enrolled.\n"
+        f"<{origin}/?workload={target['key']}|View workload>"
+    )
+    send_slack(http, webhook, message)
+    store.acknowledge(key, digest(message))
+    return 1
+
+
 def notify_incidents(http, store, webhook, origin):
     pending = store.new_incidents()
     if not pending:
         return 0
-    url = https_url(webhook)
-    if not url.startswith("https://hooks.slack.com/services/"):
-        raise ValueError("Only Slack incoming webhooks are supported")
-    origin = https_url(origin).rstrip("/")
+    origin = https_url(origin)
     for row in pending:
         count = row["new_incidents"]
         noun = "incident" if count == 1 else "incidents"
         label = html.escape(row["slug"], quote=False)
         link = f"{origin}/?workload={row['key']}#incident-table"
         message = f"*{count} new {noun}* :warning: on {label}\n<{link}|View incidents>"
-        response = http.post(
-            url,
-            json={
-                "text": message,
-                "blocks": [
-                    {
-                        "type": "section",
-                        "text": {"type": "mrkdwn", "text": message, "verbatim": True},
-                    }
-                ],
-                "unfurl_links": False,
-                "unfurl_media": False,
-            },
-        )
-        response.raise_for_status()
-        if response.text.strip() != "ok":
-            raise CoverageError("Slack did not acknowledge delivery")
+        send_slack(http, webhook, message)
         store.acknowledge_incidents(row["key"], row["through"])
     return len(pending)

@@ -62,6 +62,9 @@ def runtime(store, target, monkeypatch):
                         "evidence": "Test-only evidence",
                         "source_ids": ["observation:123"],
                         "benign_explanation": "Fixture",
+                        "what_happened": "Test-only evidence",
+                        "why_it_happened": "A fixture reported this activity.",
+                        "next_steps": "Inspect the test fixture.",
                     }
                 ],
                 "coverage_gaps": [],
@@ -98,20 +101,20 @@ def runtime(store, target, monkeypatch):
 
 def test_one_collection_and_independent_assessments_survive_slack_retry(runtime):
     worker, target, secrets, counts = runtime
-    worker.run_target(target, 900, {}, secrets)
+    with pytest.raises(httpx.HTTPStatusError):
+        worker.run_target(target, 900, {}, secrets)
     assert worker.store.assessment(target["key"], 900, "status")["outcome"] == "failed"
     assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
-    assert counts["collection"] == 1 and counts["slack"] == 0
+    assert counts["collection"] == 1 and counts["slack"] == 1
     args = (
         worker.http,
         worker.store,
         secrets["MONITORING_SLACK_WEBHOOK_URL"],
         "https://incidents.example.test",
     )
-    with pytest.raises(httpx.HTTPStatusError):
-        notify_incidents(*args)
     initial = counts.copy()
     worker.run_target(target, 900, {}, secrets)
+    assert worker.store.notice("enrollment/" + target["key"])
     assert notify_incidents(*args) == 1
     assert counts["model"] == initial["model"] and counts["collection"] == 1
     delivered = counts.copy()
@@ -143,7 +146,8 @@ def test_model_checkpoint_is_reused_after_database_publication_failure(runtime, 
         raise AssertionError("must reuse snapshot")
 
     monkeypatch.setattr(worker.collector, "collect", unavailable_run)
-    worker.run_target(pending[0]["evidence"]["target"], 900, {}, secrets)
+    with pytest.raises(httpx.HTTPStatusError):
+        worker.run_target(pending[0]["evidence"]["target"], 900, {}, secrets)
     worker.run_target(target, 900, {}, secrets)
     assert worker.store.pending(1800) == []
     assert counts["model"] == initial["model"] and counts["collection"] == 1

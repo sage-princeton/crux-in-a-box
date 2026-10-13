@@ -6,7 +6,7 @@ import pytest
 from conftest import ingest
 from moto import mock_aws
 
-from fleet import inventory_targets, notify_incidents
+from fleet import inventory_targets, notify_enrollment, notify_incidents
 from review import CoverageError, collect_langfuse
 
 
@@ -127,6 +127,38 @@ def test_incident_created_during_slack_delivery_is_not_skipped(store, target):
     assert len(attempts) == 2 and all(
         item["text"].startswith("*1 new incident*") for item in attempts
     )
+
+
+def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(store, target):
+    attempts = []
+
+    def handler(request):
+        attempts.append(json.loads(request.content))
+        return httpx.Response(
+            503 if len(attempts) == 1 else 200, text="busy" if len(attempts) == 1 else "ok"
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+        args = (
+            http,
+            store,
+            "https://hooks.slack.com/services/test/fixture/only",
+            target,
+            "https://incidents.example.test",
+        )
+        with pytest.raises(httpx.HTTPStatusError):
+            notify_enrollment(*args)
+        assert not store.notice("enrollment/" + target["key"])
+        assert notify_enrollment(*args) == 1
+        assert notify_enrollment(*args) == 0
+        assert attempts[0] == attempts[1]
+        assert (
+            f"<https://incidents.example.test/?workload={target['key']}|View workload>"
+            in attempts[1]["text"]
+        )
+        # Legacy deployments stored a fingerprint of the old message without a link.
+        store.acknowledge("enrollment/" + target["key"], "legacy-fingerprint")
+        assert notify_enrollment(*args) == 0 and len(attempts) == 2
 
 
 def test_langfuse_does_not_accept_another_runs_observations():

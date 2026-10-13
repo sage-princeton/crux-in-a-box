@@ -1,6 +1,7 @@
 import json
 
 import httpx
+import jsonschema
 import pytest
 
 from review import (
@@ -8,6 +9,7 @@ from review import (
     CoverageError,
     collect_langfuse,
     evaluate,
+    failure_reason,
     scrub,
     select_reviewer,
 )
@@ -131,6 +133,9 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
                 "evidence": "unsupported",
                 "source_ids": ["invented"],
                 "benign_explanation": "unknown",
+                "what_happened": "Attempted upload to an unapproved destination.",
+                "why_it_happened": "The cause is unknown.",
+                "next_steps": "Verify the destination and task authorization.",
             }
         ],
     }
@@ -162,3 +167,18 @@ def test_exact_non_vendor_secret_is_scrubbed_without_breaking_json():
     secret = 'arbitrary-credential-"with-quotes'
     result = scrub({"text": "before " + secret + " after"}, [secret])
     assert result == {"text": "before [REDACTED] after"}
+
+
+def test_schema_failure_reports_the_rule_without_exposing_model_output():
+    secret = "raw-provider-response-must-stay-private"
+    with pytest.raises(jsonschema.ValidationError) as caught:
+        jsonschema.validate(
+            {"what_happened": secret},
+            {
+                "type": "object",
+                "properties": {"what_happened": {"maxLength": 4}},
+            },
+        )
+    reason = failure_reason(caught.value)
+    assert "properties/what_happened/maxLength" in reason
+    assert secret not in reason
