@@ -50,6 +50,15 @@ and assessment checkpoints survive publication failures, so a retry uses saved
 artifacts without collecting the run or charging for inference again. A
 PostgreSQL advisory lock prevents concurrent worker passes.
 
+Status reports lead with the main alert, next decision, and project activity.
+Failed and unverified checks appear as bullets; milestones and supporting facts
+sit under Details. Workspace-reported budget claims are labeled separately from
+configured spend and deadlines. Failed refreshes keep the last successful report
+with its dates and a last-reported status label; checker diagnostics sit under
+Check details. Historical reports with string fields remain readable alongside
+the new list fields. The summary prompt includes examples for active, stalled,
+completed, and unknown states, validated against the output schema in tests.
+
 Incident titles include the reviewer's specific category. Each detail page explains
 what happened, why it happened (including uncertainty), and the next operator
 action. Existing incidents use their latest saved finding without repeating

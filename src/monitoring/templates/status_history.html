@@ -10,10 +10,13 @@
 <article class="mb-4 border border-line bg-white p-4 min-[701px]:p-6">
   <h2 class="mb-3 text-sm font-semibold">{{ timestamp(result.checked_at) }} · {{ result.outcome|capitalize }}</h2>
   {% if result.outcome == 'completed' %}
-    {{ report_lines(result.report) }}
+    {{ report_lines(result.report, historical=true) }}
     <p class="mt-3 text-xs text-muted">Evidence through {{ timestamp(result.evidence_at) }}</p>
     {% if result.coverage_gaps %}<details class="mt-3 text-xs text-muted"><summary class="cursor-pointer">Evidence gaps</summary><ul class="mt-2 list-disc pl-4">{% for gap in result.coverage_gaps %}<li>{{ gap }}</li>{% endfor %}</ul></details>{% endif %}
-  {% else %}<p class="text-sm text-amber-800">{{ result.error }}</p>{% endif %}
+  {% else %}
+    <p class="text-sm text-amber-800">Could not refresh status.</p>
+    <details class="text-xs text-muted"><summary class="cursor-pointer">Check details</summary><p class="mt-2 wrap-anywhere">{{ result.error }}</p></details>
+  {% endif %}
 </article>
 {% else %}<p class="text-muted">No status checks recorded yet.</p>{% endfor %}
 {% if next_cursor %}<a class="text-accent hover:underline" href="{{ url_for('status_history', key=workload.key, before=next_cursor) }}">Older checks →</a>{% endif %}

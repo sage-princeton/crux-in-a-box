@@ -25,12 +25,14 @@
     </div>
     {% if row.instance_id %}<p class="mb-2 text-xs text-muted wrap-anywhere">{{ row.instance_id }}</p>{% endif %}
     {% if row.get('latest') %}
-      <p class="mb-3 text-xs text-muted">Checked {{ timestamp(row.latest.checked_at) }}<br class="min-[701px]:hidden"> · Evidence {{ timestamp(row.latest.evidence_at) }}{% if row.stale %} · <strong class="text-amber-800">Stale evidence</strong>{% endif %}</p>
+      <p class="mb-3 text-xs text-muted">Last successful report {{ timestamp(row.latest.checked_at) }}<br class="min-[701px]:hidden"> · Evidence through {{ timestamp(row.latest.evidence_at) }}{% if row.stale %} · <strong class="text-amber-800">Stale evidence</strong>{% endif %}</p>
     {% endif %}
-    {% if row.get('attempt') == 'failed' %}<p role="status" class="mb-3 text-sm text-amber-800">Latest check failed{% if row.get('attempt_at') %} · {{ timestamp(row.attempt_at) }}{% endif %}: {{ row.error }}{% if row.get('latest') %} Showing the last successful report.{% endif %}</p>
+    {% if row.get('attempt') == 'failed' %}
+      <p role="status" class="mb-2 text-sm text-amber-800">Could not refresh status{% if row.get('attempt_at') %} · {{ timestamp(row.attempt_at) }}{% endif %}.{% if row.get('latest') %} Showing an earlier report.{% endif %}</p>
+      <details class="mb-3 text-xs text-muted"><summary class="cursor-pointer">Check details</summary><p class="mt-2 wrap-anywhere">{{ row.error }}</p></details>
     {% elif row.get('attempt') == 'running' %}<p role="status" class="mb-3 text-sm text-muted">Check started {{ timestamp(row.attempt_at) }}. {% if row.get('latest') %}Showing the last successful report.{% endif %}</p>{% endif %}
     {% if row.get('latest') %}
-      {{ report_lines(row.latest.report) }}
+      {{ report_lines(row.latest.report, historical=row.get('attempt') in ['failed', 'running'] or row.stale) }}
       {% if row.latest.coverage_gaps %}<details class="mt-3 text-xs text-muted"><summary class="cursor-pointer">Evidence gaps ({{ row.latest.coverage_gaps|length }})</summary><ul class="mt-2 list-disc pl-5">{% for gap in row.latest.coverage_gaps %}<li class="mt-1 wrap-anywhere">{{ gap }}</li>{% endfor %}</ul></details>{% endif %}
     {% elif status_error %}<p class="text-sm text-muted">Project status is unavailable.</p>
     {% else %}<p class="text-sm text-muted">Awaiting first status check.</p>{% endif %}
