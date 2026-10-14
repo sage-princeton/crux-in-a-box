@@ -3,12 +3,13 @@ import json
 import signal
 
 import pytest
-from agents import set_tracing_disabled
+from agents import Runner, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from openai.types.responses import ResponseReasoningItem
 
 from crux_scaffold import cli
+from crux_scaffold.agent_runtimes.openai_agents import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
 from crux_scaffold.telemetry import (
     LangfuseTelemetry,
@@ -169,6 +170,18 @@ def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, mon
     root = next(span for span in spans if span.name == "crux-probe")
     llm = [span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]
     assert llm and {span.context.trace_id for span in llm} == {root.context.trace_id}
+
+
+def test_probe_requests_detailed_reasoning_summary(monkeypatch):
+    captured = {}
+
+    async def run(agent, *args, **kwargs):
+        captured["agent"] = agent
+        return type("Result", (), {"final_output": "ok"})()
+
+    monkeypatch.setattr(Runner, "run", run)
+    assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "prompt", NullTelemetry())) == "ok"
+    assert captured["agent"].model_settings.reasoning.summary == "detailed"
 
 
 def test_generation_usage_is_split_into_the_exclusive_buckets_langfuse_prices():
