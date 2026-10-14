@@ -5,8 +5,8 @@ import signal
 import pytest
 from agents import Runner, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
-from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from openai.types.responses import ResponseReasoningItem
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from crux_scaffold import cli
 from crux_scaffold.agent_runtimes.openai_agents import OpenAIAgentsRuntime
