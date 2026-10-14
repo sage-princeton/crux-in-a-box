@@ -42,8 +42,9 @@ Known gaps in plugin 0.4.0, recorded in its expectations:
 
 The live exporter captures Codex's `reasoning.summary` text and includes it as
 `reasoning_summary` in the corresponding Langfuse generation output. Workspace
-configuration requests `model_reasoning_summary = "detailed"`. The Stop-hook
-plugin mode does not currently export these summaries.
+configuration sets `model_reasoning_summary = "auto"`, which selects the most
+detailed summarizer available for the model. The Stop-hook plugin mode does not
+currently export these summaries.
 
 ## Running locally
 

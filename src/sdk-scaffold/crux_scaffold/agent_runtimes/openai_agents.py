@@ -122,7 +122,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if not model:
             raise InvalidDropInError("CRUX_MODEL is not set")
         effort = env.get("CRUX_REASONING_EFFORT")
-        settings = ModelSettings(reasoning=Reasoning(effort=effort, summary="detailed"))
+        settings = ModelSettings(reasoning=Reasoning(effort=effort, summary="auto"))
         agent = Agent(name="probe", instructions="Reply with exactly the text you are asked for.", model=model,
                       model_settings=settings)
         return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
@@ -133,7 +133,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     def _settings(self) -> ModelSettings:
         effort = self.assembly.context.reasoning_effort
-        return ModelSettings(reasoning=Reasoning(effort=effort, summary="detailed"))
+        return ModelSettings(reasoning=Reasoning(effort=effort, summary="auto"))
 
     def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
         items = self.assembly.context_strategy.select(list(data.model_data.input))

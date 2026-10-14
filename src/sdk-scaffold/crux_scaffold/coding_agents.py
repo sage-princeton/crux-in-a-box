@@ -101,7 +101,7 @@ class CodexCodingAgent(CodingAgent):
                 cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
                 developer_instructions=self.developer_instructions or None,
-                config={"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "detailed"})
+                config={"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto"})
             turn = await thread.turn(brief, effort=ctx.reasoning_effort)
             final_response, usage, ended = "", TokenUsage(requests=1), None
             async with aclosing(turn.stream()) as events:

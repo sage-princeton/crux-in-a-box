@@ -71,8 +71,9 @@ TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae8
 # Optional, Codex only: how turns reach Langfuse. live (the default) disables
 # the plugin's Stop hook and runs crux-codex-live-trace, which sends reasoning
 # summaries, each tool call and model response within about 30s, and the turn's
-# root (input and output) when it ends. stop-hook uses the plugin's Stop hook
-# and does not export reasoning summaries.
+# root (input and output) when it ends. Codex's model_reasoning_summary = "auto"
+# setting selects the most detailed summarizer available for the model.
+# stop-hook uses the plugin's Stop hook and does not export reasoning summaries.
 CODEX_TRACE_MODE=live
 
 # The control box's ssh alias, used to mint workspaces.

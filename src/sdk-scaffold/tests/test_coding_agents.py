@@ -117,7 +117,7 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
     assert fake.starts == [{"cwd": str(tmp_path), "model": "gpt-codex-test", "sandbox": Sandbox.workspace_write,
                             "approval_mode": ApprovalMode.deny_all, "developer_instructions": "# Standing context",
                             "config": {"model_context_window": 1_000_000,
-                                       "model_reasoning_summary": "detailed"}}]
+                                       "model_reasoning_summary": "auto"}}]
     assert fake.thread.turns == [("TASK: add location", {"effort": "high"})]
     assert log == ["stream:ItemCompletedNotification", "record:codex:commandExecution:tool",
                    "stream:ThreadTokenUsageUpdatedNotification",

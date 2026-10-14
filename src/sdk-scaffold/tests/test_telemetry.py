@@ -172,7 +172,7 @@ def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, mon
     assert llm and {span.context.trace_id for span in llm} == {root.context.trace_id}
 
 
-def test_probe_requests_detailed_reasoning_summary(monkeypatch):
+def test_probe_sets_auto_reasoning_summary_mode(monkeypatch):
     captured = {}
 
     async def run(agent, *args, **kwargs):
@@ -181,7 +181,7 @@ def test_probe_requests_detailed_reasoning_summary(monkeypatch):
 
     monkeypatch.setattr(Runner, "run", run)
     assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "prompt", NullTelemetry())) == "ok"
-    assert captured["agent"].model_settings.reasoning.summary == "detailed"
+    assert captured["agent"].model_settings.reasoning.summary == "auto"
 
 
 def test_generation_usage_is_split_into_the_exclusive_buckets_langfuse_prices():
