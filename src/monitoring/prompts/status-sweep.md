@@ -21,6 +21,10 @@ paragraphs, semicolons, or long lists within sentences.
   them. Preserve exact measurements and relevant dates for the summary stage.
 - Keep enough source context to tell which evidence supports a disputed claim.
   Cite only supplied source IDs and include supporting IDs in source_ids.
+- Preserve resource figures even when they do not explain a blocker: budget caps,
+  measured spend and its date, launch date, elapsed time, and deadline. Include
+  task instructions and later ledger revisions, name their sources, and distinguish
+  recorded measurements from estimates. Missing spend does not erase a deadline.
 - Do not infer a stall, success, or no change from missing evidence. State gaps
   explicitly. Older evidence describes conditions at its recorded time.
 - Preserve different facts about the same topic without repeating the same fact
