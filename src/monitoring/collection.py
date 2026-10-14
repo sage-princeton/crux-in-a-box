@@ -165,12 +165,15 @@ class Collector:
             }
         ]
         gaps, snapshot, manifest, telemetry = [], None, [], []
+        langfuse_status = "unmapped"
         if target.get("langfuse"):
             try:
                 telemetry = collect_langfuse(self.http, target["langfuse"], secrets, start, end)
+                langfuse_status = "collected" if telemetry else "empty"
                 if not telemetry:
                     gaps.append("Langfuse returned no observations for this collection window.")
             except Exception as error:
+                langfuse_status = "unavailable"
                 gaps.append(f"Langfuse collection unavailable ({failure_reason(error)}).")
         else:
             gaps.append("EC2 Name is missing or duplicated; Langfuse mapping is ambiguous.")
@@ -224,5 +227,6 @@ class Collector:
             "workspace": snapshot,
             "workspace_manifest": manifest,
             "langfuse_key": telemetry_key,
+            "langfuse_status": langfuse_status,
             "captured_at": int(time.time()),
         }

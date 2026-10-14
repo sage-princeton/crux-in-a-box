@@ -235,9 +235,147 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
     assert status["report"]["progress"] == "Work is active. " * (20 if verbose else 1)
     assert status["report"]["quality"] == ["Not established."]
     assert status["report"]["reported_budget"].startswith("Workspace ledger reports")
-    assert status["report"]["budget"] == "Configured project spend and deadline are not supplied."
+    assert "budget" not in status["report"]
+    assert status["subject_families"] == ["openai"]
     incident = worker.store.assessment(target["key"], 900, "incident")
     assert incident["outcome"] == "completed"
     assert any("workspace event anchors" in gap for gap in incident["report"]["coverage_gaps"])
     worker.run_target(target, 900, {}, secrets)
     assert counts["collection"] == 1 and calls == initial
+
+
+def test_idle_status_uses_prior_observed_family_and_preserves_resource_evidence(
+    runtime, monkeypatch
+):
+    worker, target, secrets, counts = runtime
+    key = target["key"]
+    target["subject_families"] = []
+    # A report from before family provenance was added must bootstrap from its saved evidence.
+    worker.store.save_collection(
+        key,
+        450,
+        {"sources": [{"kind": "langfuse", "data": {"model": "gpt-6.1-sol"}}]},
+    )
+    worker.store.publish(
+        key, 450, "status", {"outcome": "completed", "window_end": 450, "report": {}}
+    )
+    resource_text = (
+        "The workspace ledger records LLM spend of $200.49 against $200 as of October 11. "
+        "The task deadline is November 18, 2026, 23:36 UTC."
+    )
+    source = {"id": "workspace:ledger", "kind": "workspace", "data": resource_text, "mtime": 800}
+    monkeypatch.setattr(
+        worker.collector,
+        "collect",
+        lambda *args: {
+            "sources": [source],
+            "gaps": ["Langfuse returned no observations for this collection window."],
+            "workspace": {},
+            "langfuse_status": "empty",
+        },
+    )
+
+    def handler(request):
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=MODEL_CATALOG)
+        if request.url.host == "hooks.slack.com":
+            return httpx.Response(200, text="ok")
+        body = json.loads(request.content)
+        payload = json.loads(body["messages"][1]["content"])
+        assert source in payload["sources"]
+        assert body["model"].startswith("anthropic/")
+        report = (
+            {"notes": resource_text, "source_ids": [source["id"]]}
+            if "notes" in body["response_format"]["json_schema"]["schema"]["properties"]
+            else {
+                "activity": "stalled",
+                "alert": "",
+                "recommendation": "Review the partial outcome.",
+                "progress": "No new agent activity was observed.",
+                "quality": [],
+                "milestones": [],
+                "details": [],
+                "reported_budget": resource_text,
+                "source_ids": [source["id"]],
+            }
+        )
+        return httpx.Response(
+            200,
+            json={
+                "model": body["model"],
+                "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(report)}}],
+            },
+        )
+
+    worker.http.close()
+    worker.http = httpx.Client(transport=httpx.MockTransport(handler))
+    for end in (900, 1800):
+        worker.run_target(target, end, {}, secrets)
+        result = worker.store.assessment(key, end, "status")
+        assert result["outcome"] == "completed"
+        assert result["subject_families"] == ["openai"]
+        assert result["report"]["reported_budget"] == resource_text
+        assert "budget" not in result["report"]
+        assert result["evidence_at"] == 800
+        assert any("no observations" in gap for gap in result["coverage_gaps"])
+    # New same-family or unidentified observations must still block the assessment.
+    for end, model in ((2700, "claude-example"), (3600, "unrecognized-model")):
+        observed = {"id": "observation:new", "kind": "langfuse", "data": {"model": model}}
+        evidence = worker.collector.collect()
+        evidence["sources"] = [source, observed]
+        evidence["langfuse_status"] = "collected"
+        worker.store.save_collection(key, end, evidence)
+        result = worker.assess(target, end, "status", evidence, {}, secrets)
+        assert result["outcome"] == "failed"
+        assert "different model family" in result["error"] or "unknown" in result["error"]
+        assert "error_code" not in result
+
+
+@pytest.mark.parametrize("langfuse_status", ["empty", "unavailable", "unmapped", None])
+def test_only_empty_langfuse_without_known_family_is_a_recency_failure(runtime, langfuse_status):
+    worker, target, secrets, counts = runtime
+    target["subject_families"] = []
+    evidence = {"sources": [], "gaps": [], "workspace": {}, "langfuse_status": langfuse_status}
+    worker.store.save_collection(target["key"], 900, evidence)
+    result = worker.assess(
+        target,
+        900,
+        "status",
+        evidence,
+        {},
+        secrets,
+    )
+    assert result["outcome"] == "failed"
+    if langfuse_status == "empty":
+        assert result["error_code"] == "langfuse_recency"
+        assert "Langfuse logs are stale or have not been updated" in result["error"]
+        assert worker.store.fleet()[0]["error_code"] == "langfuse_recency"
+    else:
+        assert "error_code" not in result
+        assert "Subject model family is unknown" in result["error"]
+    assert counts["model"] == 0
+
+
+@pytest.mark.parametrize("other_run", [False, True])
+def test_status_cannot_borrow_subject_identity_from_another_run_or_future_window(
+    runtime, other_run
+):
+    worker, target, secrets, counts = runtime
+    target["subject_families"] = []
+    prior_target = {**target, "instance_id": "i-other"} if other_run else target
+    if other_run:
+        worker.store.sync([target, prior_target], 900, 1800)
+    prior_end = 450 if other_run else 1800
+    worker.store.save_collection(prior_target["key"], prior_end, {"sources": []})
+    worker.store.publish(
+        prior_target["key"],
+        prior_end,
+        "status",
+        {"outcome": "completed", "window_end": prior_end, "subject_families": ["openai"]},
+    )
+    evidence = {"sources": [], "gaps": [], "workspace": {}, "langfuse_status": "empty"}
+    worker.store.save_collection(target["key"], 900, evidence)
+    result = worker.assess(target, 900, "status", evidence, {}, secrets)
+    assert result["outcome"] == "failed"
+    assert result["error_code"] == "langfuse_recency"
+    assert counts["model"] == 0

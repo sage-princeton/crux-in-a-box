@@ -50,10 +50,19 @@ and assessment checkpoints survive publication failures, so a retry uses saved
 artifacts without collecting the run or charging for inference again. A
 PostgreSQL advisory lock prevents concurrent worker passes.
 
+Status reports carry spend, caps, accounting dates, and deadlines from the task
+and workspace records, with source attribution and estimates labeled. Empty
+Langfuse windows remain explicit evidence gaps. Status checks retain previously
+observed subject model families so idle runs can still be assessed from workspace
+evidence. New observed models still participate in reviewer-family separation.
+When an empty window has no known subject family, coverage and history explain
+that Langfuse logs are stale or have not been updated. Collection outages and
+unrecognized models retain their distinct diagnostic details.
+
 Status reports lead with the main alert, next decision, and project activity.
 Failed and unverified checks appear as bullets; milestones and supporting facts
-sit under Details. Workspace-reported budget claims are labeled separately from
-configured spend and deadlines. Failed refreshes keep the last successful report
+sit under Details. Spend and time figures name their sources and accounting dates.
+Failed refreshes keep the last successful report
 with its dates and a last-reported status label; checker diagnostics sit under
 Check details. Historical reports with string fields remain readable alongside
 the new list fields. The summary prompt includes examples for active, stalled,

@@ -8,8 +8,9 @@ from status_view import coverage_rows
 
 
 @pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("error_code", ["", "langfuse_recency"])
 def test_failed_status_keeps_last_success_and_history_is_private(
-    client, store, target, monkeypatch, legacy
+    client, store, target, monkeypatch, legacy, error_code
 ):
     key = target["key"]
     for end in (900, 1800):
@@ -48,7 +49,13 @@ def test_failed_status_keeps_last_success_and_history_is_private(
         key,
         1800,
         "status",
-        {"outcome": "failed", "window_end": 1800, "checked_at": 1810, "error": "Unavailable"},
+        {
+            "outcome": "failed",
+            "window_end": 1800,
+            "checked_at": 1810,
+            "error": "Unavailable",
+            "error_code": error_code,
+        },
     )
     row = store.fleet()[0]
     assert row["latest"]["checked_at"] == 910 and row["attempt"] == "failed"
@@ -69,7 +76,13 @@ def test_failed_status_keeps_last_success_and_history_is_private(
     overview = client.get("/", base_url=ORIGIN)
     overview_html = html.fromstring(overview.data)
     assert overview.status_code == 200
-    assert "Could not refresh status" in overview_html.text_content()
+    failure_message = (
+        "Langfuse logs are stale or have not been updated"
+        if error_code == "langfuse_recency"
+        else "Could not refresh status"
+    )
+    assert failure_message in overview_html.text_content()
+    assert failure_message in page_html.text_content()
     assert "Showing an earlier report." in overview_html.text_content()
     assert "Last reported status: Active." in overview_html.text_content()
     for document in (page_html, overview_html):
@@ -82,7 +95,7 @@ def test_failed_status_keeps_last_success_and_history_is_private(
         )
         assert not document.xpath("//script[contains(text(), 'evidence')]")
         if not legacy:
-            assert "Workspace-reported budget." in document.text_content()
+            assert "Spend & time." in document.text_content()
             assert report["reported_budget"] in document.text_content()
             details = document.xpath("//div[contains(@class, 'status-report')]/details")[0]
             assert "URL coverage passed." in details.text_content()
@@ -91,8 +104,17 @@ def test_failed_status_keeps_last_success_and_history_is_private(
     assert [r["window_end"] for r in history] == [1800, 900] and cursor is None
 
 
+@pytest.mark.parametrize(
+    "resources",
+    [
+        "As of October 11, the ledger reports LLM $200.49/$200, API $13/$100, "
+        "and estimated AWS $19.43/$100. The task deadline is November 18, 2026, 23:36 UTC.",
+        "The task deadline is November 18, 2026, 23:36 UTC. Spend is not recorded.",
+        "",
+    ],
+)
 def test_current_report_keeps_warnings_visible_and_supporting_facts_collapsed(
-    client, store, target
+    client, store, target, resources
 ):
     now = int(time.time())
     key = target["key"]
@@ -104,7 +126,7 @@ def test_current_report_keeps_warnings_visible_and_supporting_facts_collapsed(
         "quality": ["Content checks failed for two groups.", "Twenty pages need visual review."],
         "milestones": ["The pilot is deployed."],
         "details": ["Access control passed."],
-        "reported_budget": "Workspace ledger reports $200.49 spent against a $200 limit.",
+        "reported_budget": resources,
         "source_ids": [],
         "budget": "Configured project spend and deadline are not supplied.",
     }
@@ -137,6 +159,12 @@ def test_current_report_keeps_warnings_visible_and_supporting_facts_collapsed(
     details = visible.xpath("./details")[0]
     assert details.get("open") is None
     assert "Access control passed." in details.text_content()
-    assert report["budget"] in details.text_content()
+    assert (
+        resources or "No spend or deadline found in the available evidence."
+    ) in visible.text_content()
+    if resources:
+        assert "No spend or deadline found" not in visible.text_content()
+    assert "Configured figures" not in document.text_content()
+    assert report["budget"] not in document.text_content()
     assert "Some workspace evidence was omitted." in document.text_content()
     assert "Could not refresh status" not in document.text_content()

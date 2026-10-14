@@ -8,7 +8,7 @@ from sqlalchemy import text
 
 from database import engine
 from lifecycle import DETECTORS, Conflict, incident_detail
-from review import CoverageError
+from review import CoverageError, model_family
 
 
 def encoded(value):
@@ -78,11 +78,46 @@ class Store:
                 attempt=attempt.get("outcome", "pending"),
                 attempt_at=attempt.get("checked_at", 0),
                 error=attempt.get("error", ""),
+                error_code=attempt.get("error_code", ""),
                 success_end=row["latest"].get("window_end", 0),
                 review_status=incident.get("outcome", "pending"),
                 last_review=incident.get("window_end", 0),
             )
         return rows
+
+    def status_subject_families(self, key: str, before: int) -> list[str]:
+        """Reuse observed model identity when a run has no recent model activity."""
+        with self.db.connect() as connection:
+            previous = (
+                connection.execute(
+                    text("""
+                    SELECT window_end, result->'subject_families' AS families
+                    FROM assessments WHERE workload_key=:key AND kind='status'
+                        AND window_end<:before AND result->>'outcome'='completed'
+                    ORDER BY window_end DESC LIMIT 1
+                """),
+                    {"key": key, "before": before},
+                )
+                .mappings()
+                .first()
+            )
+            if previous is None:
+                return []
+            if previous["families"] is not None:
+                return previous["families"]
+            # Bootstrap reports saved before family provenance was recorded. Project only
+            # the observed models, not the complete workspace manifest or source text.
+            models = connection.execute(
+                text("""
+                    SELECT DISTINCT source->'data'->>'model' FROM collections,
+                        jsonb_array_elements(evidence->'sources') source
+                    WHERE workload_key=:key AND window_end=:end
+                        AND source->>'kind'='langfuse'
+                        AND source->'data'->>'model' IS NOT NULL
+                """),
+                {"key": key, "end": previous["window_end"]},
+            ).scalars()
+            return sorted({family for model in models if (family := model_family(model))})
 
     def collection(self, key, end):
         with self.db.connect() as connection:

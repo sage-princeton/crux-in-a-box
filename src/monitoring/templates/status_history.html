@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 {% from 'components/timestamp.html' import timestamp %}
-{% from 'status_report.html' import report_lines %}
+{% from 'status_report.html' import report_lines, refresh_failure %}
 {% block title %}{{ workload.slug }} status history{% endblock %}
 {% block content %}
 <a class="text-sm text-accent hover:underline" href="{{ url_for('index', workload=workload.key) }}#coverage">← Workload coverage</a>
@@ -14,7 +14,7 @@
     <p class="mt-3 text-xs text-muted">Evidence through {{ timestamp(result.evidence_at) }}</p>
     {% if result.coverage_gaps %}<details class="mt-3 text-xs text-muted"><summary class="cursor-pointer">Evidence gaps</summary><ul class="mt-2 list-disc pl-4">{% for gap in result.coverage_gaps %}<li>{{ gap }}</li>{% endfor %}</ul></details>{% endif %}
   {% else %}
-    <p class="text-sm text-amber-800">Could not refresh status.</p>
+    <p class="text-sm text-amber-800">{{ refresh_failure(result) }}.</p>
     <details class="text-xs text-muted"><summary class="cursor-pointer">Check details</summary><p class="mt-2 wrap-anywhere">{{ result.error }}</p></details>
   {% endif %}
 </article>

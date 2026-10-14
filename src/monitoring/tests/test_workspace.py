@@ -115,7 +115,8 @@ def test_whole_archive_stream_is_acknowledged_only_after_upload_succeeds(
         assert "--expected-size" in args
 
 
-def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_path):
+@pytest.mark.parametrize("status_code", [200, 503])
+def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_path, status_code):
     from types import SimpleNamespace
 
     import boto3
@@ -179,7 +180,7 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
         assert "workspace/.evidence" in {entry["path"] for entry in manifest} and not gaps
         collector.http = httpx.Client(
             transport=httpx.MockTransport(
-                lambda request: httpx.Response(200, json={"data": [], "meta": {}})
+                lambda request: httpx.Response(status_code, json={"data": [], "meta": {}})
             )
         )
         evidence = collector.collect(
@@ -195,7 +196,11 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
                 "MONITORING_LANGFUSE_SECRET_KEY": "test-secret",
             },
         )
-        assert any("no observations" in gap for gap in evidence["gaps"])
+        assert evidence["langfuse_status"] == ("empty" if status_code == 200 else "unavailable")
+        assert any(
+            ("no observations" if status_code == 200 else "collection unavailable") in gap
+            for gap in evidence["gaps"]
+        )
         assert (
             json.loads(
                 s3.get_object(Bucket="monitoring-copy-test", Key=evidence["langfuse_key"])[
@@ -240,6 +245,7 @@ def test_busy_telemetry_is_archived_while_context_stays_bounded(monkeypatch):
         saved = s3.get_object(Bucket="busy-test", Key=evidence["langfuse_key"])["Body"].read()
         assert json.loads(saved) == telemetry
         assert input_size(evidence) < 128 * 1024 and evidence["gaps"]
+        assert evidence["langfuse_status"] == "collected"
         assert len(encoded(evidence["sources"])) < 66 * 1024
         # An omitted later model must still prevent a reviewer from evaluating its own family.
         with pytest.raises(CoverageError, match="different model family"):

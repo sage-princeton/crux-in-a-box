@@ -18,17 +18,23 @@ from lifecycle import evidence_anchors, review_anchors
 from review import (
     MAX_OUTPUT_TOKENS,
     PROMPT,
+    CoverageError,
     digest,
     encoded,
     evaluate,
     failure_reason,
     input_size,
     iso,
+    model_family,
     scrub,
     select_reviewer,
 )
 from status_review import reserve, summarize
 from store import Budget, Store
+
+
+class LangfuseRecencyError(CoverageError):
+    pass
 
 
 def validate(config):
@@ -131,17 +137,29 @@ class Runtime:
         return {"report": report, "model": provenance}
 
     def status(self, target, end, evidence, previous, secrets, prefix):
+        families = set(target["subject_families"]) | set(
+            self.store.status_subject_families(target["key"], end)
+        )
+        observed_models = {
+            source["data"]["model"]
+            for source in evidence["sources"]
+            if source["kind"] == "langfuse" and source["data"].get("model")
+        }
+        if not families and not observed_models and evidence.get("langfuse_status") == "empty":
+            raise LangfuseRecencyError(
+                "Langfuse logs are stale or have not been updated. No observations were "
+                "returned for this collection window, and no previous subject model is known."
+            )
         report, models, gaps = summarize(
             self.http,
             Budget(self.store, "status"),
             secrets["MONITORING_OPENROUTER_API_KEY"],
             self.config["status"],
-            target,
+            {**target, "subject_families": sorted(families)},
             evidence["sources"],
             previous,
             evidence["gaps"],
         )
-        report["budget"] = "Configured project spend and deadline are not supplied."
         stamps = [
             int(s["mtime"])
             for s in evidence["sources"]
@@ -152,6 +170,9 @@ class Runtime:
         return {
             "report": report,
             "models": models,
+            "subject_families": sorted(
+                families | {model_family(model) for model in observed_models}
+            ),
             "coverage_gaps": gaps,
             "evidence_at": max(stamps, default=0),
         }
@@ -167,6 +188,8 @@ class Runtime:
             except Exception as error:
                 reason = f"{kind.capitalize()} assessment unavailable ({failure_reason(error)})."
                 result = {"outcome": "failed", "error": reason}
+                if isinstance(error, LangfuseRecencyError):
+                    result["error_code"] = "langfuse_recency"
                 if kind == "incident":
                     result["report"] = {
                         "review_status": "failed",
