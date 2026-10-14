@@ -80,11 +80,11 @@ def test_long_turn_exports_every_tool_call_and_model_step(traced, expect):
 
 
 def test_generation_spans_follow_the_versions_timing_rule(traced, expect):
-    behavior(expect, "generation_timing", "first_message_or_tool_call_to_first_tool_call")
+    behavior(expect, "generation_timing", "first_reasoning_summary_to_first_tool_call_or_step_close")
     scenario, spans, _ = traced("long_turn")
     generations = sorted((s for s in spans if s.type == "generation"), key=lambda s: s.start_ns)
     for span, step in zip(generations, scenario.turns[0].steps, strict=True):
-        start = step.message_at or step.first_tool_at
+        start = step.reasoning_at
         end = step.first_tool_at or step.closed_at
         assert abs(span.start_ns - ns(start)) <= MS and abs(span.end_ns - ns(end)) <= MS, \
             f"generation {span.start_ns}..{span.end_ns} vs rollout {start}..{end}"

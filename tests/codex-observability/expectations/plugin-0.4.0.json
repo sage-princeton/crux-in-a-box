@@ -12,7 +12,7 @@
   },
   "tool_spans": "one_per_tool_call_named_as_called",
   "generations": "one_per_model_step",
-  "generation_timing": "first_message_or_tool_call_to_first_tool_call",
+  "generation_timing": "first_reasoning_summary_to_first_tool_call_or_step_close",
   "tool_timing": "call_to_output",
   "subagents": "nested_in_parent_turn",
   "turns_between_thread_events": "no_phantom_turns",
