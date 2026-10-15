@@ -6,6 +6,7 @@ import signal
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -13,6 +14,7 @@ from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.usage import Budget, UsageLedger
 
 if TYPE_CHECKING:
+    from crux_scaffold.resources import ResourceMonitor
     from crux_scaffold.telemetry import Telemetry
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
@@ -20,6 +22,11 @@ MAX_LISTED = 500
 MAX_OUTPUT_CHARS = 20_000
 
 Sleep = Callable[[float], Awaitable[None]]
+Clock = Callable[[], datetime]
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 # TODO: add runtime monitoring guardrails, especially for write_file and run_shell.
@@ -90,6 +97,33 @@ class RunContext:
     budget: Budget
     telemetry: Telemetry
     sleep: Sleep = asyncio.sleep
+    resources: ResourceMonitor | None = None
+    now: Clock = utc_now
+
+    async def refresh_resources(self, *, force: bool = False) -> None:
+        if self.resources is not None:
+            await self.resources.refresh(self, force=force)
+
+    def model_usage(self) -> dict[str, float | None]:
+        snapshot = self.resources.snapshot(self.budget.model_resource) if self.resources else None
+        metrics = snapshot.metrics if snapshot else {}
+        cost, tokens = metrics.get("cost_usd"), metrics.get("total_tokens")
+        return {"model_cost_usd": cost.value if cost and cost.unit == "USD" else None,
+                "reported_tokens": tokens.value if tokens and tokens.unit == "tokens" else None}
+
+    def budget_exhausted(self) -> bool:
+        return (self.budget.exhausted(self.usage, now=self.now(), **self.model_usage())
+                or bool(self.resources and self.resources.exhausted()))
+
+    async def budget_status(self, *, force: bool = False) -> str:
+        await self.refresh_resources(force=force)
+        now = self.now()
+        lines = [self.budget.describe(self.usage, now=now, **self.model_usage())]
+        if self.resources:
+            lines.append(self.resources.describe(now))
+        else:
+            lines.append("external resources: not configured")
+        return "\n".join(lines)
 
     @property
     def model(self) -> str:

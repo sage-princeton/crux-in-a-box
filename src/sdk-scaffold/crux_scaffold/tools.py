@@ -132,7 +132,7 @@ class Rest(Tool):
 @TOOLS.register
 class BudgetStatus(Tool):
     type_name = "budget_status"
-    description = "Report the run's token usage so far against its budget."
+    description = "Refresh the run's token, dollar, time and external resource usage against its budgets."
 
     async def invoke(self, ctx: RunContext, args: Arguments) -> str:
-        return ctx.budget.describe(ctx.usage)
+        return await ctx.budget_status(force=True)

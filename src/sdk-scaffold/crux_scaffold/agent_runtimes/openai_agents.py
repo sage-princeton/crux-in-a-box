@@ -135,9 +135,11 @@ class OpenAIAgentsRuntime(AgentRuntime):
         effort = self.assembly.context.reasoning_effort
         return ModelSettings(reasoning=Reasoning(effort=effort, summary="auto"))
 
-    def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
+    async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
         items = self.assembly.context_strategy.select(list(data.model_data.input))
-        return ModelInputData(input=items, instructions=data.model_data.instructions)
+        status = await self.assembly.context.budget_status()
+        instructions = (data.model_data.instructions or "") + f"\n\n<resource_status>\n{status}\n</resource_status>"
+        return ModelInputData(input=items, instructions=instructions)
 
     def _function_tool(self, tool: Tool) -> FunctionTool:
         ctx = self.assembly.context

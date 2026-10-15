@@ -44,8 +44,10 @@ def test_budget_status_reports_usage_against_the_limit(tmp_path):
     ctx.usage.add("pm", 300, 100)
     ctx.usage.add("engineer", 50, 50)
     report = asyncio.run(TOOLS.create("budget_status", {}).invoke(ctx, Arguments()))
-    assert report.splitlines() == ["total tokens: 500 of 1,000", "  engineer: 100 tokens over 1 requests",
-                                   "  pm: 400 tokens over 1 requests"]
+    assert "total tokens: 500 of 1,000" in report
+    assert "tokens remaining: 500" in report
+    assert "  engineer: 100 tokens over 1 requests\n  pm: 400 tokens over 1 requests" in report
+    assert "model spend: unavailable" in report
 
 
 def test_command_tool_runs_its_declared_command(tmp_path):

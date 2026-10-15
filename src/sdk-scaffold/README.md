@@ -1,6 +1,6 @@
 # `sdk-scaffold/` — a CRUX scaffold built on agent SDKs
 
-`crux_scaffold` runs a CRUX from a **drop-in directory**. Everything about the run is declared in the drop-in's `scaffold.toml`: which agents exist and what each may call, how the outer loop decides a phase is done, how context is managed, and the token budget. The scaffold assembles that declaration from registered components. It runs agents on the OpenAI Agents SDK and delegates coding to Codex ([AE-230](https://linear.app/agent-evals/issue/AE-230/prototype-custom-scaffold-using-agent-sdks)).
+`crux_scaffold` runs a CRUX from a **drop-in directory**. Everything about the run is declared in the drop-in's `scaffold.toml`: which agents exist and what each may call, how the outer loop decides a phase is done, how context is managed, and its budgets and resource providers. The scaffold assembles that declaration from registered components. It runs agents on the OpenAI Agents SDK and delegates coding to Codex ([AE-230](https://linear.app/agent-evals/issue/AE-230/prototype-custom-scaffold-using-agent-sdks)).
 
 ## Terminology
 
@@ -21,14 +21,15 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 | **Loop**, **phase**, **iteration** | The outer loop runs phases in order. Each phase repeats iterations, one prompt to the orchestrator each, until its gates pass. |
 | **Gate** | A check the loop runs between iterations (the team's *gating criteria*): a deterministic verifier, or a judgment by an isolated model the agents cannot author. A failing gate produces the next prompt. |
 | **Context strategy** | How an agent's conversation is stored, and what part of it reaches the model on each call. |
-| **Budget** | Hard token limits the loop enforces between iterations. |
+| **Budget** | Token, model-dollar and wall-clock limits checked between iterations. Resource providers can declare additional consumption limits. |
+| **Resource provider** | A source of run-scoped measurements, with units, timestamps and optional limits, shown on every model call. |
 | **Steering channel** | How the operator and the agents reach each other. The demo uses Slack through MCP. |
 | **Operator** | The human running the CRUX. |
 | **Run box** | The EC2 instance a run executes on; `src/ec2-workspaces/` calls it a *workspace*. |
 
 ## Design
 
-Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`. This first version ships one implementation of each interface, the ones the demo needs.
+Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`.
 
 | Responsibility | Interface (registry) | Built-in types |
 |---|---|---|
@@ -39,7 +40,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
 | Observability | `Telemetry` | Langfuse, or off |
-| Resource management | `Budget`, `budget_status` | token limits |
+| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status` | token, model-dollar and time limits; `langfuse` usage |
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
@@ -135,6 +136,56 @@ python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (
 - 3: the loop stopped early because its iterations or budget ran out.
 - 128 + the signal number: the run was stopped by SIGTERM or SIGINT. The unfinished iteration reruns on restart.
 
+## Budgets and resource context
+
+Every orchestrator and delegated SDK model call receives a fresh resource-status
+block after context selection. It includes tokens, elapsed time, model spend,
+remaining configured budgets, and each declared external resource. The block is
+ephemeral: it does not accumulate in the conversation history. Codex usage is
+included when its turn finishes; its internal model calls are owned by Codex.
+The `budget_status` tool forces an on-demand refresh through the same providers.
+
+```toml
+[budget]
+max_total_tokens = 1000000
+max_cost_usd = 100.0
+max_wall_seconds = 86400
+model_resource = "models"
+
+[resources.models]
+type = "langfuse"
+```
+
+Deploy the [Langfuse cost tracker](../../lambda/langfuse_cost_tracker/README.md)
+and supply `COST_TRACKER_URL`, `COST_TRACKER_TOKEN`, and a unique `RUN_SLUG`.
+The model-dollar budget requires a declared `model_resource`; the `langfuse`
+provider reads its cost and token totals from AE-225's API. The token budget
+uses the larger of the local and reported totals, never their sum. Other resource
+costs are displayed independently and can have their own limits.
+
+Providers are registered components under `[resources.<name>]`. Each has
+`refresh_seconds` (default 0), `timeout_seconds` (default 10), and optional
+`limits = { metric_name = value }`. Limits apply to consumption measurements in
+the provider's stated units. A future credits or API-spend source can implement
+`ResourceProvider` in a drop-in extension; see [the contract](docs/extending.md#resource-providers-resourceprovider).
+
+The phased loop checks token, time, model-cost and resource limits between
+iterations, using available measurements. An in-flight turn can overshoot a
+limit. Providers refresh independently and may use cached data; the status
+shows timestamps, cache state, missing measurements and retained stale values.
+An outage does not silently become zero usage or halt the run on its own.
+Reported spend can lag or omit unexported/unpriced generations, so these are
+pacing controls rather than guarantees against an invoice exceeding a limit.
+
+The first run timestamp and local tokens are saved in `state.json`, including on
+an orderly interruption. Restarts keep elapsed time, including downtime. Use a
+new state directory for a new run. When resuming state created before timestamps
+were recorded, the first upgraded launch establishes the start; migrate
+`usage.started_at` to the actual UTC start if earlier spend/time should be included.
+Without configured providers, local tokens and elapsed time still appear and
+external usage is explicitly unavailable. `check` validates configuration without
+querying providers or starting the clock.
+
 ## Tracing
 
 Langfuse v4 never updates an observation once it has stored it, so each observation is sent exactly once, when it ends. The scaffold keeps what it sends short-lived so that a long run stays visible while it progresses. These rules follow the AE-240 findings for the Codex boxes:
@@ -153,6 +204,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 | `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The model and effort for every agent and coding agent. They are the only place these are set; a drop-in cannot override them. A run without `CRUX_MODEL` stops with a configuration error. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
+| `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` | HTTPS endpoint and bearer credential for a declared `langfuse` resource provider; `RUN_SLUG` is also required. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |
 
 ## Run the demo in Docker
