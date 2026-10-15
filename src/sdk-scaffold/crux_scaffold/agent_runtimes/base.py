@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -33,6 +33,7 @@ class Assembly:
     tools: Mapping[str, Tool]
     coding_agents: Mapping[str, CodingAgent]
     context_strategy: ContextStrategy
+    instructions: Callable[[str], str]
 
 
 class TurnOutcome(BaseModel):

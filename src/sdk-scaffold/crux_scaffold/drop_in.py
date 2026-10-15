@@ -87,7 +87,6 @@ class DropInDirectory:
                              {"characters": len(text), "truncated": truncated})
         return text
 
-    # TODO(AE-249): prepend a generated description of the scaffold to the orchestrator's instructions.
     def instructions(self, agent: str) -> str:
         spec = self.config.agents[agent]
         steering = ""
