@@ -57,11 +57,13 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 | `env` | The scaffold's environment. Read configuration from here, not from `os.environ`, so tests can inject it. |
 | `usage`, `budget` | The token ledger and its limits. See [Budget and usage](#budget-and-usage). |
 | `telemetry` | See [Telemetry](#telemetry-telemetry). |
-| `sleep` | Every wait goes through this, so tests run without real time passing. |
+| `sleep` | Low-level sleep, replaceable in tests. |
+| `wait(seconds)` | Returns seconds slept; polls steering and wakes early for pending messages. Use for cooperative waits. |
+| `steering` | Optional durable `Steering` inbox/outbox assembled by `scaffold.py`; runtime binds its MCP connection. |
 
 ## Tools (`Tool`)
 
-`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `command`, `rest`, `budget_status`.
+`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `command`, `rest`, `budget_status`, `escalate`.
 
 ```python
 class PreviewArguments(Arguments):
@@ -86,7 +88,7 @@ class SitePreview(Tool):
 
 ## MCP servers (steering and external systems)
 
-`[mcp_servers.<name>]` in `scaffold.toml`, with `McpServerConfig` in `config.py`. These are not components. Any stdio MCP server becomes a set of tools for the agents whose `mcp_servers` list names it. A steering channel, such as the demo's Slack integration, is an MCP server, so adding a channel normally needs no scaffold code.
+`[mcp_servers.<name>]` in `scaffold.toml`, with `McpServerConfig` in `config.py`. These are not components. Any stdio MCP server becomes a set of tools for the agents whose `mcp_servers` list names it. A channel such as the demo's Slack integration normally needs no scaffold code. Automatic delivery additionally uses `[runtime.steering]`; exposing read tools alone does not ingest messages.
 
 - `command`, `args` and `timeout_seconds` start the server.
 - The server receives only its declared `env`, plus a minimal `PATH` and `HOME`. A `${VAR}` reference is filled from the scaffold's environment. A missing variable is a `InvalidDropInError`, and the value is never echoed.
@@ -250,7 +252,7 @@ or allowlist fails. Keep this state with the conversation store when resuming.
 returns without awaiting an operator reply. Identical IDs return the saved result;
 changing an existing request raises `ToolError`. A timeout or restart during a post
 has an **uncertain** outcome and is never resent automatically. Check the channel
-before creating a new ID. MCP write retries must be disabled by the caller because
+before creating a new ID. The runtime disables MCP write retries because
 the upstream posting tool has no idempotency key.
 
 `Steering.event` records message IDs/authors, channel/thread, request IDs and delivery
@@ -258,3 +260,45 @@ outcomes, never message bodies, MCP environment values, responses or exception
 strings. `steering.json` contains the actual instructions and escalation text; treat
 it as private run state. Tests use an MCP call double and exercise paginated scans,
 malformed responses, duplicate/restart recovery and uncertain posts without a network.
+
+
+### Runtime delivery contract
+
+`OpenAIAgentsOptions.steering` is an optional strict `SteeringOptions` table under
+`[runtime.steering]` (see the README for all keys). `scaffold.py` validates its
+server reference and constructs `RunContext.steering`. `openai-agents` starts that
+MCP server even when no agent exposes its tools, verifies the required read/post
+tools and binds the connection. Startup failures close opened servers and report
+sanitized, actionable state before any model call. No additional environment
+variables or transport credentials are introduced.
+
+The recipient is the configured orchestrator, whose instructions include a
+generated precedence/delivery contract. The asynchronous model-input filter polls
+before each orchestrator call, writes each deterministic `operator_steering` user
+envelope to the durable session, then commits the inbox's delivery marker. On
+restart it checks for an existing envelope before writing again. Delivered means
+persisted to conversation; model success or compliance cannot be guaranteed.
+Filters do not themselves persist input in the SDK, so the runtime also carries
+new envelopes through the current Runner call after context selection. Subsequent
+Runner calls reload them from the conversation. Older instructions remain ordinary
+history and can be trimmed by a context strategy. Delegates receive only their
+brief, never the operator inbox automatically; new runtimes must implement this
+contract if they add a steering option. Custom strategies must provide a durable
+session for restart guarantees.
+
+`rest` charges only the sleep completed before early wake. Phase intervals also
+use `RunContext.wait`; both check pending state before starting another transport
+scan. Polls during waits are separated by `poll_interval_seconds`; actual latency
+also includes scan time. A running model, command, delegate or coding-agent call
+runs to its boundary. Pending steering never cancels background work. New message
+polling stops when the run finishes. This extends cooperative waiting (AE-260)
+without introducing a background-job implementation.
+
+The built-in `escalate` tool uses `Escalation` as its argument schema and requires
+`runtime.steering` during assembly. It posts without awaiting a reply. Read/status
+failures are visible in `check`, run state, telemetry and orchestrator instructions;
+escalation outcomes return to the caller. Conversation-write failures stop before
+calling the model and retain pending delivery for restart. Steering telemetry uses
+ordinary `span` records, with names `steering:received`, `steering:delivered`,
+`steering:delivery_failed`, `steering:read_failed`, `steering:startup_failed`,
+`steering:escalation` and `steering:escalation_outcome`.
