@@ -127,6 +127,32 @@ def test_model_responses_carry_their_tool_calls_and_usage(rollouts, home, live):
     assert all(json.loads(g.attributes["langfuse.observation.usage_details"])["input"] > 0 for g in generations)
 
 
+# Per-token prices of Langfuse's managed gpt-6.1-sol definition; Langfuse prices every usage_details key on its own.
+PRICES = {"input": 2e-06, "input_cached_tokens": 1e-07, "output": 1e-05, "output_reasoning_tokens": 1e-05}
+
+
+def test_usage_buckets_are_disjoint_so_langfuse_bills_cached_and_reasoning_tokens_once(rollouts, home, live):
+    scenario = rollouts.long_turn()
+    with Collector() as collector:
+        passes(scenario.main, home, collector, live, [len(scenario.main.lines)])
+    reported = [json.loads(g.attributes["langfuse.observation.usage_details"])
+                for g in collector.spans if g.type == "generation"]
+    lines = scenario.main.lines
+    raw = [line["payload"]["usage"] for line, after in zip(lines, [*lines[1:], {}])
+           if line["type"] == "token_usage_record" and after.get("type") != "compacted"]
+    assert len(reported) == len(raw) > 0
+    assert any(u["cached_input_tokens"] > 0 and u["reasoning_output_tokens"] > 0 for u in raw)
+    expected = [{"input": u["input_tokens"] - u["cached_input_tokens"], "input_cached_tokens": u["cached_input_tokens"],
+                 "output": u["output_tokens"] - u["reasoning_output_tokens"],
+                 "output_reasoning_tokens": u["reasoning_output_tokens"]} for u in raw]
+    assert sorted(reported, key=json.dumps) == sorted(expected, key=json.dumps)
+    true_cost = sum((u["input_tokens"] - u["cached_input_tokens"]) * PRICES["input"]
+                    + u["cached_input_tokens"] * PRICES["input_cached_tokens"]
+                    + u["output_tokens"] * PRICES["output"] for u in raw)
+    billed = sum(count * PRICES[key] for usage in reported for key, count in usage.items())
+    assert billed == pytest.approx(true_cost)
+
+
 def test_subagent_turns_nest_under_the_turn_that_spawned_them(rollouts, home, live):
     scenario = rollouts.subagents()
     [turn] = scenario.turns

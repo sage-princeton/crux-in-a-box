@@ -37,7 +37,8 @@ class TurnEnd(Enum):
 
 @dataclass(frozen=True)
 class Usage:
-    """Token counts for one model response."""
+    """Token counts for one model response. The four counts are disjoint: `input` excludes
+    `cached_input` and `output` excludes `reasoning_output`, because Langfuse prices each count on its own."""
 
     input: int | None = None
     output: int | None = None
