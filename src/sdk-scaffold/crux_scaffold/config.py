@@ -61,6 +61,11 @@ class PhaseConfig(Options):
     interval_seconds: float = Field(0, ge=0)
 
 
+class DelegationConfig(Options):
+    max_concurrent: int | None = Field(None, strict=True, ge=1)
+    max_depth: int | None = Field(None, strict=True, ge=0)
+
+
 class ScaffoldConfig(Options):
     """The whole of `scaffold.toml`. `agents` run in the agent runtime; `coding_agents` are coding harnesses
     (`CodingAgent`) that agents delegate code changes to."""
@@ -72,6 +77,7 @@ class ScaffoldConfig(Options):
     context: ComponentTable = {"type": "persistent"}
     loop: ComponentTable
     budget: Budget = Budget()
+    delegation: DelegationConfig = DelegationConfig()
     agents: dict[str, AgentConfig]
     coding_agents: dict[str, ComponentTable] = {}
     tools: dict[str, ComponentTable] = {}
@@ -89,7 +95,17 @@ class ScaffoldConfig(Options):
             for delegate in agent.delegates:
                 if delegate not in self.agents and delegate not in self.coding_agents:
                     raise ValueError(f"agent '{name}' delegates to unknown agent '{delegate}'")
-        delegation_order(self.agents)
+        order = delegation_order(self.agents)
+        if self.delegation.max_depth is not None:
+            paths: dict[str, list[str]] = {}
+            for name in order:
+                paths[name] = max(([name, *paths.get(delegate, [delegate])]
+                                   for delegate in self.agents[name].delegates), key=len, default=[name])
+            path = max(paths.values(), key=len)
+            depth = len(path) - 1
+            if depth > self.delegation.max_depth:
+                raise ValueError(f"delegation path {' -> '.join(path)} has depth {depth}, "
+                                 f"exceeding delegation.max_depth={self.delegation.max_depth}")
         for name, agent in self.agents.items():
             for delegate in agent.delegates:
                 if delegate in self.agents and not self.agents[delegate].description:

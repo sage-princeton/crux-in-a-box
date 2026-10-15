@@ -154,10 +154,19 @@ class OpenAIAgentsRuntime(AgentRuntime):
     def _delegate(self, name: str) -> FunctionTool:
         config = self.assembly.drop_in.config
         if name in config.agents:
-            return self.agents[name].as_tool(tool_name=name, tool_description=config.agents[name].description,
-                                             max_turns=config.agents[name].max_turns, hooks=self.hooks,
-                                             run_config=self.run_config)
-        return self._coding_tool(self.assembly.coding_agents[name])
+            tool = self.agents[name].as_tool(tool_name=name, tool_description=config.agents[name].description,
+                                            max_turns=config.agents[name].max_turns, hooks=self.hooks,
+                                            run_config=self.run_config)
+        else:
+            tool = self._coding_tool(self.assembly.coding_agents[name])
+        invoke_tool = tool.on_invoke_tool
+
+        async def invoke(context: ToolContext[Any], raw: str) -> str:
+            async with self.delegation_slot():
+                return await invoke_tool(context, raw)
+
+        tool.on_invoke_tool = invoke
+        return tool
 
     def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
         ctx = self.assembly.context
