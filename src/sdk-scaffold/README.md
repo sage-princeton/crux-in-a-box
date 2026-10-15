@@ -36,9 +36,9 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
 | Context management and standing-context injection | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
-| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status` |
+| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status`, `escalate` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
-| Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
+| Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; `escalate` outbox |
 | Observability | `Telemetry` | Langfuse, or off |
 | Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod` |
 
@@ -214,6 +214,68 @@ A CRUX with different needs changes declarations, not code. The same drop-in cou
   text and pixels, without document properties, attachments, source paths or filesystem metadata. No artifact code
   is executed. Run a small live review with your configured runtime and submission formats before a research run;
   automated tests use scripted models and make no network calls.
+
+## Reliable operator steering and escalations
+
+Steering is opt-in for the `openai-agents` runtime. It delivers operator instructions
+to the configured **orchestrator**, including when the model has no Slack read tools.
+Reuse a declared Slack MCP server and configure the run's source and authorized users:
+
+```toml
+[runtime]
+type = "openai-agents"
+
+[runtime.steering]
+server = "slack"                    # a declared [mcp_servers.slack]
+channel_id = "C123"
+operator_ids = ["U123"]            # Slack user IDs allowed to issue instructions
+# Explicit run boundary; 0 includes all available history.
+after_ts = "1792036800.000000"
+# thread_ts = "1792036800.000000"  # optional fixed thread; omit for top-level channel posts
+poll_interval_seconds = 30          # poll spacing during rest and phase intervals
+max_pages = 100                     # per scan; incomplete scans report failure without advancing
+```
+
+Before **each orchestrator model call**, the scaffold scans for new messages, sorts
+them by Slack timestamp and adds identified operator instructions to its durable
+conversation. Newer instructions take precedence over conflicting workflow prompts,
+agent plans and older operator instructions, within system/developer and configured
+resource/tool constraints. An allowlist is required; other users and agent/bot posts
+are ignored. In channel mode, replies must be new top-level posts; in fixed-thread
+mode, reply in that thread. Post a new message to correct an earlier one; edits are
+not redelivered. Delegates retain their isolated brief; the orchestrator passes on
+relevant steering when it next delegates.
+
+`rest` and phase intervals poll at the configured interval and wake when messages
+are pending. Detection latency during waits is at most that interval **plus the
+MCP scan time**, while transport is healthy. During a model call or tool/delegate
+call, delivery waits for its completion and the next model-call boundary; arbitrary
+calls are never interrupted. Work that has already finished is not restarted for
+late messages. There is no independent progress/incident monitoring here (AE-211).
+
+Add `escalate` to an agent's `tools` to request operator action without waiting:
+provide `request_id`, `failure`, `diagnosis`, `requested_action` and `meanwhile`.
+The tool posts to the configured source and returns immediately so independent work
+can continue. Operator replies follow the same automatic steering path. Reuse the
+same ID for the same request: the saved outcome is returned without another post.
+An uncertain/rejected post needs channel verification before a new ID is used.
+
+Resume with the same state directory: `steering.json` contains source/cursor, ordered
+pending messages and escalation outcomes; `sessions.sqlite` contains the delivered
+instructions. Preserve both together. The delivery marker means **stored in the
+conversation**, not proof that the model obeyed it. A failed model call keeps that
+instruction available for retry. An interrupted conversation write is reconciled
+against the saved envelope, preventing duplicate instructions on restart. As with
+all session history, older steering is subject to the chosen context strategy.
+
+`check` prints the saved transport status. Read failures also appear in the model's
+instructions; malformed/capped scans keep the old cursor for a complete retry.
+Session-write failures stop delivery with recovery instructions. Missing servers,
+invalid policies and `escalate` without steering fail validation (exit 2); missing
+MCP tools or startup failures fail before the first model call (also exit 2).
+Only declared MCP environment variables reach the transport; steering telemetry
+records IDs/authors and outcomes, excluding message bodies and transport exceptions.
+Run state and conversations contain message text and must be treated as private.
 
 ## Commands
 

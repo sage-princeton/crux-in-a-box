@@ -136,7 +136,7 @@ class PhasedLoop(Loop):
                 state.next_prompt = self.continuation(drop_in, phase, state.iteration, results)
             store.save(state)
             if state.next_prompt and phase.interval_seconds:
-                await ctx.sleep(phase.interval_seconds)
+                await ctx.wait(phase.interval_seconds)
         return LoopOutcome(status="completed", phase=phases[-1].name, final_output=last_output)
 
     def continuation(self, drop_in: DropInDirectory, phase: PhaseConfig, iteration: int,
