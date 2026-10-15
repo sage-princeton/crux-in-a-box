@@ -75,10 +75,13 @@ ok "Read 3 system values (not echoed)"
 AGENT_ENV="$(scaffold_agent_env)"
 check_run_api_key_clashes "$RUN_API_KEYS" "$AGENT_ENV" "$(scaffold_extra_env)"
 RUN_ENV_FILE=/etc/crux-run.env
+[ -d "$RUN_HOME/.cache" ] || install -d -m 700 -o "$RUN_USER" -g "$RUN_USER" "$RUN_HOME/.cache"
+install -d -m 700 -o "$RUN_USER" -g "$RUN_USER" "$RUN_HOME/.cache/crux-run"
 {
   printf '%s' "$AGENT_ENV" | jq -r 'to_entries[] | .key + "=" + (.value | @json)'
   printf '%s' "$RUN_API_KEYS" | jq -r 'to_entries[] | .key + "=" + (.value | @json)'
-  printf 'PATH=%s/.local/bin:/usr/local/bin:/usr/bin:/bin\nHOME=%s\n' "$RUN_HOME" "$RUN_HOME"
+  printf 'PATH=/opt/crux-run-tools/bin:%s/.local/bin:/usr/local/bin:/usr/bin:/bin\nHOME=%s\n' "$RUN_HOME" "$RUN_HOME"
+  printf 'XDG_CACHE_HOME=%s/.cache/crux-run\n' "$RUN_HOME"
   scaffold_extra_env
 } > "$RUN_ENV_FILE"
 chmod 600 "$RUN_ENV_FILE"

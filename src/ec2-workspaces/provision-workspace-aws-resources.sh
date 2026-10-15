@@ -529,6 +529,12 @@ done
     $PUBLIC_IP first, so this should not happen; verify by hand with
     ssh -v $SLUG"
 
+if [ "$SCAFFOLD_MODULE" = sdk ]; then
+  ssh "$SLUG" 'if systemctl is-active --quiet crux-sdk-run; then
+    echo "Stop crux-sdk-run between turns before reprovisioning." >&2; exit 1
+  fi'
+fi
+
 info "Staging $DROP_IN_PATH/ on $SLUG"
 ssh "$SLUG" 'sudo install -d -o ubuntu -g ubuntu /srv/crux-run /srv/crux-run/run-harness'
 git -C "$SCRIPT_DIR/../.." archive --prefix=run-harness/ "HEAD:$DROP_IN_PATH" \
@@ -543,6 +549,16 @@ if [ "$SCAFFOLD_MODULE" = sdk ]; then
 fi
 
 # ====== INSTALL (software, bakeable) ======
+info "Staging the run's software declaration"
+ssh "$SLUG" 'sudo install -d -m 755 /usr/local/lib/crux'
+scp -q "$SCRIPT_DIR/run_provision.py" "$SLUG:/tmp/run_provision.py"
+ssh "$SLUG" 'sudo install -m 644 /tmp/run_provision.py /usr/local/lib/crux/run_provision.py'
+if git -C "$SCRIPT_DIR/../.." cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
+  git -C "$SCRIPT_DIR/../.." show "HEAD:$DROP_IN_PATH/provision.json"
+else
+  printf '{"version":1}\n'
+fi | ssh "$SLUG" 'sudo sh -c "umask 022; cat > /etc/crux-provision.json"'
+
 info "install-run.sh — software"
 scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
 scp -q "$SCRIPT_DIR/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
