@@ -17,6 +17,44 @@ def test_defaults(tmp_path):
     assert config.context == {"type": "persistent"}
     assert config.budget.max_total_tokens is None
     assert config.agents["reviewer"].max_turns == 4
+    assert config.delegation.max_concurrent is None
+    assert config.delegation.max_depth is None
+
+
+@pytest.mark.parametrize("option", [
+    "max_concurrent = 0", "max_concurrent = -1", "max_concurrent = true", 'max_concurrent = "2"',
+    "max_concurrent = 2.0", "max_depth = -1", "max_depth = false", 'max_depth = "2"', "max_depth = 2.0",
+    "max_concurent = 2",
+])
+def test_delegation_options_are_strict(tmp_path, option):
+    with pytest.raises(InvalidDropInError, match="delegation"):
+        load_config(write_config(tmp_path, SCAFFOLD_TOML + f"\n[delegation]\n{option}\n"))
+
+
+@pytest.mark.parametrize("depth", [0, 1])
+def test_depth_validation_includes_coding_workers_and_names_the_path(tmp_path, depth):
+    text = SCAFFOLD_TOML.replace('max_turns = 4', 'max_turns = 4\ndelegates = ["engineer"]')
+    text += f"\n[delegation]\nmax_depth = {depth}\n"
+    with pytest.raises(InvalidDropInError, match=f"pm -> reviewer -> engineer.*depth 2.*max_depth={depth}"):
+        load_config(write_config(tmp_path, text))
+
+
+def test_depth_boundary_allows_nested_delegation(tmp_path):
+    text = SCAFFOLD_TOML.replace('max_turns = 4', 'max_turns = 4\ndelegates = ["engineer"]')
+    config = load_config(write_config(tmp_path, text + "\n[delegation]\nmax_depth = 2\nmax_concurrent = 1\n"))
+    assert config.delegation.max_depth == 2
+
+
+def test_zero_depth_allows_agents_without_delegates(tmp_path):
+    text = SCAFFOLD_TOML.replace('delegates = ["engineer", "reviewer"]', 'delegates = []')
+    assert load_config(write_config(tmp_path, text + "\n[delegation]\nmax_depth = 0\n"))
+
+
+def test_depth_validation_also_covers_unreachable_declared_agents(tmp_path):
+    text = SCAFFOLD_TOML.replace('delegates = ["engineer", "reviewer"]', 'delegates = []')
+    text = text.replace('max_turns = 4', 'max_turns = 4\ndelegates = ["engineer"]')
+    with pytest.raises(InvalidDropInError, match="reviewer -> engineer.*max_depth=0"):
+        load_config(write_config(tmp_path, text + "\n[delegation]\nmax_depth = 0\n"))
 
 
 def test_mutable_defaults_belong_to_each_config(tmp_path):

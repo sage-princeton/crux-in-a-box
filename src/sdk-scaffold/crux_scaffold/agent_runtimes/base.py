@@ -3,8 +3,11 @@ A runtime wires the scaffold's SDK-neutral components (tools, coding agents, con
 
 from __future__ import annotations
 
+import asyncio
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
@@ -47,6 +50,14 @@ class Verdict(BaseModel):
     next_prompt: str | None
 
 
+@dataclass
+class _DelegateCall:
+    task: asyncio.Task
+    active: bool = False
+    children: int = 0
+    closed: bool = False
+
+
 class AgentRuntime(Component):
     """The agent SDK that runs the declared agents. It builds one SDK agent per `[agents.<name>]` from the
     `Assembly` and runs the orchestrator's turns. See docs/extending.md for the contract."""
@@ -54,6 +65,68 @@ class AgentRuntime(Component):
     def __init__(self, name: str, options, *, assembly: Assembly) -> None:
         super().__init__(name, options)
         self.assembly = assembly
+        self._delegate_limit = assembly.drop_in.config.delegation.max_concurrent
+        self._active_delegates = 0
+        self._delegate_changed = asyncio.Condition()
+        self._delegate_call: ContextVar[_DelegateCall | None] = ContextVar("delegate_call", default=None)
+
+    @asynccontextmanager
+    async def delegation_slot(self, *, background: bool = False) -> AsyncIterator[None]:
+        """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
+        limit = self._delegate_limit
+        if limit is None:
+            yield
+            return
+        parent = None if background else self._delegate_call.get()
+        changed = self._delegate_changed
+        async with self._suspend_delegate(parent):
+            async with changed:
+                await changed.wait_for(lambda: self._active_delegates < limit)
+                self._active_delegates += 1
+                call = _DelegateCall(asyncio.current_task(), active=True)
+            token = self._delegate_call.set(call)
+            try:
+                yield
+            finally:
+                self._delegate_call.reset(token)
+                async with changed:
+                    call.closed = True
+                    if call.active:
+                        call.active = False
+                        self._active_delegates -= 1
+                    changed.notify_all()
+
+    @asynccontextmanager
+    async def delegation_wait(self) -> AsyncIterator[None]:
+        """Suspend a delegated caller while it awaits an independently scheduled worker."""
+        async with self._suspend_delegate(self._delegate_call.get()):
+            yield
+
+    @asynccontextmanager
+    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncIterator[None]:
+        limit = self._delegate_limit
+        if limit is None or parent is None:
+            yield
+            return
+        changed = self._delegate_changed
+        async with changed:
+            parent.children += 1
+            if parent.active:
+                parent.active = False
+                self._active_delegates -= 1
+            changed.notify_all()
+        try:
+            yield
+        finally:
+            async with changed:
+                parent.children -= 1
+                changed.notify_all()
+                await changed.wait_for(lambda: parent.closed or parent.task.cancelling() or parent.children
+                                       or parent.active or self._active_delegates < limit)
+                if not (parent.closed or parent.task.cancelling() or parent.children or parent.active):
+                    parent.active = True
+                    self._active_delegates += 1
+                    changed.notify_all()
 
     @abstractmethod
     async def __aenter__(self) -> Self:

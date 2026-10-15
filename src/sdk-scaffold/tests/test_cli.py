@@ -37,6 +37,15 @@ def test_unresolved_placeholders_stop_the_run_before_any_model_call(drop_in_dir,
     assert pm.inputs == []
 
 
+def test_excessive_delegation_depth_stops_before_any_model_call(drop_in_dir, tmp_path, capsys):
+    with (drop_in_dir / "scaffold.toml").open("a") as config:
+        config.write("\n[delegation]\nmax_depth = 0\n")
+    pm = ScriptedModel(say("should not run"))
+    assert run_cli(drop_in_dir, tmp_path, {"pm": pm}) == 2
+    assert "delegation.max_depth=0" in capsys.readouterr().err
+    assert pm.inputs == []
+
+
 def test_run_prints_the_outcome_and_warns_when_tracing_is_off(drop_in_dir, tmp_path, capsys):
     assert run_cli(drop_in_dir, tmp_path, {"pm": ScriptedModel(say("All done."))}) == 0
     captured = capsys.readouterr()

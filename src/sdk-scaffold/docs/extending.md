@@ -24,7 +24,7 @@ Prefer the first option that works:
 | Which coding-agent SDK implements a brief | [`CodingAgent`](#coding-agents-codingagent) | `[coding_agents]` |
 | Which agent SDK runs the agents | [`AgentRuntime`](#agent-runtimes-agentruntime) | `[runtime]` |
 | Where traces go | [`Telemetry`](#telemetry-telemetry) | Langfuse environment variables |
-| Hard resource limits | [`Budget`](#budget-and-usage) | `[budget]` |
+| Hard resource limits | [`Budget`](#budget-and-usage), [`AgentRuntime`](#agent-runtimes-agentruntime) | `[budget]`, `[delegation]` |
 | External consumption and credits | [`ResourceProvider`](#resource-providers-resourceprovider) | `[resources.<name>]` |
 
 ## The component pattern
@@ -212,6 +212,8 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 - **Declare** it under `[coding_agents.<name>]` and list it in an agent's `delegates`. The runtime exposes it as a tool that takes one `brief` argument.
 - **Background execution** is an option of the `openai-agents` runtime. `CodingAgent.run` and `execute` still run one brief to completion; the runtime owns the task and exposes result retrieval to callers.
 
+- **Delegation limits apply at the runtime boundary.** One coding-worker brief occupies one slot and adds one depth edge. Native subagents inside its coding harness do not consume additional scaffold slots or depth. A coding-agent implementation does not acquire a second slot in `execute` or `run`.
+
 ## Agent runtimes (`AgentRuntime`)
 
 `agent_runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `agent_runtimes/openai_agents.py`.
@@ -226,6 +228,8 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
 | `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent. |
 | `describe()` | One line per agent, printed by `check`. |
+| `delegation_slot(*, background=False)` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
+| `delegation_wait()` (base implementation) | Suspend a delegated caller while awaiting independently scheduled background work; reacquire its capacity before resuming. Does not acquire a new slot. |
 | `probe(env, prompt, telemetry)` (classmethod) | One traced model call outside any drop-in, which provisioning uses to prove the runtime works. |
 
 **The behavior the rest of the scaffold relies on:**
@@ -240,6 +244,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 - **Delegates.**
   - A delegated agent or coding agent is a tool whose call starts from a fresh context holding only the caller's brief.
   - A coding agent is called through `CodingAgent.run`.
+  - Wrap the entire delegated invocation in `async with self.delegation_slot()`, including SDK execution, coding-worker execution and error handling. The base runtime owns the run's shared capacity and propagates nested call identity through task-local context. Blocking callers must await their children inside the scope. Independently scheduled background workers acquire `delegation_slot(background=True)` inside their task, covering the complete worker execution without suspending their continuing caller. Wrap result waits in `delegation_wait()` so a one-slot parent can await its worker. Own, drain and cancel background tasks through the runtime lifecycle; do not suppress cancellation.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
 - **Context.** Apply `context_strategy.select` to orchestrator and delegate model calls, then append `await ctx.budget_status()` to ephemeral instructions. The status must survive trimming and must not accumulate in stored history; delegated SDK agents receive it too. Isolated judges skip this filter so run metadata and resource status cannot enter their evidence.
 - **Standing context.** Before each orchestrator turn, pass its stored history and context loader to `inject_standing_context`, then prepend the returned messages to its prompt as SDK input. Agent delegates do the same with an empty history for each call. Preserve the persona in instructions separately.
@@ -259,7 +264,20 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 - On exceptions or cancellation, the runtime cancels and awaits outstanding tasks. Background tasks are ephemeral: there is no durable job registry, restart attachment, or recovery contract.
 - Coding usage and progress keep the existing `CodingAgent.run` telemetry/ledger path. Waiting imposes no cumulative coding wall-time limit; the loop still checks its token budget between iterations.
 
-The one-task-per-name rule is not a run-wide concurrency/depth policy and does not constrain native subagents inside a coding harness. That policy is tracked separately in [AE-259](https://linear.app/agent-evals/issue/AE-259/add-configurable-delegation-concurrency-and-depth-limits-to-the-sdk). Operator messages still reach the model through its MCP reads; `rest` and native result waits do not add automatic steering or interruption. Defined steering boundaries are tracked in [AE-263](https://linear.app/agent-evals/issue/AE-263/support-reliable-operator-steering-and-agent-escalations-in-the-sdk).
+The one-task-per-name rule applies alongside the [delegation policy](#delegation-policy-delegation). Background workers share its run-wide capacity for their full execution, including when a caller leaves results uncollected. Completed, uncollected results occupy no execution capacity. Native subagents inside a coding harness are excluded. With `[runtime.steering]`, `rest` can wake for pending messages; native result waits still await the coding task without interrupting it. See the [runtime delivery contract](#runtime-delivery-contract).
+
+### Delegation policy (`[delegation]`)
+
+`DelegationConfig` in `config.py` extends the existing configuration and runtime contracts; it is not another registered component. Both options default to `None` (unlimited) and reject unknown keys, booleans, strings and floats:
+
+| Option | Contract |
+|---|---|
+| `max_concurrent` | Positive integer limiting active delegated invocations across every caller in one scaffold runtime. The orchestrator is excluded. Calls queue in memory when full; queued calls occupy no slots. A delegated SDK parent is suspended while nested delegates run, then reacquires capacity before returning to its own work. Parallel children share this suspension; no child can resume the parent while another child is still pending. Slots are released on success, error, cancellation and timeout. |
+| `max_depth` | Nonnegative integer bounding delegate edges: root depth 0, a direct delegate depth 1, its delegate depth 2. Coding workers are leaves; their native subagents are excluded. Zero forbids all declared delegation. |
+
+Validation reuses `delegation_order` after reference and cycle checks. It computes the longest path through every declared agent, including disconnected agents and coding-worker leaves, and raises `InvalidDropInError` with an offending path before runtime construction or any model call. For the declared acyclic graph, this covers every permitted runtime path; the runtime must expose only declared delegates. An extension introducing paths outside that graph must enforce the numeric depth limit for those paths itself.
+
+Capacity is shared for the lifetime of the runtime, across callers and loop iterations, and is not persisted across restarts or coordinated across separate scaffold processes. This policy limits scaffold delegation, not ordinary tools or the internal fan-out of a coding harness. Stalled-work diagnosis, durable jobs and recovery are separate capabilities.
 
 ## Telemetry (`Telemetry`)
 
