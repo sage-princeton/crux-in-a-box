@@ -32,6 +32,7 @@ from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.errors import InvalidDropInError, ToolError
+from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool
 from crux_scaffold.usage import UsageLedger
@@ -39,6 +40,7 @@ from crux_scaffold.usage import UsageLedger
 
 class OpenAIAgentsOptions(Options):
     max_turns: int = Field(50, ge=1)
+    steering: SteeringOptions | None = None
 
 
 class BriefArguments(Arguments):
@@ -70,12 +72,16 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self.agents: dict[str, Agent] = {}
         self.servers: dict[str, MCPServerStdio] = {}
         self._stack = AsyncExitStack()
+        self._steering_items: list[dict] = []
 
     def build(self) -> None:
         if self.agents:
             return
         config, ctx = self.assembly.drop_in.config, self.assembly.context
-        used = sorted({server for agent in config.agents.values() for server in agent.mcp_servers})
+        used = {server for agent in config.agents.values() for server in agent.mcp_servers}
+        if self.options.steering:
+            used.add(self.options.steering.server)
+        used = sorted(used)
         self.servers = {name: _mcp_server(name, config.mcp_servers[name], ctx.env) for name in used}
         for name in delegation_order(config.agents):
             spec = config.agents[name]
@@ -90,16 +96,38 @@ class OpenAIAgentsRuntime(AgentRuntime):
         # TODO(AE-247): let the AgentRuntime base class own telemetry setup for every runtime.
         trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
-        for server in self.servers.values():
-            await self._stack.enter_async_context(server)
-        self.session = self.assembly.context_strategy.session(
-            self.assembly.drop_in.config.orchestrator, self.assembly.context.state_dir)
+        steering = self.assembly.context.steering
+        try:
+            for server in self.servers.values():
+                await self._stack.enter_async_context(server)
+            if steering:
+                steering.transport = self.servers[steering.options.server]
+                available = {tool.name for tool in await steering.transport.list_tools()}
+                required = {"conversations_replies" if steering.options.thread_ts else "conversations_history"}
+                if any(tool.type_name == "escalate" for tool in self.assembly.tools.values()):
+                    required.add("conversations_add_message")
+                if missing := required - available:
+                    raise InvalidDropInError(f"steering MCP server is missing tools: {', '.join(sorted(missing))}")
+            self.session = self.assembly.context_strategy.session(
+                self.assembly.drop_in.config.orchestrator, self.assembly.context.state_dir)
+        except BaseException as exc:
+            await self._stack.aclose()
+            if steering and isinstance(exc, Exception):
+                status = ("startup_failed: check the steering MCP server, credentials, scopes and required tools; "
+                          "restart with the same state directory")
+                steering.state["status"] = status
+                steering.save()
+                steering.event("startup_failed", status=status)
+                if not isinstance(exc, InvalidDropInError):
+                    raise InvalidDropInError(status) from None
+            raise
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
         await self._stack.aclose()
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
+        self._steering_items = []
         orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
         try:
             result = await Runner.run(orchestrator, prompt, context=self.assembly.context,
@@ -135,9 +163,38 @@ class OpenAIAgentsRuntime(AgentRuntime):
         effort = self.assembly.context.reasoning_effort
         return ModelSettings(reasoning=Reasoning(effort=effort)) if effort else ModelSettings()
 
-    def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
-        items = self.assembly.context_strategy.select(list(data.model_data.input))
-        return ModelInputData(input=items, instructions=data.model_data.instructions)
+    async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
+        steering = self.assembly.context.steering
+        instructions = data.model_data.instructions
+        if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
+            await steering.poll()
+            pending = steering.pending()
+            if pending:
+                for message in pending:
+                    envelope = steering.envelope(message)
+                    try:
+                        history = await self.session.get_items()
+                        if envelope not in history:
+                            await self.session.add_items([envelope])
+                            history.append(envelope)
+                        if envelope not in data.model_data.input:
+                            self._steering_items.append(envelope)
+                        steering.delivered(message["ts"])
+                    except Exception:
+                        status = ("delivery_failed: check conversation/state storage; "
+                                  "restart with the same state directory")
+                        steering.state["status"] = status
+                        steering.save()
+                        steering.event("delivery_failed", message_id=message["ts"], status=status)
+                        raise InvalidDropInError(status) from None
+            if steering.state["status"] != "ok":
+                instructions = f"{instructions or ''}\n\nSteering transport status: {steering.state['status']}"
+        items = list(self.assembly.context_strategy.select(list(data.model_data.input)))
+        if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
+            # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
+            # until its next run reloads the durable session, even when a strategy trims older conversation.
+            items.extend(item for item in self._steering_items if item not in items)
+        return ModelInputData(input=items, instructions=instructions)
 
     def _function_tool(self, tool: Tool) -> FunctionTool:
         ctx = self.assembly.context
@@ -173,7 +230,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
 def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str]) -> MCPServerStdio:
     return MCPServerStdio(params={"command": config.command, "args": config.args,
                                   "env": config.resolved_env(name, env)},
-                          name=name, cache_tools_list=True, client_session_timeout_seconds=config.timeout_seconds)
+                          name=name, cache_tools_list=True, client_session_timeout_seconds=config.timeout_seconds,
+                          max_retry_attempts=0)
 
 
 def trace_agents_sdk(telemetry: Telemetry) -> None:
