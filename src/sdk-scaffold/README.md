@@ -22,21 +22,21 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 | **Gate** | A check the loop runs between iterations (the team's *gating criteria*): a deterministic verifier, or a judgment by an isolated model the agents cannot author. A failing gate produces the next prompt. |
 | **Context strategy** | How an agent's conversation is stored, and what part of it reaches the model on each call. |
 | **Budget** | Token, model-dollar and wall-clock limits checked between iterations. Resource providers can declare additional consumption limits. |
-| **Resource provider** | A source of run-scoped measurements, with units, timestamps and optional limits, shown on every model call. |
+| **Resource provider** | A source of run-scoped measurements, with units, timestamps and optional limits, shown on orchestrator and delegate model calls. |
 | **Steering channel** | How the operator and the agents reach each other. The demo uses Slack through MCP. |
 | **Operator** | The human running the CRUX. |
 | **Run box** | The EC2 instance a run executes on; `src/ec2-workspaces/` calls it a *workspace*. |
 
 ## Design
 
-Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`.
+Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`. A drop-in can also declare an isolated judge gate.
 
 | Responsibility | Interface (registry) | Built-in types |
 |---|---|---|
 | Agent orchestration, model configuration | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
-| Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command` |
+| Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
 | Context management | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent` |
-| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `command`, `rest`, `budget_status` |
+| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
 | Observability | `Telemetry` | Langfuse, or off |
@@ -86,7 +86,7 @@ flowchart LR
 ```
 scaffold.toml            the declaration (see examples/web-cms-product-change/scaffold.toml)
 PROMPT.md                first phase's prompt, sent verbatim
-prompts/*.md             later phase prompts, and each phase's continue prompt
+prompts/*.md             later phase prompts, each phase's continue prompt, and judge rubrics
 personas/*.md            one per agent
 scaffold_extensions.py   optional: the drop-in's own components
 workspace/               where agents work; AGENTS.md and other standing context live here
@@ -117,6 +117,46 @@ tools = ["read_file", "site_preview"]
 ```
 
 Gates, context strategies, coding agents, loops and runtimes extend the same way. [docs/extending.md](docs/extending.md) describes each extension point's contract, and when to extend one rather than add a new abstraction.
+
+## Adapting the demo
+
+A CRUX with different needs changes declarations, not code. The same drop-in could, for example:
+
+- **Judge the outcome, not just the tests.** Add an isolated `llm_judge` gate to the `implement` phase. The judge is an agent with no access to the orchestrator's conversation. It starts from its rubric, the orchestrator's final output and the workspace files listed in `inspect`, then verifies the work with its `tools`: `read_file` and `list_files` by default, plus any declared tool, such as a `command` tool that runs the tests. Running out of `max_turns` fails the gate. Have the rubric ask the judge to cite what it checked. It can write the next prompt itself.
+  ```toml
+  [[loop.phases]]
+  name = "implement"
+  gates = ["site_tests_pass", "request_met"]
+
+  [gates.request_met]
+  type = "llm_judge"
+  rubric = "prompts/judge_request.md"
+  inspect = ["REQUEST.md"]
+  tools = ["read_file", "list_files", "site_tests"]
+  max_turns = 20
+  ```
+- **Review a submission blind.** Opt into evidence isolation with `blind = true`. Map neutral filenames to the
+  exact submission files in the workspace. Each review snapshots those files afresh and exposes only the aliases;
+  it receives the fixed rubric and artifact list, with no orchestrator output, phase, iteration or prior reviews.
+  The reviewer can read UTF-8 evidence and extract/render PDF pages, including figures, through restricted tools.
+  Its verdict, feedback, next prompt, telemetry and usage accounting work as in ordinary judging.
+  ```toml
+  [gates.paper_review]
+  type = "llm_judge"
+  rubric = "prompts/research_review.md"
+  blind = true
+  artifacts = { "submission.pdf" = "results/paper.pdf", "data.csv" = "results/data.csv" }
+  tools = ["read_file", "list_files", "read_pdf"]
+  max_turns = 20
+  ```
+  Do not set `inspect` in blind mode. Only the built-in `read_file`, `list_files` and `read_pdf` implementations
+  are permitted: shell commands, writes, custom tools and access to other workspace files are rejected. Missing,
+  symlinked, non-regular or over-32-MiB artifacts fail the gate before calling a reviewer. Aliases are simple
+  filenames, without directories. The drop-in owns anonymization of the rubric, aliases and artifact contents:
+  leave out author identities, plans/logs, prior reviews, expected scores and revision cues. PDF tools expose page
+  text and pixels, without document properties, attachments, source paths or filesystem metadata. No artifact code
+  is executed. Run a small live review with your configured runtime and submission formats before a research run;
+  automated tests use scripted models and make no network calls.
 
 ## Commands
 
@@ -273,7 +313,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 
 | Variable | Use |
 |---|---|
-| `OPENAI_API_KEY` | Agent and Codex model calls |
+| `OPENAI_API_KEY` | Agent, judge and Codex model calls |
 | `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The model and effort for every agent and coding agent. They are the only place these are set; a drop-in cannot override them. A run without `CRUX_MODEL` stops with a configuration error. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
