@@ -4,19 +4,21 @@ import boto3
 import httpx
 import pytest
 from botocore.exceptions import ClientError
-from conftest import ingest
+from conftest import ORIGIN, ingest
 from moto import mock_aws
 
 from fleet import (
+    Notifications,
     inventory_targets,
-    notify_enrollment,
-    notify_incidents,
-    notify_status,
-    notify_workload,
     send_slack,
     slack_webhook_url,
 )
 from review import CoverageError, collect_langfuse
+
+
+@pytest.fixture
+def notifications(store):
+    return Notifications(store, ORIGIN)
 
 
 def test_every_ec2_is_enrolled_except_the_two_named_monitoring_exclusions():
@@ -51,7 +53,9 @@ def test_every_ec2_is_enrolled_except_the_two_named_monitoring_exclusions():
 @pytest.mark.parametrize(
     "failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)]
 )
-def test_slack_only_announces_new_incidents_with_links_and_retries(store, target, failure, slack):
+def test_slack_only_announces_new_incidents_with_links_and_retries(
+    store, target, failure, slack, notifications
+):
     attempts = []
 
     def handler(request):
@@ -60,16 +64,12 @@ def test_slack_only_announces_new_incidents_with_links_and_retries(store, target
         return httpx.Response(status, text=body)
 
     with slack(handler):
-        args = (
-            store,
-            "https://incidents.example.test",
-        )
-        assert notify_incidents(*args) == 0 and attempts == []
+        assert notifications.incidents() == 0 and attempts == []
         item = ingest(store, target)
         with pytest.raises(failure[2]):
-            notify_incidents(*args)
+            notifications.incidents()
         assert store.new_incidents()[0]["new_incidents"] == 1
-        assert notify_incidents(*args) == 1
+        assert notifications.incidents() == 1
         assert attempts[0] == attempts[1]
         message = attempts[-1]["blocks"][0]["text"]
         assert message["type"] == "mrkdwn"
@@ -79,18 +79,18 @@ def test_slack_only_announces_new_incidents_with_links_and_retries(store, target
         )
         store.transition(item["id"], item["version"], "closed", {"id": "operator"}, "Resolved")
         ingest(store, target, 1800)
-        assert notify_incidents(*args) == 0 and len(attempts) == 2
+        assert notifications.incidents() == 0 and len(attempts) == 2
         # Late evidence creates a new incident even when its review window is older.
         ingest(store, target, 450, anchor="observation:late")
-        assert notify_incidents(*args) == 1
+        assert notifications.incidents() == 1
         ingest(store, target, 2700, anchor="observation:second")
         ingest(store, target, 3600, anchor="observation:third")
-        assert notify_incidents(*args) == 1
+        assert notifications.incidents() == 1
         assert attempts[-1]["text"].startswith("*2 new incidents* :warning: on experiment\n")
-        assert notify_incidents(*args) == 0 and len(attempts) == 4
+        assert notifications.incidents() == 0 and len(attempts) == 4
 
 
-def test_slack_does_not_parse_workload_names_as_mentions(store, target, slack):
+def test_slack_does_not_parse_workload_names_as_mentions(store, target, slack, notifications):
     renamed = {**target, "slug": "<@U123>"}
     store.sync([renamed], 1800, 1800)
     ingest(store, renamed)
@@ -101,14 +101,11 @@ def test_slack_does_not_parse_workload_names_as_mentions(store, target, slack):
         return httpx.Response(200, text="ok")
 
     with slack(handler):
-        notify_incidents(
-            store,
-            "https://incidents.example.test",
-        )
+        notifications.incidents()
     assert "on &lt;@U123&gt;" in attempts[0]["text"] and "<@U123>" not in attempts[0]["text"]
 
 
-def test_incident_created_during_slack_delivery_is_not_skipped(store, target, slack):
+def test_incident_created_during_slack_delivery_is_not_skipped(store, target, slack, notifications):
     ingest(store, target)
     attempts = []
 
@@ -119,21 +116,17 @@ def test_incident_created_during_slack_delivery_is_not_skipped(store, target, sl
         return httpx.Response(200, text="ok")
 
     with slack(handler):
-        args = (
-            store,
-            "https://incidents.example.test",
-        )
-        assert notify_incidents(*args) == 1
+        assert notifications.incidents() == 1
         assert store.new_incidents()[0]["new_incidents"] == 1
-        assert notify_incidents(*args) == 1
-        assert notify_incidents(*args) == 0
+        assert notifications.incidents() == 1
+        assert notifications.incidents() == 0
     assert len(attempts) == 2 and all(
         item["text"].startswith("*1 new incident*") for item in attempts
     )
 
 
 def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(
-    store, target, slack
+    store, target, slack, notifications
 ):
     attempts = []
 
@@ -144,16 +137,11 @@ def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(
         )
 
     with slack(handler):
-        args = (
-            store,
-            target,
-            "https://incidents.example.test",
-        )
         with pytest.raises(httpx.HTTPStatusError):
-            notify_enrollment(*args)
+            notifications.enrollment(target)
         assert not store.notice("enrollment/" + target["key"])
-        assert notify_enrollment(*args) == 1
-        assert notify_enrollment(*args) == 0
+        assert notifications.enrollment(target) == 1
+        assert notifications.enrollment(target) == 0
         assert attempts[0] == attempts[1]
         assert (
             f"<https://incidents.example.test/?workload={target['key']}|View workload>"
@@ -161,13 +149,15 @@ def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(
         )
         # Legacy deployments stored a fingerprint of the old message without a link.
         store.acknowledge("enrollment/" + target["key"], "legacy-fingerprint")
-        assert notify_enrollment(*args) == 0 and len(attempts) == 2
+        assert notifications.enrollment(target) == 0 and len(attempts) == 2
 
 
 @pytest.mark.parametrize(
     "failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)]
 )
-def test_status_reports_retry_and_advance_only_after_acknowledgement(store, target, failure, slack):
+def test_status_reports_retry_and_advance_only_after_acknowledgement(
+    store, target, failure, slack, notifications
+):
     attempts = []
     result = {
         "outcome": "completed",
@@ -193,11 +183,7 @@ def test_status_reports_retry_and_advance_only_after_acknowledgement(store, targ
     with slack(handler):
 
         def send():
-            return notify_status(
-                store,
-                store.fleet()[0],
-                "https://incidents.example.test",
-            )
+            return notifications.status(store.fleet()[0])
 
         with pytest.raises(failure[2]):
             send()
@@ -224,7 +210,7 @@ def test_status_reports_retry_and_advance_only_after_acknowledgement(store, targ
         assert store.notice("status/" + target["key"]) == "1800"
 
 
-def test_status_reports_escape_mentions_and_bound_verbose_text(store, target, slack):
+def test_status_reports_escape_mentions_and_bound_verbose_text(store, target, slack, notifications):
     renamed = {**target, "slug": "<@U123>"}
     store.sync([renamed], 1800, 1800)
     store.save_collection(target["key"], 900, {"target": renamed})
@@ -248,14 +234,7 @@ def test_status_reports_escape_mentions_and_bound_verbose_text(store, target, sl
         return httpx.Response(200, text="ok")
 
     with slack(handler):
-        assert (
-            notify_workload(
-                store,
-                store.fleet()[0],
-                "https://incidents.example.test",
-            )
-            == 1
-        )
+        assert notifications.workload(store.fleet()[0]) == 1
     message = attempts[0]["blocks"][0]["text"]["text"]
     assert "&lt;@U123&gt;" in message and "<@U123>" not in message
     assert "<!channel>" not in message and "&lt;!channel&gt;" in message
@@ -266,7 +245,7 @@ def test_status_reports_escape_mentions_and_bound_verbose_text(store, target, sl
     "state", ["stopping", "stopped", "shutting-down", "terminated", "no longer enrolled"]
 )
 def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(
-    store, target, state, slack
+    store, target, state, slack, notifications
 ):
     attempts = []
     store.acknowledge("enrollment/" + target["key"], "legacy-fingerprint")
@@ -280,11 +259,7 @@ def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(
     with slack(handler):
 
         def send():
-            return notify_workload(
-                store,
-                store.fleet()[0],
-                "https://incidents.example.test",
-            )
+            return notifications.workload(store.fleet()[0])
 
         store.sync(
             [] if state == "no longer enrolled" else [{**target, "state": state}], 1800, 1800
@@ -305,14 +280,7 @@ def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(
         assert send() == 0
         # Restarting can announce enrollment again without replaying old status.
         store.sync([target], 4500, 1800)
-        assert (
-            notify_enrollment(
-                store,
-                target,
-                "https://incidents.example.test",
-            )
-            == 1
-        )
+        assert notifications.enrollment(target) == 1
         assert attempts[-1]["text"].startswith("Monitoring has begun")
         store.sync([], 5400, 1800)
         assert send() == 1 and send() == 0
@@ -320,21 +288,16 @@ def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(
 
 
 @pytest.mark.parametrize("state", ["running", "pending", "stopped", "terminated"])
-def test_unassessed_instances_do_not_generate_lifecycle_notices(store, target, state, slack):
+def test_unassessed_instances_do_not_generate_lifecycle_notices(
+    store, target, state, slack, notifications
+):
     store.sync([{**target, "state": state}], 1800, 1800)
 
     def handler(request):
         raise AssertionError("A never-enrolled instance must not send a notice")
 
     with slack(handler):
-        assert (
-            notify_workload(
-                store,
-                store.fleet()[0],
-                "https://incidents.example.test",
-            )
-            == 0
-        )
+        assert notifications.workload(store.fleet()[0]) == 0
 
 
 def test_slack_sender_loads_webhook_once_and_retries_configuration_failures(monkeypatch):

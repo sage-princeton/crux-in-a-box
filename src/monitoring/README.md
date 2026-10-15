@@ -84,6 +84,11 @@ assessment window's timestamp and a status history link. Polling the same
 assessment does not repeat it; delivery retries use the latest saved status
 without repeating inference.
 
+The worker creates one `Notifications(store, origin)` for its lifetime. Workload
+and status delivery take only the current target; incident delivery takes no
+arguments. The web origin is validated at startup and shared by these deliveries;
+restart the worker after changing it.
+
 Slack announces when an enrolled instance stops, terminates or disappears from
 inventory. Saved history remains available, and restarting the instance announces
 that monitoring has begun again. Previously acknowledged enrollments are retained.

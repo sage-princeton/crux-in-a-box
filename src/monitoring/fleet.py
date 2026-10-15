@@ -93,51 +93,84 @@ def send_slack(message):
         raise CoverageError("Slack did not acknowledge delivery")
 
 
-def notify_enrollment(store, target, origin):
-    key = "enrollment/" + target["key"]
-    if store.notice(key) not in (None, "closed"):
-        return 0
-    origin = https_url(origin)
+class Notifications:
+    """Share delivery context; keep the current workload explicit on each call."""
+
+    def __init__(self, store, origin):
+        self.store = store
+        self.origin = https_url(origin)
+
+    def workload(self, target):
+        """Use current inventory, never the target saved in an old assessment."""
+        if target["state"] in CLOSED_STATES:
+            return self.closure(target)
+        if target["state"] != "running":
+            return 0
+        sent = 0
+        if target["attempt"] != "pending" and target["review_status"] != "pending":
+            sent += self.enrollment(target)
+        return sent + self.status(target)
+
+    def enrollment(self, target):
+        key = "enrollment/" + target["key"]
+        if self.store.notice(key) not in (None, "closed"):
+            return 0
+        message = (
+            f"Monitoring has begun on {workload_label(target)}. "
+            "Status checks and incident monitoring are enrolled.\n"
+            f"<{self.origin}/?workload={target['key']}|View workload>"
+        )
+        send_slack(message)
+        self.store.acknowledge(key, digest(message))
+        return 1
+
+    def closure(self, target):
+        key = "enrollment/" + target["key"]
+        if self.store.notice(key) in (None, "closed"):
+            return 0
+        state = html.escape(target["state"], quote=False)
+        message = (
+            f"Monitoring has ended on {workload_label(target)}. Instance state: {state}.\n"
+            "Status checks and incident monitoring have stopped; saved history remains available.\n"
+            f"<{self.origin}/?workload={target['key']}|View workload>"
+        )
+        send_slack(message)
+        self.store.acknowledge(key, "closed")
+        return 1
+
+    def status(self, target):
+        latest = target["latest"]
+        key = "status/" + target["key"]
+        if not latest or latest["window_end"] <= int(self.store.notice(key) or 0):
+            return 0
+        message = status_message(target)
+        send_slack(f"{message}\n<{self.origin}/workloads/{target['key']}/status|View status>")
+        self.store.acknowledge(key, str(latest["window_end"]))
+        return 1
+
+    def incidents(self):
+        pending = self.store.new_incidents()
+        for row in pending:
+            count = row["new_incidents"]
+            noun = "incident" if count == 1 else "incidents"
+            label = html.escape(row["slug"], quote=False)
+            link = f"{self.origin}/?workload={row['key']}#incident-table"
+            message = f"*{count} new {noun}* :warning: on {label}\n<{link}|View incidents>"
+            send_slack(message)
+            self.store.acknowledge_incidents(row["key"], row["through"])
+        return len(pending)
+
+
+def workload_label(target):
     label = html.escape(target["slug"], quote=False)
     instance = html.escape(target["instance_id"], quote=False)
-    message = (
-        f"Monitoring has begun on {label} ({instance}). "
-        "Status checks and incident monitoring are enrolled.\n"
-        f"<{origin}/?workload={target['key']}|View workload>"
-    )
-    send_slack(message)
-    store.acknowledge(key, digest(message))
-    return 1
+    return f"{label} ({instance})"
 
 
-def notify_closure(store, target, origin):
-    key = "enrollment/" + target["key"]
-    if store.notice(key) in (None, "closed"):
-        return 0
-    origin = https_url(origin)
-    label = html.escape(target["slug"], quote=False)
-    instance = html.escape(target["instance_id"], quote=False)
-    state = html.escape(target["state"], quote=False)
-    message = (
-        f"Monitoring has ended on {label} ({instance}). Instance state: {state}.\n"
-        "Status checks and incident monitoring have stopped; saved history remains available.\n"
-        f"<{origin}/?workload={target['key']}|View workload>"
-    )
-    send_slack(message)
-    store.acknowledge(key, "closed")
-    return 1
-
-
-def notify_status(store, target, origin):
+def status_message(target):
     latest = target["latest"]
-    key = "status/" + target["key"]
-    if not latest or latest["window_end"] <= int(store.notice(key) or 0):
-        return 0
-    origin = https_url(origin)
-    label = html.escape(target["slug"], quote=False)
-    instance = html.escape(target["instance_id"], quote=False)
     lines = [
-        f"*Status update* on {label} ({instance})",
+        f"*Status update* on {workload_label(target)}",
         f"*Window ending:* {iso(latest['window_end'])}",
     ]
     for field in ("activity", "progress", "quality", "milestones", "alert", "recommendation"):
@@ -148,35 +181,4 @@ def notify_status(store, target, origin):
             # Keep the section within Slack's 3,000-character limit, including escaped text.
             value = value if len(value) <= 400 else value[:397] + "..."
             lines.append(f"*{field.capitalize()}:* {value}")
-    lines.append(f"<{origin}/workloads/{target['key']}/status|View status>")
-    send_slack("\n".join(lines))
-    store.acknowledge(key, str(latest["window_end"]))
-    return 1
-
-
-def notify_workload(store, target, origin):
-    """Use current inventory, never the target saved in an old assessment."""
-    if target["state"] in CLOSED_STATES:
-        return notify_closure(store, target, origin)
-    if target["state"] != "running":
-        return 0
-    sent = 0
-    if target["attempt"] != "pending" and target["review_status"] != "pending":
-        sent += notify_enrollment(store, target, origin)
-    return sent + notify_status(store, target, origin)
-
-
-def notify_incidents(store, origin):
-    pending = store.new_incidents()
-    if not pending:
-        return 0
-    origin = https_url(origin)
-    for row in pending:
-        count = row["new_incidents"]
-        noun = "incident" if count == 1 else "incidents"
-        label = html.escape(row["slug"], quote=False)
-        link = f"{origin}/?workload={row['key']}#incident-table"
-        message = f"*{count} new {noun}* :warning: on {label}\n<{link}|View incidents>"
-        send_slack(message)
-        store.acknowledge_incidents(row["key"], row["through"])
-    return len(pending)
+    return "\n".join(lines)

@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 from sqlalchemy import text
 
 from collection import Collector
-from fleet import inventory_targets, notify_incidents, notify_workload
+from fleet import Notifications, inventory_targets
 from lifecycle import evidence_anchors, review_anchors
 from review import (
     MAX_OUTPUT_TOKENS,
@@ -50,6 +50,7 @@ def validate(config):
 class Runtime:
     def __init__(self, store=None):
         self.store = store or Store()
+        self.notifications = Notifications(self.store, os.environ["MONITORING_WEB_ORIGIN"])
         self.config = json.loads(Path(__file__).with_name("monitoring.json").read_text())
         validate(self.config)
         sdk = Config(
@@ -284,20 +285,13 @@ class Runtime:
                         )
                 for target in self.store.fleet():
                     try:
-                        notify_workload(
-                            self.store,
-                            target,
-                            os.environ["MONITORING_WEB_ORIGIN"],
-                        )
+                        self.notifications.workload(target)
                     except Exception as error:
                         print(
                             f"{target['instance_id']}: workload delivery failed ({type(error).__name__}).",
                             flush=True,
                         )
-                notify_incidents(
-                    self.store,
-                    os.environ["MONITORING_WEB_ORIGIN"],
-                )
+                self.notifications.incidents()
                 self.store.prune(now - 90 * 86400)
             finally:
                 lock.execute(text("SELECT pg_advisory_unlock(21145)"))

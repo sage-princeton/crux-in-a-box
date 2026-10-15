@@ -6,7 +6,6 @@ import httpx
 import pytest
 from moto import mock_aws
 
-from fleet import notify_incidents, notify_workload
 from worker import Runtime
 
 MODEL_CATALOG = {
@@ -108,30 +107,22 @@ def runtime(store, target, monkeypatch):
 def test_one_collection_and_independent_assessments_survive_slack_retry(runtime):
     worker, target, secrets, counts = runtime
     worker.run_target(target, 900, {}, secrets)
-    workload_args = (
-        worker.store,
-        worker.store.fleet()[0],
-        "https://incidents.example.test",
-    )
+    workload = worker.store.fleet()[0]
     with pytest.raises(httpx.HTTPStatusError):
-        notify_workload(*workload_args)
+        worker.notifications.workload(workload)
     assert worker.store.assessment(target["key"], 900, "status")["outcome"] == "failed"
     assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
     assert counts["collection"] == 1 and counts["slack"] == 1
-    args = (
-        worker.store,
-        "https://incidents.example.test",
-    )
     initial = counts.copy()
     worker.run_target(target, 900, {}, secrets)
-    assert notify_workload(*workload_args) == 1
+    assert worker.notifications.workload(workload) == 1
     assert worker.store.notice("enrollment/" + target["key"])
-    assert notify_incidents(*args) == 1
+    assert worker.notifications.incidents() == 1
     assert counts["model"] == initial["model"] and counts["collection"] == 1
     delivered = counts.copy()
     worker.run_target(target, 900, {}, secrets)
-    assert notify_workload(*workload_args) == 0
-    assert notify_incidents(*args) == 0
+    assert worker.notifications.workload(workload) == 0
+    assert worker.notifications.incidents() == 0
     assert counts == delivered
     assert len(worker.store.instance_page(target["instance_id"], None, None, 50)) == 1
 
