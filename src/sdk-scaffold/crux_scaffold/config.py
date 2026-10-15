@@ -20,13 +20,18 @@ ENV_REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 ComponentTable = dict[str, Any]
 
 
-class AgentConfig(Options):
+class StandingContextOptions(Options):
+    context: list[str] = Field(default_factory=list)
+    workspace_context: list[str] = Field(default_factory=list)
+    context_max_chars: int = Field(32_000, ge=200)
+
+
+class AgentConfig(StandingContextOptions):
     """An LLM agent the agent runtime runs in-process: a persona, standing context, scaffold tools, MCP servers and
     delegates. Agents plan, coordinate and talk to people; delegate code changes to a coding agent, which runs a
     full coding harness (Codex or Claude Code) and is far more capable at them."""
 
     persona: str
-    context: list[str] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
     delegates: list[str] = Field(default_factory=list)

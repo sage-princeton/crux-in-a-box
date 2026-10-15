@@ -5,6 +5,7 @@ import asyncio
 import json
 import os
 import signal
+from collections.abc import Callable
 
 from agents.items import ModelResponse
 from agents.models.interface import Model
@@ -85,12 +86,15 @@ class ScriptedCodingAgent(CodingAgent):
     type_name = "scripted"
     Options = ScriptedCodingOptions
 
-    def __init__(self, name: str, options: ScriptedCodingOptions, *, developer_instructions: str = "") -> None:
+    def __init__(self, name: str, options: ScriptedCodingOptions, *,
+                 developer_instructions: str | Callable[[], str] = "") -> None:
         super().__init__(name, options, developer_instructions=developer_instructions)
         self.briefs: list[str] = []
+        self.instructions: list[str] = []
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
         self.briefs.append(brief)
+        self.instructions.append(self.developer_instructions)
         for rel, content in self.options.writes.items():
             ctx.workspace.write_file(rel, content)
         return CodingResult(completed=True, final_response=self.options.response,

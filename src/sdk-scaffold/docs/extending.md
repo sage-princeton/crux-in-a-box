@@ -20,7 +20,7 @@ Prefer the first option that works:
 | How the operator and agents reach each other, or another external system | [MCP servers](#mcp-servers-steering-and-external-systems) | `[mcp_servers]` |
 | When a phase is done, and what to prompt next | [`Gate`](#gates-gate) | `command` gate; `continue_prompt` |
 | How phases and iterations are sequenced | [`Loop`](#loops-loop) | `[[loop.phases]]` |
-| What part of a conversation reaches the model | [`ContextStrategy`](#context-strategies-contextstrategy) | `[context]` |
+| What part of a conversation reaches the model and when standing context is injected | [`ContextStrategy`](#context-strategies-contextstrategy) | `[context]`; each agent's `context`, `workspace_context`, `context_max_chars` |
 | Which coding-agent SDK implements a brief | [`CodingAgent`](#coding-agents-codingagent) | `[coding_agents]` |
 | Which agent SDK runs the agents | [`AgentRuntime`](#agent-runtimes-agentruntime) | `[runtime]` |
 | Where traces go | [`Telemetry`](#telemetry-telemetry) | Langfuse environment variables |
@@ -176,19 +176,23 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 
 ## Context strategies (`ContextStrategy`)
 
-`context_strategies.py`, registry `CONTEXT_STRATEGIES`. Built-in: `persistent`.
+`context_strategies.py`, registry `CONTEXT_STRATEGIES`. Built-ins: `persistent`, `trim_recent`, `openai_compaction`.
 
-- **`session(session_id, state_dir)`** returns the orchestrator's durable conversation store. The default is SQLite in `state_dir`, which survives restarts.
+- **`session(session_id, ctx: RunContext)`** returns the orchestrator's durable conversation store. The default is SQLite in `ctx.state_dir`, which survives restarts.
 - **`select(items)`** returns the items sent on the next model call. The runtime applies it to orchestrator and delegate model calls; isolated judges use their own evidence. The stored history is unchanged.
-- **Standing context is never trimmed.** Personas and standing context are the agents' instructions, not conversation items, so `select` never sees them.
+- **`inject_standing_context(history, load)`** is abstract: every strategy must implement it. Before an outer runtime turn, it receives the stored conversation and a zero-argument loader for this agent's current standing context. Return a list of messages to prepend to the new turn's input. The runtime saves them with that turn through the SDK session, so the decision survives restarts and uses no process-local flags. Call `load` only when injecting. Fresh agent delegates use an empty history for every invocation.
+- **`persistent`** injects a developer snapshot once, then sends the whole history. The `is_standing_context` helper recognizes snapshots by their developer role and header.
+- **`trim_recent`** has `max_items` (default 200, positive). It trims at user-message boundaries, preserving complete tool-call sequences even when they exceed the limit. It refreshes context when the previous snapshot falls outside the recent history and keeps the latest snapshot in every model input throughout a turn.
+- **`openai_compaction`** has `trigger_items` (default 200, positive). It wraps the durable store in `OpenAIResponsesCompactionSession` and uses the run's model. Its metered client records usage as `compaction:<session_id>` in the ledger and telemetry. It injects first, and on the next outer turn when history has a compaction item newer than its latest snapshot (or no snapshot). Unsupported models fail before a model call.
+- **Standing-context sources** are declared per agent or coding agent using `StandingContextOptions`: `context` is a list of required drop-in-relative files; `workspace_context` is a list of workspace-relative files that may not exist yet; `context_max_chars` caps the whole snapshot at 32,000 characters by default (minimum 200). Paths are confined to their root at validation and at injection. Existing sources are checked for unresolved placeholders at launch. `DropInDirectory.standing_context(spec, *, telemetry, agent)` loads a bounded snapshot, marks absent dynamic files, and records a `standing_context:<agent>` span with paths, character count and truncation status. `instructions(agent)` supplies the persona separately, on every call.
 - **Strategies use the runtime's types.** Items and `Session` are OpenAI Agents SDK types today, so a strategy targets the `openai-agents` runtime. A second runtime decides whether to adapt them or to take strategies of its own.
 
 ## Coding agents (`CodingAgent`)
 
 `coding_agents.py`, registry `CODING_AGENTS`. Built-in: `codex`.
 
-- **`Options`** subclasses `CodingAgentOptions`, whose base has `description` and `context`. The model and effort are not options: use `ctx.model` and `ctx.reasoning_effort`. `codex` also gives Codex a 1M-token context window (`CONTEXT_WINDOW_TOKENS`).
-- **The constructor** must accept `developer_instructions`, the drop-in's standing context for the coding agent. Give any other dependency a default, such as `codex`'s `client_factory`, so tests can replace it.
+- **`Options`** subclasses `CodingAgentOptions`, whose base has `description`, `context`, `workspace_context` and `context_max_chars`. The model and effort are not options: use `ctx.model` and `ctx.reasoning_effort`. `codex` also gives Codex a 1M-token context window (`CONTEXT_WINDOW_TOKENS`).
+- **The constructor** must accept `developer_instructions: str | Callable[[], str]`. The composition root supplies a loader so the agent gets current files when each fresh coding brief starts. The base's `developer_instructions` property resolves it; read it once at the beginning of `execute`. Give any other dependency a default, such as `codex`'s `client_factory`, so tests can replace it.
 - **`execute(brief, ctx) -> CodingResult`** runs one brief to completion in the workspace. Each brief starts fresh: the brief is the whole task. Don't override `run`. It wraps `execute` in a telemetry `generation` and adds the usage to the ledger.
 - **`CodingResult`**:
   - Report `usage` as OpenAI counts it: cache reads and writes are included in `input_tokens`, and reasoning in `output_tokens`. Telemetry splits these into exclusive buckets.
@@ -227,6 +231,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
   - A coding agent is called through `CodingAgent.run`.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
 - **Context.** Apply `context_strategy.select` to orchestrator and delegate model calls, then append `await ctx.budget_status()` to ephemeral instructions. The status must survive trimming and must not accumulate in stored history; delegated SDK agents receive it too. Isolated judges skip this filter so run metadata and resource status cannot enter their evidence.
+- **Standing context.** Before each orchestrator turn, pass its stored history and context loader to `inject_standing_context`, then prepend the returned messages to its prompt as SDK input. Agent delegates do the same with an empty history for each call. Preserve the persona in instructions separately.
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
 - **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).

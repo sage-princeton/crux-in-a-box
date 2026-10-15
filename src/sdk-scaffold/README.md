@@ -16,7 +16,7 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 | **Agent**, **orchestrator** | An LLM agent declared with a persona, standing context and tools. The orchestrator is the agent that receives the loop's prompts. |
 | **Coding agent** | A non-interactive coding-agent SDK session (Codex now, Claude Code later) that agents delegate implementation to. It runs the full coding harness as a subprocess, with its own tools, sandbox and context management, so it is far more capable at changing code than an agent. Declare an agent for planning, coordination and talking to people, and a coding agent for code changes. |
 | **Delegate** | An agent or coding agent that another agent calls as a tool. It starts from a fresh context holding only the caller's brief. |
-| **Persona**, **standing context** | Who an agent is (`personas/*.md`); what it must know for the whole run (the files in its `context`). |
+| **Persona**, **standing context** | Who an agent is (`personas/*.md`); the operator-declared files it needs, injected at boundaries chosen by its context strategy. |
 | **Toolkit**, **tool** | The functions agents can call: built-ins plus a drop-in's extensions. |
 | **Loop**, **phase**, **iteration** | The outer loop runs phases in order. Each phase repeats iterations, one prompt to the orchestrator each, until its gates pass. |
 | **Gate** | A check the loop runs between iterations (the team's *gating criteria*): a deterministic verifier, or a judgment by an isolated model the agents cannot author. A failing gate produces the next prompt. |
@@ -35,7 +35,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 |---|---|---|
 | Agent orchestration, model configuration | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
-| Context management | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent` |
+| Context management and standing-context injection | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
@@ -94,6 +94,20 @@ OPERATOR_GUIDE.md        how to resolve placeholders and launch; operator notes 
 ```
 
 The run stops before any model call if an operator-facing file or standing-context file still contains a `{{KEY}}` or `{{KEY|default}}` placeholder. The error lists each one as `file:line`.
+
+Each agent and coding agent chooses its own standing context in `scaffold.toml`:
+
+```toml
+[agents.product_manager]
+persona = "personas/product_manager.md"
+context = ["workspace/AGENTS.md"]        # static files relative to the drop-in (run-harness on a box)
+workspace_context = ["REQUEST.md", "LOG.md"]  # dynamic paths relative to the workspace
+context_max_chars = 32000                # total snapshot limit, including truncation notice
+```
+
+Static files must exist at launch. Dynamic paths may be created during the run; absent files appear as `[Not created yet.]`. Paths stay within their declared root, including symlinks. Files are read when the strategy injects a snapshot. `persistent` injects once on the first turn and keeps that snapshot across restarts. `openai_compaction` also injects on the first turn after compaction. `trim_recent` refreshes when the previous snapshot falls outside its recent history and retains it throughout tool calls. Personas remain model instructions on every call.
+
+Snapshots are developer messages saved with the conversation. They are capped at `context_max_chars` (default 32,000; minimum 200), with a notice directing the agent to read the full files when truncated. Each fresh agent delegate and each coding brief reads its own current snapshot. For coding agents it becomes developer instructions in their fresh SDK session; their coding harness manages subsequent context. A persistent conversation does not refresh files on every turn, so agents still read files they need updated between snapshots.
 
 ## Extending
 
@@ -308,6 +322,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 - **Reasoning summaries are requested and traced.** Native OpenAI Agents calls set the Responses API reasoning-summary setting to `auto`, which selects the most detailed summarizer available for the model; their SDK response spans carry returned summary text. Delegated Codex calls use `model_reasoning_summary = "auto"` for the same selection and send each returned reasoning item as a `codex:reasoning` span. These are model-generated summaries, not private chain-of-thought; a model or provider may omit them.
 - **Generations stay small.** Langfuse reads an Agents SDK generation's input and output from `input.value` and `output.value`, so the SDK's per-message attributes (`llm.input_messages.*`) are not recorded. They grow with the conversation, and past OpenTelemetry's 128-attribute limit they would evict the span's session, tags, model and usage.
 - **A stopped scaffold flushes.** SIGTERM or SIGINT ends every open observation with level `WARNING` and a `stopped` status message before the process exits. A SIGKILL, such as from the OOM killer, still loses the open iteration's root and anything not yet flushed. Langfuse's flush interval is 5 seconds.
+- **Standing-context snapshots are visible.** `standing_context:<agent>` spans report the declared paths, injected character count and whether truncation occurred. `compaction:<agent>` generations record compaction usage in telemetry and the budget.
 
 ## Environment
 
