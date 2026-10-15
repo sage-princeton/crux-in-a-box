@@ -82,6 +82,12 @@ def runtime(store, target, monkeypatch):
         result = Runtime(store)
         result.http.close()
         result.http = httpx.Client(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr(
+            "fleet.slack_webhook_url", lambda: secrets["MONITORING_SLACK_WEBHOOK_URL"]
+        )
+        monkeypatch.setattr(
+            "fleet.httpx.post", lambda *args, **kwargs: result.http.post(*args, **kwargs)
+        )
 
         def collect(*args):
             counts["collection"] += 1
@@ -103,9 +109,7 @@ def test_one_collection_and_independent_assessments_survive_slack_retry(runtime)
     worker, target, secrets, counts = runtime
     worker.run_target(target, 900, {}, secrets)
     workload_args = (
-        worker.http,
         worker.store,
-        secrets["MONITORING_SLACK_WEBHOOK_URL"],
         worker.store.fleet()[0],
         "https://incidents.example.test",
     )
@@ -115,9 +119,7 @@ def test_one_collection_and_independent_assessments_survive_slack_retry(runtime)
     assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
     assert counts["collection"] == 1 and counts["slack"] == 1
     args = (
-        worker.http,
         worker.store,
-        secrets["MONITORING_SLACK_WEBHOOK_URL"],
         "https://incidents.example.test",
     )
     initial = counts.copy()

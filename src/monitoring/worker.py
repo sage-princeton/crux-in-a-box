@@ -285,9 +285,7 @@ class Runtime:
                 for target in self.store.fleet():
                     try:
                         notify_workload(
-                            self.http,
                             self.store,
-                            secrets["MONITORING_SLACK_WEBHOOK_URL"],
                             target,
                             os.environ["MONITORING_WEB_ORIGIN"],
                         )
@@ -297,9 +295,7 @@ class Runtime:
                             flush=True,
                         )
                 notify_incidents(
-                    self.http,
                     self.store,
-                    secrets["MONITORING_SLACK_WEBHOOK_URL"],
                     os.environ["MONITORING_WEB_ORIGIN"],
                 )
                 self.store.prune(now - 90 * 86400)

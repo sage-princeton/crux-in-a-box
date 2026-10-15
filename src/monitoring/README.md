@@ -76,7 +76,9 @@ saved failure reason and coverage gaps directly.
 
 The `MONITORING_SLACK_WEBHOOK_URL` incoming webhook targets the `crux-monitoring`
 chat. Enrollment, status reports, instance closure notices and incident alerts all
-use this webhook. Each new successful status assessment sends a bounded summary
+use this webhook. `send_slack(message)` owns the HTTP request and loads the webhook
+once from `/crux/monitoring/env` in SSM; restart the worker after changing its
+destination. Each new successful status assessment sends a bounded summary
 of activity, progress, quality, milestones, alerts and recommendations with the
 assessment window's timestamp and a status history link. Polling the same
 assessment does not repeat it; delivery retries use the latest saved status

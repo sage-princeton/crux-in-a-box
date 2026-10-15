@@ -3,6 +3,7 @@ import json
 import boto3
 import httpx
 import pytest
+from botocore.exceptions import ClientError
 from conftest import ingest
 from moto import mock_aws
 
@@ -12,6 +13,8 @@ from fleet import (
     notify_incidents,
     notify_status,
     notify_workload,
+    send_slack,
+    slack_webhook_url,
 )
 from review import CoverageError, collect_langfuse
 
@@ -48,7 +51,7 @@ def test_every_ec2_is_enrolled_except_the_two_named_monitoring_exclusions():
 @pytest.mark.parametrize(
     "failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)]
 )
-def test_slack_only_announces_new_incidents_with_links_and_retries(store, target, failure):
+def test_slack_only_announces_new_incidents_with_links_and_retries(store, target, failure, slack):
     attempts = []
 
     def handler(request):
@@ -56,11 +59,9 @@ def test_slack_only_announces_new_incidents_with_links_and_retries(store, target
         status, body = failure[:2] if len(attempts) == 1 else (200, "ok")
         return httpx.Response(status, text=body)
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
         args = (
-            http,
             store,
-            "https://hooks.slack.com/services/test/fixture/only",
             "https://incidents.example.test",
         )
         assert notify_incidents(*args) == 0 and attempts == []
@@ -89,7 +90,7 @@ def test_slack_only_announces_new_incidents_with_links_and_retries(store, target
         assert notify_incidents(*args) == 0 and len(attempts) == 4
 
 
-def test_slack_does_not_parse_workload_names_as_mentions(store, target):
+def test_slack_does_not_parse_workload_names_as_mentions(store, target, slack):
     renamed = {**target, "slug": "<@U123>"}
     store.sync([renamed], 1800, 1800)
     ingest(store, renamed)
@@ -99,17 +100,15 @@ def test_slack_does_not_parse_workload_names_as_mentions(store, target):
         attempts.append(json.loads(request.content))
         return httpx.Response(200, text="ok")
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
         notify_incidents(
-            http,
             store,
-            "https://hooks.slack.com/services/test/fixture/only",
             "https://incidents.example.test",
         )
     assert "on &lt;@U123&gt;" in attempts[0]["text"] and "<@U123>" not in attempts[0]["text"]
 
 
-def test_incident_created_during_slack_delivery_is_not_skipped(store, target):
+def test_incident_created_during_slack_delivery_is_not_skipped(store, target, slack):
     ingest(store, target)
     attempts = []
 
@@ -119,11 +118,9 @@ def test_incident_created_during_slack_delivery_is_not_skipped(store, target):
             ingest(store, target, 1800, anchor="observation:arrived-during-delivery")
         return httpx.Response(200, text="ok")
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
         args = (
-            http,
             store,
-            "https://hooks.slack.com/services/test/fixture/only",
             "https://incidents.example.test",
         )
         assert notify_incidents(*args) == 1
@@ -135,7 +132,9 @@ def test_incident_created_during_slack_delivery_is_not_skipped(store, target):
     )
 
 
-def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(store, target):
+def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(
+    store, target, slack
+):
     attempts = []
 
     def handler(request):
@@ -144,11 +143,9 @@ def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(s
             503 if len(attempts) == 1 else 200, text="busy" if len(attempts) == 1 else "ok"
         )
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
         args = (
-            http,
             store,
-            "https://hooks.slack.com/services/test/fixture/only",
             target,
             "https://incidents.example.test",
         )
@@ -170,7 +167,7 @@ def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(s
 @pytest.mark.parametrize(
     "failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)]
 )
-def test_status_reports_retry_and_advance_only_after_acknowledgement(store, target, failure):
+def test_status_reports_retry_and_advance_only_after_acknowledgement(store, target, failure, slack):
     attempts = []
     result = {
         "outcome": "completed",
@@ -193,13 +190,11 @@ def test_status_reports_retry_and_advance_only_after_acknowledgement(store, targ
         status, body = failure[:2] if len(attempts) == 1 else (200, "ok")
         return httpx.Response(status, text=body)
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
 
         def send():
             return notify_status(
-                http,
                 store,
-                "https://hooks.slack.com/services/test/fixture/only",
                 store.fleet()[0],
                 "https://incidents.example.test",
             )
@@ -229,7 +224,7 @@ def test_status_reports_retry_and_advance_only_after_acknowledgement(store, targ
         assert store.notice("status/" + target["key"]) == "1800"
 
 
-def test_status_reports_escape_mentions_and_bound_verbose_text(store, target):
+def test_status_reports_escape_mentions_and_bound_verbose_text(store, target, slack):
     renamed = {**target, "slug": "<@U123>"}
     store.sync([renamed], 1800, 1800)
     store.save_collection(target["key"], 900, {"target": renamed})
@@ -252,12 +247,10 @@ def test_status_reports_escape_mentions_and_bound_verbose_text(store, target):
         attempts.append(json.loads(request.content))
         return httpx.Response(200, text="ok")
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
         assert (
             notify_workload(
-                http,
                 store,
-                "https://hooks.slack.com/services/test/fixture/only",
                 store.fleet()[0],
                 "https://incidents.example.test",
             )
@@ -272,7 +265,9 @@ def test_status_reports_escape_mentions_and_bound_verbose_text(store, target):
 @pytest.mark.parametrize(
     "state", ["stopping", "stopped", "shutting-down", "terminated", "no longer enrolled"]
 )
-def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(store, target, state):
+def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(
+    store, target, state, slack
+):
     attempts = []
     store.acknowledge("enrollment/" + target["key"], "legacy-fingerprint")
 
@@ -282,13 +277,11 @@ def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(stor
             503 if len(attempts) == 1 else 200, text="busy" if len(attempts) == 1 else "ok"
         )
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
 
         def send():
             return notify_workload(
-                http,
                 store,
-                "https://hooks.slack.com/services/test/fixture/only",
                 store.fleet()[0],
                 "https://incidents.example.test",
             )
@@ -314,9 +307,7 @@ def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(stor
         store.sync([target], 4500, 1800)
         assert (
             notify_enrollment(
-                http,
                 store,
-                "https://hooks.slack.com/services/test/fixture/only",
                 target,
                 "https://incidents.example.test",
             )
@@ -329,23 +320,56 @@ def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(stor
 
 
 @pytest.mark.parametrize("state", ["running", "pending", "stopped", "terminated"])
-def test_unassessed_instances_do_not_generate_lifecycle_notices(store, target, state):
+def test_unassessed_instances_do_not_generate_lifecycle_notices(store, target, state, slack):
     store.sync([{**target, "state": state}], 1800, 1800)
 
     def handler(request):
         raise AssertionError("A never-enrolled instance must not send a notice")
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
+    with slack(handler):
         assert (
             notify_workload(
-                http,
                 store,
-                "https://hooks.slack.com/services/test/fixture/only",
                 store.fleet()[0],
                 "https://incidents.example.test",
             )
             == 0
         )
+
+
+def test_slack_sender_loads_webhook_once_and_retries_configuration_failures(monkeypatch):
+    attempts = []
+
+    def handler(request):
+        attempts.append((str(request.url), json.loads(request.content)))
+        return httpx.Response(200, text="ok")
+
+    slack_webhook_url.cache_clear()
+    try:
+        with mock_aws(), httpx.Client(transport=httpx.MockTransport(handler)) as http:
+            monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+            monkeypatch.setattr("fleet.httpx.post", http.post)
+            # A failed lookup must be retryable when configuration becomes available.
+            with pytest.raises(ClientError):
+                send_slack("First report")
+            assert attempts == []
+            ssm = boto3.client("ssm")
+            first = "https://hooks.slack.com/services/test/fixture/first"
+            for webhook, message in (
+                (first, "First report"),
+                ("https://hooks.slack.com/services/test/fixture/replacement", "Next report"),
+            ):
+                ssm.put_parameter(
+                    Name="/crux/monitoring/env",
+                    Type="SecureString",
+                    Value=json.dumps({"MONITORING_SLACK_WEBHOOK_URL": webhook}),
+                    Overwrite=True,
+                )
+                send_slack(message)
+            assert [url for url, _ in attempts] == [first, first]
+            assert [body["text"] for _, body in attempts] == ["First report", "Next report"]
+    finally:
+        slack_webhook_url.cache_clear()
 
 
 def test_langfuse_does_not_accept_another_runs_observations():
