@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
@@ -31,7 +32,7 @@ from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import Field, ValidationError
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
-from crux_scaffold.coding_agents import CodingAgent
+from crux_scaffold.coding_agents import CodingAgent, CodingResult
 from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.errors import InvalidDropInError, ToolError
@@ -45,10 +46,15 @@ JUDGE = "judge"
 
 class OpenAIAgentsOptions(Options):
     max_turns: int = Field(50, ge=1)
+    background_coding: bool = False
 
 
 class BriefArguments(Arguments):
     brief: str = Field(description="Everything the coding agent needs: the task, acceptance criteria and scope.")
+
+
+class CodingResultArguments(Arguments):
+    wait: bool = Field(description="Whether to await completion; false returns immediately if still running.")
 
 
 class UsageHooks(RunHooks):
@@ -76,18 +82,25 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self.run_config = RunConfig(call_model_input_filter=self._select_input)
         self.agents: dict[str, Agent] = {}
         self.servers: dict[str, MCPServerStdio] = {}
+        self._coding_tasks: dict[str, asyncio.Task[CodingResult]] = {}
         self._stack = AsyncExitStack()
 
     def build(self) -> None:
         if self.agents:
             return
         config, ctx = self.assembly.drop_in.config, self.assembly.context
+        if self.options.background_coding:
+            declared = set(self.assembly.tools) | set(config.agents) | set(config.coding_agents)
+            self._check_result_names(declared)
         used = sorted({server for agent in config.agents.values() for server in agent.mcp_servers})
         self.servers = {name: _mcp_server(name, config.mcp_servers[name], ctx.env) for name in used}
         for name in delegation_order(config.agents):
             spec = config.agents[name]
             tools = [self._function_tool(self.assembly.tools[tool]) for tool in spec.tools]
             tools += [self._delegate(delegate) for delegate in spec.delegates]
+            if self.options.background_coding:
+                tools += [self._coding_result_tool(delegate) for delegate in spec.delegates
+                          if delegate in self.assembly.coding_agents]
             self.agents[name] = Agent(
                 name=name, instructions=self.assembly.drop_in.instructions(name), tools=tools,
                 mcp_servers=[self.servers[server] for server in spec.mcp_servers],
@@ -97,26 +110,88 @@ class OpenAIAgentsRuntime(AgentRuntime):
         # TODO(AE-247): let the AgentRuntime base class own telemetry setup for every runtime.
         trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
-        for server in self.servers.values():
-            await self._stack.enter_async_context(server)
-        self.session = self.assembly.context_strategy.session(
-            self.assembly.drop_in.config.orchestrator, self.assembly.context)
+        try:
+            for server in self.servers.values():
+                await self._stack.enter_async_context(server)
+                if self.options.background_coding:
+                    self._check_result_names({tool.name for tool in await server.list_tools()})
+            self.session = self.assembly.context_strategy.session(
+                self.assembly.drop_in.config.orchestrator, self.assembly.context)
+        except BaseException:
+            await self._stack.aclose()
+            raise
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
-        await self._stack.aclose()
+        try:
+            await self._cancel_coding()
+        finally:
+            await self._stack.aclose()
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
         history = await self.session.get_items()
         input = self._turn_input(orchestrator.name, prompt, history)
         try:
-            result = await Runner.run(orchestrator, input, context=self.assembly.context,
-                                      max_turns=self.options.max_turns, hooks=self.hooks, session=self.session,
-                                      run_config=replace(self.run_config, workflow_name=workflow))
-        except MaxTurnsExceeded:
-            return TurnOutcome(final_output="", completed=False)
-        return TurnOutcome(final_output=str(result.final_output), completed=True)
+            try:
+                result = await Runner.run(orchestrator, input, context=self.assembly.context,
+                                          max_turns=self.options.max_turns, hooks=self.hooks, session=self.session,
+                                          run_config=replace(self.run_config, workflow_name=workflow))
+            except MaxTurnsExceeded:
+                outcome = TurnOutcome(final_output="", completed=False)
+            else:
+                outcome = TurnOutcome(final_output=str(result.final_output), completed=True)
+            remaining = [f"{name}: {await self._coding_result(name, wait=True)}"
+                         for name in list(self._coding_tasks)]
+            if remaining:
+                report = ("Scaffold coding completion report (uncollected delegate outputs):\n\n"
+                          + "\n\n".join(remaining))
+                await self.session.add_items([{"role": "user", "content": report}])
+            outcome.final_output = "\n\n".join(part for part in [outcome.final_output, *remaining] if part)
+            return outcome
+        except BaseException:
+            await self._cancel_coding()
+            raise
+
+    def _check_result_names(self, names: set[str]) -> None:
+        config = self.assembly.drop_in.config
+        generated = {f"{delegate}_result" for agent in config.agents.values() for delegate in agent.delegates
+                     if delegate in self.assembly.coding_agents}
+        if collisions := sorted(generated & names):
+            raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
+
+    async def _cancel_coding(self) -> None:
+        tasks = list(self._coding_tasks.values())
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self._coding_tasks.clear()
+
+    async def _coding_result(self, name: str, *, wait: bool) -> str:
+        task = self._coding_tasks.get(name)
+        if task is None:
+            return f"error: No uncollected coding task for '{name}'."
+        if not wait and not task.done():
+            return f"[coding agent running] {name}. Use rest before checking again, or call {name}_result(wait=true)."
+        try:
+            return (await task).as_tool_output()
+        except Exception as exc:
+            return f"error: Coding agent '{name}' failed: {exc}"
+        finally:
+            if self._coding_tasks.get(name) is task:
+                del self._coding_tasks[name]
+
+    def _coding_result_tool(self, name: str) -> FunctionTool:
+        async def invoke(_: ToolContext[Any], raw: str) -> str:
+            try:
+                args = CodingResultArguments.model_validate_json(raw)
+            except ValidationError as exc:
+                return f"error: {exc}"
+            return await self._coding_result(name, wait=args.wait)
+
+        return FunctionTool(name=f"{name}_result", description=f"Check or collect the coding result from {name}.",
+                            on_invoke_tool=invoke,
+                            params_json_schema=ensure_strict_json_schema(CodingResultArguments.model_json_schema()))
 
     async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int,
                     review_workspace: ReviewWorkspace | None = None) -> Verdict:
@@ -206,9 +281,19 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             brief = BriefArguments.model_validate_json(raw).brief
+            if self.options.background_coding:
+                if agent.name in self._coding_tasks:
+                    return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
+                self._coding_tasks[agent.name] = asyncio.create_task(agent.run(brief, ctx))
+                return (f"[coding agent started] {agent.name}. Choose rest durations while it works; "
+                        f"call {agent.name}_result(wait=false) to check or {agent.name}_result(wait=true) to await "
+                        "and collect the result.")
             return (await agent.run(brief, ctx)).as_tool_output()
 
-        return FunctionTool(name=agent.name, description=agent.description, on_invoke_tool=invoke,
+        description = agent.description
+        if self.options.background_coding:
+            description += f" Starts in the background; collect its result using {agent.name}_result."
+        return FunctionTool(name=agent.name, description=description, on_invoke_tool=invoke,
                             params_json_schema=ensure_strict_json_schema(BriefArguments.model_json_schema()))
 
 
