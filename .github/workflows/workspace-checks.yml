@@ -30,12 +30,12 @@ jobs:
           shellcheck --version
       - name: Bash syntax
         run: |
-          for script in src/ec2-workspaces/*.sh; do
+          for script in src/ec2-workspaces/*.sh src/ec2-workspaces/scaffolds/*.sh; do
             bash -n "$script"
           done
       - name: ShellCheck
         # SSH commands intentionally expand locally; quoted tildes are remote paths.
-        run: shellcheck -x -e SC2029,SC2088 src/ec2-workspaces/*.sh
+        run: shellcheck -x -e SC2029,SC2088 src/ec2-workspaces/*.sh src/ec2-workspaces/scaffolds/*.sh
       - name: Changed-file whitespace and secret checks
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
