@@ -185,6 +185,15 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 
 Inside the container, Codex runs with `sandbox = "full-access"` because its Linux sandbox (bubblewrap) cannot create namespaces in an unprivileged container. The container is the boundary instead: it runs as a non-root user, and the volume at `/work` is its only persistent storage. A run box keeps `workspace-write`.
 
+## On a run box
+
+Set `AGENT_PLATFORM=openai-agents` and `DROP_IN_PATH=<drop-in directory>` in the workspace base config; see [`../ec2-workspaces/README.md`](../ec2-workspaces/README.md). Provisioning does four things, and creates no AgentRQ workspace:
+
+1. It stages this directory, root-owned, at `/opt/crux-sdk-scaffold`, and the drop-in at `/srv/crux-run/run-harness`.
+2. It writes the environment above to `/etc/crux-run.env`.
+3. It runs `probe --coding-agent codex`.
+4. It installs `crux-sdk-run.service`, but does not start it.
+
 ## Development
 
 ```bash
