@@ -48,7 +48,8 @@ class ScriptedModel(Model):
         self.inputs.append(input)
         if not self.turns:
             raise AssertionError("ScriptedModel ran out of scripted turns")
-        output = [self.turns.pop(0)]
+        turn = self.turns.pop(0)
+        output = turn if isinstance(turn, list) else [turn]
         with response_span() as span:
             span.span_data.input = input
             span.span_data.response = Response(

@@ -39,7 +39,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
 | Observability | `Telemetry` | Langfuse, or off |
-| Resource management | `Budget`, `budget_status` | token limits |
+| Resource management | `Budget`, `budget_status`, `AgentRuntime.delegation_slot` | token limits; delegation concurrency and depth limits |
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
@@ -93,6 +93,22 @@ OPERATOR_GUIDE.md        how to resolve placeholders and launch; operator notes 
 ```
 
 The run stops before any model call if an operator-facing file or standing-context file still contains a `{{KEY}}` or `{{KEY|default}}` placeholder. The error lists each one as `file:line`.
+
+## Delegation limits
+
+Declare optional limits in `scaffold.toml`:
+
+```toml
+[delegation]
+max_concurrent = 4
+max_depth = 2
+```
+
+`max_concurrent` is a positive integer shared across all callers in the run. Each delegated SDK-agent call or coding-worker brief uses one slot. The root orchestrator uses none. Requests wait in memory when capacity is full; queued work does not count as active. A delegated parent releases its slot while nested delegates run and reacquires capacity before continuing, so nesting works even with one slot. Success, failure, cancellation and timeout release capacity.
+
+The orchestrator has depth 0; each delegate edge adds 1. For example, `orchestrator -> researcher -> coder` has depth 2. `max_depth` is a nonnegative integer; 0 forbids delegation. Before any model call, configuration validation checks the longest path in the entire declared delegate graph, including unused agents and coding-worker leaves. It reports an offending path when the limit is exceeded. Cycles remain invalid.
+
+Each coding worker counts once at the scaffold boundary. Its native subagent fan-out consumes no additional scaffold slots or depth. Omit either option to leave that dimension unlimited; existing drop-ins retain their behavior. Queues are local to the running scaffold process and are not durable jobs.
 
 ## Extending
 

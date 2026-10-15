@@ -24,7 +24,7 @@ Prefer the first option that works:
 | Which coding-agent SDK implements a brief | [`CodingAgent`](#coding-agents-codingagent) | `[coding_agents]` |
 | Which agent SDK runs the agents | [`AgentRuntime`](#agent-runtimes-agentruntime) | `[runtime]` |
 | Where traces go | [`Telemetry`](#telemetry-telemetry) | Langfuse environment variables |
-| Hard resource limits | [`Budget`](#budget-and-usage) | `[budget]` |
+| Hard resource limits | [`Budget`](#budget-and-usage), [`AgentRuntime`](#agent-runtimes-agentruntime) | `[budget]`, `[delegation]` |
 
 ## The component pattern
 
@@ -152,6 +152,7 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 - **Long turns stream progress.** Send each finished step as `ctx.telemetry.record(...)` while the turn runs, as `codex` does with each item.
 - **Sandboxing is the coding agent's own,** declared in its options, such as `codex`'s `sandbox`.
 - **Declare** it under `[coding_agents.<name>]` and list it in an agent's `delegates`. The runtime exposes it as a tool that takes one `brief` argument.
+- **Delegation limits apply at the runtime boundary.** One coding-worker brief occupies one slot and adds one depth edge. Native subagents inside its coding harness do not consume additional scaffold slots or depth. A coding-agent implementation does not acquire a second slot in `execute` or `run`.
 
 ## Agent runtimes (`AgentRuntime`)
 
@@ -166,6 +167,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
 | `describe()` | One line per agent, printed by `check`. |
+| `delegation_slot()` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
 | `probe(env, prompt, telemetry)` (classmethod) | One traced model call outside any drop-in, which provisioning uses to prove the runtime works. |
 
 **The behavior the rest of the scaffold relies on:**
@@ -180,10 +182,24 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 - **Delegates.**
   - A delegated agent or coding agent is a tool whose call starts from a fresh context holding only the caller's brief.
   - A coding agent is called through `CodingAgent.run`.
+  - Wrap the entire delegated invocation in `async with self.delegation_slot()`, including SDK execution, coding-worker execution and error handling. The base runtime owns the run's shared capacity and propagates nested call identity through task-local context. Callers must await their children inside the scope; do not detach delegated work or suppress cancellation.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
 - **Context.** Apply `context_strategy.select` to every model call.
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).
+
+### Delegation policy (`[delegation]`)
+
+`DelegationConfig` in `config.py` extends the existing configuration and runtime contracts; it is not another registered component. Both options default to `None` (unlimited) and reject unknown keys, booleans, strings and floats:
+
+| Option | Contract |
+|---|---|
+| `max_concurrent` | Positive integer limiting active delegated invocations across every caller in one scaffold runtime. The orchestrator is excluded. Calls queue in memory when full; queued calls occupy no slots. A delegated SDK parent is suspended while nested delegates run, then reacquires capacity before returning to its own work. Parallel children share this suspension; no child can resume the parent while another child is still pending. Slots are released on success, error, cancellation and timeout. |
+| `max_depth` | Nonnegative integer bounding delegate edges: root depth 0, a direct delegate depth 1, its delegate depth 2. Coding workers are leaves; their native subagents are excluded. Zero forbids all declared delegation. |
+
+Validation reuses `delegation_order` after reference and cycle checks. It computes the longest path through every declared agent, including disconnected agents and coding-worker leaves, and raises `InvalidDropInError` with an offending path before runtime construction or any model call. For the declared acyclic graph, this covers every permitted runtime path; the runtime must expose only declared delegates. An extension introducing paths outside that graph must enforce the numeric depth limit for those paths itself.
+
+Capacity is shared for the lifetime of the runtime, across callers and loop iterations, and is not persisted across restarts or coordinated across separate scaffold processes. This policy limits scaffold delegation, not ordinary tools or the internal fan-out of a coding harness. Stalled-work diagnosis, durable jobs and recovery are separate capabilities.
 
 ## Telemetry (`Telemetry`)
 
