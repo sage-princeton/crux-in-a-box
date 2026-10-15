@@ -18,6 +18,19 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 TLS_EMAIL="${TLS_EMAIL:-}"
 
 DATA_DIR=/srv/agentrq
+# The control plane is the CRUX build of AgentRQ, not agentrq/agentrq:latest:
+# upstream 45c3692 (the image crux-control ran from 2026-09-14) plus a fix
+# upstream lacks. Upstream saves a task together with every tool call it has
+# made, in one statement SQLite refuses past 4,095 rows, so a long task can no
+# longer be replied to or completed and keeps the workspace's ongoing slot.
+# Released from sage-princeton/agentrq (crux/* branches) as a docker save
+# tarball, loaded only if its sha256 matches. Moving it is a deliberate change:
+# check what the new image does to the run boxes' gateway, ideally between runs.
+# Do not update these AgentRQ image pins until AE-264 is resolved:
+# https://linear.app/agent-evals/issue/AE-264
+AGENTRQ_IMAGE=agentrq-crux:0.6.3-45c3692-crux.1
+AGENTRQ_IMAGE_URL=https://github.com/sage-princeton/agentrq/releases/download/crux-v0.6.3-45c3692-crux.1/agentrq-crux-0.6.3-45c3692-crux.1-linux-amd64.tar.gz
+AGENTRQ_IMAGE_SHA256=dccbce43c95669066527cf60a9b960ab97ac2d88e6b4e39e78af8d289802c071
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 
 # ====== PACKAGES ======
@@ -103,7 +116,7 @@ ExecStart=/usr/bin/docker run --rm --name agentrq \\
   --env-file ${ENV_FILE} \\
   -v ${DATA_DIR}/_storage:/_storage \\
   -v ${DATA_DIR}/_certs:/_certs \\
-  agentrq/agentrq:latest
+  ${AGENTRQ_IMAGE}
 ExecStop=/usr/bin/docker stop agentrq
 
 [Install]
@@ -111,7 +124,18 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-docker pull -q agentrq/agentrq:latest >/dev/null
+IMG_DIR="$(mktemp -d)"
+IMG_TARBALL="$IMG_DIR/agentrq-image.tar.gz"
+curl -fsSL "$AGENTRQ_IMAGE_URL" -o "$IMG_TARBALL" \
+  || die "Could not download $AGENTRQ_IMAGE_URL"
+IMG_SHA256="$(sha256sum "$IMG_TARBALL" | awk '{print $1}')"
+[ "$IMG_SHA256" = "$AGENTRQ_IMAGE_SHA256" ] \
+  || die "$AGENTRQ_IMAGE_URL has sha256 $IMG_SHA256, but AGENTRQ_IMAGE_SHA256 pins $AGENTRQ_IMAGE_SHA256. Not loading it."
+docker load -q -i "$IMG_TARBALL" >/dev/null || die "docker load of $AGENTRQ_IMAGE_URL failed"
+rm -rf "$IMG_DIR"
+docker image inspect "$AGENTRQ_IMAGE" >/dev/null 2>&1 \
+  || die "The pinned tarball did not load as $AGENTRQ_IMAGE. Not starting it."
+ok "Loaded $AGENTRQ_IMAGE (sha256 ${AGENTRQ_IMAGE_SHA256:0:12}…)"
 systemctl enable agentrq >/dev/null
 systemctl restart agentrq
 ok "Service enabled and started"
