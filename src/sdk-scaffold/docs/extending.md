@@ -226,6 +226,12 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 
 A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, and the context strategy. `runtime_overrides` add further keyword arguments, such as the test models that `openai-agents` takes. A new runtime module must be imported by `scaffold.py` so it registers. Its SDK stays inside that module.
 
+`Assembly.instructions(agent_name) -> str` supplies the complete instructions for an agent. The composition root joins the generated setup, optional drop-in guidance, persona and standing context for the orchestrator; other agents receive only their own persona and context. It reads persona and standing-context files at assembly time, so missing files still fail before a model call. Runtimes must call `instructions` on every model call, including delegated calls, rather than cache its result: the setup reads live loop state and must reflect phase changes and resumed iterations. The OpenAI Agents runtime adapts it to an SDK instructions callback.
+
+The generated setup uses assembled tool and coding-agent descriptions and only capabilities listed on the orchestrator. For the built-in `phased` loop it includes the current phase and iteration, phase limits and intervals, and referenced gates (including `command` criteria). Other loops supply their summary through `Loop.describe()` without assuming phased control flow. Rest bounds come from each available `rest` tool, and the token limit comes from `RunContext.budget`. MCP servers are identified by declared name; their commands, arguments and environment are never included.
+
+`[preamble]` in `scaffold.toml` has two optional keys: `enabled` (default `true`) controls generation, and `append` (default empty string) supplies inline text after the setup and before the persona. Appended text remains enabled even if generation is disabled, and follows the normal unresolved-placeholder validation. These settings affect only the orchestrator. This is scaffold instruction composition, not a new component registry.
+
 **Methods:**
 
 | Method | Contract |
@@ -241,7 +247,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 **The behavior the rest of the scaffold relies on:**
 
 - **Agents.**
-  - Build one agent per `[agents.<name>]`, with `drop_in.instructions(name)` as its instructions.
+  - Build one agent per `[agents.<name>]`, with instructions supplied by `Assembly.instructions(name)` on each model call.
   - Every agent uses `ctx.model` and `ctx.reasoning_effort`. A drop-in cannot set a model, so runs differ in model only by `CRUX_MODEL`.
 - **Tools.**
   - Expose each `Tool` with its `Arguments` schema.

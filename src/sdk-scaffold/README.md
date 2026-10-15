@@ -44,6 +44,18 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
+The orchestrator receives a generated setup preamble before its persona and standing context. It describes the current phase and its gates, available delegates and tools, connected MCP servers, token and rest limits, and restart behavior. It is rendered from the assembled scaffold on each model call, so phase changes and resumed progress stay current. MCP launch arguments and environment values are excluded. Delegate instructions stay scoped to each delegate.
+
+A drop-in can append guidance or disable the generated setup in `scaffold.toml`:
+
+```toml
+[preamble]
+enabled = true  # false disables the generated setup
+append = "Use the operator channel for questions about scope."
+```
+
+Both keys are optional. `append` is inline text placed after the generated setup and before the persona; it still applies when `enabled = false`. Personas and standing-context files continue to define the CRUX's task-specific instructions.
+
 The web-cms-product-change demo in this design, as a C4 container view:
 
 ```mermaid
