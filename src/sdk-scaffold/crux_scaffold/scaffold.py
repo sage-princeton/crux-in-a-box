@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -46,7 +47,8 @@ class Scaffold:
         agents = {}
         for name, table in self.drop_in.config.coding_agents.items():
             cls, options = CODING_AGENTS.resolve(name, table)
-            agents[name] = cls(name, options, developer_instructions=self.drop_in.standing_context(options.context))
+            source = partial(self.drop_in.standing_context, options, agent=name, telemetry=self.context.telemetry)
+            agents[name] = cls(name, options, developer_instructions=source)
         return agents
 
     async def run(self) -> LoopOutcome:

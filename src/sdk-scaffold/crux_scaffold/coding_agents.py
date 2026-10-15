@@ -13,16 +13,16 @@ from openai_codex.generated.v2_all import ItemCompletedNotification
 from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnCompletedNotification, TurnStatus
 from pydantic import BaseModel
 
-from crux_scaffold.components import Component, Options, Registry
+from crux_scaffold.components import Component, Registry
+from crux_scaffold.config import StandingContextOptions
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
 
-class CodingAgentOptions(Options):
+class CodingAgentOptions(StandingContextOptions):
     """What every coding agent declares: the tool description its callers see, and its standing-context files."""
 
     description: str
-    context: list[str] = []
 
 
 class CodingResult(BaseModel):
@@ -44,9 +44,15 @@ class CodingAgent(Component):
 
     Options = CodingAgentOptions
 
-    def __init__(self, name: str, options: CodingAgentOptions, *, developer_instructions: str = "") -> None:
+    def __init__(self, name: str, options: CodingAgentOptions, *,
+                 developer_instructions: str | Callable[[], str] = "") -> None:
         super().__init__(name, options)
-        self.developer_instructions = developer_instructions
+        self._developer_instructions = developer_instructions
+
+    @property
+    def developer_instructions(self) -> str:
+        source = self._developer_instructions
+        return source() if callable(source) else source
 
     @property
     def description(self) -> str:
@@ -87,12 +93,13 @@ class CodexCodingAgent(CodingAgent):
     type_name = "codex"
     Options = CodexOptions
 
-    def __init__(self, name: str, options: CodexOptions, *, developer_instructions: str = "",
+    def __init__(self, name: str, options: CodexOptions, *, developer_instructions: str | Callable[[], str] = "",
                  client_factory: ClientFactory = codex_client) -> None:
         super().__init__(name, options, developer_instructions=developer_instructions)
         self.client_factory = client_factory
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
+        instructions = self.developer_instructions
         (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
         async with self.client_factory(ctx) as codex:
             if ctx.env.get("OPENAI_API_KEY"):
@@ -100,7 +107,7 @@ class CodexCodingAgent(CodingAgent):
             thread = await codex.thread_start(
                 cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
-                developer_instructions=self.developer_instructions or None,
+                developer_instructions=instructions or None,
                 config={"model_context_window": CONTEXT_WINDOW_TOKENS})
             turn = await thread.turn(brief, effort=ctx.reasoning_effort)
             final_response, usage, ended = "", TokenUsage(requests=1), None

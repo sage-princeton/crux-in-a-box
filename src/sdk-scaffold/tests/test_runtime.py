@@ -31,6 +31,25 @@ def test_agent_delegate_sees_its_persona_and_brief_but_not_the_callers_context(d
     assert "Handle the request" not in str(reviewer.inputs[0])
 
 
+def test_each_delegate_invocation_reads_current_workspace_context(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", 'description = "Reviews a change and reports problems."',
+         'description = "Reviews a change and reports problems."\nworkspace_context = ["REQUEST.md"]')
+    edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/ENGINEERING.md"]',
+         'context = ["workspace/ENGINEERING.md"]\nworkspace_context = ["REQUEST.md"]')
+    reviewer = ScriptedModel(say("first review"), say("second review"))
+    pm = ScriptedModel(call("reviewer", {"input": "review"}, "p1"),
+                       call("write_file", {"path": "REQUEST.md", "content": "New acceptance criteria."}, "p2"),
+                       call("reviewer", {"input": "review again"}, "p3"),
+                       call("engineer", {"brief": "implement"}, "p4"), say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm, "reviewer": reviewer})
+    asyncio.run(scaffold.run())
+    assert "Not created yet" in str(reviewer.inputs[0])
+    assert "New acceptance criteria." in str(reviewer.inputs[1])
+    assert "first review" not in str(reviewer.inputs[1])
+    assert "PM standing context." not in str(reviewer.inputs)
+    assert "New acceptance criteria." in scaffold.coding_agents["engineer"].instructions[0]
+
+
 def test_subagent_out_of_turns_reports_an_error_to_its_caller(drop_in_dir, assemble):
     reviewer = ScriptedModel(*[call("read_file", {"path": "AGENTS.md"}, f"r{i}") for i in range(6)])
     pm = ScriptedModel(call("reviewer", {"input": "loop"}, "p1"), say("recovered"))
