@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 SCRIPT = Path(__file__).resolve().parents[2] / "src/ec2-workspaces/run_provision.py"
+sys.path.insert(0, str(SCRIPT.parent))
 SPEC = importlib.util.spec_from_file_location("run_provision", SCRIPT)
 provision = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(provision)

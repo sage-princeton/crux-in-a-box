@@ -124,7 +124,7 @@ cp run-secrets.json.example run-secrets-base.json   # or run-secrets-claude.json
 ```
 Fill in the provider API key.
 
-Optionally, add API keys the agent's own tools need for this run, such as `WAVE_API_KEY` (the WebAIM WAVE accessibility API) or `PAGESPEED_API_KEY` (Google PageSpeed Insights). Every key in the base secrets file other than the provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) and `AGENTRQ_*` is copied into each workspace's `run-secrets-<slug>.json`, and `configure-run.sh` writes it into `/etc/crux-run.env`, which is the agent process's environment. So the agent sees everything else in this file: keep operator-only secrets out of it. Names must be `UPPER_SNAKE_CASE`, and values that are empty or still placeholders fail preflight. A key that would override a variable the env file already sets (`PATH`, `HOME`, or a provider setting such as `ANTHROPIC_BASE_URL`) fails on the box before the gateway starts. Unused provider keys and the AgentRQ token never reach the agent.
+Optionally, add API keys the agent's own tools need for this run, such as `WAVE_API_KEY` (the WebAIM WAVE accessibility API) or `PAGESPEED_API_KEY` (Google PageSpeed Insights). Every key in the base secrets file other than the provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`), `AGENTRQ_*`, and `SERVICE_AUTH` is copied into each workspace's `run-secrets-<slug>.json`, and `configure-run.sh` writes it into `/etc/crux-run.env`, which is the agent process's environment. So the agent sees everything else in this file: keep operator-only secrets out of it. Names must be `UPPER_SNAKE_CASE`, and values that are empty or still placeholders fail preflight. A key that would override a variable the env file already sets (`PATH`, `HOME`, or a provider setting such as `ANTHROPIC_BASE_URL`) fails on the box before the gateway starts. Unused provider keys and the AgentRQ token never reach the agent. `SERVICE_AUTH` delivers protected CLI state files for explicitly declared services; see [service authentication](provisioning.md#service-authentication).
 
 ```json
 {
@@ -307,7 +307,8 @@ For an SDK box:
   runs `crux_scaffold probe --coding-agent codex`: one traced model call and one
   Codex turn. It then installs `crux-sdk-run.service`, but does not start it.
 - **Run software:** optionally commit `provision.json` alongside `scaffold.toml`
-  to install OS packages and pinned CLIs. Declared commands are checked as the
+  to install OS packages and pinned CLIs, configure services, and deliver private
+  authentication state. Declared commands and service access are checked as the
   run user during provisioning and at every SDK start. See
   [the provisioning contract and example](provisioning.md).
 - **Launching:** resolve the drop-in's placeholders on the box (see its

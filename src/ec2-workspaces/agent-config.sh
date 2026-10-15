@@ -102,7 +102,7 @@ validate_agent_key() {
 }
 
 # Any key in the secrets JSON other than a provider key or an AgentRQ
-# credential is a per-run API key for the agent's own tools: it travels with
+# credential or SERVICE_AUTH is a per-run API key for the agent's own tools: it travels with
 # the workspace's secrets and lands in the agent process's environment.
 # Provider keys and AgentRQ credentials have their own paths, so an unselected
 # provider key or the AgentRQ token never reaches the agent.
@@ -111,12 +111,14 @@ PROVIDER_KEY_NAMES="OPENAI_API_KEY ANTHROPIC_API_KEY OPENROUTER_API_KEY"
 run_api_keys_json() {
   jq -c --arg reserved "$PROVIDER_KEY_NAMES" '
     with_entries(select(.key as $k |
-      ($reserved | split(" ") | index($k) | not) and ($k | startswith("AGENTRQ_") | not)))
+      ($reserved | split(" ") | index($k) | not) and ($k | startswith("AGENTRQ_") | not)
+      and $k != "SERVICE_AUTH"))
   ' "$1"
 }
 
 validate_run_api_keys() {
-  # Names become env-file lines; values follow validate_agent_key's rules.
+  # Names become env-file lines. Quoted service passphrases may contain spaces;
+  # control characters cannot appear in an environment-file value.
   # Report rejected names only, never values.
   local keys bad
   keys="$(run_api_keys_json "$1" 2>/dev/null)" || die "$1 is not a valid JSON object."
@@ -124,7 +126,7 @@ validate_run_api_keys() {
     [to_entries[] | select(
       (.key | test("^[A-Z_][A-Z0-9_]*$") | not) or
       (.value | type != "string" or length == 0 or
-        test("[[:space:][:cntrl:]]") or test("CHANGE|REPLACE|xxx|\\.\\.\\.")))
+        test("[[:cntrl:]]") or test("CHANGE|REPLACE|xxx|\\.\\.\\.")))
      | .key | @json] | join(", ")')"
   [ -z "$bad" ] || die "Per-run API key(s) in $1 have an invalid name (want UPPER_SNAKE_CASE) or an empty, invalid, or placeholder value: $bad"
 }
@@ -148,6 +150,8 @@ scaffold_needs() {
 # The drop-in directory staged at /srv/crux-run/run-harness. Provisioning
 # archives the committed HEAD, so validate against HEAD, not the working tree.
 load_drop_in_path() {
+  local secret_args=()
+  [ -z "${2:-}" ] || secret_args=(--secrets "$2")
   DROP_IN_PATH="$(cfg DROP_IN_PATH)"
   DROP_IN_PATH="${DROP_IN_PATH:-run-harness}"
   [[ "$DROP_IN_PATH" =~ ^[A-Za-z0-9._/-]+$ && "$DROP_IN_PATH" != /* && "$DROP_IN_PATH" != *..* ]] \
@@ -159,8 +163,9 @@ load_drop_in_path() {
       || die "$DROP_IN_PATH/scaffold.toml is not in the committed HEAD; openai-agents boxes run a scaffold drop-in."
   fi
   if git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
-    git -C "$1" show "HEAD:$DROP_IN_PATH/provision.json" \
-      | python3 "$1/src/ec2-workspaces/run_provision.py" validate --manifest /dev/stdin \
-      || die "Fix $DROP_IN_PATH/provision.json and commit it before provisioning."
-  fi
+    git -C "$1" show "HEAD:$DROP_IN_PATH/provision.json"
+  else
+    printf '{"version":1}\n'
+  fi | python3 "$1/src/ec2-workspaces/run_provision.py" validate --manifest /dev/stdin "${secret_args[@]}" \
+    || die "Fix the committed $DROP_IN_PATH/provision.json or its service authentication before provisioning."
 }

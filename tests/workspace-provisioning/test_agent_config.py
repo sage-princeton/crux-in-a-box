@@ -179,13 +179,15 @@ class AgentConfigTests(unittest.TestCase):
         secrets = {"OPENAI_API_KEY": "fixture-openai", "ANTHROPIC_API_KEY": "fixture-anthropic",
                        "OPENROUTER_API_KEY": "fixture-openrouter", "AGENTRQ_WORKSPACE_TOKEN": "fixture-token",
                        "AGENTRQ_WORKSPACE_ID": "fixture-workspace", "GH_TOKEN": "fixture-github",
-                       "VERCEL_TOKEN": "fixture-vercel"}
+                       "VERCEL_TOKEN": "fixture-vercel", "SERVICE_AUTH": {"review-mailbox": "fixture-bundle"},
+                       "GOG_KEYRING_PASSWORD": 'a "fixture" passphrase'}
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "secrets.json"
             path.write_text(json.dumps(secrets))
             result = self.shell('validate_run_api_keys "$SECRETS_PATH"; '
                                 'run_api_keys_json "$SECRETS_PATH"', {"SECRETS_PATH": str(path)})
-        self.assertEqual(json.loads(result), {k: secrets[k] for k in ("GH_TOKEN", "VERCEL_TOKEN")})
+        self.assertEqual(json.loads(result), {k: secrets[k] for k in
+                         ("GH_TOKEN", "VERCEL_TOKEN", "GOG_KEYRING_PASSWORD")})
 
     def test_service_secrets_cannot_override_scaffold_environment(self):
         output = self.shell('check_run_api_key_clashes \'{"CRUX_MODEL":"fixture-private"}\' '

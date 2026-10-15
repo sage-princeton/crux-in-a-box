@@ -92,18 +92,18 @@ scaffold_configure() {
   install -d -m 755 -o "$RUN_USER" -g "$RUN_USER" "$WORK_DIR" "$STATE_DIR" "$STATE_DIR/codex"
   scaffold_probe_sandbox
 
-  info "Checking declared commands as $RUN_USER"
+  info "Checking declared commands and service access as $RUN_USER"
   systemd-run --quiet --wait --pipe --collect --uid="$RUN_USER" \
-    --property=EnvironmentFile="$RUN_ENV_FILE" --working-directory="$DROP_IN_DIR/workspace" \
+    --property=EnvironmentFile="$RUN_ENV_FILE" --property=UMask=0077 --working-directory="$DROP_IN_DIR/workspace" \
     /usr/bin/python3 /usr/local/lib/crux/run_provision.py check --manifest /etc/crux-provision.json \
-    || die "Declared run software checks failed; correct provision.json or re-run install-run.sh before launch."
+    || die "Run provisioning checks failed; follow the named check's diagnostic before launch."
 
   # One real model call and one Codex turn, with the unit's exact environment;
   # the probe also requires Langfuse to accept the keys.
   info "Probing the scaffold: one traced model call and one Codex turn"
   install -m 600 /dev/null "$PROBE_LOG"
   if ! systemd-run --quiet --wait --pipe --collect --uid="$RUN_USER" \
-       --property=EnvironmentFile="$RUN_ENV_FILE" --working-directory="$WORK_DIR" \
+       --property=EnvironmentFile="$RUN_ENV_FILE" --property=UMask=0077 --working-directory="$WORK_DIR" \
        "$SCAFFOLD_PYTHON" -m crux_scaffold probe --coding-agent codex >"$PROBE_LOG" 2>&1; then
     die "Scaffold probe failed. Inspect $PROBE_LOG with sudo; crux-sdk-run was not installed."
   fi
@@ -126,6 +126,7 @@ Wants=network-online.target
 [Service]
 Type=exec
 User=${RUN_USER}
+UMask=0077
 WorkingDirectory=${DROP_IN_DIR}/workspace
 EnvironmentFile=${RUN_ENV_FILE}
 ExecStart=/usr/bin/python3 /usr/local/lib/crux/run_provision.py exec --manifest /etc/crux-provision.json -- ${SCAFFOLD_PYTHON} -m crux_scaffold run --drop-in ${DROP_IN_DIR} --state-dir ${STATE_DIR}
