@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import replace
+from functools import partial
 from typing import Any, Self
 
 from agents import (
@@ -93,7 +94,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         for server in self.servers.values():
             await self._stack.enter_async_context(server)
         self.session = self.assembly.context_strategy.session(
-            self.assembly.drop_in.config.orchestrator, self.assembly.context.state_dir)
+            self.assembly.drop_in.config.orchestrator, self.assembly.context)
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
@@ -101,13 +102,21 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
+        history = await self.session.get_items()
+        input = self._turn_input(orchestrator.name, prompt, history)
         try:
-            result = await Runner.run(orchestrator, prompt, context=self.assembly.context,
+            result = await Runner.run(orchestrator, input, context=self.assembly.context,
                                       max_turns=self.options.max_turns, hooks=self.hooks, session=self.session,
                                       run_config=replace(self.run_config, workflow_name=workflow))
         except MaxTurnsExceeded:
             return TurnOutcome(final_output="", completed=False)
         return TurnOutcome(final_output=str(result.final_output), completed=True)
+
+    def _turn_input(self, name: str, prompt: str, history: list[Any]) -> list[Any]:
+        drop_in, ctx = self.assembly.drop_in, self.assembly.context
+        load = partial(drop_in.standing_context, drop_in.config.agents[name], agent=name, telemetry=ctx.telemetry)
+        prefix = self.assembly.context_strategy.inject_standing_context(history, load)
+        return [*prefix, {"role": "user", "content": prompt}]
 
     def describe(self) -> list[str]:
         self.build()
@@ -154,9 +163,11 @@ class OpenAIAgentsRuntime(AgentRuntime):
     def _delegate(self, name: str) -> FunctionTool:
         config = self.assembly.drop_in.config
         if name in config.agents:
-            return self.agents[name].as_tool(tool_name=name, tool_description=config.agents[name].description,
-                                             max_turns=config.agents[name].max_turns, hooks=self.hooks,
-                                             run_config=self.run_config)
+            spec = config.agents[name]
+            return self.agents[name].as_tool(
+                tool_name=name, tool_description=spec.description, max_turns=spec.max_turns, hooks=self.hooks,
+                run_config=self.run_config,
+                input_builder=lambda data: self._turn_input(name, data["params"]["input"], []))
         return self._coding_tool(self.assembly.coding_agents[name])
 
     def _coding_tool(self, agent: CodingAgent) -> FunctionTool:

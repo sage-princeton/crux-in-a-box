@@ -1,6 +1,6 @@
 # AGENTS.md — Product Manager Standing Context
 
-This file is your standing context for the whole run. The scaffold puts it in your instructions on every turn.
+The scaffold delivers this file, `REQUEST.md` and `LOG.md` as standing context when the context strategy requests a snapshot. With the demo's persistent strategy that is the first turn; you retain it in your conversation. Read working files when you need changes made since that snapshot. Each fresh engineer brief receives their current contents.
 
 ## How this run works
 

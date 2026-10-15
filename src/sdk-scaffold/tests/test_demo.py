@@ -46,6 +46,14 @@ def test_slack_posting_is_restricted_to_the_request_channel(tmp_path):
     assert slack.env == {"SLACK_MCP_XOXB_TOKEN": "${SLACK_BOT_TOKEN}", "SLACK_MCP_ADD_MESSAGE_TOOL": "C0DEMO"}
 
 
+def test_demo_declares_static_and_dynamic_standing_context(tmp_path):
+    config = load_config(resolved_copy(tmp_path))
+    pm, engineer = config.agents["product_manager"], config.coding_agents["engineer"]
+    assert pm.context == ["workspace/AGENTS.md"]
+    assert engineer["context"] == ["workspace/ENGINEERING.md"]
+    assert pm.workspace_context == engineer["workspace_context"] == ["REQUEST.md", "LOG.md"]
+
+
 def use_fakes(root: Path) -> None:
     """Swap the Slack MCP server and Codex for the test doubles; everything else runs as declared."""
     toml = root / "scaffold.toml"

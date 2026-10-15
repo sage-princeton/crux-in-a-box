@@ -136,3 +136,17 @@ def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):
     result = asyncio.run(agent.run("TASK", ctx))
     assert fake.logins == []
     assert result.as_tool_output() == "[coding agent did not complete]\nsandbox denied"
+
+
+def test_codex_loads_current_instructions_for_each_fresh_brief(tmp_path):
+    fake = FakeCodex([completed()])
+    source = tmp_path / "REQUEST.md"
+    source.write_text("first spec")
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
+                                 developer_instructions=source.read_text, client_factory=lambda ctx: fake)
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
+                     NullTelemetry())
+    asyncio.run(agent.run("first brief", ctx))
+    source.write_text("second spec")
+    asyncio.run(agent.run("second brief", ctx))
+    assert [start["developer_instructions"] for start in fake.starts] == ["first spec", "second spec"]
