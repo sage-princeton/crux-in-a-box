@@ -48,6 +48,7 @@ Installed by default:
 
 ## Layout
 
+- `lambda/langfuse_cost_tracker/` — [cross-platform Langfuse cost and token API](lambda/langfuse_cost_tracker/README.md) for runs with Langfuse exports; the legacy OpenClaw path above uses the provider trackers
 - `linux/` — provisioning, watchdog, monitoring
 - `run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
 - `harness-overview.html` — human-facing overview
