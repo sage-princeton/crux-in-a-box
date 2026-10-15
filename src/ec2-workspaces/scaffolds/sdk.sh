@@ -92,6 +92,12 @@ scaffold_configure() {
   install -d -m 755 -o "$RUN_USER" -g "$RUN_USER" "$WORK_DIR" "$STATE_DIR" "$STATE_DIR/codex"
   scaffold_probe_sandbox
 
+  info "Checking declared commands as $RUN_USER"
+  systemd-run --quiet --wait --pipe --collect --uid="$RUN_USER" \
+    --property=EnvironmentFile="$RUN_ENV_FILE" --working-directory="$DROP_IN_DIR/workspace" \
+    /usr/bin/python3 /usr/local/lib/crux/run_provision.py check --manifest /etc/crux-provision.json \
+    || die "Declared run software checks failed; correct provision.json or re-run install-run.sh before launch."
+
   # One real model call and one Codex turn, with the unit's exact environment;
   # the probe also requires Langfuse to accept the keys.
   info "Probing the scaffold: one traced model call and one Codex turn"
@@ -122,7 +128,7 @@ Type=exec
 User=${RUN_USER}
 WorkingDirectory=${DROP_IN_DIR}/workspace
 EnvironmentFile=${RUN_ENV_FILE}
-ExecStart=${SCAFFOLD_PYTHON} -m crux_scaffold run --drop-in ${DROP_IN_DIR} --state-dir ${STATE_DIR}
+ExecStart=/usr/bin/python3 /usr/local/lib/crux/run_provision.py exec --manifest /etc/crux-provision.json -- ${SCAFFOLD_PYTHON} -m crux_scaffold run --drop-in ${DROP_IN_DIR} --state-dir ${STATE_DIR}
 Restart=on-failure
 RestartSec=30
 RestartPreventExitStatus=2 3

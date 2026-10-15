@@ -25,7 +25,7 @@ RUN_HOME="/home/$RUN_USER"
 info "Base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl unzip jq git ca-certificates >/dev/null
+apt-get install -y -qq curl unzip jq git ca-certificates python3 >/dev/null
 ok "apt packages in"
 
 # ====== NEEDRESTART ======
@@ -82,3 +82,6 @@ else
 fi
 
 scaffold_install
+
+info "Installing declared run software"
+python3 /usr/local/lib/crux/run_provision.py install --manifest /etc/crux-provision.json

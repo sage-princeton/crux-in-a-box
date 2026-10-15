@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "apt_packages": ["poppler-utils"],
+  "tools": [
+    {
+      "name": "gog",
+      "url": "https://github.com/openclaw/gogcli/releases/download/v0.28.0/gogcli_0.28.0_linux_amd64.tar.gz",
+      "sha256": "5076a41ef1fd09573e20559c1911de3ba7abcb08bff61788867a302d3d2d90d8",
+      "member": "gog"
+    }
+  ],
+  "checks": [
+    {"name": "pdf-text", "argv": ["pdftotext", "-v"]},
+    {"name": "gog-version", "argv": ["gog", "--version"]}
+  ]
+}
