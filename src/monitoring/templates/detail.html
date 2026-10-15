@@ -1,7 +1,7 @@
 {% extends 'base.html' %}
 {% from 'components/timestamp.html' import timestamp %}
 {% block title %}{{ incident.title }}{% endblock %}{% block content %}
-<a class="inline-block" href="/?status=all">← All incidents</a><div class="my-6 rounded-[10px] border border-line bg-white p-6 max-[700px]:p-5 [&_article]:border-t [&_article]:border-line [&_article]:py-3 incident-heading"><p class="mb-3 text-xs text-muted wrap-anywhere">{{ incident.workload_label }} · {{ incident.id }}</p>
+<a class="inline-block" href="{{ url_for('index', status='all', workload=private.workload_key, _anchor='incident-table') }}">← {{ incident.workload_label }} incidents</a><div class="my-6 rounded-[10px] border border-line bg-white p-6 max-[700px]:p-5 [&_article]:border-t [&_article]:border-line [&_article]:py-3 incident-heading"><p class="mb-3 text-xs text-muted wrap-anywhere">{{ incident.workload_label }} · {{ incident.id }}</p>
 <h1 class="mb-4 text-2xl leading-[1.3] font-bold">{{ incident.title }}</h1><span class="whitespace-nowrap text-xs font-medium {{ 'text-amber-800' if incident.status == 'open' else 'text-green-800' }}">{{ incident.status }}</span>
 <dl class="mt-6 max-w-[850px] text-[15px]">
 {% for label, value in [('What happened', incident.what_happened), ('Why did it happen?', incident.why_it_happened), ('What needs to be done now?', incident.next_steps)] %}

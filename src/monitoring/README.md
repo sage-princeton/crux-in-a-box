@@ -31,7 +31,7 @@ flowchart LR
   Status --> SQL[(RDS PostgreSQL)]
   Incidents --> SQL
   SQL --> Web[Authenticated website]
-  Worker --> Slack[Enrollment and new incident notifications]
+  Worker --> Slack[Enrollment, status, closure and new incident notifications]
 ```
 
 `worker.py` coordinates discovery, saved checkpoints and publication.
@@ -74,12 +74,27 @@ action. Existing incidents use their latest saved finding without repeating
 inference or changing incident identity. Monitoring health incidents show the
 saved failure reason and coverage gaps directly.
 
-Slack announces enrollment once per workload and newly created incidents with a
-count, workload name and clickable incident-list link. Repeated observations and
-status changes send no message. SQL delivery cursors advance after Slack accepts
-a message; failures retry. Cursors start at the nil UUID and cannot be null. The
-migration skips existing incident history and preserves enrollment acknowledgements.
-An ambiguous network failure after Slack accepts a message can cause a duplicate.
+The `MONITORING_SLACK_WEBHOOK_URL` incoming webhook targets the `crux-monitoring`
+chat. Enrollment, status reports, instance closure notices and incident alerts all
+use this webhook. Each new successful status assessment sends a bounded summary
+of activity, progress, quality, milestones, alerts and recommendations with the
+assessment window's timestamp and a status history link. Polling the same
+assessment does not repeat it; delivery retries use the latest saved status
+without repeating inference.
+
+Slack announces when an enrolled instance stops, terminates or disappears from
+inventory. Saved history remains available, and restarting the instance announces
+that monitoring has begun again. Previously acknowledged enrollments are retained.
+Notifications use current inventory so retries of archived assessments cannot
+re-enroll a closed instance. Instances never announced as enrolled do not generate
+closure notices.
+
+Newly created incidents send a count, workload name and clickable incident-list
+link. Repeated observations and operator incident status changes send no incident
+message. SQL delivery cursors advance after Slack accepts a message; failures
+retry. Cursors start at the nil UUID and cannot be null. The migration skips
+existing incident history and preserves enrollment acknowledgements. An ambiguous
+network failure after Slack accepts a message can cause a duplicate.
 
 A unique EC2 Name maps to the matching Langfuse environment. Missing or duplicate
 names do not borrow another run's telemetry. Incident reviewers must come from a
@@ -87,6 +102,12 @@ different observed model family; unknown subject models remain a coverage gap.
 Stopped instances retain their history and receive no new collections. Instance
 IDs keep replacement boxes separate. SQL collections and S3 snapshots have
 90-day retention; incidents and operator decisions remain in SQL.
+
+Select a workload in the overview and press **Show** to see its status and
+incidents together, including historical workloads whose instances have closed.
+Incident status tabs and pagination retain the selection. Selecting a historical
+workload opens its incidents automatically; **Status history** shows its saved
+checks. Incident detail pages link back to that workload's incidents.
 
 ## Development and CI
 

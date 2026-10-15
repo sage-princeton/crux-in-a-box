@@ -1,6 +1,7 @@
 import base64
 import json
 import time
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from conftest import ORIGIN, authorize, ingest, report
@@ -280,3 +281,95 @@ def test_invalid_database_cursors_return_bad_request(client, store, target):
             ).status_code
             == 400
         )
+
+
+@pytest.mark.parametrize("status", ["all", "open", "closed"])
+def test_workload_selection_scopes_status_and_incidents_and_survives_tabs(
+    client, store, target, status
+):
+    selected = {**target, "name": "pr49-test", "slug": "pr49-test", "state": "no longer enrolled"}
+    other = {**target, "instance_id": "i-other", "name": "other", "slug": "other"}
+    store.sync([selected, other], 1800, 1800)
+    opened = ingest(store, selected)
+    closed = ingest(store, selected, anchor="observation:closed")
+    closed = store.transition(
+        closed["id"], closed["version"], "closed", {"id": "operator"}, "Resolved"
+    )
+    unrelated = ingest(store, other)
+    authorize(client, store)
+    page = client.get(
+        "/", query_string={"workload": selected["key"], "status": status}, base_url=ORIGIN
+    )
+    assert page.status_code == 200
+    tree = html.fromstring(page.data)
+    articles = tree.xpath('//article[contains(@class, "workload-status")]/@aria-label')
+    assert articles == ["pr49-test project status"]
+    incident_links = tree.xpath('//section[@id="incident-table"]//tbody//a/@href')
+    expected = {
+        f"/incidents/{item['id']}" for item in (opened, closed) if status in ("all", item["status"])
+    }
+    assert set(incident_links) == expected
+    assert f"/incidents/{unrelated['id']}" not in incident_links
+    assert tree.xpath('//section[@id="incident-table"]//details[@open]')
+    assert set(tree.xpath('//select[@name="workload"]/option/@value')) == {
+        "",
+        selected["key"],
+        other["key"],
+    }
+    for link in tree.xpath('//nav[@aria-label="Incident status"]/a/@href'):
+        assert parse_qs(urlsplit(link).query)["workload"] == [selected["key"]]
+        next_page = client.get(link, base_url=ORIGIN)
+        assert next_page.status_code == 200
+        assert f"/incidents/{unrelated['id']}".encode() not in next_page.data
+    detail = html.fromstring(client.get(f"/incidents/{opened['id']}", base_url=ORIGIN).data)
+    back = detail.xpath("//main/a/@href")[0]
+    assert parse_qs(urlsplit(back).query)["workload"] == [selected["key"]]
+
+
+def test_selected_workload_pagination_stays_scoped_and_rejects_another_workloads_cursor(
+    client, store, target
+):
+    other = {**target, "instance_id": "i-other", "name": "aaa-other", "slug": "aaa-other"}
+    store.sync([target, other], 1800, 1800)
+    unrelated = ingest(store, other)
+    store.save_collection(target["key"], 900, {"target": target})
+    for index in range(52):
+        anchor = f"observation:{index}"
+        store.ingest(
+            target["key"],
+            900,
+            {"report": report(anchor), "artifact_prefix": "private"},
+            {anchor: anchor},
+        )
+    selected_ids = {
+        item["id"] for item in store.instance_page(target["instance_id"], None, None, 100)
+    }
+    authorize(client, store)
+    page = client.get(
+        "/", query_string={"workload": target["key"], "status": "all"}, base_url=ORIGIN
+    )
+    tree = html.fromstring(page.data)
+    links = tree.xpath('//section[@id="incident-table"]//tbody//a/@href')
+    assert len(links) == 50 and f"/incidents/{unrelated['id']}" not in links
+    next_page = tree.xpath('//div[contains(@class, "pagination")]/a/@href')[0]
+    assert parse_qs(urlsplit(next_page).query)["workload"] == [target["key"]]
+    remaining = html.fromstring(client.get(next_page, base_url=ORIGIN).data)
+    links += remaining.xpath('//section[@id="incident-table"]//tbody//a/@href')
+    assert len(links) == 52 and set(links) == {f"/incidents/{key}" for key in selected_ids}
+    cursor = base64.urlsafe_b64encode(json.dumps([other["instance_id"], None]).encode()).decode()
+    assert (
+        client.get(
+            "/", query_string={"workload": target["key"], "cursor": cursor}, base_url=ORIGIN
+        ).status_code
+        == 400
+    )
+
+
+def test_selected_workload_with_no_incidents_does_not_show_other_workloads(client, store, target):
+    other = {**target, "instance_id": "i-other", "name": "other", "slug": "other"}
+    store.sync([target, other], 1800, 1800)
+    unrelated = ingest(store, other)
+    authorize(client, store)
+    page = client.get("/", query_string={"workload": target["key"]}, base_url=ORIGIN)
+    assert page.status_code == 200 and b"No open incidents on this page" in page.data
+    assert f"/incidents/{unrelated['id']}".encode() not in page.data
