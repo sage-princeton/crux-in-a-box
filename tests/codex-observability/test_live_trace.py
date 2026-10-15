@@ -14,7 +14,6 @@ import sys
 from pathlib import Path
 
 import pytest
-
 from collector import Collector, Span
 from pins import REPO
 
