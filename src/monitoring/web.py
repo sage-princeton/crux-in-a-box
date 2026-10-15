@@ -173,6 +173,7 @@ def create_app(store=None, settings=None):
                 if k in row
             }
             for row in incident_rows
+            if not selected or row["key"] == selected
         ]
         fleet.sort(
             key=lambda row: (

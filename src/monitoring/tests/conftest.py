@@ -3,6 +3,7 @@ import secrets
 import time
 from pathlib import Path
 
+import httpx
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -17,6 +18,20 @@ from web_auth import SESSION_COOKIE
 
 ROOT = Path(__file__).resolve().parents[1]
 ORIGIN = "https://incidents.example.test"
+
+
+@pytest.fixture
+def slack(monkeypatch):
+    monkeypatch.setattr(
+        "fleet.slack_webhook_url", lambda: "https://hooks.slack.com/services/test/fixture/only"
+    )
+
+    def transport(handler):
+        http = httpx.Client(transport=httpx.MockTransport(handler))
+        monkeypatch.setattr("fleet.httpx.post", http.post)
+        return http
+
+    return transport
 
 
 @pytest.fixture(scope="session")
