@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install and check optional run software without handling service credentials."""
+"""Install declared software, seed protected authentication, and check a run."""
 
 import argparse
 import hashlib
@@ -7,6 +7,7 @@ import http.client
 import json
 import os
 from pathlib import Path, PurePosixPath
+import pwd
 import re
 import shutil
 import subprocess
@@ -15,6 +16,8 @@ import tarfile
 import tempfile
 import urllib.parse
 import urllib.request
+
+from run_service_auth import ServiceError, configure_services, service_checks, validate_auth, validate_services
 
 
 DEFAULT_TOOLS_DIR = "/opt/crux-run-tools/bin"
@@ -43,7 +46,7 @@ def load_manifest(path):
         manifest = json.loads(Path(path).read_text())
     except (OSError, ValueError):
         raise ProvisionError("Cannot read provision.json as JSON.") from None
-    fields(manifest, ("version", "apt_packages", "tools", "checks"), ("version",))
+    fields(manifest, ("version", "apt_packages", "tools", "checks", "services"), ("version",))
     require(type(manifest["version"]) is int and manifest["version"] == 1,
             "provision.json version must be 1.")
     for key in ("apt_packages", "tools", "checks"):
@@ -81,6 +84,7 @@ def load_manifest(path):
                 timeout = item.get("timeout_seconds", 30)
                 require(type(timeout) is int and 1 <= timeout <= 300, f"Check {name}: timeout must be 1–300 seconds.")
                 require(isinstance(item.get("hint", ""), str), f"Check {name}: hint must be a string.")
+    validate_services(manifest.get("services", []))
     return manifest
 
 
@@ -168,7 +172,7 @@ def check(manifest, tools_dir):
     for tool in manifest.get("tools", []):
         require(shutil.which(tool["name"], path=env["PATH"]),
                 f"Tool {tool['name']} is unavailable. Re-run install-run.sh.")
-    for probe in manifest.get("checks", []):
+    for probe in [*manifest.get("checks", []), *service_checks(manifest.get("services", []), env)]:
         try:
             run_quiet(probe["argv"], timeout=probe.get("timeout_seconds", 30), env=env)
         except (OSError, subprocess.SubprocessError):
@@ -178,9 +182,12 @@ def check(manifest, tools_dir):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("validate", "install", "check", "exec"))
+    parser.add_argument("action", choices=("validate", "install", "configure", "check", "exec"))
     parser.add_argument("--manifest", required=True)
     parser.add_argument("--tools-dir", default=DEFAULT_TOOLS_DIR)
+    parser.add_argument("--secrets")
+    parser.add_argument("--run-user", default="ubuntu")
+    parser.add_argument("--env-file", default="/etc/crux-run.env")
     args, command = parser.parse_known_args(argv)
     if args.action == "exec":
         if len(command) < 2 or command[0] != "--":
@@ -189,13 +196,28 @@ def main(argv=None):
         parser.error("unexpected arguments")
     try:
         manifest = load_manifest(args.manifest)
-        if args.action == "install":
+        secrets = None
+        if args.secrets:
+            try:
+                secrets = json.loads(Path(args.secrets).read_text())
+            except (OSError, ValueError):
+                raise ProvisionError("Cannot read service authentication JSON.") from None
+            validate_auth(manifest.get("services", []), secrets)
+        if args.action == "configure":
+            require(secrets is not None, "configure requires --secrets (use /dev/stdin for protected delivery).")
+            try:
+                user = pwd.getpwnam(args.run_user)
+            except KeyError:
+                raise ProvisionError("The run user does not exist.") from None
+            configure_services(manifest.get("services", []), secrets, Path(user.pw_dir),
+                               user.pw_uid, user.pw_gid, Path(args.env_file))
+        elif args.action == "install":
             install(manifest, args.tools_dir)
         elif args.action in ("check", "exec"):
             env = check(manifest, args.tools_dir)
             if args.action == "exec":
                 os.execvpe(command[1], command[1:], env)
-    except ProvisionError as error:
+    except (ProvisionError, ServiceError) as error:
         print(f"Run provisioning: {error}", file=sys.stderr)
         return 2
     except OSError:
