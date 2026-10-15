@@ -1,125 +1,170 @@
 import time
 
 import pytest
-from botocore.exceptions import ClientError
+from conftest import ORIGIN, authorize
 from lxml import html
-from test_lifecycle import ingest, store
-from test_status import completed, status_store
-from test_web import ORIGIN, SETTINGS, authorize
 
-from status_store import workload_key
-from web import create_app
+from status_view import coverage_rows
 
 
-@pytest.fixture
-def status_client(store, status_store):
-    app = create_app(store, SETTINGS, status_store)
-    app.config.update(TESTING=True)
-    client = app.test_client()
-    authorize(client, store)
-    return client
-
-
-def seed(
-    status_store,
-    iid="i-status",
-    run="run-1",
-    state="running",
-    end=None,
-    progress="Two evaluations completed.",
+@pytest.mark.parametrize("legacy", [False, True])
+@pytest.mark.parametrize("error_code", ["", "langfuse_recency"])
+def test_failed_status_keeps_last_success_and_history_is_private(
+    client, store, target, monkeypatch, legacy, error_code
 ):
-    end = end or int(time.time()) // 900 * 900
-    key = workload_key(iid, run)
-    status_store.sync(
-        key,
-        {"instance_id": iid, "workload_id": run, "slug": "example-project", "state": state},
-        int(time.time()),
-        1800,
-    )
-    status_store.publish(key, end, completed(end, progress))
-    return key
-
-
-def test_latest_status_is_before_incidents_without_creating_an_incident(
-    status_client, status_store, store
-):
-    key = seed(status_store)
-    before = list(store.all("INCIDENTS"))
-    response = status_client.get("/", base_url=ORIGIN)
-    page = html.fromstring(response.data)
-    assert page.xpath('//*[@id="coverage"]//ol[@class]/li')
-    assert len(page.xpath('//ol[contains(@class,"status-report")]/li')) == 5
-    body = response.get_data(as_text=True)
-    assert body.index('id="coverage"') < body.index('id="incident-table"')
-    assert "Two evaluations completed." in body
-    assert list(store.all("INCIDENTS")) == before == []
-    assert status_client.get(f"/workloads/{key}/status", base_url=ORIGIN).status_code == 200
-
-
-def test_failure_staleness_and_history_keep_original_report_time(status_client, status_store):
-    end = int(time.time()) - 7200
-    key = seed(status_store, end=end)
-    status_store.publish(
-        key,
-        end + 3600,
-        {"outcome": "failed", "checked_at": end + 3610, "error": "Budget exhausted"},
-    )
-    page = status_client.get("/", base_url=ORIGIN).get_data(as_text=True)
-    assert "Stale evidence" in page and "Latest check failed" in page
-    assert "Two evaluations completed." in page and "last successful report" in page
-    history = status_client.get(f"/workloads/{key}/status", base_url=ORIGIN).get_data(as_text=True)
-    assert "Budget exhausted" in history and "Two evaluations completed." in history
-
-
-def test_independent_data_read_failures_do_not_hide_the_other_section(
-    status_client, status_store, store, monkeypatch
-):
-    seed(status_store)
-    ingest(store)
-    original = status_store.fleet
-
-    def unavailable(*args, **kwargs):
-        raise ClientError(
-            {"Error": {"Code": "ServiceUnavailable", "Message": "PRIVATE_DETAILS"}}, "Query"
+    key = target["key"]
+    for end in (900, 1800):
+        store.save_collection(key, end, {"target": target, "sources": []})
+    report = {
+        "activity": "alive",
+        "alert": "",
+        "recommendation": "Continue",
+        "progress": "Two evaluations completed",
+        "quality": "Unknown",
+        "milestones": "Baseline complete",
+        "source_ids": [],
+        "budget": "Unknown",
+    }
+    if not legacy:
+        report.update(
+            quality=["Content checks failed for two groups.", "Search remains unverified."],
+            milestones=["The pilot is deployed.", "Final acceptance is unfinished."],
+            details=["URL coverage passed.", "<script>alert('evidence')</script>"],
+            reported_budget="Workspace ledger reports $200.49 spent against a $200 limit.",
         )
-
-    monkeypatch.setattr(status_store, "fleet", unavailable)
-    page = status_client.get("/", base_url=ORIGIN).get_data(as_text=True)
-    assert "Project status is temporarily unavailable" in page
-    assert "Unexpected upload destination" in page
-    assert "PRIVATE_DETAILS" not in page
-    monkeypatch.setattr(status_store, "fleet", original)
-    monkeypatch.setattr(store, "all", unavailable)
-    page = status_client.get("/", base_url=ORIGIN).get_data(as_text=True)
-    assert "Incident data is temporarily unavailable" in page
-    assert "Two evaluations completed." in page
-
-
-def test_status_is_private_escaped_and_scoped_by_run(status_client, status_store, store):
-    first = seed(status_store, run="first", progress="PRIVATE_STATUS<script>bad()</script>")
-    seed(status_store, run="second", progress="Different run")
-    body = status_client.get(f"/?workload={first}", base_url=ORIGIN).get_data(as_text=True)
-    assert "PRIVATE_STATUS&lt;script&gt;" in body and "<script>" not in body
-    assert "Different run" not in body
-    anonymous = create_app(store, SETTINGS, status_store).test_client()
-    for path in ("/", f"/workloads/{first}/status"):
-        response = anonymous.get(path, base_url=ORIGIN)
-        assert response.status_code == 302
-        assert "PRIVATE_STATUS" not in response.get_data(as_text=True)
-    assert (
-        status_client.get(f"/workloads/{first}/status?before=invalid", base_url=ORIGIN).status_code
-        == 400
+    store.publish(
+        key,
+        900,
+        "status",
+        {
+            "outcome": "completed",
+            "window_end": 900,
+            "checked_at": 910,
+            "evidence_at": 899,
+            "report": report,
+            "coverage_gaps": [],
+        },
     )
+    store.publish(
+        key,
+        1800,
+        "status",
+        {
+            "outcome": "failed",
+            "window_end": 1800,
+            "checked_at": 1810,
+            "error": "Unavailable",
+            "error_code": error_code,
+        },
+    )
+    row = store.fleet()[0]
+    assert row["latest"]["checked_at"] == 910 and row["attempt"] == "failed"
+    with monkeypatch.context() as clock:
+        clock.setattr("status_view.time.time", lambda: 2700)
+        view = coverage_rows([row])[0]
+    assert view["stale"] and view["attention"]
+    path = f"/workloads/{key}/status"
+    assert client.get(path, base_url=ORIGIN).status_code == 302
+    authorize(client, store)
+    page = client.get(path, base_url=ORIGIN)
+    assert (
+        page.status_code == 200 and b"Two evaluations" in page.data and b"Unavailable" in page.data
+    )
+    page_html = html.fromstring(page.data)
+    assert page_html.xpath("//details[summary='Check details']//p[contains(., 'Unavailable')]")
+    assert "Last reported status: Active." in page_html.text_content()
+    overview = client.get("/", base_url=ORIGIN)
+    overview_html = html.fromstring(overview.data)
+    assert overview.status_code == 200
+    failure_message = (
+        "Langfuse logs are stale or have not been updated"
+        if error_code == "langfuse_recency"
+        else "Could not refresh status"
+    )
+    assert failure_message in overview_html.text_content()
+    assert failure_message in page_html.text_content()
+    assert "Showing an earlier report." in overview_html.text_content()
+    assert "Last reported status: Active." in overview_html.text_content()
+    for document in (page_html, overview_html):
+        checks = document.xpath("//div[@class='status-checks']/ul/li")
+        assert [item.text_content() for item in checks] == (
+            ["Unknown"] if legacy else report["quality"]
+        )
+        assert document.xpath(
+            "//div[contains(@class, 'status-report')]/details/summary[text()='Details']"
+        )
+        assert not document.xpath("//script[contains(text(), 'evidence')]")
+        if not legacy:
+            assert "Spend & time." in document.text_content()
+            assert report["reported_budget"] in document.text_content()
+            details = document.xpath("//div[contains(@class, 'status-report')]/details")[0]
+            assert "URL coverage passed." in details.text_content()
+            assert "The pilot is deployed." in details.text_content()
+    history, cursor = store.history(key, None)
+    assert [r["window_end"] for r in history] == [1800, 900] and cursor is None
 
 
-def test_coverage_paginates_and_keeps_retired_history_separate(status_client, status_store):
-    for n in range(7):
-        seed(status_store, iid=f"i-{n}")
-    retired = seed(status_store, iid="i-retired", state="stopped")
-    page = html.fromstring(status_client.get("/", base_url=ORIGIN).data)
-    assert len(page.xpath('//article[contains(@class,"workload-status")]')) == 5
-    assert page.xpath('//nav[@aria-label="Coverage pages"]')
-    second = html.fromstring(status_client.get("/?coverage_page=2", base_url=ORIGIN).data)
-    assert len(second.xpath('//article[contains(@class,"workload-status")]')) == 2
-    assert status_client.get(f"/?workload={retired}", base_url=ORIGIN).status_code == 200
-    assert status_client.get("/?coverage_page=-1", base_url=ORIGIN).status_code == 400
+@pytest.mark.parametrize(
+    "resources",
+    [
+        "As of October 11, the ledger reports LLM $200.49/$200, API $13/$100, "
+        "and estimated AWS $19.43/$100. The task deadline is November 18, 2026, 23:36 UTC.",
+        "The task deadline is November 18, 2026, 23:36 UTC. Spend is not recorded.",
+        "",
+    ],
+)
+def test_current_report_keeps_warnings_visible_and_supporting_facts_collapsed(
+    client, store, target, resources
+):
+    now = int(time.time())
+    key = target["key"]
+    report = {
+        "activity": "stalled",
+        "alert": "The run stopped with release checks unfinished.",
+        "recommendation": "The operator should decide whether to fund another run.",
+        "progress": "The completion report marks the work unfinished.",
+        "quality": ["Content checks failed for two groups.", "Twenty pages need visual review."],
+        "milestones": ["The pilot is deployed."],
+        "details": ["Access control passed."],
+        "reported_budget": resources,
+        "source_ids": [],
+        "budget": "Configured project spend and deadline are not supplied.",
+    }
+    store.save_collection(key, now, {"target": target, "sources": []})
+    store.publish(
+        key,
+        now,
+        "status",
+        {
+            "outcome": "completed",
+            "window_end": now,
+            "checked_at": now,
+            "evidence_at": now,
+            "report": report,
+            "coverage_gaps": ["Some workspace evidence was omitted."],
+        },
+    )
+    authorize(client, store)
+    response = client.get("/", base_url=ORIGIN)
+    assert response.status_code == 200
+    document = html.fromstring(response.data)
+    visible = document.xpath("//div[contains(@class, 'status-report')]")[0]
+    assert "Project status: Stalled." in visible.text_content()
+    assert report["alert"] in visible.text_content()
+    assert report["recommendation"] in visible.text_content()
+    assert [
+        item.text_content() for item in visible.xpath("./div[@class='status-checks']/ul/li")
+    ] == report["quality"]
+    assert not visible.xpath("./div[@class='status-checks']/ancestor::details")
+    details = visible.xpath("./details")[0]
+    assert details.get("open") is None
+    assert "Access control passed." in details.text_content()
+    assert (
+        resources or "No spend or deadline found in the available evidence."
+    ) in visible.text_content()
+    if resources:
+        assert "No spend or deadline found" not in visible.text_content()
+    assert "Configured figures" not in document.text_content()
+    assert report["budget"] not in document.text_content()
+    assert "Some workspace evidence was omitted." in document.text_content()
+    assert "Could not refresh status" not in document.text_content()

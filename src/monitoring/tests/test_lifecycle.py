@@ -1,201 +1,223 @@
-import time
+import json
+from uuid import UUID
 
-import boto3
 import pytest
-from moto import mock_aws
+from alembic import command
+from alembic.config import Config
+from conftest import ROOT, ingest, report
+from sqlalchemy import text
 
-from lifecycle import (
-    Conflict,
-    IncidentStore,
-    evidence_anchors,
-    public_incident,
-    sftp_anchor_positions,
-)
+from lifecycle import Conflict, evidence_anchors, public_incident
+from review import CoverageError
+from store import Budget
 
 
-@pytest.fixture
-def store():
-    with mock_aws():
-        table = boto3.resource("dynamodb", region_name="us-east-1").create_table(
-            TableName="incidents",
-            BillingMode="PAY_PER_REQUEST",
-            KeySchema=[
-                {"AttributeName": "pk", "KeyType": "HASH"},
-                {"AttributeName": "sk", "KeyType": "RANGE"},
-            ],
-            AttributeDefinitions=[
-                {"AttributeName": k, "AttributeType": "S"}
-                for k in ("pk", "sk", "instance_id", "id")
-            ],
-            GlobalSecondaryIndexes=[
-                {
-                    "IndexName": "instance-incidents",
-                    "KeySchema": [
-                        {"AttributeName": "instance_id", "KeyType": "HASH"},
-                        {"AttributeName": "id", "KeyType": "RANGE"},
-                    ],
-                    "Projection": {"ProjectionType": "ALL"},
-                }
-            ],
+def test_alembic_roundtrip(db):
+    config = Config(str(ROOT / "alembic.ini"))
+    command.downgrade(config, "base")
+    with db.connect() as connection:
+        assert connection.execute(text("SELECT to_regclass('workloads')")).scalar() is None
+    command.upgrade(config, "head")
+    with db.connect() as connection:
+        assert (
+            connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
         )
-        yield IncidentStore(table)
+        undocumented = connection.execute(
+            text("""
+                SELECT t.relname, a.attname FROM pg_class t
+                JOIN pg_namespace n ON n.oid=t.relnamespace
+                JOIN pg_attribute a ON a.attrelid=t.oid AND a.attnum>0 AND NOT a.attisdropped
+                WHERE n.nspname=current_schema() AND t.relkind='r'
+                    AND (COALESCE(trim(obj_description(t.oid)), '')=''
+                        OR COALESCE(trim(col_description(t.oid, a.attnum)), '')='')
+            """)
+        ).all()
+    assert undocumented == [], f"Missing database comments: {undocumented}"
 
 
-def report(text="Private evidence", anchor="observation:123"):
-    return {
-        "summary": "Review complete",
-        "review_status": "completed",
-        "coverage_gaps": [],
-        "findings": [
-            {
-                "detector_id": "unexpected_upload",
-                "anchor_id": anchor,
-                "category": "Private title",
-                "evidence": text,
-                "source_ids": [anchor],
-                "severity": "low",
-                "confidence": "medium",
-            }
-        ],
-    }
-
-
-def ingest(store, window=300, text="Private evidence", anchor="observation:123"):
-    store.ingest(
-        report(text, anchor),
-        f"REVIEW#i-test#{window}",
-        "reviews/test",
-        {"slug": "test-workload"},
-        {"prompt_sha256": "prompt-1", "reported_model": "model-1"},
-        {anchor: anchor},
-    )
-    return list(store.all("INCIDENTS"))[0]
-
-
-def test_close_reopen_repeated_review_preserves_id_state_and_history(store):
-    item = ingest(store)
-    incident_id = item["id"]
-    actor = {"id": "operator@example.test", "issuer": "test-idp"}
-    closed = store.transition(incident_id, item["version"], "closed", actor, "Private resolution")
-    ingest(store, 600, "Completely rephrased explanation")
-    repeated = store.incident(incident_id)
-    assert repeated["status"] == "closed" and repeated["review_count"] == 2
-    assert len(list(store.all("INCIDENTS"))) == 1
-    with pytest.raises(Conflict):
-        store.transition(incident_id, closed["version"], "open", actor)
-    reopened = store.transition(incident_id, repeated["version"], "open", actor)
-    assert reopened["status"] == "open" and reopened["id"] == incident_id
-    events, _ = store.page("HISTORY#" + incident_id, prefix="EVENT#")
-    assert [e["status"] for e in events] == ["closed", "open"]
-    assert events[0]["note"] == "Private resolution" and events[0]["actor"] == actor
-    # Retrying the same review is not another observation, even if the reviewer wording changes.
-    ingest(store, 600, "Retry text")
-    assert store.incident(incident_id)["review_count"] == 2
-    observations, _ = store.page("HISTORY#" + incident_id, prefix="OBS#")
-    assert len(observations) == 2
-    assert all(o["provenance"]["prompt_sha256"] == "prompt-1" for o in observations)
-    assert store.get("REVIEW#REVIEW#i-test#600", "STATE")["window_start"] == -1200
-    assert "Private" not in str(public_incident(reopened))
-
-
-def test_separate_source_event_creates_new_incident_and_reopening_does_not(store):
-    item = ingest(store)
-    ingest(store, 600, anchor="observation:456")
-    fleet = [{"instance_id": "i-test", "last_updated": 600}]
-    assert store.summaries(fleet)[0]["total_incident_count"] == 2
-    store.transition(item["id"], item["version"], "closed", {"id": "operator"})
-    assert store.summaries(fleet)[0]["incident_count"] == 1
-    item = store.incident(item["id"])
-    store.transition(item["id"], item["version"], "open", {"id": "operator"})
-    assert store.summaries(fleet)[0]["total_incident_count"] == 2
-
-
-def test_anchors_are_derived_from_source_events_not_window_or_prose():
-    sources = [
-        {"id": "observation:1", "kind": "langfuse", "data": {"text": "anything"}},
-        {"id": "file:/exports/activity", "kind": "sftp", "mtime": 100, "data": "upload"},
-        {
-            "id": "logs:group",
-            "kind": "cloudwatch",
-            "data": [{"eventId": "event-1", "message": "upload"}],
-        },
+def test_slack_cursor_migration_skips_existing_incidents_without_losing_history(store, target):
+    original = ingest(store, target)
+    empty = {**target, "instance_id": "i-empty", "slug": "empty"}
+    store.sync([target, empty], 900, 1800)
+    config = Config(str(ROOT / "alembic.ini"))
+    command.downgrade(config, "0001")
+    command.upgrade(config, "head")
+    assert store.new_incidents() == []
+    assert store.incident(original["id"])["status"] == "open"
+    with store.db.connect() as connection:
+        cursors = dict(
+            connection.execute(text("SELECT key, slack_incident_cursor FROM workloads")).all()
+        )
+        nullable = connection.execute(
+            text("""
+            SELECT is_nullable FROM information_schema.columns
+            WHERE table_name='workloads' AND column_name='slack_incident_cursor'
+        """)
+        ).scalar_one()
+    assert cursors[UUID(target["key"])] == UUID(original["id"])
+    assert cursors[UUID(empty["key"])] == UUID(int=0)
+    assert nullable == "NO"
+    new = ingest(store, target, 450, anchor="observation:late")
+    assert store.new_incidents() == [
+        {"key": target["key"], "slug": target["slug"], "new_incidents": 1, "through": new["id"]}
     ]
-    before = evidence_anchors(sources)
-    sources[1]["mtime"] = 200
-    assert evidence_anchors(sources) == before
-    assert before["event:event-1"] == "logs:group"
-    sources[1]["data"] = "different event"
-    assert evidence_anchors(sources) != before
+    fresh = {**target, "instance_id": "i-new", "slug": "new"}
+    store.sync([target, empty, fresh], 1800, 1800)
+    with store.db.connect() as connection:
+        assert connection.execute(
+            text("SELECT slack_incident_cursor FROM workloads WHERE key=:key"),
+            {"key": fresh["key"]},
+        ).scalar_one() == UUID(int=0)
 
 
-def test_expired_sessions_and_private_rows_never_enter_incident_listing(store):
-    ingest(store)
-    store.put_once({"pk": "SESSION#private", "sk": "STATE", "expires_at": int(time.time()) - 1})
-    rows, _ = store.page("INCIDENTS")
-    assert len(rows) == 1 and rows[0]["pk"] == "INCIDENTS"
-
-
-def test_legacy_failed_review_retains_failure_without_explicit_status(store):
-    report = {"summary": "Review unavailable", "findings": [], "coverage_gaps": ["Private failure"]}
-    ids = store.ingest(report, "REVIEW#i-test#300", "reviews/legacy", {}, {}, {})
-    incident = store.incident(ids[0])
-    assert incident["detector_id"] == "monitoring:unavailable"
-    assert store.get("REVIEW#REVIEW#i-test#300", "STATE")["review_status"] == "failed"
-
-
-def test_export_append_preserves_closed_incident_and_new_event_is_distinct(store):
-    source = {
-        "id": "file:/exports/events",
-        "kind": "sftp",
-        "data": '{"id":"one","action":"upload"}\n',
+def test_workload_uuidv7_survives_renames_and_separates_replacements(store, target):
+    original = target["key"]
+    renamed = {**target, "name": "renamed", "slug": "renamed"}
+    replacement = {**renamed, "instance_id": "i-replacement"}
+    store.sync([renamed, replacement], 1800, 1800)
+    assert UUID(original).version == UUID(replacement["key"]).version == 7
+    assert renamed["key"] == original != replacement["key"]
+    assert {row["key"]: row["name"] for row in store.fleet()} == {
+        original: "renamed",
+        replacement["key"]: "renamed",
     }
+
+
+def test_incident_identity_and_closed_state_survive_repeated_observations(store, target):
+    item = ingest(store, target)
+    assert UUID(item["id"]).version == 7
+    closed = store.transition(item["id"], item["version"], "closed", {"id": "operator"}, "Resolved")
+    ingest(store, target, 1800)
+    repeated = store.incident(item["id"])
+    assert repeated["status"] == "closed" and repeated["review_count"] == 2
+    assert len(store.instance_page(target["instance_id"], None, None, 50)) == 1
+    with pytest.raises(Conflict):
+        store.transition(item["id"], closed["version"], "open", {"id": "operator"}, "")
+    reopened = store.transition(item["id"], repeated["version"], "open", {"id": "operator"}, "")
+    ingest(store, target, 1800)
+    assert store.incident(item["id"])["version"] == reopened["version"]
+    events, _ = store.incident_history(item["id"], "events", None)
+    observations, _ = store.incident_history(item["id"], "observations", None)
+    assert [e["status"] for e in events] == ["closed", "open"]
+    assert events[0]["note"] == "Resolved" and len(observations) == 2
+    assert public_incident(reopened)["what_happened"] == "Private evidence"
+    assert (
+        not {"anchor", "detector", "workload_key", "version", "latest_finding"}
+        & public_incident(reopened).keys()
+    )
+
+
+def test_missing_or_fabricated_anchors_are_rejected(store, target):
+    result = {"report": report("invented"), "artifact_prefix": "private"}
+    with pytest.raises(ValueError, match="anchor"):
+        store.ingest(target["key"], 900, result, {"real": "real"})
+    del result["report"]["findings"][0]["anchor_id"]
+    with pytest.raises(KeyError):
+        store.ingest(target["key"], 900, result, {})
+    assert store.instance_page(target["instance_id"], None, None, 50) == []
+
+
+def test_workspace_append_preserves_existing_event_identity():
+    source = {"id": "workspace/LOG.md", "kind": "workspace", "data": "event one\n"}
     before = evidence_anchors([source])
-    anchor = next(iter(before))
-
-    def finding(event):
-        result = report(anchor=event)
-        result["findings"][0]["source_ids"] = [source["id"]]
-        return result
-
-    store.ingest(finding(anchor), "REVIEW#i-test#300", "reviews/1", {}, {}, before)
-    item = list(store.all("INCIDENTS"))[0]
-    store.transition(item["id"], item["version"], "closed", {"id": "operator"})
-    source["data"] += '{"id":"two","action":"read"}\n'
+    source["data"] += "event two\n"
     after = evidence_anchors([source])
     assert set(before) < set(after)
-    assert dict(sftp_anchor_positions(source))[anchor] == 1
-    assert dict(sftp_anchor_positions(source))[(set(after) - set(before)).pop()] == 2
-    store.ingest(finding(anchor), "REVIEW#i-test#600", "reviews/2", {}, {}, after)
-    assert len(list(store.all("INCIDENTS"))) == 1
-    assert store.incident(item["id"])["status"] == "closed"
-    new_anchor = (set(after) - set(before)).pop()
-    store.ingest(finding(new_anchor), "REVIEW#i-test#900", "reviews/3", {}, {}, after)
-    assert len(list(store.all("INCIDENTS"))) == 2
-    source["data"] = '{"id":"one","action":"rephrased"}\npartial'
-    source["truncated"] = True
-    assert evidence_anchors([source]) == before
 
 
-def test_compact_fleet_counts_retries_once_and_preserves_latest_review(store, monkeypatch):
-    store.put_once(
-        {
-            "pk": "FLEET",
-            "sk": "i-test",
-            "instance_id": "i-test",
-            "slug": "test",
-            "state": "running",
-            "review_count": 100,
-            "review_windows": {"old-" + str(n) for n in range(100)},
-        }
+def test_archived_finding_enriches_existing_incident_without_reopening_or_alerting(store, target):
+    item = ingest(store, target)
+    closed = store.transition(item["id"], item["version"], "closed", {"id": "operator"}, "Resolved")
+    store.acknowledge_incidents(target["key"], item["id"])
+    finding = {
+        "category": "upload failed",
+        "evidence": "Uploading /root/usr/abc/123 failed with EACCES; access did not succeed.",
+        "benign_explanation": "The path may have been entered by mistake.",
+        "severity": "low",
+        "confidence": "medium",
+    }
+    # Archived incidents saved useful narrative only in their observations.
+    with store.db.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE observations SET detail=jsonb_set(detail, '{finding}', CAST(:finding AS jsonb)) WHERE incident_id=:id"
+            ),
+            {"id": item["id"], "finding": json.dumps(finding)},
+        )
+    enriched = store.incident(item["id"])
+    assert enriched["title"] == "Unexpected upload destination: upload failed"
+    assert enriched["what_happened"] == finding["evidence"]
+    assert "did not establish the cause" in enriched["why_it_happened"]
+    assert "may have been entered by mistake" in enriched["why_it_happened"]
+    assert (enriched["id"], enriched["status"], enriched["version"]) == (
+        closed["id"],
+        "closed",
+        closed["version"],
     )
-    store.sync_fleet([{"instance_id": "i-test", "slug": "test", "state": "running"}])
-    ingest(store, 900)
-    ingest(store, 900)
-    ingest(store, 300)
-    row = store.get("FLEET", "i-test")
-    assert row["review_count"] == 102 and row["last_review"] == 900
-    assert "review_windows" not in row
-    monkeypatch.setattr(store.table, "scan", lambda **kwargs: pytest.fail("History table scan"))
-    assert store.summaries(list(store.all("FLEET")))[0]["incident_count"] == 1
-    store.sync_fleet([], complete=True)
-    assert store.get("FLEET", "i-test")["state"] == "no longer present"
+    assert (
+        store.instance_page(target["instance_id"], None, None, 50)[0]["title"] == enriched["title"]
+    )
+    assert store.new_incidents() == []
+
+
+def test_finding_explanations_and_latest_window_are_persisted(store, target):
+    result = {"report": report(), "artifact_prefix": "private"}
+    finding = result["report"]["findings"][0]
+    finding.update(
+        detector_id="other",
+        category="file permissions",
+        what_happened="Reading /root/usr/abc/123 failed with EACCES.",
+        why_it_happened="The process lacks permission; the path is outside the supplied task.",
+        next_steps="Confirm the requested file and task permissions with the operator.",
+    )
+    store.ingest(target["key"], 1800, result, {"observation:123": "observation:123"})
+    finding["what_happened"] = "Older observation"
+    store.ingest(target["key"], 900, result, {"observation:123": "observation:123"})
+    item = store.instance_page(target["instance_id"], None, None, 50)[0]
+    assert item["title"] == "Activity requires review: file permissions"
+    assert item["what_happened"] == "Reading /root/usr/abc/123 failed with EACCES."
+    assert item["why_it_happened"] == finding["why_it_happened"]
+    assert item["next_steps"] == finding["next_steps"]
+    with store.db.connect() as connection:
+        saved = connection.execute(
+            text("SELECT detail FROM incidents WHERE id=:id"), {"id": item["id"]}
+        ).scalar_one()
+    assert saved["what_happened"] == item["what_happened"]
+
+
+@pytest.mark.parametrize("status", ["failed", "completed"])
+def test_monitoring_health_explains_failure_and_coverage_gaps(store, target, status):
+    reason = "Incident assessment unavailable (Subject model family is unknown; configure a trusted family mapping)."
+    gap = "Langfuse returned no observations for this collection window."
+    result = {
+        "artifact_prefix": "private",
+        "report": {
+            "review_status": status,
+            "summary": "Review complete",
+            "findings": [],
+            "review_error": reason,
+            "coverage_gaps": [gap, reason],
+        },
+    }
+    store.ingest(target["key"], 900, result, {})
+    item = store.instance_page(target["instance_id"], None, None, 50)[0]
+    assert reason in item["why_it_happened"] and gap in item["why_it_happened"]
+    if status == "failed":
+        assert item["title"] == "AI reviews unavailable: unknown subject model"
+        assert "no safety verdict" in item["what_happened"]
+        assert "trusted subject-family mapping" in item["next_steps"]
+    else:
+        assert "incomplete evidence" in item["what_happened"]
+        assert "coverage gaps" in item["next_steps"]
+
+
+def test_budget_reservations_are_atomic_and_separate(store):
+    budget = Budget(store, "status")
+    budget.reserve(600, 1000)
+    with pytest.raises(CoverageError, match="exhausted"):
+        budget.reserve(600, 1000)
+    Budget(store, "incident").reserve(900, 1000)
+    with store.db.connect() as connection:
+        assert dict(
+            connection.execute(text("SELECT scope,reserved_microusd FROM budgets")).all()
+        ) == {"status": 600, "incident": 900}

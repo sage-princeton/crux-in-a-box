@@ -1,9 +1,33 @@
-{% macro report_lines(report) %}
-<ol class="status-report m-0 list-none space-y-2 p-0 text-sm leading-relaxed wrap-anywhere">
-  <li><strong class="font-semibold {{ 'text-amber-800' if report.alert else 'text-ink' }}">{{ report.alert or 'No alerts observed.' }}</strong> {{ report.recommendation }}</li>
-  <li><span class="font-semibold">{{ report.activity|capitalize }}.</span> {{ report.progress }}</li>
-  <li><span class="font-medium">Spend &amp; time.</span> {{ report.budget }}</li>
-  <li><span class="font-medium">Quality.</span> {{ report.quality }}</li>
-  <li><span class="font-medium">Milestones.</span> {{ report.milestones }}</li>
-</ol>
+{% macro report_items(values) %}
+{% set items = [values] if values is string else values or [] %}
+<ul class="m-0 list-disc space-y-1 pl-5">
+  {% for item in items %}<li>{{ item }}</li>{% endfor %}
+</ul>
+{% endmacro %}
+
+{% macro refresh_failure(result) -%}
+{{ 'Langfuse logs are stale or have not been updated' if result.get('error_code') == 'langfuse_recency' else 'Could not refresh status' }}
+{%- endmacro %}
+
+{% macro report_lines(report, historical=false) %}
+{% set activity = {'alive': 'Active', 'stalled': 'Stalled', 'unknown': 'Unknown', 'completed': 'Completed'}.get(report.activity, 'Unknown') %}
+<div class="status-report flex max-w-3xl flex-col gap-3 text-sm leading-relaxed wrap-anywhere">
+  <p class="m-0 font-semibold {{ 'text-amber-800' if report.alert else 'text-ink' }}">{{ report.alert or 'No alerts observed.' }}</p>
+  <p class="m-0"><span class="font-medium">Next step.</span> {{ report.recommendation }}</p>
+  <p class="m-0"><span class="font-medium">{{ 'Last reported status' if historical else 'Project status' }}: {{ activity }}.</span> {{ report.progress }}</p>
+  {% if report.quality %}
+  <div class="status-checks">
+    <p class="m-0 mb-1 font-medium">Checks</p>
+    {{ report_items(report.quality) }}
+  </div>
+  {% endif %}
+  {% if report.reported_budget is defined %}<p class="m-0"><span class="font-medium">Spend &amp; time.</span> {{ report.reported_budget or 'No spend or deadline found in the available evidence.' }}</p>{% endif %}
+  <details class="text-muted">
+    <summary class="cursor-pointer text-accent">Details</summary>
+    <div class="mt-2 flex flex-col gap-3">
+      {% if report.milestones %}<div><p class="m-0 mb-1 font-medium">Milestones</p>{{ report_items(report.milestones) }}</div>{% endif %}
+      {% if report.details %}<div><p class="m-0 mb-1 font-medium">Supporting facts</p>{{ report_items(report.details) }}</div>{% endif %}
+    </div>
+  </details>
+</div>
 {% endmacro %}

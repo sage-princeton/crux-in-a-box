@@ -1,9 +1,6 @@
 name: Monitor Terraform plan
 
 on:
-  # Bootstrap validation for PR #21; remove with the temporary branch IAM trust.
-  push:
-    branches: [ae-211-ec2-monitoring]
   # AWS checks the PR subject together with the main ref and trusted workflow name.
   # Keep automation on the base branch; ordinary pull_request refs are not trusted.
   pull_request_target:
@@ -20,7 +17,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: monitoring-plan-${{ github.event.pull_request.number || inputs.pull_request || '21' }}
+  group: monitoring-plan-${{ github.event.pull_request.number || inputs.pull_request }}
   cancel-in-progress: true
 
 jobs:
@@ -44,7 +41,7 @@ jobs:
       - id: pr
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request || '21' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request }}
         run: python3 src/monitoring/ci/pr_plan.py context
 
   plan:
@@ -82,7 +79,7 @@ jobs:
           allowed-account-ids: '881004720495'
           role-session-name: monitoring-plan-${{ github.run_id }}
           role-duration-seconds: 1800
-      - name: Plan using deployed inputs and read-only remote state
+      - name: Plan checked-in settings and deployed image digests against read-only state
         env:
           MONITORING_CONFIG_BUCKET: ${{ vars.MONITORING_CONFIG_BUCKET }}
           PLAN_DIRECTORY: candidate/src/monitoring/terraform

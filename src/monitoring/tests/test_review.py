@@ -1,14 +1,15 @@
 import json
 
 import httpx
+import jsonschema
 import pytest
 
 from review import (
-    MAX_EVIDENCE_BYTES,
+    MAX_LANGFUSE_BYTES,
     CoverageError,
     collect_langfuse,
-    collect_sftp,
     evaluate,
+    failure_reason,
     scrub,
     select_reviewer,
 )
@@ -50,7 +51,7 @@ def test_langfuse_cursor_preserves_session_window_and_required_fields():
     [
         {"data": [{"id": "wrong", "sessionId": "another-session"}], "meta": {}},
         {"data": [], "meta": {"cursor": "repeated"}},
-        {"data": "x" * MAX_EVIDENCE_BYTES},
+        {"data": "x" * MAX_LANGFUSE_BYTES},
     ],
 )
 def test_incomplete_or_misattributed_langfuse_is_not_accepted(body):
@@ -59,6 +60,23 @@ def test_incomplete_or_misattributed_langfuse_is_not_accepted(body):
     ) as client:
         with pytest.raises(CoverageError):
             collect_langfuse(client, {"session_id": "trusted-session"}, SECRETS, 0, 300)
+
+
+def test_busy_langfuse_window_keeps_inputs_outputs_across_many_pages():
+    def handler(request):
+        page = int(request.url.params.get("cursor", "0"))
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"id": str(page), "sessionId": "trusted", "input": "x" * 64_000}],
+                "meta": {"cursor": str(page + 1) if page < 11 else None},
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        sources = collect_langfuse(client, {"session_id": "trusted"}, SECRETS, 0, 300)
+    assert len(sources) == 12
+    assert all(source["data"]["input"] == "x" * 64_000 for source in sources)
 
 
 def test_model_family_separation_uses_observed_and_declared_models():
@@ -85,20 +103,18 @@ def test_disallowed_reviewers_fail_before_network_access(model):
     with pytest.raises(CoverageError, match="explicit"):
         select_reviewer(["anthropic/claude-example", model], [], ["openai"])
     with pytest.raises(CoverageError, match="explicit"):
-        evaluate(None, model, "fixture", {})
+        evaluate(None, model, "fixture", {}, lambda body: None)
 
 
 def test_large_reviewer_input_fails_before_network_access():
     with pytest.raises(CoverageError, match="128 KiB"):
-        evaluate(None, "anthropic/claude-example", "fixture", {"data": "x" * (128 * 1024)})
-
-
-def test_unverified_or_escaping_sftp_sources_fail_before_connecting():
-    with pytest.raises(CoverageError):
-        collect_sftp({"boundary_verified": False}, "127.0.0.1", "")
-    for path in ["/etc/passwd", "/exports/../private", "/exports/.env"]:
-        with pytest.raises(ValueError):
-            collect_sftp({"boundary_verified": True, "paths": [path]}, "127.0.0.1", "")
+        evaluate(
+            None,
+            "anthropic/claude-example",
+            "fixture",
+            {"data": "x" * (128 * 1024)},
+            lambda body: None,
+        )
 
 
 def test_reviewer_cannot_invent_citations_or_acquire_tools():
@@ -117,6 +133,9 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
                 "evidence": "unsupported",
                 "source_ids": ["invented"],
                 "benign_explanation": "unknown",
+                "what_happened": "Attempted upload to an unapproved destination.",
+                "why_it_happened": "The cause is unknown.",
+                "next_steps": "Verify the destination and task authorization.",
             }
         ],
     }
@@ -140,6 +159,7 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
                 "anthropic/claude-example",
                 "test-credential",
                 {"sources": [{"id": "known"}]},
+                lambda body: None,
             )
 
 
@@ -147,3 +167,18 @@ def test_exact_non_vendor_secret_is_scrubbed_without_breaking_json():
     secret = 'arbitrary-credential-"with-quotes'
     result = scrub({"text": "before " + secret + " after"}, [secret])
     assert result == {"text": "before [REDACTED] after"}
+
+
+def test_schema_failure_reports_the_rule_without_exposing_model_output():
+    secret = "raw-provider-response-must-stay-private"
+    with pytest.raises(jsonschema.ValidationError) as caught:
+        jsonschema.validate(
+            {"what_happened": secret},
+            {
+                "type": "object",
+                "properties": {"what_happened": {"maxLength": 4}},
+            },
+        )
+    reason = failure_reason(caught.value)
+    assert "properties/what_happened/maxLength" in reason
+    assert secret not in reason

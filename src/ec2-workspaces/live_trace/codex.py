@@ -229,11 +229,19 @@ def _parent_thread_id(meta: dict) -> str | None:
 def _usage(raw: object) -> Usage | None:
     match raw:
         case dict():
-            return Usage(input=raw.get("input_tokens"), output=raw.get("output_tokens"),
-                         cached_input=raw.get("cached_input_tokens"),
-                         reasoning_output=raw.get("reasoning_output_tokens"))
+            cached, reasoning = raw.get("cached_input_tokens"), raw.get("reasoning_output_tokens")
+            return Usage(input=_excluding(raw.get("input_tokens"), cached),
+                         output=_excluding(raw.get("output_tokens"), reasoning),
+                         cached_input=cached, reasoning_output=reasoning)
         case _:
             return None
+
+
+def _excluding(total: object, part: object) -> object:
+    """Codex's totals include their cached/reasoning share; Langfuse prices each bucket separately."""
+    if isinstance(total, int) and isinstance(part, int):
+        return max(total - part, 0)
+    return total
 
 
 def _text(content: object) -> str:
