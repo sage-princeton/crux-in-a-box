@@ -3,14 +3,19 @@ prompt next. Deterministic gates run a command; judgment gates ask an isolated m
 
 from __future__ import annotations
 
+import re
 from abc import abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool, model_validator
 
 from crux_scaffold.components import Component, Options, Registry
-from crux_scaffold.workspace import RunContext
+from crux_scaffold.errors import ToolError
+from crux_scaffold.tools import Tool, validate_review_tools
+from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 if TYPE_CHECKING:
     from crux_scaffold.agent_runtimes.base import AgentRuntime
@@ -57,6 +62,9 @@ class Gate(Component):
         """Scaffold tools this gate's checks call; the scaffold builds them along with the agents' tools."""
         return []
 
+    def validate_tools(self, tools: Mapping[str, Tool]) -> None:
+        """Validate the gate's tool policy during assembly, before any model call."""
+
     @abstractmethod
     async def evaluate(self, ctx: GateContext) -> GateResult: ...
 
@@ -87,13 +95,29 @@ class JudgeOptions(Options):
     inspect: list[str] = []
     tools: list[str] = ["read_file", "list_files"]
     max_turns: int = Field(20, ge=1)
+    blind: StrictBool = False
+    artifacts: dict[str, str] = {}
+
+    @model_validator(mode="after")
+    def evidence_policy(self):
+        if self.blind and (self.inspect or not self.artifacts):
+            raise ValueError("blind review requires artifacts and cannot use inspect")
+        if not self.blind and self.artifacts:
+            raise ValueError("artifacts requires blind = true")
+        for alias, source in self.artifacts.items():
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", alias):
+                raise ValueError("artifact aliases must be simple filenames")
+            if not source or PurePosixPath(source).is_absolute() or ".." in PurePosixPath(source).parts:
+                raise ValueError("artifact sources must be relative workspace file paths")
+        return self
 
 
 @GATES.register
 class LlmJudgeGate(Gate):
     """An isolated judge agent scores the iteration against a rubric file. It starts from the orchestrator's final
     output and the workspace files listed in `inspect`, and verifies the work with its `tools` (read-only by
-    default; add a `command` tool to let it run checks). It may also write the next prompt."""
+    default; add a `command` tool to let it run checks). Blind mode uses only aliased submission snapshots and
+    restricted reader tools. It may also write the next prompt."""
 
     type_name = "llm_judge"
     Options = JudgeOptions
@@ -102,12 +126,28 @@ class LlmJudgeGate(Gate):
     def tools(self) -> list[str]:
         return list(self.options.tools)
 
+    def validate_tools(self, tools: Mapping[str, Tool]) -> None:
+        if self.options.blind:
+            validate_review_tools([tools[name] for name in self.tools])
+
     async def evaluate(self, ctx: GateContext) -> GateResult:
+        if self.options.blind:
+            try:
+                workspace = ReviewWorkspace.snapshot(ctx.run.workspace, self.options.artifacts)
+            except ToolError as exc:
+                return GateResult(gate=self.name, passed=False, feedback=str(exc))
+            verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx),
+                                              tools=self.tools, max_turns=self.options.max_turns,
+                                              review_workspace=workspace)
+            return GateResult(gate=self.name, **verdict.model_dump())
         verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx),
                                           tools=self.tools, max_turns=self.options.max_turns)
         return GateResult(gate=self.name, **verdict.model_dump())
 
     def evidence(self, ctx: GateContext) -> str:
+        if self.options.blind:
+            return "Available submission artifacts:\n" + "\n".join(
+                f"- {name}" for name in sorted(self.options.artifacts))
         parts = [f"# Phase `{ctx.phase}`, iteration {ctx.iteration}: the agent's final output\n\n{ctx.last_output}"]
         for rel in self.options.inspect:
             try:

@@ -31,7 +31,8 @@ class FakeRuntime(AgentRuntime):
         self.prompts.append(prompt)
         return self.outputs.pop(0)
 
-    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int,
+                    review_workspace=None) -> Verdict:
         self.judged.append((rubric, evidence, tools, max_turns))
         return self.verdicts.pop(0)
 

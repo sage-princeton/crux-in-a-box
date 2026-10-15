@@ -34,7 +34,10 @@ class Scaffold:
         self.loop = LOOPS.create("loop", config.loop, gates={name: GATES.create(name, table)
                                                              for name, table in config.gates.items()})
         self.coding_agents = self._coding_agents()
-        assembly = Assembly(drop_in, self.context, self._tools(), self.coding_agents, self.strategy)
+        tools = self._tools()
+        for gate in self.loop.gates.values():
+            gate.validate_tools(tools)
+        assembly = Assembly(drop_in, self.context, tools, self.coding_agents, self.strategy)
         self.runtime = RUNTIMES.create("runtime", config.runtime, assembly=assembly, **(runtime_overrides or {}))
 
     def _tools(self) -> dict[str, Tool]:

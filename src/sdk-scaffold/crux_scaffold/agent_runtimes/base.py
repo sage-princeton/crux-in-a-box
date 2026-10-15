@@ -14,7 +14,7 @@ from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Component, Registry
 from crux_scaffold.context_strategies import ContextStrategy
 from crux_scaffold.tools import Tool
-from crux_scaffold.workspace import RunContext
+from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 if TYPE_CHECKING:
     from crux_scaffold.drop_in import DropInDirectory
@@ -67,9 +67,12 @@ class AgentRuntime(Component):
         """Send one prompt to the orchestrator, continuing its session. `workflow` names the turn in traces."""
 
     @abstractmethod
-    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int) -> Verdict:
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int,
+                    review_workspace: ReviewWorkspace | None = None) -> Verdict:
         """Ask an isolated judge agent for a verdict. It has the named scaffold tools and no session, so it sees
-        only the rubric, the evidence and what it checks itself. Out of turns is a failing verdict, not an error."""
+        only the rubric, the evidence and what it checks itself. With review_workspace, bind every tool to that
+        snapshot and omit workflow metadata from model inputs. Count every call as judge:<name>.
+        Out of turns is a failing verdict, not an error."""
 
     @abstractmethod
     def describe(self) -> list[str]:
