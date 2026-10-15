@@ -13,7 +13,7 @@ from botocore.exceptions import ClientError
 from sqlalchemy import text
 
 from collection import Collector
-from fleet import inventory_targets, notify_enrollment, notify_incidents
+from fleet import inventory_targets, notify_incidents, notify_workload
 from lifecycle import evidence_anchors, review_anchors
 from review import (
     MAX_OUTPUT_TOKENS,
@@ -242,14 +242,6 @@ class Runtime:
                     f"{target['instance_id']}: {kind} publication failed ({type(error).__name__}).",
                     flush=True,
                 )
-        if all(self.store.assessment(key, end, kind) for kind in ("status", "incident")):
-            notify_enrollment(
-                self.http,
-                self.store,
-                secrets["MONITORING_SLACK_WEBHOOK_URL"],
-                target,
-                os.environ["MONITORING_WEB_ORIGIN"],
-            )
 
     def tick(self):
         now = int(time.time())
@@ -288,6 +280,20 @@ class Runtime:
                     except Exception as error:
                         print(
                             f"{target['instance_id']}: saved pass failed ({type(error).__name__}).",
+                            flush=True,
+                        )
+                for target in self.store.fleet():
+                    try:
+                        notify_workload(
+                            self.http,
+                            self.store,
+                            secrets["MONITORING_SLACK_WEBHOOK_URL"],
+                            target,
+                            os.environ["MONITORING_WEB_ORIGIN"],
+                        )
+                    except Exception as error:
+                        print(
+                            f"{target['instance_id']}: workload delivery failed ({type(error).__name__}).",
                             flush=True,
                         )
                 notify_incidents(

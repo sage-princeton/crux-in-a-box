@@ -6,7 +6,7 @@ import httpx
 import pytest
 from moto import mock_aws
 
-from fleet import notify_incidents
+from fleet import notify_incidents, notify_workload
 from worker import Runtime
 
 MODEL_CATALOG = {
@@ -101,8 +101,16 @@ def runtime(store, target, monkeypatch):
 
 def test_one_collection_and_independent_assessments_survive_slack_retry(runtime):
     worker, target, secrets, counts = runtime
+    worker.run_target(target, 900, {}, secrets)
+    workload_args = (
+        worker.http,
+        worker.store,
+        secrets["MONITORING_SLACK_WEBHOOK_URL"],
+        worker.store.fleet()[0],
+        "https://incidents.example.test",
+    )
     with pytest.raises(httpx.HTTPStatusError):
-        worker.run_target(target, 900, {}, secrets)
+        notify_workload(*workload_args)
     assert worker.store.assessment(target["key"], 900, "status")["outcome"] == "failed"
     assert worker.store.assessment(target["key"], 900, "incident")["outcome"] == "completed"
     assert counts["collection"] == 1 and counts["slack"] == 1
@@ -114,11 +122,13 @@ def test_one_collection_and_independent_assessments_survive_slack_retry(runtime)
     )
     initial = counts.copy()
     worker.run_target(target, 900, {}, secrets)
+    assert notify_workload(*workload_args) == 1
     assert worker.store.notice("enrollment/" + target["key"])
     assert notify_incidents(*args) == 1
     assert counts["model"] == initial["model"] and counts["collection"] == 1
     delivered = counts.copy()
     worker.run_target(target, 900, {}, secrets)
+    assert notify_workload(*workload_args) == 0
     assert notify_incidents(*args) == 0
     assert counts == delivered
     assert len(worker.store.instance_page(target["instance_id"], None, None, 50)) == 1
@@ -146,10 +156,52 @@ def test_model_checkpoint_is_reused_after_database_publication_failure(runtime, 
         raise AssertionError("must reuse snapshot")
 
     monkeypatch.setattr(worker.collector, "collect", unavailable_run)
-    with pytest.raises(httpx.HTTPStatusError):
-        worker.run_target(pending[0]["evidence"]["target"], 900, {}, secrets)
+    worker.run_target(pending[0]["evidence"]["target"], 900, {}, secrets)
     worker.run_target(target, 900, {}, secrets)
     assert worker.store.pending(1800) == []
+    assert counts["model"] == initial["model"] and counts["collection"] == 1
+
+
+def test_poll_retries_closure_without_reenrolling_an_archived_target(runtime, monkeypatch):
+    worker, target, secrets, counts = runtime
+    worker.store.acknowledge("enrollment/" + target["key"], "legacy-enrollment")
+    publish = worker.store.publish
+
+    def fail_status(key, end, kind, result):
+        if kind == "status":
+            raise RuntimeError("Publication failed")
+        return publish(key, end, kind, result)
+
+    monkeypatch.setattr(worker.store, "publish", fail_status)
+    worker.run_target(target, 900, {}, secrets)
+    initial = counts.copy()
+    monkeypatch.setattr(worker.store, "publish", publish)
+    monkeypatch.setattr(worker, "secrets", lambda: secrets)
+    monkeypatch.setattr("worker.time.time", lambda: 1801)
+    messages = []
+
+    def handler(request):
+        assert request.url.host == "hooks.slack.com", "Must reuse saved model results"
+        assert str(request.url) == secrets["MONITORING_SLACK_WEBHOOK_URL"]
+        messages.append(json.loads(request.content))
+        return httpx.Response(
+            503 if len(messages) == 1 else 200, text="busy" if len(messages) == 1 else "ok"
+        )
+
+    worker.http.close()
+    worker.http = httpx.Client(transport=httpx.MockTransport(handler))
+    # The fixture's instance is absent from EC2; its saved target still says running.
+    worker.tick()
+    assert worker.store.pending(1801) == []
+    assert worker.store.fleet()[0]["state"] == "no longer enrolled"
+    assert worker.store.notice("enrollment/" + target["key"]) == "legacy-enrollment"
+    assert messages[0]["text"].startswith("Monitoring has ended")
+    assert messages[1]["text"].startswith("*1 new incident*")
+    worker.tick()
+    assert messages[0] == messages[2]
+    assert worker.store.notice("enrollment/" + target["key"]) == "closed"
+    worker.tick()
+    assert len(messages) == 3
     assert counts["model"] == initial["model"] and counts["collection"] == 1
 
 
@@ -158,7 +210,7 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
     runtime, monkeypatch, verbose
 ):
     worker, target, secrets, counts = runtime
-    calls = []
+    calls, messages = [], []
     collect = worker.collector.collect
 
     def workspace_evidence(*args):
@@ -186,6 +238,7 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
         if request.url.path == "/api/v1/models":
             return httpx.Response(200, json=MODEL_CATALOG)
         if request.url.host == "hooks.slack.com":
+            messages.append((str(request.url), json.loads(request.content)))
             return httpx.Response(200, text="ok")
         body = json.loads(request.content)
         schema = body["response_format"]["json_schema"]
@@ -227,7 +280,15 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
 
     worker.http.close()
     worker.http = httpx.Client(transport=httpx.MockTransport(handler))
-    worker.run_target(target, 900, {}, secrets)
+    monkeypatch.setattr("worker.inventory_targets", lambda ec2: [target])
+    monkeypatch.setattr("worker.time.time", lambda: 901)
+    monkeypatch.setattr(worker, "secrets", lambda: secrets)
+    worker.tick()
+    assert len(messages) == 3
+    assert all(url == secrets["MONITORING_SLACK_WEBHOOK_URL"] for url, _ in messages)
+    assert messages[0][1]["text"].startswith("Monitoring has begun")
+    assert "*Progress:* Work is active." in messages[1][1]["text"]
+    assert messages[2][1]["text"].startswith("*1 new incident*")
     initial = calls.copy()
     assert worker.store.fleet()[0]["latest"]["report"]["activity"] == "alive"
     status = worker.store.assessment(target["key"], 900, "status")
@@ -240,7 +301,19 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
     incident = worker.store.assessment(target["key"], 900, "incident")
     assert incident["outcome"] == "completed"
     assert any("workspace event anchors" in gap for gap in incident["report"]["coverage_gaps"])
-    worker.run_target(target, 900, {}, secrets)
+    worker.tick()
+    assert len(messages) == 3
+    assert counts["collection"] == 1 and calls == initial
+    target["state"] = "stopped"
+    worker.tick()
+    assert messages[-1][1]["text"].startswith("Monitoring has ended")
+    target["state"] = "running"
+    worker.tick()
+    assert messages[-1][1]["text"].startswith("Monitoring has begun")
+    target["state"] = "stopped"
+    worker.tick()
+    worker.tick()
+    assert len(messages) == 6 and messages[-1][1]["text"].startswith("Monitoring has ended")
     assert counts["collection"] == 1 and calls == initial
 
 
