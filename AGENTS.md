@@ -2,6 +2,10 @@
 
 This repo provisions and steers **CRUX runs**: autonomous research agents (OpenClaw on EC2) that take a research question and produce a paper. `linux/` provisions boxes, `run-harness/` is the scaffold the agent lives in, `harness-overview.html` explains it to humans.
 
+## Pull request scope
+
+Every PR should have a precise scope and add a testable unit of functionality. Keep PRs small when possible (for example, under 800 changed lines) so humans can review them. When a feature, story, or issue needs a larger implementation, prefer splitting it across multiple stacked PRs using GitHub's stacked PR feature.
+
 The main activity here is **post-run scaffold revision**: a run finishes, something went wrong or could be better, and we fold the lesson into the scaffold for the next run. Follow this process.
 
 ## The post-run revision loop
