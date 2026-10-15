@@ -3,11 +3,13 @@ import json
 import signal
 
 import pytest
-from agents import set_tracing_disabled
+from agents import Runner, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
+from openai.types.responses import ResponseReasoningItem
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from crux_scaffold import cli
+from crux_scaffold.agent_runtimes.openai_agents import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
 from crux_scaffold.telemetry import (
     LangfuseTelemetry,
@@ -142,6 +144,21 @@ def test_a_long_conversation_keeps_every_generation_in_the_run_session(langfuse,
         assert "input.value" in span.attributes and "output.value" in span.attributes
 
 
+def test_openai_agents_reasoning_summary_is_exported_in_the_sdk_response(langfuse, drop_in_dir, assemble):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    set_tracing_disabled(False)
+    summary = "I compared the alternatives before selecting the implementation."
+    reasoning = ResponseReasoningItem(
+        id="rs_reasoning", type="reasoning",
+        summary=[{"type": "summary_text", "text": summary}], status="completed")
+    asyncio.run(assemble(drop_in_dir, {"pm": ScriptedModel(reasoning, say("done"))}, env=ENV,
+                         telemetry=telemetry).run())
+    responses = [span.attributes.get("output.value", "") for span in exporter.get_finished_spans()
+                 if span.attributes.get("openinference.span.kind") == "LLM"]
+    assert any(summary in response for response in responses)
+
+
 def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, monkeypatch):
     telemetry, exporter = langfuse
     exporter.clear()
@@ -153,6 +170,18 @@ def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, mon
     root = next(span for span in spans if span.name == "crux-probe")
     llm = [span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]
     assert llm and {span.context.trace_id for span in llm} == {root.context.trace_id}
+
+
+def test_probe_sets_auto_reasoning_summary_mode(monkeypatch):
+    captured = {}
+
+    async def run(agent, *args, **kwargs):
+        captured["agent"] = agent
+        return type("Result", (), {"final_output": "ok"})()
+
+    monkeypatch.setattr(Runner, "run", run)
+    assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "prompt", NullTelemetry())) == "ok"
+    assert captured["agent"].model_settings.reasoning.summary == "auto"
 
 
 def test_generation_usage_is_split_into_the_exclusive_buckets_langfuse_prices():

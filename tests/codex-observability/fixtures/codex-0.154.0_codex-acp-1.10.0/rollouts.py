@@ -269,7 +269,8 @@ class Rollout:
         self.tick(0.5)
 
     def _reasoning(self) -> datetime:
-        written = self._line("response_item", {"type": "reasoning", "id": _id("rs", len(self.lines)), "summary": [],
+        written = self._line("response_item", {"type": "reasoning", "id": _id("rs", len(self.lines)),
+                                     "summary": [{"type": "summary_text", "text": "Fixture reasoning summary."}],
                                      "encrypted_content": "gAAAAfixture",
                                      "internal_chat_message_metadata_passthrough": self._meta()})
         self._item({"type": "Reasoning", "summary_text": [], "raw_content": []})

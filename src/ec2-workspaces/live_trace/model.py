@@ -71,6 +71,7 @@ class ModelStep:
     started: float
     ended: float
     text: list[str] = field(default_factory=list)
+    reasoning_summary: list[str] = field(default_factory=list)
     calls: list[ToolCall] = field(default_factory=list)
     usage: Usage | None = None
     complete: bool = False

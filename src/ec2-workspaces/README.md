@@ -236,7 +236,13 @@ codex still holds open is left alone. See what it did with
 `journalctl -u crux-acp-gateway | grep codex-flush`, or list what it would upload
 with `sudo -iu ubuntu python3 /usr/local/lib/crux/codex-flush-turns.py --plugin <dist/index.mjs> --reason manual --check`.
 
-`CODEX_TRACE_MODE=live` (experimental) shows a turn in Langfuse while it runs.
+`CODEX_TRACE_MODE=live` (the default) shows a turn in Langfuse while it runs
+and exports Codex's reasoning summaries with each model generation. Codex is
+configured with `model_reasoning_summary = "auto"`, which selects the most
+detailed summarizer available for the model. Codex writes these summaries to
+its rollout; they are not the model's private reasoning tokens. The legacy
+`stop-hook` mode uses the Langfuse plugin and does not export reasoning
+summaries.
 Langfuse v4 never updates an observation it has stored, so instead of the
 plugin's `Stop` hook a service, `crux-codex-live-trace`, reads the rollouts every
 30s and sends each observation once, as soon as it is complete:

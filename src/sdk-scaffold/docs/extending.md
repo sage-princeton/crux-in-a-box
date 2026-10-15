@@ -183,6 +183,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
 - **Context.** Apply `context_strategy.select` to every model call.
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
+- **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).
 
 ## Telemetry (`Telemetry`)

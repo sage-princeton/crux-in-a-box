@@ -76,12 +76,13 @@ ACP_GATEWAY_SHA256=e24b9252393d315051f13391f3ee592360abbb932a470ad6f6c1d5de48fc8
 TRACING_PLUGIN_VERSION=0.4.0
 TRACING_HOOK_TRUSTED_HASH=sha256:69a05cbfa6984ec5f1433343b45480d5239c119e7332ae863f9865edc2efec74
 
-# Optional, Codex only, experimental: how turns reach Langfuse. stop-hook (the
-# default) uploads each turn from the plugin's Stop hook when it ends. live
-# disables that hook and runs crux-codex-live-trace, which sends each tool call,
-# model response and turn input within about 30s, and each turn's root (input
-# and output) when the turn ends.
-CODEX_TRACE_MODE=stop-hook
+# Optional, Codex only: how turns reach Langfuse. live (the default) disables
+# the plugin's Stop hook and runs crux-codex-live-trace, which sends reasoning
+# summaries, each tool call and model response within about 30s, and the turn's
+# root (input and output) when it ends. Codex's model_reasoning_summary = "auto"
+# setting selects the most detailed summarizer available for the model.
+# stop-hook uses the plugin's Stop hook and does not export reasoning summaries.
+CODEX_TRACE_MODE=live
 
 # The control box's ssh alias, used to mint workspaces.
 CONTROL_SSH_ALIAS=crux-control

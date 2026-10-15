@@ -101,7 +101,7 @@ class CodexCodingAgent(CodingAgent):
                 cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
                 developer_instructions=self.developer_instructions or None,
-                config={"model_context_window": CONTEXT_WINDOW_TOKENS})
+                config={"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto"})
             turn = await thread.turn(brief, effort=ctx.reasoning_effort)
             final_response, usage, ended = "", TokenUsage(requests=1), None
             async with aclosing(turn.stream()) as events:
@@ -130,6 +130,9 @@ CODEX_TOOL_ITEMS = {"commandExecution", "fileChange", "mcpToolCall", "dynamicToo
 def record_item(ctx: RunContext, item: Any) -> str | None:
     """Send a completed Codex item now, so a long turn shows its progress; returns an agent message's text."""
     if item.type == "userMessage":
+        return None
+    if item.type == "reasoning":
+        ctx.telemetry.record("codex:reasoning", "span", None, {"summary": item.summary or []})
         return None
     ctx.telemetry.record(f"codex:{item.type}", "tool" if item.type in CODEX_TOOL_ITEMS else "span", None,
                          item.model_dump(mode="json", by_alias=True, exclude_none=True, warnings=False))
