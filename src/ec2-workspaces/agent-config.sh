@@ -140,7 +140,7 @@ check_run_api_key_clashes() {
   # A per-run key must not override the agent env or the env file's fixed lines.
   local clash
   clash="$(jq -rn --argjson keys "$1" --argjson env "$2" --arg extra "${3:-}" '
-    (($env | keys) + ["PATH", "HOME", "CLAUDE_CODE_EXECUTABLE"]
+    (($env | keys) + ["PATH", "HOME", "XDG_CACHE_HOME", "CLAUDE_CODE_EXECUTABLE"]
       + [$extra | split("\n")[] | select(length > 0) | split("=")[0]]) as $reserved
     | [$keys | keys[] | select(. as $k | $reserved | index($k))] | join(", ")')"
   [ -z "$clash" ] || die "Per-run API key(s) would override the agent environment: $clash. Remove them from the base secrets file."
@@ -162,5 +162,10 @@ load_drop_in_path() {
   if [ "$SCAFFOLD_MODULE" = sdk ]; then
     git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/scaffold.toml" 2>/dev/null \
       || die "$DROP_IN_PATH/scaffold.toml is not in the committed HEAD; openai-agents boxes run a scaffold drop-in."
+  fi
+  if git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
+    git -C "$1" show "HEAD:$DROP_IN_PATH/provision.json" \
+      | python3 "$1/src/ec2-workspaces/run_provision.py" validate --manifest /dev/stdin \
+      || die "Fix $DROP_IN_PATH/provision.json and commit it before provisioning."
   fi
 }
