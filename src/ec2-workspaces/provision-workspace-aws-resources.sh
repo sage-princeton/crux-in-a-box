@@ -171,7 +171,7 @@ RUN_SG="crux-run-sg"
 SYSTEM_IAM_ROLE="crux-system-role"
 SYSTEM_IAM_PROFILE="crux-system-profile"
 SYSTEM_SSM_PARAM="/crux/system/env"
-BOX_SECRETS_PATH="/tmp/crux-run-secrets.json"
+BOX_SECRETS_PATH="/home/ubuntu/.config/crux-provision/run-secrets.json"
 KEY_FILE="$HOME/.ssh/${KEY_NAME}.pem"
 SSH_USER="ubuntu"
 AGENTRQ_PORT=2026
@@ -299,7 +299,7 @@ if [ "$HANDSHAKE" = 1 ]; then
   exit $?
 fi
 
-load_drop_in_path "$SCRIPT_DIR/../.."
+load_drop_in_path "$SCRIPT_DIR/../.." "$RUN_SECRETS_FILE"
 
 if [ "$DRY_RUN" = 1 ]; then
   if [ "$USE_ELASTIC_IP" != true ]; then
@@ -551,8 +551,8 @@ fi
 # ====== INSTALL (software, bakeable) ======
 info "Staging the run's software declaration"
 ssh "$SLUG" 'sudo install -d -m 755 /usr/local/lib/crux'
-scp -q "$SCRIPT_DIR/run_provision.py" "$SLUG:/tmp/run_provision.py"
-ssh "$SLUG" 'sudo install -m 644 /tmp/run_provision.py /usr/local/lib/crux/run_provision.py'
+scp -q "$SCRIPT_DIR/run_provision.py" "$SCRIPT_DIR/run_service_auth.py" "$SLUG:/tmp/"
+ssh "$SLUG" 'sudo install -m 644 /tmp/run_provision.py /tmp/run_service_auth.py /usr/local/lib/crux/'
 if git -C "$SCRIPT_DIR/../.." cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
   git -C "$SCRIPT_DIR/../.." show "HEAD:$DROP_IN_PATH/provision.json"
 else
@@ -608,6 +608,7 @@ fi
 # it, writes the values where they live (mode-600 files), then deletes it —
 # so it exists on the box only for the duration of the configure step.
 info "Copying per-run secrets to $SLUG:$BOX_SECRETS_PATH"
+ssh "$SLUG" 'install -d -m 700 /home/ubuntu/.config/crux-provision'
 scp -q "$RUN_SECRETS_FILE" "$SLUG:$BOX_SECRETS_PATH"
 ssh "$SLUG" "chmod 600 '$BOX_SECRETS_PATH'"
 ok "Copied (mode 600; configure-run.sh deletes it)"

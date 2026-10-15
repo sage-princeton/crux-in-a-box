@@ -86,4 +86,8 @@ install -d -m 700 -o "$RUN_USER" -g "$RUN_USER" "$RUN_HOME/.cache/crux-run"
 } > "$RUN_ENV_FILE"
 chmod 600 "$RUN_ENV_FILE"
 
+printf '%s' "$SECRETS" | python3 /usr/local/lib/crux/run_provision.py configure \
+  --manifest /etc/crux-provision.json --secrets /dev/stdin --run-user "$RUN_USER" --env-file "$RUN_ENV_FILE"
+unset SECRETS
+
 scaffold_configure

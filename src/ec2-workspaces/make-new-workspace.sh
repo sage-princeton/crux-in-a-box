@@ -85,7 +85,7 @@ ok "Base config and secrets present; control box '$CONTROL_SLUG'"
 load_agent_config all
 validate_agent_key "$BASE_SECRETS"
 validate_run_api_keys "$BASE_SECRETS"
-load_drop_in_path "$SCRIPT_DIR/../.."
+load_drop_in_path "$SCRIPT_DIR/../.." "$BASE_SECRETS"
 AGENT_API_KEY="$(jq -r --arg key "$API_KEY_NAME" '.[$key]' "$BASE_SECRETS")"
 if [ "$AGENT_PLATFORM" = claude ]; then
   [ -f "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" ] \
@@ -218,7 +218,9 @@ info "Writing $(basename "$SECRETS")"
 umask 077
 jq -n --arg key "$API_KEY_NAME" --arg k "$AGENT_API_KEY" --arg id "$WS_ID" --arg t "${WS_TOKEN:-}" \
   --argjson extra "$(run_api_keys_json "$BASE_SECRETS")" \
-  '{($key):$k} + (if $id == "" then {} else {AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t} end) + $extra' > "$SECRETS"
+  --slurpfile source "$BASE_SECRETS" \
+  '{($key):$k} + (if $id == "" then {} else {AGENTRQ_WORKSPACE_ID:$id, AGENTRQ_WORKSPACE_TOKEN:$t} end) + $extra
+   + (if $source[0] | has("SERVICE_AUTH") then {SERVICE_AUTH:$source[0].SERVICE_AUTH} else {} end)' > "$SECRETS"
 chmod 600 "$SECRETS"
 ok "Wrote $(basename "$SECRETS") (mode 600, values not echoed)"
 

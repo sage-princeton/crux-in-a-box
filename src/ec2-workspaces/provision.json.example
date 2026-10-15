@@ -12,5 +12,17 @@
   "checks": [
     {"name": "pdf-text", "argv": ["pdftotext", "-v"]},
     {"name": "gog-version", "argv": ["gog", "--version"]}
+  ],
+  "services": [
+    {
+      "name": "review-mailbox",
+      "environment": {"GOG_HOME": "{service_dir}", "GOG_KEYRING_BACKEND": "file"},
+      "required_env": ["GOG_ACCOUNT", "GOG_KEYRING_PASSWORD"],
+      "check": {
+        "argv": ["gog", "--no-input", "--json", "gmail", "labels", "list"],
+        "timeout_seconds": 30,
+        "hint": "Authorize the review mailbox with utils/bootstrap-gog.sh, deliver SERVICE_AUTH and its GOG_KEYRING_PASSWORD, then re-run configure-run.sh."
+      }
+    }
   ]
 }
