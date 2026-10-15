@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import stat
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from crux_scaffold.errors import InvalidDropInError, ToolError
@@ -41,6 +43,12 @@ class Workspace:
         if not path.is_file():
             raise ToolError(f"{rel} is not a file")
         return path.read_text()
+
+    def read_bytes(self, rel: str) -> bytes:
+        path = self.resolve(rel)
+        if not path.is_file():
+            raise ToolError(f"{rel} is not a file")
+        return path.read_bytes()
 
     def write_file(self, rel: str, content: str) -> str:
         path = self.resolve(rel)
@@ -77,6 +85,70 @@ class Workspace:
             omitted = len(output) - MAX_OUTPUT_CHARS
             output = f"... {omitted} earlier characters omitted\n" + output[-MAX_OUTPUT_CHARS:]
         return f"exit_code={process.returncode}\n{output}"
+
+
+class ReviewWorkspace(Workspace):
+    """A fresh, read-only snapshot addressed only by the drop-in's submission aliases."""
+
+    MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
+
+    def __init__(self, artifacts: Mapping[str, bytes]) -> None:
+        super().__init__(Path("."))
+        self.artifacts = MappingProxyType(dict(artifacts))
+
+    @classmethod
+    def snapshot(cls, workspace: Workspace, artifacts: Mapping[str, str]) -> ReviewWorkspace:
+        contents = {}
+        for alias, source in artifacts.items():
+            descriptors = []
+            try:
+                descriptors.append(os.open(workspace.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+                parts = Path(source).parts
+                if not parts or Path(source).is_absolute() or ".." in parts:
+                    raise ValueError("invalid source")
+                for part in parts[:-1]:
+                    descriptors.append(os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                                               dir_fd=descriptors[-1]))
+                descriptors.append(os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
+                                           dir_fd=descriptors[-1]))
+                if not stat.S_ISREG(os.fstat(descriptors[-1]).st_mode):
+                    raise ValueError("not a regular file")
+                with os.fdopen(os.dup(descriptors[-1]), "rb") as file:
+                    content = file.read(cls.MAX_ARTIFACT_BYTES + 1)
+                if len(content) > cls.MAX_ARTIFACT_BYTES:
+                    raise ValueError("artifact too large")
+                contents[alias] = content
+            except (OSError, ValueError):
+                raise ToolError(f"Submission artifact unavailable: {alias}") from None
+            finally:
+                for descriptor in reversed(descriptors):
+                    os.close(descriptor)
+        return cls(contents)
+
+    def resolve(self, rel: str) -> Path:
+        raise ToolError("artifact unavailable")
+
+    def read_bytes(self, rel: str) -> bytes:
+        if rel not in self.artifacts:
+            raise ToolError("artifact unavailable")
+        return self.artifacts[rel]
+
+    def read_file(self, rel: str) -> str:
+        try:
+            return self.read_bytes(rel).decode("utf-8")
+        except UnicodeError:
+            raise ToolError("artifact is not UTF-8 text; use read_pdf for a PDF") from None
+
+    def list_files(self, rel: str) -> str:
+        if rel != ".":
+            raise ToolError("artifact unavailable")
+        return "\n".join(sorted(self.artifacts))
+
+    def write_file(self, rel: str, content: str) -> str:
+        raise ToolError("review workspace is read-only")
+
+    def run_shell(self, command: str, timeout_seconds: float) -> str:
+        raise ToolError("review workspace is read-only")
 
 
 @dataclass

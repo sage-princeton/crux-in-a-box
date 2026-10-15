@@ -35,7 +35,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Agent orchestration, model configuration | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
 | Context management | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
-| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `run_shell`, `command`, `rest`, `budget_status` |
+| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
 | Observability | `Telemetry` | Langfuse, or off |
@@ -134,6 +134,28 @@ A CRUX with different needs changes declarations, not code. The same drop-in cou
   tools = ["read_file", "list_files", "site_tests"]
   max_turns = 20
   ```
+- **Review a submission blind.** Opt into evidence isolation with `blind = true`. Map neutral filenames to the
+  exact submission files in the workspace. Each review snapshots those files afresh and exposes only the aliases;
+  it receives the fixed rubric and artifact list, with no orchestrator output, phase, iteration or prior reviews.
+  The reviewer can read UTF-8 evidence and extract/render PDF pages, including figures, through restricted tools.
+  Its verdict, feedback, next prompt, telemetry and usage accounting work as in ordinary judging.
+  ```toml
+  [gates.paper_review]
+  type = "llm_judge"
+  rubric = "prompts/research_review.md"
+  blind = true
+  artifacts = { "submission.pdf" = "results/paper.pdf", "data.csv" = "results/data.csv" }
+  tools = ["read_file", "list_files", "read_pdf"]
+  max_turns = 20
+  ```
+  Do not set `inspect` in blind mode. Only the built-in `read_file`, `list_files` and `read_pdf` implementations
+  are permitted: shell commands, writes, custom tools and access to other workspace files are rejected. Missing,
+  symlinked, non-regular or over-32-MiB artifacts fail the gate before calling a reviewer. Aliases are simple
+  filenames, without directories. The drop-in owns anonymization of the rubric, aliases and artifact contents:
+  leave out author identities, plans/logs, prior reviews, expected scores and revision cues. PDF tools expose page
+  text and pixels, without document properties, attachments, source paths or filesystem metadata. No artifact code
+  is executed. Run a small live review with your configured runtime and submission formats before a research run;
+  automated tests use scripted models and make no network calls.
 - **Bound the context of a long run.** Send only recent history, cut at a user message so tool calls keep their results. The full history stays in the session.
   ```toml
   [context]
