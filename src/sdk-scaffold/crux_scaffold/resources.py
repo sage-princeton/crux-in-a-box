@@ -85,8 +85,8 @@ class ResourceMonitor:
             if not isinstance(result, ResourceSnapshot):
                 raise TypeError("resource provider did not return a snapshot")
             previous = self.snapshot(name)
-            if not result.metrics and previous is not None and previous.metrics:
-                raise ResourceReadError("latest refresh returned no measurements")
+            if previous is not None and previous.metrics.keys() - result.metrics.keys():
+                raise ResourceReadError("latest refresh returned incomplete measurements")
             self._snapshots[name] = result
             self._statuses[name] = "fresh"
             self._errors.pop(name, None)
