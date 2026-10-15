@@ -1,3 +1,4 @@
+import json
 import signal
 
 import pytest
@@ -54,7 +55,9 @@ def test_a_loop_that_does_not_complete_exits_3(drop_in_dir, tmp_path, capsys):
 def test_sigterm_stops_the_run_cleanly_so_a_restart_resumes_it(drop_in_dir, tmp_path, capsys):
     assert run_cli(drop_in_dir, tmp_path, {"pm": StoppedModel()}) == 128 + signal.SIGTERM
     assert "stopped by SIGTERM" in capsys.readouterr().err
-    assert not (tmp_path / "state" / "state.json").exists()
+    saved = json.loads((tmp_path / "state" / "state.json").read_text())
+    assert saved["usage"]["started_at"] is not None
+    assert saved["iteration"] == 0 and saved["history"] == []
     assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
 
 

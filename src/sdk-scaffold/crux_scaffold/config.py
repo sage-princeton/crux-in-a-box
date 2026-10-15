@@ -72,6 +72,7 @@ class ScaffoldConfig(Options):
     context: ComponentTable = {"type": "persistent"}
     loop: ComponentTable
     budget: Budget = Budget()
+    resources: dict[str, ComponentTable] = {}
     agents: dict[str, AgentConfig]
     coding_agents: dict[str, ComponentTable] = {}
     tools: dict[str, ComponentTable] = {}
