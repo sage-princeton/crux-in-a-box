@@ -136,7 +136,6 @@ def test_model_responses_export_reasoning_summaries_separately(rollouts, home, l
     assert all(output["reasoning_summary"] == "Fixture reasoning summary." for output in outputs)
     assert all(output["content"] != output["reasoning_summary"] for output in outputs)
 
-    
 # Per-token prices of Langfuse's managed gpt-6.1-sol definition; Langfuse prices every usage_details key on its own.
 PRICES = {"input": 2e-06, "input_cached_tokens": 1e-07, "output": 1e-05, "output_reasoning_tokens": 1e-05}
 
