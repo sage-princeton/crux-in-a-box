@@ -61,6 +61,8 @@ CODEX_ACP_VERSION=1.10.0
 # race fix, released from sage-princeton/agentrq-acp-gateway (crux/* branches).
 # Provisioning downloads the tarball and installs it only if its sha256 matches;
 # take both from the release's assets.
+# Do not update these gateway pins until AE-264 is resolved:
+# https://linear.app/agent-evals/issue/AE-264
 ACP_GATEWAY_VERSION=0.2.17-crux.1
 ACP_GATEWAY_TARBALL_URL=https://github.com/sage-princeton/agentrq-acp-gateway/releases/download/crux-v0.2.17-crux.1/agentrq-acp-gateway-0.2.17-crux.1.tgz
 ACP_GATEWAY_SHA256=e24b9252393d315051f13391f3ee592360abbb932a470ad6f6c1d5de48fc89c8

@@ -26,6 +26,8 @@ DATA_DIR=/srv/agentrq
 # Released from sage-princeton/agentrq (crux/* branches) as a docker save
 # tarball, loaded only if its sha256 matches. Moving it is a deliberate change:
 # check what the new image does to the run boxes' gateway, ideally between runs.
+# Do not update these AgentRQ image pins until AE-264 is resolved:
+# https://linear.app/agent-evals/issue/AE-264
 AGENTRQ_IMAGE=agentrq-crux:0.6.3-45c3692-crux.1
 AGENTRQ_IMAGE_URL=https://github.com/sage-princeton/agentrq/releases/download/crux-v0.6.3-45c3692-crux.1/agentrq-crux-0.6.3-45c3692-crux.1-linux-amd64.tar.gz
 AGENTRQ_IMAGE_SHA256=dccbce43c95669066527cf60a9b960ab97ac2d88e6b4e39e78af8d289802c071
