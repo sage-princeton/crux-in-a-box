@@ -4,7 +4,7 @@ A runtime wires the scaffold's SDK-neutral components (tools, coding agents, con
 from __future__ import annotations
 
 from abc import abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
@@ -30,6 +30,7 @@ class Assembly:
     tools: Mapping[str, Tool]
     coding_agents: Mapping[str, CodingAgent]
     context_strategy: ContextStrategy
+    instructions: Callable[[str], str]
 
 
 class TurnOutcome(BaseModel):
