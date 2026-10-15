@@ -1,0 +1,58 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AppMediaInThisAccountOnly",
+      "Effect": "Allow",
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:PutObjectAcl",
+        "s3:ListBucket",
+        "s3:GetBucketLocation"
+      ],
+      "Resource": "*",
+      "Condition": {
+        "StringEquals": {
+          "aws:ResourceAccount": "{{AUX_ACCOUNT_ID}}"
+        }
+      }
+    },
+    {
+      "Sid": "AppLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:CreateLogGroup",
+        "logs:CreateLogStream",
+        "logs:PutLogEvents"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "SsmAgentConnectivity",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:UpdateInstanceInformation",
+        "ssm:ListInstanceAssociations",
+        "ssm:UpdateInstanceAssociationStatus",
+        "ssm:DescribeAssociation",
+        "ssm:ListAssociations",
+        "ssm:GetDocument",
+        "ssm:DescribeDocument",
+        "ssm:GetManifest",
+        "ssmmessages:CreateControlChannel",
+        "ssmmessages:CreateDataChannel",
+        "ssmmessages:OpenControlChannel",
+        "ssmmessages:OpenDataChannel",
+        "ec2messages:AcknowledgeMessage",
+        "ec2messages:DeleteMessage",
+        "ec2messages:FailMessage",
+        "ec2messages:GetEndpoint",
+        "ec2messages:GetMessages",
+        "ec2messages:SendReply"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
