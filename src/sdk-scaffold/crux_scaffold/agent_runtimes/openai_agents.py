@@ -82,7 +82,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             tools = [self._function_tool(self.assembly.tools[tool]) for tool in spec.tools]
             tools += [self._delegate(delegate) for delegate in spec.delegates]
             self.agents[name] = Agent(
-                name=name, instructions=self.assembly.drop_in.instructions(name), tools=tools,
+                name=name, instructions=self._instructions, tools=tools,
                 mcp_servers=[self.servers[server] for server in spec.mcp_servers],
                 model=self._model(name), model_settings=self._settings())
 
@@ -134,6 +134,9 @@ class OpenAIAgentsRuntime(AgentRuntime):
     def _settings(self) -> ModelSettings:
         effort = self.assembly.context.reasoning_effort
         return ModelSettings(reasoning=Reasoning(effort=effort, summary="auto"))
+
+    def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
+        return self.assembly.instructions(agent.name)
 
     def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
         items = self.assembly.context_strategy.select(list(data.model_data.input))

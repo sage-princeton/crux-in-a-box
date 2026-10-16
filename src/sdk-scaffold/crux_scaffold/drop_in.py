@@ -54,7 +54,6 @@ class DropInDirectory:
     def standing_context(self, files: list[str]) -> str:
         return "\n\n---\n\n".join(f"# Standing context: {rel}\n\n{self.read(rel).strip()}" for rel in files)
 
-    # TODO(AE-249): prepend a generated description of the scaffold to the orchestrator's instructions.
     def instructions(self, agent: str) -> str:
         spec = self.config.agents[agent]
         return "\n\n---\n\n".join(filter(None, [self.read(spec.persona).strip(), self.standing_context(spec.context)]))

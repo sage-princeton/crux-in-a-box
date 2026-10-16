@@ -61,6 +61,11 @@ class PhaseConfig(Options):
     interval_seconds: float = Field(0, ge=0)
 
 
+class PreambleConfig(Options):
+    enabled: bool = True
+    append: str = ""
+
+
 class ScaffoldConfig(Options):
     """The whole of `scaffold.toml`. `agents` run in the agent runtime; `coding_agents` are coding harnesses
     (`CodingAgent`) that agents delegate code changes to."""
@@ -72,6 +77,7 @@ class ScaffoldConfig(Options):
     context: ComponentTable = {"type": "persistent"}
     loop: ComponentTable
     budget: Budget = Budget()
+    preamble: PreambleConfig = PreambleConfig()
     agents: dict[str, AgentConfig]
     coding_agents: dict[str, ComponentTable] = {}
     tools: dict[str, ComponentTable] = {}
