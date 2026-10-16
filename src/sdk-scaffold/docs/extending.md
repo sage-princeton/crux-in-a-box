@@ -221,3 +221,41 @@ A new component needs tests for:
 - for a tool or gate, one run through `main(["run", ...])` or the runtime with a scripted model.
 
 `tests/test_docs.py` fails when a built-in type or extension point is missing from this guide.
+
+## Durable Slack transport state
+
+`steering.py` provides the SDK-neutral `Steering` inbox/outbox used by the runtime's
+MCP integration. It receives an existing MCP connection and telemetry; it does not
+start a server or build components. This extends the existing runtime/MCP and tool
+contracts rather than adding a transport registry.
+
+`SteeringOptions` declares a server, channel, optional fixed thread, nonempty
+`operator_ids` allowlist and explicit `after_ts` (Slack timestamp; `0` includes all
+available history). `poll_interval_seconds` bounds waiting between polls;
+`max_pages` bounds one scan. It targets the CSV contract of
+[slack-mcp-server v1.3.0](https://github.com/korotovsky/slack-mcp-server/blob/v1.3.0/pkg/handler/conversations.go).
+Channel history is newest first; thread replies are oldest first, so thread scans
+must finish every page. Channel mode accepts top-level messages; thread mode
+accepts replies in its configured thread. Other authors and bot posts are ignored.
+Edits/deletions of old messages are not new instructions: post a new correction.
+
+`steering.json` in the state directory atomically stores the source/policy, scanned
+timestamp, ordered inbox, pending/delivered status and escalation outbox. A complete
+scan commits its cursor together with messages; a failed, malformed or capped scan
+leaves it unchanged. Pagination cursors are transient; each retry scans from the
+head so cursor expiration cannot skip messages. Reusing state with another source
+or allowlist fails. Keep this state with the conversation store when resuming.
+
+`Escalation` requires a stable `request_id`, `failure`, `diagnosis`,
+`requested_action` and `meanwhile`. `Steering.escalate` persists before posting and
+returns without awaiting an operator reply. Identical IDs return the saved result;
+changing an existing request raises `ToolError`. A timeout or restart during a post
+has an **uncertain** outcome and is never resent automatically. Check the channel
+before creating a new ID. MCP write retries must be disabled by the caller because
+the upstream posting tool has no idempotency key.
+
+`Steering.event` records message IDs/authors, channel/thread, request IDs and delivery
+outcomes, never message bodies, MCP environment values, responses or exception
+strings. `steering.json` contains the actual instructions and escalation text; treat
+it as private run state. Tests use an MCP call double and exercise paginated scans,
+malformed responses, duplicate/restart recovery and uncertain posts without a network.
