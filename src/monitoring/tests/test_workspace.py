@@ -26,9 +26,7 @@ def test_copy_preserves_the_whole_workspace_and_model_limits_never_shorten_archi
     archive = tmp_path / "copy.tar.gz"
     info = archive_workspace(root, archive)
     with tarfile.open(archive) as saved:
-        assert (
-            saved.extractfile("workspace/.hidden/config.json").read() == b'{"setting": "preserved"}'
-        )
+        assert saved.extractfile("workspace/.hidden/config.json").read() == b'{"setting": "preserved"}'
         assert saved.extractfile("workspace/artifact.bin").read() == binary
         assert saved.extractfile("workspace/results.txt").read().decode() == long
         assert saved.getmember("workspace/outside-link").issym()
@@ -56,9 +54,7 @@ def test_corrupt_archive_is_not_accepted(tmp_path):
 
 
 @pytest.mark.parametrize("exit_code", [0, 1])
-def test_whole_archive_stream_is_acknowledged_only_after_upload_succeeds(
-    tmp_path, monkeypatch, capsys, exit_code
-):
+def test_whole_archive_stream_is_acknowledged_only_after_upload_succeeds(tmp_path, monkeypatch, capsys, exit_code):
     root = tmp_path / "workspace"
     root.mkdir()
     (root / ".hidden").write_bytes(bytes(range(256)) * 1000)
@@ -102,9 +98,7 @@ def test_whole_archive_stream_is_acknowledged_only_after_upload_succeeds(
         assert info["bytes"] == output.stat().st_size
         assert info["sha256"] == hashlib.sha256(output.read_bytes()).hexdigest()
         with tarfile.open(output) as archive:
-            assert (
-                archive.extractfile("workspace/.hidden").read() == (root / ".hidden").read_bytes()
-            )
+            assert archive.extractfile("workspace/.hidden").read() == (root / ".hidden").read_bytes()
         args = json.loads(arguments.read_text())
         assert args[:4] == [
             "s3",
@@ -133,9 +127,7 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
     key = "workspaces/i-abcdef/900/workspace.tar.gz"
 
     def assume_role(**request):
-        assert json.loads(request["Policy"])["Statement"][0]["Resource"] == (
-            "arn:aws:s3:::monitoring-copy-test/" + key
-        )
+        assert json.loads(request["Policy"])["Statement"][0]["Resource"] == ("arn:aws:s3:::monitoring-copy-test/" + key)
         return {
             "Credentials": {
                 "AccessKeyId": "test-access",
@@ -154,9 +146,7 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
     with mock_aws():
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket="monitoring-copy-test")
-        s3.put_bucket_versioning(
-            Bucket="monitoring-copy-test", VersioningConfiguration={"Status": "Enabled"}
-        )
+        s3.put_bucket_versioning(Bucket="monitoring-copy-test", VersioningConfiguration={"Status": "Enabled"})
         s3.put_object(Bucket="monitoring-copy-test", Key=key, Body=archive.read_bytes())
         collector = Collector(
             None,
@@ -179,9 +169,7 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
         assert snapshot["version_id"] and snapshot["sha256"] == info["sha256"]
         assert "workspace/.evidence" in {entry["path"] for entry in manifest} and not gaps
         collector.http = httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(status_code, json={"data": [], "meta": {}})
-            )
+            transport=httpx.MockTransport(lambda request: httpx.Response(status_code, json={"data": [], "meta": {}}))
         )
         evidence = collector.collect(
             {
@@ -198,16 +186,10 @@ def test_ssm_copy_uses_one_object_credentials_and_verifies_saved_snapshot(tmp_pa
         )
         assert evidence["langfuse_status"] == ("empty" if status_code == 200 else "unavailable")
         assert any(
-            ("no observations" if status_code == 200 else "collection unavailable") in gap
-            for gap in evidence["gaps"]
+            ("no observations" if status_code == 200 else "collection unavailable") in gap for gap in evidence["gaps"]
         )
         assert (
-            json.loads(
-                s3.get_object(Bucket="monitoring-copy-test", Key=evidence["langfuse_key"])[
-                    "Body"
-                ].read()
-            )
-            == []
+            json.loads(s3.get_object(Bucket="monitoring-copy-test", Key=evidence["langfuse_key"])["Body"].read()) == []
         )
         collector.http.close()
 
@@ -228,9 +210,7 @@ def test_busy_telemetry_is_archived_while_context_stays_bounded(monkeypatch):
         }
         for index in range(600)
     ]
-    telemetry.append(
-        {"id": "observation:last", "kind": "langfuse", "data": {"model": "claude-example"}}
-    )
+    telemetry.append({"id": "observation:last", "kind": "langfuse", "data": {"model": "claude-example"}})
     monkeypatch.setattr("collection.collect_langfuse", lambda *args: telemetry)
     with mock_aws(), httpx.Client() as http:
         s3 = boto3.client("s3", region_name="us-east-1")

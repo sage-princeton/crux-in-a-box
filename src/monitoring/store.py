@@ -122,9 +122,7 @@ class Store:
     def collection(self, key, end):
         with self.db.connect() as connection:
             return connection.execute(
-                text(
-                    "SELECT evidence FROM collections WHERE workload_key=:key AND window_end=:end"
-                ),
+                text("SELECT evidence FROM collections WHERE workload_key=:key AND window_end=:end"),
                 {"key": key, "end": end},
             ).scalar()
 
@@ -141,10 +139,7 @@ class Store:
     def assessment(self, key, end, kind):
         with self.db.connect() as connection:
             return connection.execute(
-                text(
-                    "SELECT result FROM assessments WHERE "
-                    "workload_key=:key AND window_end=:end AND kind=:kind"
-                ),
+                text("SELECT result FROM assessments WHERE workload_key=:key AND window_end=:end AND kind=:kind"),
                 {"key": key, "end": end, "kind": kind},
             ).scalar()
 
@@ -173,9 +168,7 @@ class Store:
                 .mappings()
                 .all()
             )
-        return [row["result"] for row in rows[:20]], str(rows[19]["window_end"]) if len(
-            rows
-        ) > 20 else None
+        return [row["result"] for row in rows[:20]], str(rows[19]["window_end"]) if len(rows) > 20 else None
 
     def pending(self, now):
         with self.db.connect() as connection:
@@ -206,11 +199,7 @@ class Store:
             if anchor not in anchors or anchors[anchor] not in finding["source_ids"]:
                 raise ValueError("Finding anchor is not in its cited evidence")
             findings.append((detector, anchor, finding))
-        health = (
-            "unavailable"
-            if status == "failed"
-            else ("coverage" if report["coverage_gaps"] else None)
-        )
+        health = "unavailable" if status == "failed" else ("coverage" if report["coverage_gaps"] else None)
         if health:
             findings.append(
                 (
@@ -351,9 +340,7 @@ class Store:
                 .mappings()
                 .all()
             )
-        return [row["detail"] for row in rows[:50]], str(rows[49][column]) if len(
-            rows
-        ) > 50 else None
+        return [row["detail"] for row in rows[:50]], str(rows[49][column]) if len(rows) > 50 else None
 
     def transition(self, identity, version, status, actor, note):
         if not self.transition_many([(identity, version)], status, actor, note):
@@ -388,10 +375,7 @@ class Store:
             changed = [row for row in rows if row["status"] != status]
             for row in changed:
                 connection.execute(
-                    text(
-                        "UPDATE incidents SET status=:status, version=version+1, "
-                        "updated_at=:now WHERE id=:id"
-                    ),
+                    text("UPDATE incidents SET status=:status, version=version+1, updated_at=:now WHERE id=:id"),
                     {"id": row["id"], "status": status, "now": now},
                 )
                 event = {
@@ -403,9 +387,7 @@ class Store:
                     "version": row["version"] + 1,
                 }
                 connection.execute(
-                    text(
-                        "INSERT INTO incident_events VALUES (:id, :version, CAST(:event AS jsonb))"
-                    ),
+                    text("INSERT INTO incident_events VALUES (:id, :version, CAST(:event AS jsonb))"),
                     {"id": row["id"], "version": event["version"], "event": encoded(event)},
                 )
         return len(changed)
@@ -422,9 +404,7 @@ class Store:
 
     def notice(self, key):
         with self.db.connect() as connection:
-            return connection.execute(
-                text("SELECT fingerprint FROM notices WHERE key=:key"), {"key": key}
-            ).scalar()
+            return connection.execute(text("SELECT fingerprint FROM notices WHERE key=:key"), {"key": key}).scalar()
 
     def acknowledge(self, key, fingerprint):
         with self.db.begin() as connection:
@@ -467,9 +447,7 @@ class Store:
     def pending_login(self, token):
         with self.db.connect() as connection:
             row = (
-                connection.execute(
-                    text("SELECT * FROM login_requests WHERE token=:token"), {"token": token}
-                )
+                connection.execute(text("SELECT * FROM login_requests WHERE token=:token"), {"token": token})
                 .mappings()
                 .first()
             )
@@ -478,9 +456,7 @@ class Store:
     def session(self, token):
         with self.db.connect() as connection:
             row = (
-                connection.execute(
-                    text("SELECT * FROM sessions WHERE token=:token"), {"token": token}
-                )
+                connection.execute(text("SELECT * FROM sessions WHERE token=:token"), {"token": token})
                 .mappings()
                 .first()
             )
@@ -489,18 +465,13 @@ class Store:
     def finish_login(self, login, token, actor, csrf, expires, now):
         with self.db.begin() as connection:
             used = connection.execute(
-                text(
-                    "DELETE FROM login_requests WHERE token=:token "
-                    "AND expires_at>:now RETURNING token"
-                ),
+                text("DELETE FROM login_requests WHERE token=:token AND expires_at>:now RETURNING token"),
                 {"token": login, "now": now},
             ).first()
             if not used:
                 raise Conflict("Sign-in already used or expired.")
             connection.execute(
-                text(
-                    "INSERT INTO sessions VALUES (:token, CAST(:actor AS jsonb), :csrf, :expires)"
-                ),
+                text("INSERT INTO sessions VALUES (:token, CAST(:actor AS jsonb), :csrf, :expires)"),
                 {"token": token, "actor": encoded(actor), "csrf": csrf, "expires": expires},
             )
 
@@ -510,9 +481,7 @@ class Store:
 
     def prune(self, before):
         with self.db.begin() as connection:
-            connection.execute(
-                text("DELETE FROM collections WHERE window_end<:before"), {"before": before}
-            )
+            connection.execute(text("DELETE FROM collections WHERE window_end<:before"), {"before": before})
             now = {"now": int(time.time())}
             connection.execute(text("DELETE FROM sessions WHERE expires_at<:now"), now)
             connection.execute(text("DELETE FROM login_requests WHERE expires_at<:now"), now)

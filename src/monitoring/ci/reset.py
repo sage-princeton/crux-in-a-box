@@ -14,9 +14,7 @@ def reset(config):
     name = config["name"]
     if name != "crux-monitoring-ae211":
         raise ValueError("Reset is limited to the retired monitoring namespace")
-    scheduler, batch, dynamodb = (
-        boto3.client(service) for service in ("scheduler", "batch", "dynamodb")
-    )
+    scheduler, batch, dynamodb = (boto3.client(service) for service in ("scheduler", "batch", "dynamodb"))
     retired_queues = []
     for suffix in ("", "-status"):
         resource = name + suffix
@@ -39,13 +37,9 @@ def reset(config):
             retired_queues.append(queue["jobQueueArn"])
             batch.update_job_queue(jobQueue=queue["jobQueueArn"], state="DISABLED")
             for status in ("SUBMITTED", "PENDING", "RUNNABLE", "STARTING", "RUNNING"):
-                for page in batch.get_paginator("list_jobs").paginate(
-                    jobQueue=queue["jobQueueArn"], jobStatus=status
-                ):
+                for page in batch.get_paginator("list_jobs").paginate(jobQueue=queue["jobQueueArn"], jobStatus=status):
                     for job in page["jobSummaryList"]:
-                        batch.terminate_job(
-                            jobId=job["jobId"], reason="Approved fresh monitoring reset"
-                        )
+                        batch.terminate_job(jobId=job["jobId"], reason="Approved fresh monitoring reset")
     deadline = time.monotonic() + 180
     while retired_queues:
         active = any(
@@ -90,21 +84,11 @@ def reset(config):
                 for item in page.get("Versions", []) + page.get("DeleteMarkers", [])
             ]
             if objects:
-                result = s3.delete_objects(
-                    Bucket=bucket, Delete={"Objects": objects, "Quiet": True}
-                )
+                result = s3.delete_objects(Bucket=bucket, Delete={"Objects": objects, "Quiet": True})
                 if result.get("Errors"):
                     raise RuntimeError("Retired monitoring artifacts could not be deleted")
     print("Retired monitoring stopped; old tables are ready for Terraform destruction.")
 
 
 if __name__ == "__main__":
-    reset(
-        json.loads(
-            Path(__file__)
-            .resolve()
-            .parents[1]
-            .joinpath("terraform/production.auto.tfvars.json")
-            .read_text()
-        )
-    )
+    reset(json.loads(Path(__file__).resolve().parents[1].joinpath("terraform/production.auto.tfvars.json").read_text()))

@@ -23,25 +23,15 @@ from web_auth import install_auth, require_operator
 
 def create_app(store=None, settings=None):
     if settings is None:
-        parameter = boto3.client("ssm").get_parameter(
-            Name=os.environ["MONITORING_WEB_PARAMETER"], WithDecryption=True
-        )
+        parameter = boto3.client("ssm").get_parameter(Name=os.environ["MONITORING_WEB_PARAMETER"], WithDecryption=True)
         settings = json.loads(parameter["Parameter"]["Value"])
     origin = settings["origin"].rstrip("/")
     parsed = urlsplit(origin)
-    if (
-        parsed.scheme != "https"
-        or parsed.path
-        or parsed.query
-        or parsed.fragment
-        or parsed.username
-    ):
+    if parsed.scheme != "https" or parsed.path or parsed.query or parsed.fragment or parsed.username:
         raise ValueError("Web origin must be an HTTPS origin")
     store = store or Store()
     app = Flask(__name__)
-    app.config.update(
-        PUBLIC_ORIGIN=origin, TRUSTED_HOSTS=[parsed.hostname], MAX_CONTENT_LENGTH=128 * 1024
-    )
+    app.config.update(PUBLIC_ORIGIN=origin, TRUSTED_HOSTS=[parsed.hostname], MAX_CONTENT_LENGTH=128 * 1024)
     app.extensions["incidents"] = store
     install_auth(app, store, settings)
 
@@ -60,9 +50,7 @@ def create_app(store=None, settings=None):
 
     @app.template_filter("stamp")
     def stamp(value):
-        return datetime.fromtimestamp(int(value), ZoneInfo("America/New_York")).strftime(
-            "%b %d, %Y · %H:%M ET"
-        )
+        return datetime.fromtimestamp(int(value), ZoneInfo("America/New_York")).strftime("%b %d, %Y · %H:%M ET")
 
     @app.template_filter("isostamp")
     def isostamp(value):
@@ -96,7 +84,10 @@ def create_app(store=None, settings=None):
                 "Referrer-Policy": "same-origin",
                 "X-Frame-Options": "DENY",
                 "Strict-Transport-Security": "max-age=31536000",
-                "Content-Security-Policy": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
+                "Content-Security-Policy": (
+                    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
+                    "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+                ),
             }
         )
         return response
@@ -186,9 +177,7 @@ def create_app(store=None, settings=None):
         if cursor:
             try:
                 start_instance, start_id = json.loads(base64.urlsafe_b64decode(cursor).decode())
-                if not isinstance(start_instance, str) or not isinstance(
-                    start_id, (str, type(None))
-                ):
+                if not isinstance(start_instance, str) or not isinstance(start_id, (str, type(None))):
                     raise ValueError()
                 if start_id is not None:
                     start_id = str(UUID(start_id))
@@ -248,9 +237,7 @@ def create_app(store=None, settings=None):
             coverage_more=len(active_coverage) > coverage_page * 5,
             incident_error=incident_error,
             status_error=status_error,
-            groups=sorted(
-                groups.values(), key=lambda group: (group["label"].casefold(), group["instance_id"])
-            ),
+            groups=sorted(groups.values(), key=lambda group: (group["label"].casefold(), group["instance_id"])),
         )
 
     @app.get("/workloads/<uuid:key>/status")
@@ -266,9 +253,7 @@ def create_app(store=None, settings=None):
             abort(503, "Status history is temporarily unavailable.")
         if not row:
             abort(404)
-        return render_template(
-            "status_history.html", workload=row, history=history, next_cursor=next_cursor
-        )
+        return render_template("status_history.html", workload=row, history=history, next_cursor=next_cursor)
 
     @app.get("/incidents/<uuid:incident_id>")
     def detail(incident_id):
@@ -280,9 +265,7 @@ def create_app(store=None, settings=None):
         item = store.incident(incident_id)
         if item is None:
             abort(404)
-        events, event_cursor = store.incident_history(
-            incident_id, "events", request.args.get("events")
-        )
+        events, event_cursor = store.incident_history(incident_id, "events", request.args.get("events"))
         observations, observation_cursor = store.incident_history(
             incident_id, "observations", request.args.get("observations")
         )
@@ -334,9 +317,7 @@ def create_app(store=None, settings=None):
                 workload = str(UUID(workload))
             selections = [value.rsplit(":", 1) for value in request.form.getlist("selection")]
             status = request.form["status"]
-            updated = store.transition_many(
-                selections, status, g.actor, request.form.get("note", "")
-            )
+            updated = store.transition_many(selections, status, g.actor, request.form.get("note", ""))
         except (ValueError, KeyError):
             abort(400, "Select up to 50 distinct incidents with valid status changes.")
         except Conflict as error:

@@ -122,10 +122,7 @@ class Collector:
                 "UploadKey": [key],
                 "Credentials": [
                     json.dumps(
-                        {
-                            field: credentials[field]
-                            for field in ("AccessKeyId", "SecretAccessKey", "SessionToken")
-                        }
+                        {field: credentials[field] for field in ("AccessKeyId", "SecretAccessKey", "SessionToken")}
                     )
                 ],
             },
@@ -145,9 +142,7 @@ class Collector:
                     if head["ContentLength"] != info["bytes"]:
                         raise CoverageError("Workspace upload size did not match")
                     version = head["VersionId"]
-                    with self.s3.get_object(Bucket=self.bucket, Key=key, VersionId=version)[
-                        "Body"
-                    ] as stream:
+                    with self.s3.get_object(Bucket=self.bucket, Key=key, VersionId=version)["Body"] as stream:
                         sources, manifest, gaps = workspace_view(stream, info["sha256"])
                     return sources, {**info, "key": key, "version_id": version}, manifest, gaps
                 if result["Status"] not in ("Pending", "InProgress", "Delayed"):
@@ -214,9 +209,7 @@ class Collector:
             if model:
                 models.add(model)
         if omitted:
-            gaps.append(
-                f"{omitted} sources exceed model context; inspect saved workspace/telemetry."
-            )
+            gaps.append(f"{omitted} sources exceed model context; inspect saved workspace/telemetry.")
         if any(source.get("coverage_gap") for source in telemetry):
             gaps.append("Langfuse inputs/outputs exceeded the archive limit and were omitted.")
         if len(encoded(view)) > MAX_EVIDENCE_BYTES:

@@ -12,11 +12,7 @@ def coverage_rows(rows):
         threshold = row["stale_seconds"]
         row["stale"] = bool(latest) and now - latest.get("evidence_at", 0) > threshold
         row["inventory_stale"] = now - row["inventory_at"] > threshold
-        row["attention"] = (
-            bool(latest.get("report", {}).get("alert"))
-            or row["stale"]
-            or row["attempt"] == "failed"
-        )
+        row["attention"] = bool(latest.get("report", {}).get("alert")) or row["stale"] or row["attempt"] == "failed"
         row["review"] = item
         result.append(row)
     return sorted(

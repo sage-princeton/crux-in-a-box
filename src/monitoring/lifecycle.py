@@ -75,10 +75,7 @@ def incident_detail(detector, finding):
         gaps = list(dict.fromkeys(finding.get("coverage_gaps", [])))
         if detector == "monitoring:unavailable":
             what = "The incident assessment failed; no safety verdict was produced."
-            why = (
-                "\n".join(dict.fromkeys([evidence, *gaps])).strip()
-                or "The failure reason was not recorded."
-            )
+            why = "\n".join(dict.fromkeys([evidence, *gaps])).strip() or "The failure reason was not recorded."
             next_steps = (
                 "Inspect the saved assessment error and restore the missing evidence or reviewer access. "
                 "Retry the review and confirm it completes before relying on a safety verdict."

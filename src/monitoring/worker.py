@@ -52,12 +52,8 @@ class Runtime:
         self.store = store or Store()
         self.config = json.loads(Path(__file__).with_name("monitoring.json").read_text())
         validate(self.config)
-        sdk = Config(
-            retries={"mode": "standard", "max_attempts": 3}, connect_timeout=10, read_timeout=30
-        )
-        self.ec2, self.ssm, self.s3 = (
-            boto3.client(name, config=sdk) for name in ("ec2", "ssm", "s3")
-        )
+        sdk = Config(retries={"mode": "standard", "max_attempts": 3}, connect_timeout=10, read_timeout=30)
+        self.ec2, self.ssm, self.s3 = (boto3.client(name, config=sdk) for name in ("ec2", "ssm", "s3"))
         self.bucket = os.environ["MONITORING_BUCKET"]
         self.http = httpx.Client(timeout=httpx.Timeout(90, connect=10), follow_redirects=False)
         self.collector = Collector(
@@ -91,9 +87,7 @@ class Runtime:
 
     def secrets(self):
         return json.loads(
-            self.ssm.get_parameter(Name="/crux/monitoring/env", WithDecryption=True)["Parameter"][
-                "Value"
-            ]
+            self.ssm.get_parameter(Name="/crux/monitoring/env", WithDecryption=True)["Parameter"]["Value"]
         )
 
     def incident(self, target, end, evidence, previous, secrets, prefix):
@@ -110,9 +104,7 @@ class Runtime:
             "evidence_anchors": anchors,
             "evidence_anchor_positions": positions,
         }
-        model = select_reviewer(
-            self.config["incident"]["reviewer_models"], sources, target["subject_families"]
-        )
+        model = select_reviewer(self.config["incident"]["reviewer_models"], sources, target["subject_families"])
         reserved = reserve(
             Budget(self.store, "incident"),
             self.http,
@@ -137,9 +129,7 @@ class Runtime:
         return {"report": report, "model": provenance}
 
     def status(self, target, end, evidence, previous, secrets, prefix):
-        families = set(target["subject_families"]) | set(
-            self.store.status_subject_families(target["key"], end)
-        )
+        families = set(target["subject_families"]) | set(self.store.status_subject_families(target["key"], end))
         observed_models = {
             source["data"]["model"]
             for source in evidence["sources"]
@@ -160,19 +150,13 @@ class Runtime:
             previous,
             evidence["gaps"],
         )
-        stamps = [
-            int(s["mtime"])
-            for s in evidence["sources"]
-            if s.get("mtime", 0) <= time.time() and s.get("mtime")
-        ]
+        stamps = [int(s["mtime"]) for s in evidence["sources"] if s.get("mtime", 0) <= time.time() and s.get("mtime")]
         if any(s["kind"] == "langfuse" for s in evidence["sources"]):
             stamps.append(end)
         return {
             "report": report,
             "models": models,
-            "subject_families": sorted(
-                families | {model_family(model) for model in observed_models}
-            ),
+            "subject_families": sorted(families | {model_family(model) for model in observed_models}),
             "coverage_gaps": gaps,
             "evidence_at": max(stamps, default=0),
         }

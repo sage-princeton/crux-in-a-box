@@ -55,9 +55,7 @@ def test_langfuse_cursor_preserves_session_window_and_required_fields():
     ],
 )
 def test_incomplete_or_misattributed_langfuse_is_not_accepted(body):
-    with httpx.Client(
-        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))
-    ) as client:
+    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))) as client:
         with pytest.raises(CoverageError):
             collect_langfuse(client, {"session_id": "trusted-session"}, SECRETS, 0, 300)
 
@@ -85,9 +83,7 @@ def test_model_family_separation_uses_observed_and_declared_models():
     with pytest.raises(CoverageError, match="different model family"):
         select_reviewer(["anthropic/claude-example", "openai/gpt-example"], sources, ["openai"])
     with pytest.raises(CoverageError, match="unknown"):
-        select_reviewer(
-            ["openai/gpt-example"], [{"kind": "langfuse", "data": {"model": "unknown"}}], []
-        )
+        select_reviewer(["openai/gpt-example"], [{"kind": "langfuse", "data": {"model": "unknown"}}], [])
 
 
 @pytest.mark.parametrize(

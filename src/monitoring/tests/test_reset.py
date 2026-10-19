@@ -37,14 +37,8 @@ def test_reset_deletes_only_retired_monitoring_data_and_leaves_sql_snapshots(mon
         reset(config)
         versions = s3.list_object_versions(Bucket=bucket)["Versions"]
         assert {v["Key"] for v in versions} == {"workspaces/new.tar.gz", "collections/new.json"}
-        assert (
-            db.describe_table(TableName=name + "-incidents")["Table"]["DeletionProtectionEnabled"]
-            is False
-        )
-        assert (
-            db.describe_table(TableName="research-data")["Table"]["DeletionProtectionEnabled"]
-            is True
-        )
+        assert db.describe_table(TableName=name + "-incidents")["Table"]["DeletionProtectionEnabled"] is False
+        assert db.describe_table(TableName="research-data")["Table"]["DeletionProtectionEnabled"] is True
 
 
 def test_reset_refuses_another_account(monkeypatch):

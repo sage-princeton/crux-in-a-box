@@ -24,9 +24,7 @@ def runtime(store, target, monkeypatch):
         monkeypatch.setenv("MONITORING_BUCKET", "monitoring-test")
         monkeypatch.setenv("MONITORING_WORKSPACE_DOCUMENT", "copy-workspace")
         monkeypatch.setenv("MONITORING_WEB_ORIGIN", "https://incidents.example.test")
-        monkeypatch.setenv(
-            "MONITORING_UPLOAD_ROLE", "arn:aws:iam::123456789012:role/workspace-upload"
-        )
+        monkeypatch.setenv("MONITORING_UPLOAD_ROLE", "arn:aws:iam::123456789012:role/workspace-upload")
         boto3.client("s3").create_bucket(Bucket="monitoring-test")
         secrets = {
             "MONITORING_OPENROUTER_API_KEY": "test-only-inference-credential",
@@ -73,28 +71,20 @@ def runtime(store, target, monkeypatch):
                 200,
                 json={
                     "model": payload["model"],
-                    "choices": [
-                        {"finish_reason": "stop", "message": {"content": json.dumps(report)}}
-                    ],
+                    "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(report)}}],
                 },
             )
 
         result = Runtime(store)
         result.http.close()
         result.http = httpx.Client(transport=httpx.MockTransport(handler))
-        monkeypatch.setattr(
-            "fleet.slack_webhook_url", lambda: secrets["MONITORING_SLACK_WEBHOOK_URL"]
-        )
-        monkeypatch.setattr(
-            "fleet.httpx.post", lambda *args, **kwargs: result.http.post(*args, **kwargs)
-        )
+        monkeypatch.setattr("fleet.slack_webhook_url", lambda: secrets["MONITORING_SLACK_WEBHOOK_URL"])
+        monkeypatch.setattr("fleet.httpx.post", lambda *args, **kwargs: result.http.post(*args, **kwargs))
 
         def collect(*args):
             counts["collection"] += 1
             return {
-                "sources": [
-                    {"id": "observation:123", "kind": "langfuse", "data": {"model": "gpt-6.1-sol"}}
-                ],
+                "sources": [{"id": "observation:123", "kind": "langfuse", "data": {"model": "gpt-6.1-sol"}}],
                 "gaps": [],
                 "workspace": {"key": "whole-workspace.tar.gz", "sha256": "fixture"},
                 "captured_at": int(time.time()),
@@ -186,9 +176,7 @@ def test_poll_retries_closure_without_reenrolling_an_archived_target(runtime, mo
         assert request.url.host == "hooks.slack.com", "Must reuse saved model results"
         assert str(request.url) == secrets["MONITORING_SLACK_WEBHOOK_URL"]
         messages.append(json.loads(request.content))
-        return httpx.Response(
-            503 if len(messages) == 1 else 200, text="busy" if len(messages) == 1 else "ok"
-        )
+        return httpx.Response(503 if len(messages) == 1 else 200, text="busy" if len(messages) == 1 else "ok")
 
     worker.http.close()
     worker.http = httpx.Client(transport=httpx.MockTransport(handler))
@@ -208,9 +196,7 @@ def test_poll_retries_closure_without_reenrolling_an_archived_target(runtime, mo
 
 
 @pytest.mark.parametrize("verbose", [False, True])
-def test_successful_status_sweep_summary_and_incident_publish_independently(
-    runtime, monkeypatch, verbose
-):
+def test_successful_status_sweep_summary_and_incident_publish_independently(runtime, monkeypatch, verbose):
     worker, target, secrets, counts = runtime
     calls, messages = [], []
     collect = worker.collector.collect
@@ -319,9 +305,7 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(
     assert counts["collection"] == 1 and calls == initial
 
 
-def test_idle_status_uses_prior_observed_family_and_preserves_resource_evidence(
-    runtime, monkeypatch
-):
+def test_idle_status_uses_prior_observed_family_and_preserves_resource_evidence(runtime, monkeypatch):
     worker, target, secrets, counts = runtime
     key = target["key"]
     target["subject_families"] = []
@@ -331,9 +315,7 @@ def test_idle_status_uses_prior_observed_family_and_preserves_resource_evidence(
         450,
         {"sources": [{"kind": "langfuse", "data": {"model": "gpt-6.1-sol"}}]},
     )
-    worker.store.publish(
-        key, 450, "status", {"outcome": "completed", "window_end": 450, "report": {}}
-    )
+    worker.store.publish(key, 450, "status", {"outcome": "completed", "window_end": 450, "report": {}})
     resource_text = (
         "The workspace ledger records LLM spend of $200.49 against $200 as of October 11. "
         "The task deadline is November 18, 2026, 23:36 UTC."
@@ -432,9 +414,7 @@ def test_only_empty_langfuse_without_known_family_is_a_recency_failure(runtime, 
 
 
 @pytest.mark.parametrize("other_run", [False, True])
-def test_status_cannot_borrow_subject_identity_from_another_run_or_future_window(
-    runtime, other_run
-):
+def test_status_cannot_borrow_subject_identity_from_another_run_or_future_window(runtime, other_run):
     worker, target, secrets, counts = runtime
     target["subject_families"] = []
     prior_target = {**target, "instance_id": "i-other"} if other_run else target
