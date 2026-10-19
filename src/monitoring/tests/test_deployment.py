@@ -40,19 +40,19 @@ if name == 'systemctl' and args[0] == 'restart':
         path.chmod(0o700)
 
     def run(version, migration_fails):
-        values = dict(
-            origin=f"https://{version}.example",
-            region="us-east-1",
-            repository="fixture",
-            image=version,
-            proxy_image=version + "-proxy",
-            db_host=version + "-db",
-            db_secret=version + "-secret",
-            bucket="private-bucket",
-            document="copy-workspace",
-            upload_role="arn:aws:iam::123456789012:role/workspace-upload",
-            revision=version,
-        )
+        values = {
+            "origin": f"https://{version}.example",
+            "region": "us-east-1",
+            "repository": "fixture",
+            "image": version,
+            "proxy_image": version + "-proxy",
+            "db_host": version + "-db",
+            "db_secret": version + "-secret",
+            "bucket": "private-bucket",
+            "document": "copy-workspace",
+            "upload_role": "arn:aws:iam::123456789012:role/workspace-upload",
+            "revision": version,
+        }
         script = (
             template.replace("$${", "${")
             .replace("/opt/crux-incidents", str(service))
@@ -69,7 +69,7 @@ if name == 'systemctl' and args[0] == 'restart':
             "APP_IMAGE": "fixture@" + version,
             "PROXY_IMAGE": "fixture@" + version + "-proxy",
         }
-        return subprocess.run(["bash"], input=script, text=True, env=env, capture_output=True)
+        return subprocess.run(["bash"], input=script, text=True, env=env, capture_output=True, check=False)
 
     return run, service, log
 

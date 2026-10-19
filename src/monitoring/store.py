@@ -321,14 +321,18 @@ class Store:
         column, query = (
             (
                 "version",
-                "SELECT version, detail FROM incident_events WHERE incident_id=:id "
-                "AND version>:cursor ORDER BY version LIMIT 51",
+                (
+                    "SELECT version, detail FROM incident_events WHERE incident_id=:id "
+                    "AND version>:cursor ORDER BY version LIMIT 51"
+                ),
             )
             if kind == "events"
             else (
                 "window_end",
-                "SELECT window_end, detail FROM observations WHERE incident_id=:id "
-                "AND window_end>:cursor ORDER BY window_end LIMIT 51",
+                (
+                    "SELECT window_end, detail FROM observations WHERE incident_id=:id "
+                    "AND window_end>:cursor ORDER BY window_end LIMIT 51"
+                ),
             )
         )
         with self.db.connect() as connection:

@@ -169,7 +169,7 @@ class Runtime:
             try:
                 result = getattr(self, kind)(target, end, evidence, previous, secrets, prefix)
                 result["outcome"] = "completed"
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Record any provider failure without exposing raw diagnostics.
                 reason = f"{kind.capitalize()} assessment unavailable ({failure_reason(error)})."
                 result = {"outcome": "failed", "error": reason}
                 if isinstance(error, LangfuseRecencyError):
@@ -221,7 +221,7 @@ class Runtime:
         for kind in ("status", "incident"):
             try:
                 self.assess(target, end, kind, evidence, previous.get(kind, {}), secrets)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Let the independent assessment finish after publication errors.
                 print(
                     f"{target['instance_id']}: {kind} publication failed ({type(error).__name__}).",
                     flush=True,
@@ -250,7 +250,7 @@ class Runtime:
                         continue
                     try:
                         self.run_target(target, end, previous.get(target["key"], {}), secrets)
-                    except Exception as error:
+                    except Exception as error:  # noqa: BLE001 - One workload failure must not stop the fleet pass.
                         print(
                             f"{target['instance_id']}: collection/delivery failed ({type(error).__name__}).",
                             flush=True,
@@ -261,7 +261,7 @@ class Runtime:
                     target = pending["evidence"]["target"]
                     try:
                         self.run_target(target, pending["window_end"], {}, secrets)
-                    except Exception as error:
+                    except Exception as error:  # noqa: BLE001 - One saved pass must not block other retries.
                         print(
                             f"{target['instance_id']}: saved pass failed ({type(error).__name__}).",
                             flush=True,
@@ -273,7 +273,7 @@ class Runtime:
                             target,
                             os.environ["MONITORING_WEB_ORIGIN"],
                         )
-                    except Exception as error:
+                    except Exception as error:  # noqa: BLE001 - Delivery failures must not block other workloads.
                         print(
                             f"{target['instance_id']}: workload delivery failed ({type(error).__name__}).",
                             flush=True,
@@ -290,7 +290,7 @@ class Runtime:
         while True:
             try:
                 self.tick()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Retry failed passes and keep provider diagnostics private.
                 print(f"Monitoring pass failed ({type(error).__name__}).", flush=True)
             time.sleep(60)
 

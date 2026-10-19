@@ -55,9 +55,11 @@ def test_langfuse_cursor_preserves_session_window_and_required_fields():
     ],
 )
 def test_incomplete_or_misattributed_langfuse_is_not_accepted(body):
-    with httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))) as client:
-        with pytest.raises(CoverageError):
-            collect_langfuse(client, {"session_id": "trusted-session"}, SECRETS, 0, 300)
+    with (
+        httpx.Client(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=body))) as client,
+        pytest.raises(CoverageError),
+    ):
+        collect_langfuse(client, {"session_id": "trusted-session"}, SECRETS, 0, 300)
 
 
 def test_busy_langfuse_window_keeps_inputs_outputs_across_many_pages():
@@ -148,15 +150,17 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
             },
         )
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        with pytest.raises(CoverageError, match="cited"):
-            evaluate(
-                client,
-                "anthropic/claude-example",
-                "test-credential",
-                {"sources": [{"id": "known"}]},
-                lambda body: None,
-            )
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as client,
+        pytest.raises(CoverageError, match="cited"),
+    ):
+        evaluate(
+            client,
+            "anthropic/claude-example",
+            "test-credential",
+            {"sources": [{"id": "known"}]},
+            lambda body: None,
+        )
 
 
 def test_exact_non_vendor_secret_is_scrubbed_without_breaking_json():

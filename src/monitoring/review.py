@@ -114,7 +114,7 @@ def iso(epoch):
 
 def scrub(value, secrets):
     """Redact credentials in the model view; private raw workspace archives stay complete."""
-    sensitive = re.compile(r"api.?key|password|secret|authorization|(?:^|_)token$", re.I)
+    sensitive = re.compile(r"api.?key|password|secret|authorization|(?:^|_)token$", re.IGNORECASE)
 
     def clean(item):
         if isinstance(item, dict):
@@ -133,7 +133,7 @@ def scrub(value, secrets):
             r"([?&](?:token|api_key|access_token|password)=)[^&\s\"']+",
             r"\1[REDACTED]",
             item,
-            flags=re.I,
+            flags=re.IGNORECASE,
         )
         return re.sub(
             r"(?im)(\b[A-Z_]*(?:API_KEY|PASSWORD|SECRET_ACCESS_KEY|TOKEN)\s*=\s*)[^\n]+",

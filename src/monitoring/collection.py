@@ -81,8 +81,10 @@ def workspace_view(stream, expected_sha256):
     omitted = omitted or any(source["truncated"] for source in sources)
     gaps = (
         [
-            "The complete workspace is archived. Model context contains bounded excerpts of "
-            "recent text files; binary files and remaining content require archive inspection."
+            (
+                "The complete workspace is archived. Model context contains bounded excerpts of "
+                "recent text files; binary files and remaining content require archive inspection."
+            )
         ]
         if omitted
         else []
@@ -167,7 +169,7 @@ class Collector:
                 langfuse_status = "collected" if telemetry else "empty"
                 if not telemetry:
                     gaps.append("Langfuse returned no observations for this collection window.")
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Preserve workspace collection after any provider failure.
                 langfuse_status = "unavailable"
                 gaps.append(f"Langfuse collection unavailable ({failure_reason(error)}).")
         else:
@@ -177,7 +179,7 @@ class Collector:
             # Raw archive is never shortened. These are only inference context limits.
             sources.extend(workspace)
             gaps.extend(limitations)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Preserve telemetry after any workspace collection failure.
             gaps.append(f"Whole workspace copy unavailable ({failure_reason(error)}).")
         telemetry_key = f"collections/{iid}/{end}/langfuse.json"
         self.s3.put_object(

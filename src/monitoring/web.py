@@ -135,9 +135,8 @@ def create_app(store=None, settings=None):
         status_error = incident_error
         coverage = coverage_rows(incident_rows)
         selected = request.args.get("workload", "")
-        if selected and selected not in {row["key"] for row in coverage}:
-            if not status_error:
-                abort(404, "Workload not found.")
+        if selected and selected not in {row["key"] for row in coverage} and not status_error:
+            abort(404, "Workload not found.")
         try:
             coverage_page = int(request.args.get("coverage_page", "1"))
             if not 1 <= coverage_page <= 10000:
@@ -178,7 +177,7 @@ def create_app(store=None, settings=None):
             try:
                 start_instance, start_id = json.loads(base64.urlsafe_b64decode(cursor).decode())
                 if not isinstance(start_instance, str) or not isinstance(start_id, (str, type(None))):
-                    raise ValueError()
+                    raise TypeError()
                 if start_id is not None:
                     start_id = str(UUID(start_id))
             except (ValueError, TypeError, UnicodeError):

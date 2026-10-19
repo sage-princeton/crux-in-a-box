@@ -306,7 +306,7 @@ def test_successful_status_sweep_summary_and_incident_publish_independently(runt
 
 
 def test_idle_status_uses_prior_observed_family_and_preserves_resource_evidence(runtime, monkeypatch):
-    worker, target, secrets, counts = runtime
+    worker, target, secrets, _counts = runtime
     key = target["key"]
     target["subject_families"] = []
     # A report from before family provenance was added must bootstrap from its saved evidence.

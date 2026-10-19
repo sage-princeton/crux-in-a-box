@@ -112,7 +112,7 @@ def install_auth(app, store, settings):
         auth = saml()
         try:
             auth.process_response(request_id=pending["request_id"])
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Fail closed without logging SAML assertions or credentials.
             app.logger.warning("SAML denied: processing exception %s", type(error).__name__)
             abort(403, "Unable to verify sign-in.")
         if auth.get_errors() or not auth.is_authenticated() or not auth.get_nameid():

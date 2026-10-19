@@ -102,8 +102,10 @@ def test_failed_status_keeps_last_success_and_history_is_private(
 @pytest.mark.parametrize(
     "resources",
     [
-        "As of October 11, the ledger reports LLM $200.49/$200, API $13/$100, "
-        "and estimated AWS $19.43/$100. The task deadline is November 18, 2026, 23:36 UTC.",
+        (
+            "As of October 11, the ledger reports LLM $200.49/$200, API $13/$100, "
+            "and estimated AWS $19.43/$100. The task deadline is November 18, 2026, 23:36 UTC."
+        ),
         "The task deadline is November 18, 2026, 23:36 UTC. Spend is not recorded.",
         "",
     ],

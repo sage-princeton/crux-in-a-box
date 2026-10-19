@@ -3,8 +3,6 @@ extend = "../../pyproject.toml"
 # These modules import and request shared pytest fixtures by name.
 [lint.per-file-ignores]
 "tests/test_pipeline.py" = ["F401", "F811"]
-# SQL migrations and signed XML fixtures retain their literal layout.
-"tests/test_saml.py" = ["F401", "F811", "E501"]
-"migrations/versions/*.py" = ["E501"]
+"tests/test_saml.py" = ["F401", "F811"]
 "tests/test_web.py" = ["F401", "F811"]
 "tests/test_status_web.py" = ["F401", "F811"]

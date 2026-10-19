@@ -90,7 +90,9 @@ def resource_changes(plan):
 
 
 def terraform(arguments, directory, env, success=(0,)):
-    result = subprocess.run(["terraform", *arguments], cwd=directory, env=env, text=True, capture_output=True)
+    result = subprocess.run(
+        ["terraform", *arguments], cwd=directory, env=env, text=True, capture_output=True, check=False
+    )
     if result.returncode not in success:
         # Terraform diagnostics can contain state/secret values. Report only
         # denied AWS action names, which are useful for IAM troubleshooting.
@@ -156,7 +158,7 @@ def plan(directory, bucket, report):
     except RuntimeError as error:
         print(str(error))
         return 1
-    except Exception:
+    except Exception:  # noqa: BLE001 - Provider failures must not expose state or credentials.
         print("Live Terraform plan failed; no valid change summary is available.")
         return 1
     finally:
@@ -218,8 +220,10 @@ def render(report, sha, url):
             ]
     lines += [
         "",
-        "Speculative plan using checked-in settings, deployed image digests and a read-only state snapshot. "
-        "No apply was run. Deployment creates a fresh plan. Attribute values are omitted.",
+        (
+            "Speculative plan using checked-in settings, deployed image digests and a read-only state snapshot. "
+            "No apply was run. Deployment creates a fresh plan. Attribute values are omitted."
+        ),
     ]
     return "\n".join(lines) + "\n"
 
@@ -277,8 +281,7 @@ def main():
     if args.mode == "context":
         values = context(number, repository, url)
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            for key, value in values.items():
-                output.write(f"{key}={value}\n")
+            output.writelines(f"{key}={value}\n" for key, value in values.items())
         return 0
     try:
         report = read_report(Path(os.environ["PLAN_REPORT"]), os.environ["PLAN_JOB_RESULT"])

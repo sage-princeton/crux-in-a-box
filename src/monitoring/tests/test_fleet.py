@@ -356,6 +356,8 @@ def test_langfuse_does_not_accept_another_runs_observations():
         assert request.url.params.get_list("environment") == ["experiment"]
         return httpx.Response(200, json={"data": [{"id": "1", "environment": "other"}]})
 
-    with httpx.Client(transport=httpx.MockTransport(handler)) as http:
-        with pytest.raises(CoverageError, match="unexpected"):
-            collect_langfuse(http, {"environment": "experiment"}, secrets, 0, 900)
+    with (
+        httpx.Client(transport=httpx.MockTransport(handler)) as http,
+        pytest.raises(CoverageError, match="unexpected"),
+    ):
+        collect_langfuse(http, {"environment": "experiment"}, secrets, 0, 900)

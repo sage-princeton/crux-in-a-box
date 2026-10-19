@@ -178,8 +178,10 @@ def review_anchors(sources):
                     anchors,
                     positions,
                     [
-                        "Only 128 workspace event anchors fit the review context; "
-                        "remaining records require saved workspace inspection."
+                        (
+                            "Only 128 workspace event anchors fit the review context; "
+                            "remaining records require saved workspace inspection."
+                        )
                     ],
                 )
             anchors[anchor] = source["id"]
