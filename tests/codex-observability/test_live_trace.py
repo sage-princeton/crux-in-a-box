@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 from collector import Collector, Span
 from pins import REPO
 
@@ -147,7 +148,7 @@ def test_usage_buckets_are_disjoint_so_langfuse_bills_cached_and_reasoning_token
     reported = [json.loads(g.attributes["langfuse.observation.usage_details"])
                 for g in collector.spans if g.type == "generation"]
     lines = scenario.main.lines
-    raw = [line["payload"]["usage"] for line, after in zip(lines, [*lines[1:], {}])
+    raw = [line["payload"]["usage"] for line, after in zip(lines, [*lines[1:], {}], strict=True)
            if line["type"] == "token_usage_record" and after.get("type") != "compacted"]
     assert len(reported) == len(raw) > 0
     assert any(u["cached_input_tokens"] > 0 and u["reasoning_output_tokens"] > 0 for u in raw)

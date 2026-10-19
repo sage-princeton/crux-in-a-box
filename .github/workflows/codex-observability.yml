@@ -6,6 +6,8 @@ on:
       - 'src/ec2-workspaces/**'
       - 'tests/codex-observability/**'
       - '.github/workflows/codex-observability.yml'
+      - 'pyproject.toml'
+      - 'requirements-dev.txt'
   push:
     branches: [main]
   schedule:
@@ -36,6 +38,6 @@ jobs:
         with:
           node-version: '22'
       - name: Install test dependencies
-        run: python3 -m pip install -r tests/codex-observability/requirements.txt
+        run: python -m pip install -r requirements-dev.txt
       - name: Run tests
-        run: python3 -m pytest tests/codex-observability -v
+        run: python -m pytest -q tests/codex-observability

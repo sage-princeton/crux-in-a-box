@@ -1,10 +1,11 @@
 import time
 
 import pytest
-from conftest import ORIGIN, authorize
 from lxml import html
 
 from status_view import coverage_rows
+
+from .conftest import ORIGIN, authorize
 
 
 @pytest.mark.parametrize("legacy", [False, True])
@@ -67,9 +68,7 @@ def test_failed_status_keeps_last_success_and_history_is_private(
     assert client.get(path, base_url=ORIGIN).status_code == 302
     authorize(client, store)
     page = client.get(path, base_url=ORIGIN)
-    assert (
-        page.status_code == 200 and b"Two evaluations" in page.data and b"Unavailable" in page.data
-    )
+    assert page.status_code == 200 and b"Two evaluations" in page.data and b"Unavailable" in page.data
     page_html = html.fromstring(page.data)
     assert page_html.xpath("//details[summary='Check details']//p[contains(., 'Unavailable')]")
     assert "Last reported status: Active." in page_html.text_content()
@@ -87,12 +86,8 @@ def test_failed_status_keeps_last_success_and_history_is_private(
     assert "Last reported status: Active." in overview_html.text_content()
     for document in (page_html, overview_html):
         checks = document.xpath("//div[@class='status-checks']/ul/li")
-        assert [item.text_content() for item in checks] == (
-            ["Unknown"] if legacy else report["quality"]
-        )
-        assert document.xpath(
-            "//div[contains(@class, 'status-report')]/details/summary[text()='Details']"
-        )
+        assert [item.text_content() for item in checks] == (["Unknown"] if legacy else report["quality"])
+        assert document.xpath("//div[contains(@class, 'status-report')]/details/summary[text()='Details']")
         assert not document.xpath("//script[contains(text(), 'evidence')]")
         if not legacy:
             assert "Spend & time." in document.text_content()
@@ -113,9 +108,7 @@ def test_failed_status_keeps_last_success_and_history_is_private(
         "",
     ],
 )
-def test_current_report_keeps_warnings_visible_and_supporting_facts_collapsed(
-    client, store, target, resources
-):
+def test_current_report_keeps_warnings_visible_and_supporting_facts_collapsed(client, store, target, resources):
     now = int(time.time())
     key = target["key"]
     report = {
@@ -152,16 +145,12 @@ def test_current_report_keeps_warnings_visible_and_supporting_facts_collapsed(
     assert "Project status: Stalled." in visible.text_content()
     assert report["alert"] in visible.text_content()
     assert report["recommendation"] in visible.text_content()
-    assert [
-        item.text_content() for item in visible.xpath("./div[@class='status-checks']/ul/li")
-    ] == report["quality"]
+    assert [item.text_content() for item in visible.xpath("./div[@class='status-checks']/ul/li")] == report["quality"]
     assert not visible.xpath("./div[@class='status-checks']/ancestor::details")
     details = visible.xpath("./details")[0]
     assert details.get("open") is None
     assert "Access control passed." in details.text_content()
-    assert (
-        resources or "No spend or deadline found in the available evidence."
-    ) in visible.text_content()
+    assert (resources or "No spend or deadline found in the available evidence.") in visible.text_content()
     if resources:
         assert "No spend or deadline found" not in visible.text_content()
     assert "Configured figures" not in document.text_content()

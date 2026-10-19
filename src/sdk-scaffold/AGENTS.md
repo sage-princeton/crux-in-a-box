@@ -70,7 +70,7 @@ If the change is user-facing, update the README in the same change. That include
 
   ```bash
   cd src/sdk-scaffold
-  .venv/bin/ruff check . && .venv/bin/python -m pytest -q
+  .venv/bin/ruff check . && .venv/bin/python -m pytest -q tests
   .venv/bin/python -m unittest discover -s examples/web-cms-product-change/workspace/site
   shellcheck docker/*.sh
   docker build --tag crux-sdk-scaffold-demo --file docker/Dockerfile .   # when docker/ or dependencies change

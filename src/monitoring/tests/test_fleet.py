@@ -4,7 +4,6 @@ import boto3
 import httpx
 import pytest
 from botocore.exceptions import ClientError
-from conftest import ingest
 from moto import mock_aws
 
 from fleet import (
@@ -17,6 +16,8 @@ from fleet import (
     slack_webhook_url,
 )
 from review import CoverageError, collect_langfuse
+
+from .conftest import ingest
 
 
 def test_every_ec2_is_enrolled_except_the_two_named_monitoring_exclusions():
@@ -33,9 +34,7 @@ def test_every_ec2_is_enrolled_except_the_two_named_monitoring_exclusions():
                 ImageId="ami-12345678",
                 MinCount=1,
                 MaxCount=1,
-                TagSpecifications=[
-                    {"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": name}]}
-                ],
+                TagSpecifications=[{"ResourceType": "instance", "Tags": [{"Key": "Name", "Value": name}]}],
             )
         targets = inventory_targets(ec2)
         assert {t["name"] for t in targets} == {"ordinary-untagged", "duplicate"}
@@ -43,14 +42,10 @@ def test_every_ec2_is_enrolled_except_the_two_named_monitoring_exclusions():
             "environment": "ordinary-untagged"
         }
         duplicated = [t for t in targets if t["name"] == "duplicate"]
-        assert len({t["slug"] for t in duplicated}) == 2 and all(
-            "langfuse" not in t for t in duplicated
-        )
+        assert len({t["slug"] for t in duplicated}) == 2 and all("langfuse" not in t for t in duplicated)
 
 
-@pytest.mark.parametrize(
-    "failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)]
-)
+@pytest.mark.parametrize("failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)])
 def test_slack_only_announces_new_incidents_with_links_and_retries(store, target, failure, slack):
     attempts = []
 
@@ -127,21 +122,15 @@ def test_incident_created_during_slack_delivery_is_not_skipped(store, target, sl
         assert store.new_incidents()[0]["new_incidents"] == 1
         assert notify_incidents(*args) == 1
         assert notify_incidents(*args) == 0
-    assert len(attempts) == 2 and all(
-        item["text"].startswith("*1 new incident*") for item in attempts
-    )
+    assert len(attempts) == 2 and all(item["text"].startswith("*1 new incident*") for item in attempts)
 
 
-def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(
-    store, target, slack
-):
+def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(store, target, slack):
     attempts = []
 
     def handler(request):
         attempts.append(json.loads(request.content))
-        return httpx.Response(
-            503 if len(attempts) == 1 else 200, text="busy" if len(attempts) == 1 else "ok"
-        )
+        return httpx.Response(503 if len(attempts) == 1 else 200, text="busy" if len(attempts) == 1 else "ok")
 
     with slack(handler):
         args = (
@@ -155,18 +144,13 @@ def test_enrollment_keeps_existing_acknowledgements_and_retries_new_deliveries(
         assert notify_enrollment(*args) == 1
         assert notify_enrollment(*args) == 0
         assert attempts[0] == attempts[1]
-        assert (
-            f"<https://incidents.example.test/?workload={target['key']}|View workload>"
-            in attempts[1]["text"]
-        )
+        assert f"<https://incidents.example.test/?workload={target['key']}|View workload>" in attempts[1]["text"]
         # Legacy deployments stored a fingerprint of the old message without a link.
         store.acknowledge("enrollment/" + target["key"], "legacy-fingerprint")
         assert notify_enrollment(*args) == 0 and len(attempts) == 2
 
 
-@pytest.mark.parametrize(
-    "failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)]
-)
+@pytest.mark.parametrize("failure", [(503, "busy", httpx.HTTPStatusError), (200, "invalid", CoverageError)])
 def test_status_reports_retry_and_advance_only_after_acknowledgement(store, target, failure, slack):
     attempts = []
     result = {
@@ -262,20 +246,14 @@ def test_status_reports_escape_mentions_and_bound_verbose_text(store, target, sl
     assert len(message) <= 3000 and message.endswith("|View status>")
 
 
-@pytest.mark.parametrize(
-    "state", ["stopping", "stopped", "shutting-down", "terminated", "no longer enrolled"]
-)
-def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(
-    store, target, state, slack
-):
+@pytest.mark.parametrize("state", ["stopping", "stopped", "shutting-down", "terminated", "no longer enrolled"])
+def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(store, target, state, slack):
     attempts = []
     store.acknowledge("enrollment/" + target["key"], "legacy-fingerprint")
 
     def handler(request):
         attempts.append(json.loads(request.content))
-        return httpx.Response(
-            503 if len(attempts) == 1 else 200, text="busy" if len(attempts) == 1 else "ok"
-        )
+        return httpx.Response(503 if len(attempts) == 1 else 200, text="busy" if len(attempts) == 1 else "ok")
 
     with slack(handler):
 
@@ -286,18 +264,13 @@ def test_closure_retries_once_per_stop_and_enrollment_resumes_after_restart(
                 "https://incidents.example.test",
             )
 
-        store.sync(
-            [] if state == "no longer enrolled" else [{**target, "state": state}], 1800, 1800
-        )
+        store.sync([] if state == "no longer enrolled" else [{**target, "state": state}], 1800, 1800)
         with pytest.raises(httpx.HTTPStatusError):
             send()
         assert store.notice("enrollment/" + target["key"]) == "legacy-fingerprint"
         assert send() == 1 and attempts[0] == attempts[1]
         assert send() == 0
-        assert (
-            f"Monitoring has ended on experiment (i-test). Instance state: {state}."
-            in attempts[1]["text"]
-        )
+        assert f"Monitoring has ended on experiment (i-test). Instance state: {state}." in attempts[1]["text"]
         assert f"/?workload={target['key']}|View workload>" in attempts[1]["text"]
         store.sync([{**target, "state": "terminated"}], 2700, 1800)
         assert send() == 0

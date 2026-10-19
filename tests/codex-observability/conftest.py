@@ -8,8 +8,6 @@ from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-
 from collector import Collector
 from pins import HERE, PLACEHOLDERS, expectations_file, fixture_dir, read_pins
 from plugin_runner import fetch_plugin, run_stop_hook

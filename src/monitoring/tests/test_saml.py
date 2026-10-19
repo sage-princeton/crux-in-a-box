@@ -4,7 +4,6 @@ from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
-from conftest import ORIGIN
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -15,6 +14,8 @@ from onelogin.saml2.utils import OneLogin_Saml2_Utils
 from review import digest
 from web import create_app
 from web_auth import LOGIN_COOKIE, SESSION_COOKIE
+
+from .conftest import ORIGIN
 
 
 @pytest.mark.parametrize("empty_attributes", [False, True])
@@ -47,13 +48,9 @@ def test_real_signed_saml_login_rejects_tampering_and_replay(store, empty_attrib
     }
     client = create_app(store, settings).test_client()
     response = client.get("/auth/login", base_url=ORIGIN)
-    assert response.status_code == 302 and response.location.startswith(
-        "https://idp.example.test/login?"
-    )
+    assert response.status_code == 302 and response.location.startswith("https://idp.example.test/login?")
     request_xml = etree.fromstring(
-        zlib.decompress(
-            base64.b64decode(parse_qs(urlsplit(response.location).query)["SAMLRequest"][0]), -15
-        )
+        zlib.decompress(base64.b64decode(parse_qs(urlsplit(response.location).query)["SAMLRequest"][0]), -15)
     )
     namespace = {"p": "urn:oasis:names:tc:SAML:2.0:protocol"}
     assert request_xml.find("p:NameIDPolicy", namespace).get("Format").endswith(":emailAddress")
