@@ -11,7 +11,7 @@ from typing import Any, Literal
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
 from openai_codex.generated.v2_all import ItemCompletedNotification
 from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnCompletedNotification, TurnStatus
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.usage import TokenUsage
@@ -22,7 +22,7 @@ class CodingAgentOptions(Options):
     """What every coding agent declares: the tool description its callers see, and its standing-context files."""
 
     description: str
-    context: list[str] = []
+    context: list[str] = Field(default_factory=list)
 
 
 class CodingResult(BaseModel):

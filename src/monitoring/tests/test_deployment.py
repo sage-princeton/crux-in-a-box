@@ -27,7 +27,8 @@ with open(os.environ['COMMAND_LOG'], 'a') as f:
 if name == 'aws': print('fixture-password')
 if name == 'docker':
     if args[0] == 'login': sys.stdin.read()
-    if args[0] == 'run' and args[-3:] == ['alembic','upgrade','head'] and os.environ.get('MIGRATION_FAILS') == 'true': sys.exit(1)
+    if args[0] == 'run' and args[-3:] == ['alembic','upgrade','head'] and os.environ.get('MIGRATION_FAILS') == 'true':
+        sys.exit(1)
     if args[0] == 'inspect':
         print(os.environ['APP_IMAGE' if args[-1] != 'crux-incident-proxy' else 'PROXY_IMAGE'])
 if name == 'systemctl' and args[0] == 'restart':
@@ -39,19 +40,19 @@ if name == 'systemctl' and args[0] == 'restart':
         path.chmod(0o700)
 
     def run(version, migration_fails):
-        values = dict(
-            origin=f"https://{version}.example",
-            region="us-east-1",
-            repository="fixture",
-            image=version,
-            proxy_image=version + "-proxy",
-            db_host=version + "-db",
-            db_secret=version + "-secret",
-            bucket="private-bucket",
-            document="copy-workspace",
-            upload_role="arn:aws:iam::123456789012:role/workspace-upload",
-            revision=version,
-        )
+        values = {
+            "origin": f"https://{version}.example",
+            "region": "us-east-1",
+            "repository": "fixture",
+            "image": version,
+            "proxy_image": version + "-proxy",
+            "db_host": version + "-db",
+            "db_secret": version + "-secret",
+            "bucket": "private-bucket",
+            "document": "copy-workspace",
+            "upload_role": "arn:aws:iam::123456789012:role/workspace-upload",
+            "revision": version,
+        }
         script = (
             template.replace("$${", "${")
             .replace("/opt/crux-incidents", str(service))
@@ -68,7 +69,7 @@ if name == 'systemctl' and args[0] == 'restart':
             "APP_IMAGE": "fixture@" + version,
             "PROXY_IMAGE": "fixture@" + version + "-proxy",
         }
-        return subprocess.run(["bash"], input=script, text=True, env=env, capture_output=True)
+        return subprocess.run(["bash"], input=script, text=True, env=env, capture_output=True, check=False)
 
     return run, service, log
 

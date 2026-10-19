@@ -81,9 +81,7 @@ def install_auth(app, store, settings):
         store.login(digest(nonce), auth.get_last_request_id(), int(time.time()) + 300)
         response = redirect(url)
         # SAML returns a cross-site POST. Only this short-lived binding cookie needs SameSite=None.
-        response.set_cookie(
-            LOGIN_COOKIE, nonce, max_age=300, secure=True, httponly=True, samesite="None", path="/"
-        )
+        response.set_cookie(LOGIN_COOKIE, nonce, max_age=300, secure=True, httponly=True, samesite="None", path="/")
         return response
 
     @app.post("/auth/callback")
@@ -114,7 +112,7 @@ def install_auth(app, store, settings):
         auth = saml()
         try:
             auth.process_response(request_id=pending["request_id"])
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - Fail closed without logging SAML assertions or credentials.
             app.logger.warning("SAML denied: processing exception %s", type(error).__name__)
             abort(403, "Unable to verify sign-in.")
         if auth.get_errors() or not auth.is_authenticated() or not auth.get_nameid():
@@ -141,9 +139,7 @@ def install_auth(app, store, settings):
                 )
                 if name in reason
             ]
-            app.logger.warning(
-                "SAML denied: validation errors=%s categories=%s", auth.get_errors(), categories
-            )
+            app.logger.warning("SAML denied: validation errors=%s categories=%s", auth.get_errors(), categories)
             abort(403, "Unable to verify sign-in.")
         token = secrets.token_urlsafe(32)
         expires = min(now + 3600, int(auth.get_session_expiration() or now + 3600))
@@ -183,10 +179,5 @@ def require_operator(origin):
     if request.headers.get("Origin") != origin:
         abort(403, "Request origin does not match this site.")
     token = request.form.get("csrf", "")
-    if (
-        not token
-        or len(token) > 200
-        or not token.isascii()
-        or not secrets.compare_digest(token, g.csrf)
-    ):
+    if not token or len(token) > 200 or not token.isascii() or not secrets.compare_digest(token, g.csrf):
         abort(403, "Form expired. Reload the page and try again.")

@@ -100,7 +100,7 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
         return EXIT_PROBE_FAILED
     try:
         authorized = telemetry.client.auth_check()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - Provider failures must use the probe exit code and omit credentials.
         print(f"probe failed: could not reach Langfuse ({type(exc).__name__})", file=sys.stderr)
         return EXIT_PROBE_FAILED
     if not authorized:

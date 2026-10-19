@@ -26,10 +26,10 @@ class AgentConfig(Options):
     full coding harness (Codex or Claude Code) and is far more capable at them."""
 
     persona: str
-    context: list[str] = []
-    tools: list[str] = []
-    mcp_servers: list[str] = []
-    delegates: list[str] = []
+    context: list[str] = Field(default_factory=list)
+    tools: list[str] = Field(default_factory=list)
+    mcp_servers: list[str] = Field(default_factory=list)
+    delegates: list[str] = Field(default_factory=list)
     description: str = ""
     max_turns: int = Field(30, ge=1)
 
@@ -38,8 +38,8 @@ class McpServerConfig(Options):
     """A stdio MCP server the agents that list it can use. It gets only the environment declared in `env`."""
 
     command: str
-    args: list[str] = []
-    env: dict[str, str] = {}
+    args: list[str] = Field(default_factory=list)
+    env: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 30
 
     def resolved_env(self, name: str, env: Mapping[str, str]) -> dict[str, str]:
@@ -56,7 +56,7 @@ class PhaseConfig(Options):
     name: str
     prompt: str
     continue_prompt: str
-    gates: list[str] = []
+    gates: list[str] = Field(default_factory=list)
     max_iterations: int = Field(1, ge=1)
     interval_seconds: float = Field(0, ge=0)
 
@@ -67,16 +67,16 @@ class ScaffoldConfig(Options):
 
     orchestrator: str
     workspace: str = "workspace"
-    extensions: list[str] = []
-    runtime: ComponentTable = {"type": "openai-agents"}
-    context: ComponentTable = {"type": "persistent"}
+    extensions: list[str] = Field(default_factory=list)
+    runtime: ComponentTable = Field(default_factory=lambda: {"type": "openai-agents"})
+    context: ComponentTable = Field(default_factory=lambda: {"type": "persistent"})
     loop: ComponentTable
     budget: Budget = Budget()
     agents: dict[str, AgentConfig]
-    coding_agents: dict[str, ComponentTable] = {}
-    tools: dict[str, ComponentTable] = {}
-    gates: dict[str, ComponentTable] = {}
-    mcp_servers: dict[str, McpServerConfig] = {}
+    coding_agents: dict[str, ComponentTable] = Field(default_factory=dict)
+    tools: dict[str, ComponentTable] = Field(default_factory=dict)
+    gates: dict[str, ComponentTable] = Field(default_factory=dict)
+    mcp_servers: dict[str, McpServerConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _check_references(self) -> ScaffoldConfig:

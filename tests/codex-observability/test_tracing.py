@@ -166,7 +166,7 @@ def test_goal_continuation_turns_are_each_traced_once_as_their_own_turn(rollouts
     assert {r.name for r in roots} == {expect["names"]["turn"]}
     assert [r.export for r in roots] == list(range(1, len(scenario.turns) + 1)), \
         "each Stop should upload exactly the turn that stopped"
-    for root, turn in zip(roots, scenario.turns):
+    for root, turn in zip(roots, scenario.turns, strict=True):
         tools = [s.name for s in collector.spans if s.trace_id == root.trace_id and s.type == "tool"]
         assert collections.Counter(tools) == collections.Counter(turn.tool_names)
 

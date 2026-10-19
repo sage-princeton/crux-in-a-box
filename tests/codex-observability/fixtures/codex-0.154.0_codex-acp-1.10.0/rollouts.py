@@ -12,14 +12,14 @@ from __future__ import annotations
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 CLI_VERSION = "0.153.4"
 ORIGINATOR = "@agentrq/acp-gateway"
 MODEL = "gpt-5.5"
 MCP_NAMESPACE = "mcp__0wsFixture01"
-START = datetime(2026, 10, 1, 0, 52, 54, 455000, tzinfo=timezone.utc)
+START = datetime(2026, 10, 1, 0, 52, 54, 455000, tzinfo=UTC)
 GOAL_PROMPT = (
     '<codex_internal_context source="goal">\n'
     "Continue working toward the active thread goal.\n"
@@ -171,7 +171,8 @@ class Rollout:
             "id": self.thread_id, "session_id": self.thread_id, "timestamp": self._iso(),
             "cwd": "/srv/fixture", "originator": ORIGINATOR, "cli_version": CLI_VERSION,
             "source": "vscode", "model_provider": "openai", "history_mode": "full",
-            "base_instructions": {"text": "You are Codex, a coding agent.", "provenance": {"model": MODEL, "type": "model"}},
+            "base_instructions": {"text": "You are Codex, a coding agent.",
+                                  "provenance": {"model": MODEL, "type": "model"}},
             "context_window": {"window_id": _id("window", self.thread_id)},
         }
         if self.parent is not None:
@@ -311,7 +312,8 @@ class Rollout:
                                                         "queries": [tool.arguments["query"]]},
                                              "internal_chat_message_metadata_passthrough": self._meta()})
             elif tool.kind == "custom":
-                call = {"type": "custom_tool_call", "status": "completed", "call_id": _id("call", self.thread_id, len(self.lines)),
+                call = {"type": "custom_tool_call", "status": "completed",
+                        "call_id": _id("call", self.thread_id, len(self.lines)),
                         "name": tool.name, "input": tool.arguments, "id": _id("ctc", len(self.lines)),
                         "internal_chat_message_metadata_passthrough": self._meta()}
                 tool.call_id = call["call_id"]
@@ -325,7 +327,7 @@ class Rollout:
                 tool.call_id = call["call_id"]
                 self._line("response_item", call)
         self._usage_lines()
-        for tool, truth in zip(tools, truths):
+        for tool, truth in zip(tools, truths, strict=True):
             self.tick(tool.seconds)
             if tool.kind == "web_search":
                 self._item({"type": "WebSearch", "query": tool.arguments["query"],

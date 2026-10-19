@@ -51,8 +51,8 @@ currently export these summaries.
 Needs Python 3.12+, Node 22 and npm (the plugin is fetched with `npm pack`).
 
 ```bash
-python3 -m pip install -r tests/codex-observability/requirements.txt
-python3 -m pytest tests/codex-observability
+python3 -m pip install -r requirements-dev.txt
+python3 -m pytest -q tests/codex-observability
 ```
 
 Set `CODEX_OBSERVABILITY_PLUGIN_DIR` to an unpacked plugin package (the directory holding `package.json` and `dist/`) to test a local build or run offline.

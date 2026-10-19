@@ -18,6 +18,7 @@ from openai.types.responses import (
     ResponseUsage,
 )
 from openai.types.responses.response_usage import InputTokensDetails, OutputTokensDetails
+from pydantic import Field
 
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent, CodingAgentOptions, CodingResult
 from crux_scaffold.usage import TokenUsage
@@ -73,7 +74,7 @@ class StoppedModel(ScriptedModel):
 
 
 class ScriptedCodingOptions(CodingAgentOptions):
-    writes: dict[str, str] = {}
+    writes: dict[str, str] = Field(default_factory=dict)
     response: str = "done"
 
 

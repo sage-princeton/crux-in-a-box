@@ -103,7 +103,7 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - Redact every failure at the SSM output boundary.
         # SSM output must never contain upload credentials or workspace contents.
         print(type(error).__name__)
         raise SystemExit(1) from None

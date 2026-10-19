@@ -52,12 +52,8 @@ class Runtime:
         self.store = store or Store()
         self.config = json.loads(Path(__file__).with_name("monitoring.json").read_text())
         validate(self.config)
-        sdk = Config(
-            retries={"mode": "standard", "max_attempts": 3}, connect_timeout=10, read_timeout=30
-        )
-        self.ec2, self.ssm, self.s3 = (
-            boto3.client(name, config=sdk) for name in ("ec2", "ssm", "s3")
-        )
+        sdk = Config(retries={"mode": "standard", "max_attempts": 3}, connect_timeout=10, read_timeout=30)
+        self.ec2, self.ssm, self.s3 = (boto3.client(name, config=sdk) for name in ("ec2", "ssm", "s3"))
         self.bucket = os.environ["MONITORING_BUCKET"]
         self.http = httpx.Client(timeout=httpx.Timeout(90, connect=10), follow_redirects=False)
         self.collector = Collector(
@@ -91,9 +87,7 @@ class Runtime:
 
     def secrets(self):
         return json.loads(
-            self.ssm.get_parameter(Name="/crux/monitoring/env", WithDecryption=True)["Parameter"][
-                "Value"
-            ]
+            self.ssm.get_parameter(Name="/crux/monitoring/env", WithDecryption=True)["Parameter"]["Value"]
         )
 
     def incident(self, target, end, evidence, previous, secrets, prefix):
@@ -110,9 +104,7 @@ class Runtime:
             "evidence_anchors": anchors,
             "evidence_anchor_positions": positions,
         }
-        model = select_reviewer(
-            self.config["incident"]["reviewer_models"], sources, target["subject_families"]
-        )
+        model = select_reviewer(self.config["incident"]["reviewer_models"], sources, target["subject_families"])
         reserved = reserve(
             Budget(self.store, "incident"),
             self.http,
@@ -137,9 +129,7 @@ class Runtime:
         return {"report": report, "model": provenance}
 
     def status(self, target, end, evidence, previous, secrets, prefix):
-        families = set(target["subject_families"]) | set(
-            self.store.status_subject_families(target["key"], end)
-        )
+        families = set(target["subject_families"]) | set(self.store.status_subject_families(target["key"], end))
         observed_models = {
             source["data"]["model"]
             for source in evidence["sources"]
@@ -160,19 +150,13 @@ class Runtime:
             previous,
             evidence["gaps"],
         )
-        stamps = [
-            int(s["mtime"])
-            for s in evidence["sources"]
-            if s.get("mtime", 0) <= time.time() and s.get("mtime")
-        ]
+        stamps = [int(s["mtime"]) for s in evidence["sources"] if s.get("mtime", 0) <= time.time() and s.get("mtime")]
         if any(s["kind"] == "langfuse" for s in evidence["sources"]):
             stamps.append(end)
         return {
             "report": report,
             "models": models,
-            "subject_families": sorted(
-                families | {model_family(model) for model in observed_models}
-            ),
+            "subject_families": sorted(families | {model_family(model) for model in observed_models}),
             "coverage_gaps": gaps,
             "evidence_at": max(stamps, default=0),
         }
@@ -185,7 +169,7 @@ class Runtime:
             try:
                 result = getattr(self, kind)(target, end, evidence, previous, secrets, prefix)
                 result["outcome"] = "completed"
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Record any provider failure without exposing raw diagnostics.
                 reason = f"{kind.capitalize()} assessment unavailable ({failure_reason(error)})."
                 result = {"outcome": "failed", "error": reason}
                 if isinstance(error, LangfuseRecencyError):
@@ -237,7 +221,7 @@ class Runtime:
         for kind in ("status", "incident"):
             try:
                 self.assess(target, end, kind, evidence, previous.get(kind, {}), secrets)
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Let the independent assessment finish after publication errors.
                 print(
                     f"{target['instance_id']}: {kind} publication failed ({type(error).__name__}).",
                     flush=True,
@@ -266,7 +250,7 @@ class Runtime:
                         continue
                     try:
                         self.run_target(target, end, previous.get(target["key"], {}), secrets)
-                    except Exception as error:
+                    except Exception as error:  # noqa: BLE001 - One workload failure must not stop the fleet pass.
                         print(
                             f"{target['instance_id']}: collection/delivery failed ({type(error).__name__}).",
                             flush=True,
@@ -277,7 +261,7 @@ class Runtime:
                     target = pending["evidence"]["target"]
                     try:
                         self.run_target(target, pending["window_end"], {}, secrets)
-                    except Exception as error:
+                    except Exception as error:  # noqa: BLE001 - One saved pass must not block other retries.
                         print(
                             f"{target['instance_id']}: saved pass failed ({type(error).__name__}).",
                             flush=True,
@@ -289,7 +273,7 @@ class Runtime:
                             target,
                             os.environ["MONITORING_WEB_ORIGIN"],
                         )
-                    except Exception as error:
+                    except Exception as error:  # noqa: BLE001 - Delivery failures must not block other workloads.
                         print(
                             f"{target['instance_id']}: workload delivery failed ({type(error).__name__}).",
                             flush=True,
@@ -306,7 +290,7 @@ class Runtime:
         while True:
             try:
                 self.tick()
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - Retry failed passes and keep provider diagnostics private.
                 print(f"Monitoring pass failed ({type(error).__name__}).", flush=True)
             time.sleep(60)
 

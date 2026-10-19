@@ -60,9 +60,7 @@ def slack_webhook_url():
     """Load the fixed webhook once, on the first delivery attempt."""
     ssm = boto3.client(
         "ssm",
-        config=Config(
-            retries={"mode": "standard", "max_attempts": 3}, connect_timeout=10, read_timeout=30
-        ),
+        config=Config(retries={"mode": "standard", "max_attempts": 3}, connect_timeout=10, read_timeout=30),
     )
     parameter = ssm.get_parameter(Name="/crux/monitoring/env", WithDecryption=True)
     return json.loads(parameter["Parameter"]["Value"])["MONITORING_SLACK_WEBHOOK_URL"]

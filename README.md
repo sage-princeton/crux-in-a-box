@@ -46,6 +46,16 @@ Installed by default:
 > be a useful way to improve your confidence that each service is properly
 > configured.
 
+## Python checks
+
+Install shared check tools with `python -m pip install -r requirements-dev.txt`,
+plus the project dependencies described in the [monitoring](src/monitoring/README.md),
+[SDK scaffold](src/sdk-scaffold/README.md), or [observability](tests/codex-observability/README.md) guide.
+From the repository root, `python -m ruff check .` lints Python under `src/` and
+`tests/`. Use `python -m pytest -q <test-directory>` for one suite, or
+`python -m pytest -q` for all three after installing their dependencies. Monitoring
+tests require a disposable PostgreSQL database as described in its guide.
+
 ## Layout
 
 - `linux/` — provisioning, watchdog, monitoring

@@ -390,7 +390,7 @@ class CodexRollouts(TranscriptSource):
             for raw in f:
                 try:
                     line = json.loads(raw)
-                    at = datetime.fromisoformat(line["timestamp"].replace("Z", "+00:00")).timestamp()
+                    at = datetime.fromisoformat(line["timestamp"]).timestamp()
                 except (ValueError, KeyError, TypeError, AttributeError):
                     continue
                 reader.apply(at, decode(line))

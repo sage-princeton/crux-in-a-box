@@ -22,9 +22,7 @@ ORIGIN = "https://incidents.example.test"
 
 @pytest.fixture
 def slack(monkeypatch):
-    monkeypatch.setattr(
-        "fleet.slack_webhook_url", lambda: "https://hooks.slack.com/services/test/fixture/only"
-    )
+    monkeypatch.setattr("fleet.slack_webhook_url", lambda: "https://hooks.slack.com/services/test/fixture/only")
 
     def transport(handler):
         http = httpx.Client(transport=httpx.MockTransport(handler))
@@ -47,9 +45,7 @@ def db():
 @pytest.fixture
 def store(db):
     with db.begin() as connection:
-        connection.execute(
-            text("TRUNCATE workloads, notices, budgets, sessions, login_requests CASCADE")
-        )
+        connection.execute(text("TRUNCATE workloads, notices, budgets, sessions, login_requests CASCADE"))
     return Store(db)
 
 
@@ -79,9 +75,7 @@ def authorize(client, store, expires=None):
     nonce = digest(secrets.token_urlsafe(32))
     now = int(time.time())
     store.login(nonce, "fixture-request", now + 300)
-    store.finish_login(
-        nonce, digest(token), {"id": "operator", "issuer": "test"}, csrf, expires or now + 300, now
-    )
+    store.finish_login(nonce, digest(token), {"id": "operator", "issuer": "test"}, csrf, expires or now + 300, now)
     client.set_cookie(SESSION_COOKIE, token, domain="incidents.example.test")
     return csrf
 
@@ -116,8 +110,4 @@ def ingest(store, target, end=900, anchor="observation:123"):
     }
     store.publish(key, end, "incident", result)
     store.ingest(key, end, result, {anchor: anchor})
-    return next(
-        item
-        for item in store.instance_page(target["instance_id"], None, None, 50)
-        if item["anchor"] == anchor
-    )
+    return next(item for item in store.instance_page(target["instance_id"], None, None, 50) if item["anchor"] == anchor)

@@ -12,8 +12,8 @@ from pathlib import Path
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from live_trace.cli import main  # noqa: E402
-from live_trace.codex import CodexRollouts  # noqa: E402
+from live_trace.cli import main
+from live_trace.codex import CodexRollouts
 
 if __name__ == "__main__":
     sys.exit(main(CodexRollouts()))

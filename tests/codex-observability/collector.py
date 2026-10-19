@@ -5,6 +5,7 @@ import json
 import threading
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Self
 
 TRACES_PATH = "/api/public/otel/v1/traces"
 
@@ -109,7 +110,7 @@ class Collector:
                         attributes={a["key"]: _value(a["value"]) for a in s.get("attributes", [])},
                         export=self.exports))
 
-    def __enter__(self) -> Collector:
+    def __enter__(self) -> Self:
         self.thread.start()
         return self
 

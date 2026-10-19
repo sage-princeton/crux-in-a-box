@@ -129,7 +129,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     def _model(self, agent: str) -> str | Model:
         """The run's model; tests substitute scripted models per agent through `models`."""
-        return self.models[agent] if agent in self.models else self.assembly.context.model
+        return self.models.get(agent, self.assembly.context.model)
 
     def _settings(self) -> ModelSettings:
         effort = self.assembly.context.reasoning_effort

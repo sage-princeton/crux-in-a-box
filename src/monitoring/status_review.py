@@ -58,8 +58,7 @@ def chunks(sources):
             # Split large records into literal fragments; preserve source identity.
             data = encoded(source["data"]).decode()
             pieces = [
-                {**source, "data": data[i : i + 4000], "fragment": i // 4000 + 1}
-                for i in range(0, len(data), 4000)
+                {**source, "data": data[i : i + 4000], "fragment": i // 4000 + 1} for i in range(0, len(data), 4000)
             ]
         else:
             pieces = [source]
@@ -76,9 +75,7 @@ def chunks(sources):
 
 
 def reserve(store, client, model, size, budget, max_output=MAX_OUTPUT):
-    models = get_json(client, "https://openrouter.ai/api/v1/models", max_bytes=8 * 1024 * 1024)[
-        "data"
-    ]
+    models = get_json(client, "https://openrouter.ai/api/v1/models", max_bytes=8 * 1024 * 1024)["data"]
     price = next(m["pricing"] for m in models if m["id"] == model)
     rates = {}
     for key in ("prompt", "completion", "request"):
@@ -91,10 +88,7 @@ def reserve(store, client, model, size, budget, max_output=MAX_OUTPUT):
         raise CoverageError("Status model exceeds the per-token price ceiling")
     amount = max(
         1,
-        math.ceil(
-            (size * rates["prompt"] + max_output * rates["completion"] + rates["request"])
-            * 1_000_000
-        ),
+        math.ceil((size * rates["prompt"] + max_output * rates["completion"] + rates["request"]) * 1_000_000),
     )
     if amount > 1_000_000:
         raise CoverageError("Status reservation exceeds $1 per call")
@@ -145,9 +139,7 @@ def call(client, store, secret, model, stage, payload, budget):
     except jsonschema.ValidationError as error:
         # Include the rule and field, never the model's potentially sensitive value.
         field = ".".join(str(part) for part in error.absolute_path) or "response"
-        raise CoverageError(
-            f"Status {stage} output violates {error.validator} at {field}."
-        ) from None
+        raise CoverageError(f"Status {stage} output violates {error.validator} at {field}.") from None
     if not set(result["source_ids"]) <= set(payload["allowed_source_ids"]):
         raise CoverageError("Status model cited evidence that was not supplied")
     return result, {
@@ -169,8 +161,7 @@ def call(client, store, secret, model, stage, payload, budget):
 
 def summarize(client, store, secret, config, target, sources, previous, gaps):
     sweep_model, summary_model = (
-        select_reviewer([config[k]], sources, target["subject_families"])
-        for k in ("sweep_model", "summary_model")
+        select_reviewer([config[k]], sources, target["subject_families"]) for k in ("sweep_model", "summary_model")
     )
     batches, omitted = chunks(sources)
     notes, usage = [], []
@@ -199,9 +190,7 @@ def summarize(client, store, secret, config, target, sources, previous, gaps):
             selected.append(source)
     gaps = [*gaps, *omitted]
     if cited - {s["id"] for s in selected}:
-        gaps.append(
-            "Some cited originals exceed the summary limit; only sweep notes were supplied."
-        )
+        gaps.append("Some cited originals exceed the summary limit; only sweep notes were supplied.")
     report, model = call(
         client,
         store,

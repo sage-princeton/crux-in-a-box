@@ -114,14 +114,11 @@ def iso(epoch):
 
 def scrub(value, secrets):
     """Redact credentials in the model view; private raw workspace archives stay complete."""
-    sensitive = re.compile(r"api.?key|password|secret|authorization|(?:^|_)token$", re.I)
+    sensitive = re.compile(r"api.?key|password|secret|authorization|(?:^|_)token$", re.IGNORECASE)
 
     def clean(item):
         if isinstance(item, dict):
-            return {
-                key: "[REDACTED]" if sensitive.search(key) else clean(value)
-                for key, value in item.items()
-            }
+            return {key: "[REDACTED]" if sensitive.search(key) else clean(value) for key, value in item.items()}
         if isinstance(item, list):
             return [clean(value) for value in item]
         if not isinstance(item, str):
@@ -136,7 +133,7 @@ def scrub(value, secrets):
             r"([?&](?:token|api_key|access_token|password)=)[^&\s\"']+",
             r"\1[REDACTED]",
             item,
-            flags=re.I,
+            flags=re.IGNORECASE,
         )
         return re.sub(
             r"(?im)(\b[A-Z_]*(?:API_KEY|PASSWORD|SECRET_ACCESS_KEY|TOKEN)\s*=\s*)[^\n]+",
@@ -146,9 +143,7 @@ def scrub(value, secrets):
 
     value = clean(value)
     text = json.dumps(value, ensure_ascii=True)
-    for secret in sorted(
-        (s for s in secrets if isinstance(s, str) and len(s) >= 8), key=len, reverse=True
-    ):
+    for secret in sorted((s for s in secrets if isinstance(s, str) and len(s) >= 8), key=len, reverse=True):
         text = text.replace(json.dumps(secret)[1:-1], "[REDACTED]")
     text = re.sub(r"(?:sk-(?:ant-|or-v1-|lf-)?|gh[pousr]_)[A-Za-z0-9_-]{16,}", "[REDACTED]", text)
     text = re.sub(r"https://hooks\.slack\.com/services/[A-Za-z0-9/_-]+", "[REDACTED]", text)
@@ -214,7 +209,10 @@ def collect_langfuse(client, config, secrets, start, end):
             if "io" not in params["fields"].split(","):
                 source.update(
                     truncated=True,
-                    coverage_gap="Langfuse inputs/outputs were omitted because the full page exceeded the evidence limit; content-level review is incomplete.",
+                    coverage_gap=(
+                        "Langfuse inputs/outputs were omitted because the full page exceeded the evidence limit; "
+                        "content-level review is incomplete."
+                    ),
                 )
             result.append(source)
             size += len(encoded(source)) + 1
@@ -261,11 +259,7 @@ def input_size(payload):
 
 def select_reviewer(models, sources, declared_families):
     reviewers = [(model, reviewer_family(model)) for model in models]
-    observed = {
-        s["data"].get("model")
-        for s in sources
-        if s["kind"] == "langfuse" and s["data"].get("model")
-    }
+    observed = {s["data"].get("model") for s in sources if s["kind"] == "langfuse" and s["data"].get("model")}
     families = {model_family(model) for model in observed}
     if None in families or not (families or declared_families):
         raise CoverageError("Subject model family is unknown; configure a trusted family mapping")
@@ -312,10 +306,7 @@ def evaluate(client, model, secret, payload, record_response):
         raise CoverageError("Reviewer cited evidence that was not supplied")
     anchors = payload.get("evidence_anchors", {})
     for finding in report["findings"]:
-        if (
-            finding["anchor_id"] not in anchors
-            or anchors[finding["anchor_id"]] not in finding["source_ids"]
-        ):
+        if finding["anchor_id"] not in anchors or anchors[finding["anchor_id"]] not in finding["source_ids"]:
             raise CoverageError("Reviewer cited an event anchor that was not supplied")
     reported_model = body.get("model", "")
     if model_family(reported_model) != model_family(model):

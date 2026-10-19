@@ -91,18 +91,12 @@ def resource_changes(plan):
 
 def terraform(arguments, directory, env, success=(0,)):
     result = subprocess.run(
-        ["terraform", *arguments], cwd=directory, env=env, text=True, capture_output=True
+        ["terraform", *arguments], cwd=directory, env=env, text=True, capture_output=True, check=False
     )
     if result.returncode not in success:
         # Terraform diagnostics can contain state/secret values. Report only
         # denied AWS action names, which are useful for IAM troubleshooting.
-        denied = sorted(
-            set(
-                re.findall(
-                    r"not authorized to perform: ([a-zA-Z0-9:*]+)", result.stdout + result.stderr
-                )
-            )
-        )
+        denied = sorted(set(re.findall(r"not authorized to perform: ([a-zA-Z0-9:*]+)", result.stdout + result.stderr)))
         raise RuntimeError(
             f"Terraform {arguments[0]} failed (exit {result.returncode}); "
             f"denied AWS actions: {', '.join(denied) or 'none reported'}"
@@ -121,13 +115,9 @@ def plan(directory, bucket, report):
             desired = json.loads((directory / "production.auto.tfvars.json").read_text())
             if desired["account_id"] != boto3.client("sts").get_caller_identity()["Account"]:
                 raise ValueError("Unexpected planning account")
-            release = json.loads(
-                s3.get_object(Bucket=bucket, Key="config/release.json")["Body"].read()
-            )
+            release = json.loads(s3.get_object(Bucket=bucket, Key="config/release.json")["Body"].read())
             # Only release identity comes from AWS; desired settings come from the candidate.
-            config = {
-                key: release[key] for key in ("revision", "web_image_digest", "proxy_image_digest")
-            }
+            config = {key: release[key] for key in ("revision", "web_image_digest", "proxy_image_digest")}
             variables = temporary / "inputs.tfvars.json"
             variables.write_text(json.dumps(config))
             binary = temporary / "plan.bin"
@@ -168,7 +158,7 @@ def plan(directory, bucket, report):
     except RuntimeError as error:
         print(str(error))
         return 1
-    except Exception:
+    except Exception:  # noqa: BLE001 - Provider failures must not expose state or credentials.
         print("Live Terraform plan failed; no valid change summary is available.")
         return 1
     finally:
@@ -219,12 +209,7 @@ def render(report, sha, url):
         lines += ["**" + ", ".join(totals) + ".**", "", "| Action | Resource |", "| --- | --- |"]
         for row in changes[:100]:
             # Bound the escaped result too: repeated HTML metacharacters expand.
-            address = (
-                html.escape(row["address"])
-                .replace("|", "&#124;")
-                .replace("\n", " ")
-                .replace("\r", " ")
-            )
+            address = html.escape(row["address"]).replace("|", "&#124;").replace("\n", " ").replace("\r", " ")
             if len(address) > 400:
                 address = address[:400] + "…"
             lines.append(f"| {row['action']} | <code>{address}</code> |")
@@ -235,8 +220,10 @@ def render(report, sha, url):
             ]
     lines += [
         "",
-        "Speculative plan using checked-in settings, deployed image digests and a read-only state snapshot. "
-        "No apply was run. Deployment creates a fresh plan. Attribute values are omitted.",
+        (
+            "Speculative plan using checked-in settings, deployed image digests and a read-only state snapshot. "
+            "No apply was run. Deployment creates a fresh plan. Attribute values are omitted."
+        ),
     ]
     return "\n".join(lines) + "\n"
 
@@ -250,9 +237,7 @@ def publish(report, number, sha, repository, url):
     for page in range(1, 101):
         comments = github(f"repos/{repository}/issues/{number}/comments?per_page=100&page={page}")
         for comment in comments:
-            if comment["user"]["login"] == "github-actions[bot]" and comment["body"].startswith(
-                MARKER
-            ):
+            if comment["user"]["login"] == "github-actions[bot]" and comment["body"].startswith(MARKER):
                 existing = comment
                 break
         if existing or len(comments) < 100:
@@ -296,8 +281,7 @@ def main():
     if args.mode == "context":
         values = context(number, repository, url)
         with open(os.environ["GITHUB_OUTPUT"], "a") as output:
-            for key, value in values.items():
-                output.write(f"{key}={value}\n")
+            output.writelines(f"{key}={value}\n" for key, value in values.items())
         return 0
     try:
         report = read_report(Path(os.environ["PLAN_REPORT"]), os.environ["PLAN_JOB_RESULT"])

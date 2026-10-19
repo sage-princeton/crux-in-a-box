@@ -191,8 +191,8 @@ Inside the container, Codex runs with `sandbox = "full-access"` because its Linu
 ```bash
 cd src/sdk-scaffold
 uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python -r requirements.txt 'pytest>=8,<9' ruff==0.14.0
-.venv/bin/ruff check . && .venv/bin/python -m pytest -q
+uv pip install --python .venv/bin/python -r requirements.txt -r ../../requirements-dev.txt
+.venv/bin/ruff check . && .venv/bin/python -m pytest -q tests
 ```
 
 Contribution guidelines are in [AGENTS.md](AGENTS.md). Tests never call a model or the network. They use scripted models, a scripted coding agent, a fake runtime, a fake stdio Slack MCP server and an in-memory span exporter.

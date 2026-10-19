@@ -115,11 +115,12 @@ class LangfuseTelemetry(Telemetry):
 
     @contextmanager
     def trace(self, name: str, metadata: Mapping[str, Any] | None = None) -> Iterator[None]:
-        with self.observe(as_type="span", name=name, metadata=metadata):
-            with propagate_attributes(session_id=self.identity.run_slug, user_id=self.identity.run_slug,
-                                      tags=self.identity.tags(), metadata=self.identity.metadata(),
-                                      trace_name=name):
-                yield
+        with (
+            self.observe(as_type="span", name=name, metadata=metadata),
+            propagate_attributes(session_id=self.identity.run_slug, user_id=self.identity.run_slug,
+                                 tags=self.identity.tags(), metadata=self.identity.metadata(), trace_name=name),
+        ):
+            yield
 
     def record(self, name: str, kind: RecordKind, input: Any, output: Any) -> None:
         with self.client.start_as_current_observation(as_type=kind, name=name, input=input, output=output):

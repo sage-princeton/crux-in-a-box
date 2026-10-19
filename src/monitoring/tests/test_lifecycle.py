@@ -4,12 +4,13 @@ from uuid import UUID
 import pytest
 from alembic import command
 from alembic.config import Config
-from conftest import ROOT, ingest, report
 from sqlalchemy import text
 
 from lifecycle import Conflict, evidence_anchors, public_incident
 from review import CoverageError
 from store import Budget
+
+from .conftest import ROOT, ingest, report
 
 
 def test_alembic_roundtrip(db):
@@ -19,9 +20,7 @@ def test_alembic_roundtrip(db):
         assert connection.execute(text("SELECT to_regclass('workloads')")).scalar() is None
     command.upgrade(config, "head")
     with db.connect() as connection:
-        assert (
-            connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
-        )
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
         undocumented = connection.execute(
             text("""
                 SELECT t.relname, a.attname FROM pg_class t
@@ -45,9 +44,7 @@ def test_slack_cursor_migration_skips_existing_incidents_without_losing_history(
     assert store.new_incidents() == []
     assert store.incident(original["id"])["status"] == "open"
     with store.db.connect() as connection:
-        cursors = dict(
-            connection.execute(text("SELECT key, slack_incident_cursor FROM workloads")).all()
-        )
+        cursors = dict(connection.execute(text("SELECT key, slack_incident_cursor FROM workloads")).all())
         nullable = connection.execute(
             text("""
             SELECT is_nullable FROM information_schema.columns
@@ -101,10 +98,7 @@ def test_incident_identity_and_closed_state_survive_repeated_observations(store,
     assert [e["status"] for e in events] == ["closed", "open"]
     assert events[0]["note"] == "Resolved" and len(observations) == 2
     assert public_incident(reopened)["what_happened"] == "Private evidence"
-    assert (
-        not {"anchor", "detector", "workload_key", "version", "latest_finding"}
-        & public_incident(reopened).keys()
-    )
+    assert not {"anchor", "detector", "workload_key", "version", "latest_finding"} & public_incident(reopened).keys()
 
 
 def test_missing_or_fabricated_anchors_are_rejected(store, target):
@@ -140,7 +134,8 @@ def test_archived_finding_enriches_existing_incident_without_reopening_or_alerti
     with store.db.begin() as connection:
         connection.execute(
             text(
-                "UPDATE observations SET detail=jsonb_set(detail, '{finding}', CAST(:finding AS jsonb)) WHERE incident_id=:id"
+                "UPDATE observations SET detail=jsonb_set(detail, '{finding}', CAST(:finding AS jsonb)) "
+                "WHERE incident_id=:id"
             ),
             {"id": item["id"], "finding": json.dumps(finding)},
         )
@@ -154,9 +149,7 @@ def test_archived_finding_enriches_existing_incident_without_reopening_or_alerti
         "closed",
         closed["version"],
     )
-    assert (
-        store.instance_page(target["instance_id"], None, None, 50)[0]["title"] == enriched["title"]
-    )
+    assert store.instance_page(target["instance_id"], None, None, 50)[0]["title"] == enriched["title"]
     assert store.new_incidents() == []
 
 
@@ -179,9 +172,7 @@ def test_finding_explanations_and_latest_window_are_persisted(store, target):
     assert item["why_it_happened"] == finding["why_it_happened"]
     assert item["next_steps"] == finding["next_steps"]
     with store.db.connect() as connection:
-        saved = connection.execute(
-            text("SELECT detail FROM incidents WHERE id=:id"), {"id": item["id"]}
-        ).scalar_one()
+        saved = connection.execute(text("SELECT detail FROM incidents WHERE id=:id"), {"id": item["id"]}).scalar_one()
     assert saved["what_happened"] == item["what_happened"]
 
 
@@ -218,6 +209,7 @@ def test_budget_reservations_are_atomic_and_separate(store):
         budget.reserve(600, 1000)
     Budget(store, "incident").reserve(900, 1000)
     with store.db.connect() as connection:
-        assert dict(
-            connection.execute(text("SELECT scope,reserved_microusd FROM budgets")).all()
-        ) == {"status": 600, "incident": 900}
+        assert dict(connection.execute(text("SELECT scope,reserved_microusd FROM budgets")).all()) == {
+            "status": 600,
+            "incident": 900,
+        }

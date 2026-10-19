@@ -117,10 +117,10 @@ Use a disposable PostgreSQL database whose name ends in `_test`:
 
 ```sh
 python3 -m venv /tmp/crux-monitor-venv
-/tmp/crux-monitor-venv/bin/pip install -r src/monitoring/web-requirements.txt pytest 'moto[s3,ec2,ssm]>=5,<6' ruff
+/tmp/crux-monitor-venv/bin/pip install -r src/monitoring/web-requirements.txt -r requirements-dev.txt 'moto[s3,ec2,ssm]>=5,<6' PyYAML==6.0.3
 export DATABASE_URL='postgresql+psycopg://postgres:password@localhost:5432/monitoring_test'
 /tmp/crux-monitor-venv/bin/alembic -c src/monitoring/alembic.ini upgrade head
-PYTHONPATH=src/monitoring /tmp/crux-monitor-venv/bin/pytest -q src/monitoring/tests
+/tmp/crux-monitor-venv/bin/python -m pytest -q src/monitoring/tests
 /tmp/crux-monitor-venv/bin/ruff check src/monitoring
 /tmp/crux-monitor-venv/bin/ruff format --check src/monitoring
 ```

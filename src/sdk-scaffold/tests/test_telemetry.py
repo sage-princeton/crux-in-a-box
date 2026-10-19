@@ -86,10 +86,9 @@ def test_a_stopped_scaffold_sends_what_finished_and_marks_what_did_not(langfuse)
     exporter.clear()
 
     async def stopped_mid_turn():
-        with telemetry.trace("implement #1"):
-            with telemetry.generation("engineer", "gpt-codex-test", "TASK"):
-                telemetry.record("codex:commandExecution", "tool", "ls", {"exitCode": 0})
-                raise asyncio.CancelledError
+        with telemetry.trace("implement #1"), telemetry.generation("engineer", "gpt-codex-test", "TASK"):
+            telemetry.record("codex:commandExecution", "tool", "ls", {"exitCode": 0})
+            raise asyncio.CancelledError
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(stopped_mid_turn())
@@ -105,9 +104,8 @@ def test_a_stopped_scaffold_sends_what_finished_and_marks_what_did_not(langfuse)
 def test_a_generation_carries_its_model_and_the_output_and_usage_set_inside_it(langfuse):
     telemetry, exporter = langfuse
     exporter.clear()
-    with telemetry.trace("implement #1"):
-        with telemetry.generation("engineer", "gpt-codex-test", "TASK") as outcome:
-            outcome.output, outcome.usage = "done", TokenUsage(requests=1, input_tokens=10, output_tokens=5)
+    with telemetry.trace("implement #1"), telemetry.generation("engineer", "gpt-codex-test", "TASK") as outcome:
+        outcome.output, outcome.usage = "done", TokenUsage(requests=1, input_tokens=10, output_tokens=5)
     telemetry.flush()
     engineer = next(span for span in exporter.get_finished_spans() if span.name == "engineer")
     assert engineer.attributes["langfuse.observation.output"] == "done"

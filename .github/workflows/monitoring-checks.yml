@@ -21,8 +21,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  python-lint:
+    name: Python lint and formatting
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m ruff check .
+      - run: python -m ruff format --check src/monitoring
   monitoring:
     name: Monitoring behavior and image
+    needs: python-lint
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -45,11 +60,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - run: pip install -r src/monitoring/web-requirements.txt 'pytest>=8,<9' 'moto[s3,ec2,ssm]>=5,<6' PyYAML==6.0.3 ruff==0.16.10
-      - name: Python lint and formatting
-        run: |
-          ruff check src/monitoring
-          ruff format --check src/monitoring
+      - run: python -m pip install -r src/monitoring/web-requirements.txt -r requirements-dev.txt 'moto[s3,ec2,ssm]>=5,<6' PyYAML==6.0.3
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -67,9 +78,7 @@ jobs:
           alembic -c src/monitoring/alembic.ini downgrade base
           alembic -c src/monitoring/alembic.ini upgrade head
       - name: Monitoring behavior against PostgreSQL
-        env:
-          PYTHONPATH: src/monitoring
-        run: pytest -q src/monitoring/tests
+        run: python -m pytest -q src/monitoring/tests
       - name: Build app and HTTPS proxy images
         run: |
           docker build --platform linux/amd64 -t crux-monitoring:check src/monitoring
