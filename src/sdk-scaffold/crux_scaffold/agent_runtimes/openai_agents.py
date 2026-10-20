@@ -198,7 +198,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if not wait and not task.done():
             return f"[coding agent running] {name}. Use rest before checking again, or call {name}_result(wait=true)."
         try:
-            return (await task).as_tool_output()
+            async with self.delegation_wait():
+                return (await task).as_tool_output()
         except Exception as exc:  # noqa: BLE001 - Worker failures return to the PI; cancellation propagates.
             return f"error: Coding agent '{name}' failed: {exc}"
         finally:
@@ -321,27 +322,40 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     def _delegate(self, name: str) -> FunctionTool:
         config = self.assembly.drop_in.config
-        if name in config.agents:
-            spec = config.agents[name]
-            return self.agents[name].as_tool(
-                tool_name=name, tool_description=spec.description, max_turns=spec.max_turns, hooks=self.hooks,
-                run_config=self.run_config,
-                input_builder=lambda data: self._turn_input(name, data["params"]["input"], []))
-        return self._coding_tool(self.assembly.coding_agents[name])
+        if name not in config.agents:
+            return self._coding_tool(self.assembly.coding_agents[name])
+        spec = config.agents[name]
+        tool = self.agents[name].as_tool(
+            tool_name=name, tool_description=spec.description, max_turns=spec.max_turns, hooks=self.hooks,
+            run_config=self.run_config,
+            input_builder=lambda data: self._turn_input(name, data["params"]["input"], []))
+        invoke_tool = tool.on_invoke_tool
+
+        async def invoke(context: ToolContext[Any], raw: str) -> str:
+            async with self.delegation_slot():
+                return await invoke_tool(context, raw)
+
+        tool.on_invoke_tool = invoke
+        return tool
 
     def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
         ctx = self.assembly.context
 
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             brief = BriefArguments.model_validate_json(raw).brief
+
+            async def execute() -> CodingResult:
+                async with self.delegation_slot(background=self.options.background_coding):
+                    return await agent.run(brief, ctx)
+
             if self.options.background_coding:
                 if agent.name in self._coding_tasks:
                     return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
-                self._coding_tasks[agent.name] = asyncio.create_task(agent.run(brief, ctx))
+                self._coding_tasks[agent.name] = asyncio.create_task(execute())
                 return (f"[coding agent started] {agent.name}. Choose rest durations while it works; "
                         f"call {agent.name}_result(wait=false) to check or {agent.name}_result(wait=true) to await "
                         "and collect the result.")
-            return (await agent.run(brief, ctx)).as_tool_output()
+            return (await execute()).as_tool_output()
 
         description = agent.description
         if self.options.background_coding:

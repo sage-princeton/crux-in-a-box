@@ -40,7 +40,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; `escalate` outbox |
 | Observability | `Telemetry` | Langfuse, or off |
-| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod` |
+| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `AgentRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`; delegation concurrency and depth limits |
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
@@ -150,7 +150,23 @@ With the settings above, a request for 1 second grants 10 seconds, and a request
 
 Rest allowance belongs to the declared tool instance, shared by every agent using that name, and resets when the scaffold is assembled again. Use sequential rest calls as in this example: concurrent calls to the same instance can overcommit its remaining allowance because usage is recorded after each sleep completes.
 
-Each declared coding delegate has one outstanding task shared by its callers. Collect its result before starting another brief. Tasks live within the current runtime call: before returning to the loop's gates and state save, the runtime awaits outstanding work, appends any uncollected results to the turn output, and records them in the PI's existing session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Errors or cancellation cancel and await remaining tasks. Pending tasks are not restored after restart; ordinary SDK delegates retain their blocking behavior. Run-wide delegation limits and automatic operator steering are separate capabilities; see the [runtime contract](docs/extending.md#agent-runtimes-agentruntime).
+Each declared coding delegate has one outstanding task shared by its callers. Collect its result before starting another brief. Tasks live within the current runtime call: before returning to the loop's gates and state save, the runtime awaits outstanding work, appends any uncollected results to the turn output, and records them in the PI's existing session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Errors or cancellation cancel and await remaining tasks. Pending tasks are not restored after restart; ordinary SDK delegates retain their blocking behavior. The [delegation limits](#delegation-limits) also cover background workers. Configure [operator steering](#reliable-operator-steering-and-escalations) separately.
+
+## Delegation limits
+
+Declare optional limits in `scaffold.toml`:
+
+```toml
+[delegation]
+max_concurrent = 4
+max_depth = 2
+```
+
+`max_concurrent` is a positive integer shared across all callers in the run. Each delegated SDK-agent call or coding-worker brief uses one slot. The root orchestrator uses none. Requests wait in memory when capacity is full; queued work does not count as active. A delegated parent releases its slot while nested delegates run and reacquires capacity before continuing, so nesting works even with one slot. Success, failure, cancellation and timeout release capacity. Background coding workers hold a slot from the start of their work until completion, rather than only during the start request. Their callers keep their own slots while continuing work and release them while awaiting a result; checking a result without waiting uses no additional slot.
+
+The orchestrator has depth 0; each delegate edge adds 1. For example, `orchestrator -> researcher -> coder` has depth 2. `max_depth` is a nonnegative integer; 0 forbids delegation. Before any model call, configuration validation checks the longest path in the entire declared delegate graph, including unused agents and coding-worker leaves. It reports an offending path when the limit is exceeded. Cycles remain invalid.
+
+Each coding worker counts once at the scaffold boundary. Its native subagent fan-out consumes no additional scaffold slots or depth. Omit either option to leave that dimension unlimited; existing drop-ins retain their behavior. Queues are local to the running scaffold process and are not durable jobs.
 
 ## Extending
 
