@@ -155,6 +155,27 @@ def test_sanitized_resource_errors_are_visible_and_clear_after_success():
     assert action not in monitor.describe(NOW)
 
 
+def test_partial_refresh_retains_previous_cost_and_timestamp_without_merging_live_counts():
+    previous = ResourceSnapshot(as_of=NOW, metrics={"cost_usd": ResourceMetric(value=2, unit="USD"),
+                                                   "running_pods": ResourceMetric(value=1, unit="pods")})
+    partial = ResourceSnapshot(as_of=NOW + timedelta(minutes=1), metrics={
+        "running_pods": ResourceMetric(value=0, unit="pods")}, note="billing pending")
+    monitor = ResourceMonitor({"compute": ScriptedResource(previous, partial, limits={"cost_usd": 2})})
+
+    async def run():
+        await monitor.refresh(context())
+        await monitor.refresh(context())
+
+    asyncio.run(run())
+    assert monitor.exhausted()
+    assert monitor.status("compute") == "stale"
+    assert monitor.snapshot("compute") == previous
+    report = monitor.describe(NOW + timedelta(minutes=1))
+    assert "incomplete measurements" in report
+    assert "age 60s" in report
+    assert "running_pods: 1 pods" in report
+
+
 def test_cache_expires_and_unknown_limited_metric_is_reported():
     clock = [NOW]
     provider = ScriptedResource(ResourceSnapshot(as_of=NOW, metrics={}), snapshot(), refresh_seconds=60,

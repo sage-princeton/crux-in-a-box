@@ -40,7 +40,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]` | any stdio MCP server; the demo uses Slack |
 | Observability | `Telemetry` | Langfuse, or off |
-| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status` | token, model-dollar and time limits; `langfuse` usage |
+| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod` |
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
@@ -186,6 +186,79 @@ Without configured providers, local tokens and elapsed time still appear and
 external usage is explicitly unavailable. `check` validates configuration without
 querying providers or starting the clock.
 
+### AWS compute and RunPod
+
+Add either or both providers to the same declaration:
+
+```toml
+[resources.aws]
+type = "aws-compute"
+region = "us-east-1"
+tag_key = "Name"
+tag_value_env = "RUN_SLUG"
+profile_env = "AWS_PROFILE"
+refresh_seconds = 3600
+limits = { cost_usd = 200.0 }
+
+[resources.gpu]
+type = "runpod"
+refresh_seconds = 60
+limits = { cost_usd = 200.0 }
+```
+
+`aws-compute` requires the AWS CLI and an explicit profile from `AWS_PROFILE`
+(or `profile_env`). Every command passes that profile; a failed identity check
+stops that refresh and reports the SSO reauthentication command. The profile
+needs `sts:GetCallerIdentity`, `ce:GetCostAndUsage`, and `ec2:DescribeInstances`.
+It reads regional EC2 compute spending scoped to that account and the exact run
+tag, plus running instance count. Other AWS services, storage and public IP
+charges are outside this collector's scope. Usage quantities retain their
+individual AWS usage types and units.
+
+The existing provisioner tags instances `Name=RUN_SLUG`. Activate the selected
+tag for cost allocation before the run, and use a value dedicated to this run.
+AWS billing is daily, can lag more than a day, and Cost Explorer charges per
+request; the default refresh is hourly. Empty billing is shown as unknown,
+even when a live instance count is available. See [AWS Cost Explorer](https://docs.aws.amazon.com/cost-management/latest/userguide/ce-what-is.html).
+
+`runpod` requires `RUNPOD_API_KEY` (or `api_key_env`) and a unique `RUN_SLUG`
+(or `run_slug_env`). No pod IDs are needed before launch. When creating a pod,
+set its environment variable `CRUX_RUN_SLUG` to the run slug. The status block
+supplies the exact value to use. The collector pages through the account's pods
+on each refresh and adopts only exact marker matches, including cluster members;
+names, creation time and other runs' pods do not establish ownership.
+
+Discovered IDs are saved atomically under `state_dir/resources/runpod-*.json`
+before billing is queried. They remain tracked after termination and process
+restart, so delayed charges are still counted when the pod disappears from the
+live list. Preserve the whole state directory when resuming. Inventory is bound
+to the provider name, run slug and persisted start time; corruption or a scope
+mismatch fails the refresh instead of forgetting prior spending. Never reuse a
+pod or run slug across runs, or change a tracked pod's ownership marker.
+
+Discovery polls at `refresh_seconds`. After creating a short-lived pod, call
+`budget_status` before terminating it to force discovery; a pod created and
+terminated entirely between refreshes cannot be attributed from billing alone.
+Pods already terminated before first discovery are outside coverage. With no
+discovered pods a successful complete list reports zero; once pods are known,
+missing billing is unknown, not zero. Discovery/billing failures retain the
+last complete snapshot as stale.
+
+The API v2 collector reports total/GPU/CPU/disk spend, running pods/GPUs, and
+the current hourly rate. Billing uses hour-aligned windows; AWS uses day-aligned
+windows, so both can include time before the scaffold started. Neither
+extrapolates an invoice from a current rate. Account-wide balance changes are
+not used to attribute shared-account spend to a run.
+RunPod's billing API does not report GPU-hours; the provider labels that
+limitation. Serverless and separate network-volume spending are outside this
+collector. See [RunPod billing](https://docs.runpod.io/api-reference-v2/billing/get-pod-billing-history)
+and [pod discovery](https://docs.runpod.io/api-reference-v2/pods/list-pods).
+
+Each provider has a 30-second overall read deadline. A failed or incomplete
+refresh retains the previous complete snapshot as stale, including known
+costs and their timestamp. Keep credentials outside the repository and pass
+only the required credentials/profile into the scaffold process or container.
+
 ## Tracing
 
 Langfuse v4 never updates an observation once it has stored it, so each observation is sent exactly once, when it ends. The scaffold keeps what it sends short-lived so that a long run stays visible while it progresses. These rules follow the AE-240 findings for the Codex boxes:
@@ -205,6 +278,8 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` | HTTPS endpoint and bearer credential for a declared `langfuse` resource provider; `RUN_SLUG` is also required. |
+| `AWS_PROFILE` | Required explicit profile for `aws-compute`; the profile and AWS CLI must be available in the scaffold's environment. |
+| `RUNPOD_API_KEY` | List access to pods (including their ownership environment marker) and read access to pod billing for `runpod`. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |
 
 ## Run the demo in Docker

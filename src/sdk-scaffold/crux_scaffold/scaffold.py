@@ -7,7 +7,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-import crux_scaffold.agent_runtimes.openai_agents  # noqa: F401  registers the built-in runtime
+import crux_scaffold.agent_runtimes.openai_agents
+import crux_scaffold.external_resources  # noqa: F401  registers compute resource providers
 from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
