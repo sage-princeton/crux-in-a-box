@@ -194,7 +194,7 @@ Set `AGENT_PLATFORM=openai-agents` and `DROP_IN_PATH=<drop-in directory>` in the
 
 1. It stages this directory, root-owned, at `/opt/crux-sdk-scaffold`, and the drop-in at `/srv/crux-run/run-harness`.
 2. It writes the environment above to `/etc/crux-run.env`.
-3. It runs `probe --coding-agent codex`.
+3. It installs system Bubblewrap and Ubuntu's AppArmor profile for it, then checks sandboxed shell execution and file write/readback before running `probe --coding-agent codex`. `workspace-write` remains the default; global user-namespace restrictions are unchanged.
 4. It installs `crux-sdk-run.service`, but does not start it.
 
 ## Development

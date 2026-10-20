@@ -13,7 +13,23 @@ scaffold_install_preflight() {
   [ -f "$SCAFFOLD_DIR/requirements.txt" ] || die "Stage src/sdk-scaffold at $SCAFFOLD_DIR before install-run.sh."
 }
 
+scaffold_install_sandbox() {
+  info "Bubblewrap and Ubuntu AppArmor sandbox prerequisites"
+  apt-get install -y -qq bubblewrap apparmor-profiles apparmor-utils >/dev/null \
+    || die "Installing Bubblewrap/AppArmor prerequisites failed"
+  if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = 1 ]; then
+    local profile=/etc/apparmor.d/bwrap-userns-restrict
+    if [ ! -f "$profile" ]; then
+      install -m 644 /usr/share/apparmor/extra-profiles/bwrap-userns-restrict "$profile" \
+        || die "Ubuntu's Bubblewrap AppArmor profile is unavailable"
+    fi
+    apparmor_parser -r "$profile" || die "Could not load the Bubblewrap AppArmor profile"
+  fi
+  ok "System Bubblewrap installed; global namespace restrictions unchanged"
+}
+
 scaffold_install() {
+  scaffold_install_sandbox
   info "SDK scaffold venv at $SCAFFOLD_DIR/.venv"
   apt-get install -y -qq python3 >/dev/null
   export UV_CACHE_DIR=/var/cache/crux-uv
@@ -49,8 +65,32 @@ scaffold_extra_env() {
     | to_entries[] | .key + "=" + (.value | @json)'
 }
 
+scaffold_probe_sandbox() {
+  local codex_bin sandbox_log="${PROBE_LOG%.log}-sandbox.log"
+  codex_bin="$("$SCAFFOLD_PYTHON" -c 'from codex_cli_bin import bundled_codex_path; print(bundled_codex_path())')" \
+    || die "Could not locate the pinned SDK Codex executable"
+  info "Checking sandboxed shell execution and workspace writes"
+  install -m 600 /dev/null "$sandbox_log"
+  # shellcheck disable=SC2016
+  if ! systemd-run --quiet --wait --pipe --collect --uid="$RUN_USER" \
+       --property=EnvironmentFile="$RUN_ENV_FILE" --working-directory="$DROP_IN_DIR/workspace" \
+       --setenv="CODEX_HOME=$STATE_DIR/codex" \
+       timeout 60 "$codex_bin" sandbox -c 'sandbox_mode="workspace-write"' -- /bin/sh -c '
+         set -eu
+         probe=$(mktemp .crux-sandbox-probe.XXXXXX)
+         cleanup() { rm -f -- "$probe"; }
+         trap cleanup EXIT
+         printf "%s\n" SANDBOX-PROBE > "$probe"
+         test "$(cat "$probe")" = SANDBOX-PROBE
+       ' >"$sandbox_log" 2>&1; then
+    die "Codex sandbox probe failed. Inspect $sandbox_log with sudo; check Bubblewrap/AppArmor setup."
+  fi
+  ok "Sandboxed shell and file write/readback passed"
+}
+
 scaffold_configure() {
-  install -d -m 755 -o "$RUN_USER" -g "$RUN_USER" "$WORK_DIR" "$STATE_DIR"
+  install -d -m 755 -o "$RUN_USER" -g "$RUN_USER" "$WORK_DIR" "$STATE_DIR" "$STATE_DIR/codex"
+  scaffold_probe_sandbox
 
   # One real model call and one Codex turn, with the unit's exact environment;
   # the probe also requires Langfuse to accept the keys.

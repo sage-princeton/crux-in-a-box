@@ -298,9 +298,14 @@ For an SDK box:
 - **Base secrets:** `OPENAI_API_KEY`, plus any keys the drop-in's MCP servers
   read, such as `SLACK_BOT_TOKEN`. Like every non-provider key in the base
   secrets, it reaches the run's environment.
-- **Provisioning** writes `/etc/crux-run.env`, then runs `crux_scaffold probe
-  --coding-agent codex`: one traced model call and one Codex turn. It then
-  installs `crux-sdk-run.service`, but does not start it.
+- **Sandbox prerequisites:** the SDK installer adds system `bubblewrap` and
+  loads Ubuntu's `bwrap-userns-restrict` AppArmor profile when required. Existing
+  profiles are preserved; the global namespace restriction stays enabled.
+- **Provisioning** writes `/etc/crux-run.env`, then checks a sandboxed shell
+  can create and read back a temporary workspace file. Failure stops provisioning
+  before any model call; inspect `/var/log/crux-agent-probe-sandbox.log`. Next it
+  runs `crux_scaffold probe --coding-agent codex`: one traced model call and one
+  Codex turn. It then installs `crux-sdk-run.service`, but does not start it.
 - **Launching:** resolve the drop-in's placeholders on the box (see its
   `OPERATOR_GUIDE.md`), then run `sudo systemctl start crux-sdk-run`. Watch it
   with `journalctl -u crux-sdk-run -f`.
