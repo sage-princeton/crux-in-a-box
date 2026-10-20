@@ -68,7 +68,8 @@ def test_dynamic_context_can_be_created_after_launch_and_is_bounded(drop_in_dir)
     (drop_in.workspace / "REQUEST.md").write_text("Latest spec. " * 100)
 
     class RecordingTelemetry(NullTelemetry):
-        records = []
+        def __init__(self):
+            self.records = []
 
         def record(self, *args):
             self.records.append(args)
