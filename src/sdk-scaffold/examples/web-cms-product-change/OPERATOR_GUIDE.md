@@ -24,6 +24,10 @@ sed -i 's/{{SLACK_CHANNEL_ID}}/C0123456789/g' PROMPT.md scaffold.toml workspace/
 python -m crux_scaffold check --drop-in . --state-dir .state    # lists any placeholder left, with file:line
 ```
 
+Both agents declare their always-relevant files in `scaffold.toml`. `context` names required files relative to this drop-in; `workspace_context` names dynamic files relative to `workspace/`. The product manager gets `AGENTS.md`, and the engineer gets `ENGINEERING.md`; both also get `REQUEST.md` and `LOG.md`. A missing `REQUEST.md` is marked as not created yet at launch.
+
+The demo uses `[context] type = "persistent"`: its first snapshot stays in the product manager's history across turns and restarts. It still reads working files when it needs updates. Each engineer brief starts fresh with the current spec and log. To use compaction, select `type = "openai_compaction"` and optionally set `trigger_items` (default 200); this refreshes the snapshot on the next outer turn after compaction. `type = "trim_recent"` with `max_items` (default 200) refreshes when the previous snapshot falls outside recent history. Each agent's `context_max_chars` caps the snapshot at 32,000 characters; order files by importance when using a smaller limit. Langfuse's `standing_context:<agent>` spans report sizes and truncation.
+
 ## 3. Post the request, then run
 
 Post this as a top-level message in the channel, as yourself rather than the bot:
