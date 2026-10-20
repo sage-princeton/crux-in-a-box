@@ -1,0 +1,1 @@
+Write SMOKE.md containing exactly SCAFFOLD-PROBE on one line. Then ask the reviewer to read SMOKE.md and report its contents. After the reviewer returns, reply exactly SCAFFOLD-PROBE. Do not perform any other work.

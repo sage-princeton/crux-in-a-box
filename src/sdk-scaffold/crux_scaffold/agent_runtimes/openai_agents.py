@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import replace
-from typing import Any, Self
+from typing import Any, Literal, Self
 
 from agents import (
     Agent,
     FunctionTool,
     ModelSettings,
+    OpenAIProvider,
     RunConfig,
     RunContextWrapper,
     RunHooks,
@@ -22,10 +23,11 @@ from agents.models.interface import Model
 from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool_context import ToolContext
+from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
-from pydantic import Field, ValidationError
+from pydantic import Field, HttpUrl, ValidationError, model_validator
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
 from crux_scaffold.coding_agents import CodingAgent
@@ -37,8 +39,31 @@ from crux_scaffold.tools import Arguments, Tool
 from crux_scaffold.usage import UsageLedger
 
 
+class ModelProviderOptions(Options):
+    """Configure the SDK's provider; model and effort still come only from the run environment."""
+
+    type: Literal["openai", "openai-compatible"] = "openai"
+    api: Literal["responses", "chat-completions"] = "responses"
+    base_url: HttpUrl | None = None
+    api_key_env: str = Field("OPENAI_API_KEY", pattern=r"^[A-Z_][A-Z0-9_]*$")
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_provider(self) -> Self:
+        if self.type == "openai-compatible" and self.base_url is None:
+            raise ValueError("openai-compatible model_provider requires base_url")
+        if self.type == "openai" and (self.base_url or self.extra_body or self.api != "responses"
+                                      or self.api_key_env != "OPENAI_API_KEY"):
+            raise ValueError("custom provider settings require type=openai-compatible")
+        if {"model", "models", "input", "messages", "instructions", "tools", "store", "stream",
+            "previous_response_id", "conversation", "reasoning", "reasoning_effort", "include"} & self.extra_body.keys():
+            raise ValueError("extra_body cannot override the run model, context, tools, reasoning or session settings")
+        return self
+
+
 class OpenAIAgentsOptions(Options):
     max_turns: int = Field(50, ge=1)
+    model_provider: ModelProviderOptions = ModelProviderOptions()
 
 
 class BriefArguments(Arguments):
@@ -50,7 +75,10 @@ class UsageHooks(RunHooks):
         self.ledger = ledger
 
     async def on_llm_end(self, context: RunContextWrapper, agent: Agent, response: ModelResponse) -> None:
-        self.ledger.add(agent.name, response.usage.input_tokens, response.usage.output_tokens)
+        usage = response.usage
+        self.ledger.add(agent.name, usage.input_tokens, usage.output_tokens,
+                        cached_input_tokens=usage.input_tokens_details.cached_tokens,
+                        reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens)
 
 
 @RUNTIMES.register
@@ -69,12 +97,18 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self.run_config = RunConfig(call_model_input_filter=self._select_input)
         self.agents: dict[str, Agent] = {}
         self.servers: dict[str, MCPServerStdio] = {}
+        self.client: AsyncOpenAI | None = None
+        self.provider: OpenAIProvider | None = None
         self._stack = AsyncExitStack()
 
     def build(self) -> None:
         if self.agents:
             return
         config, ctx = self.assembly.drop_in.config, self.assembly.context
+        if self.options.model_provider.type == "openai-compatible":
+            self.client = _compatible_client(self.options.model_provider, ctx.env)
+            self.provider = OpenAIProvider(openai_client=self.client,
+                                           use_responses=self.options.model_provider.api == "responses")
         used = sorted({server for agent in config.agents.values() for server in agent.mcp_servers})
         self.servers = {name: _mcp_server(name, config.mcp_servers[name], ctx.env) for name in used}
         for name in delegation_order(config.agents):
@@ -90,10 +124,16 @@ class OpenAIAgentsRuntime(AgentRuntime):
         # TODO(AE-247): let the AgentRuntime base class own telemetry setup for every runtime.
         trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
-        for server in self.servers.values():
-            await self._stack.enter_async_context(server)
-        self.session = self.assembly.context_strategy.session(
-            self.assembly.drop_in.config.orchestrator, self.assembly.context.state_dir)
+        try:
+            if self.client:
+                await self._stack.enter_async_context(self.client)
+            for server in self.servers.values():
+                await self._stack.enter_async_context(server)
+            self.session = self.assembly.context_strategy.session(
+                self.assembly.drop_in.config.orchestrator, self.assembly.context.state_dir)
+        except BaseException:
+            await self._stack.aclose()
+            raise
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
@@ -112,28 +152,37 @@ class OpenAIAgentsRuntime(AgentRuntime):
     def describe(self) -> list[str]:
         self.build()
         config = self.assembly.drop_in.config
-        return [f"{name}: tools [{', '.join(tool.name for tool in agent.tools)}] "
-                f"mcp [{', '.join(config.agents[name].mcp_servers)}]" for name, agent in self.agents.items()]
+        provider = self.options.model_provider
+        return [f"model provider {provider.type} ({provider.api})",
+                *(f"{name}: tools [{', '.join(tool.name for tool in agent.tools)}] "
+                  f"mcp [{', '.join(config.agents[name].mcp_servers)}]" for name, agent in self.agents.items())]
 
     @classmethod
-    async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry) -> str:
+    async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry, *,
+                    options: OpenAIAgentsOptions | None = None) -> str:
         trace_agents_sdk(telemetry)
         model = env.get("CRUX_MODEL")
         if not model:
             raise InvalidDropInError("CRUX_MODEL is not set")
-        effort = env.get("CRUX_REASONING_EFFORT")
-        settings = ModelSettings(reasoning=Reasoning(effort=effort, summary="auto"))
-        agent = Agent(name="probe", instructions="Reply with exactly the text you are asked for.", model=model,
-                      model_settings=settings)
-        return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
+        provider_options = (options or OpenAIAgentsOptions()).model_provider
+        async with AsyncExitStack() as stack:
+            if provider_options.type == "openai-compatible":
+                client = await stack.enter_async_context(_compatible_client(provider_options, env))
+                model = OpenAIProvider(openai_client=client, use_responses=provider_options.api == "responses").get_model(
+                    model)
+            agent = Agent(name="probe", instructions="Reply with exactly the text you are asked for.", model=model,
+                          model_settings=_model_settings(provider_options, env))
+            return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
 
     def _model(self, agent: str) -> str | Model:
         """The run's model; tests substitute scripted models per agent through `models`."""
-        return self.models.get(agent, self.assembly.context.model)
+        if agent in self.models:
+            return self.models[agent]
+        model = self.assembly.context.model
+        return self.provider.get_model(model) if self.provider else model
 
     def _settings(self) -> ModelSettings:
-        effort = self.assembly.context.reasoning_effort
-        return ModelSettings(reasoning=Reasoning(effort=effort, summary="auto"))
+        return _model_settings(self.options.model_provider, self.assembly.context.env)
 
     def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
         items = self.assembly.context_strategy.select(list(data.model_data.input))
@@ -174,6 +223,27 @@ def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str]) -> M
     return MCPServerStdio(params={"command": config.command, "args": config.args,
                                   "env": config.resolved_env(name, env)},
                           name=name, cache_tools_list=True, client_session_timeout_seconds=config.timeout_seconds)
+
+
+def _compatible_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:
+    key = env.get(options.api_key_env)
+    if not key:
+        raise InvalidDropInError(f"{options.api_key_env} is not set")
+    return AsyncOpenAI(api_key=key, base_url=str(options.base_url))
+
+
+def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
+    settings = ModelSettings(reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"))
+    if options.type == "openai-compatible":
+        # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
+        settings.preserve_raw_usage = True
+        settings.extra_body = options.extra_body or None
+        if options.api == "responses":
+            settings.store = False
+            settings.response_include = ["reasoning.encrypted_content"]
+        else:
+            settings.reasoning = Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None)
+    return settings
 
 
 def trace_agents_sdk(telemetry: Telemetry) -> None:

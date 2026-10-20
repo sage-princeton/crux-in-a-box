@@ -165,8 +165,8 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 |---|---|
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
-| `describe()` | One line per agent, printed by `check`. |
-| `probe(env, prompt, telemetry)` (classmethod) | One traced model call outside any drop-in, which provisioning uses to prove the runtime works. |
+| `describe()` | Assembly details, including provider and one line per agent, printed by `check`. |
+| `probe(env, prompt, telemetry, *, options=None)` (classmethod) | One traced model call without running a loop. Optional validated runtime options let `probe --drop-in` use the run's model provider; provisioning can omit them for the default provider. |
 
 **The behavior the rest of the scaffold relies on:**
 
@@ -186,6 +186,22 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 - **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).
 
+### Model providers in `openai-agents`
+
+The existing runtime's `model_provider` options configure the SDK's `OpenAIProvider`; this is not another component registry. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy.
+
+| `[runtime.model_provider]` key | Contract |
+|---|---|
+| `type` | `openai` (default), or `openai-compatible`. OpenAI keeps the existing Responses behavior. |
+| `api` | `responses` (default) or `chat-completions`; custom settings require `openai-compatible`. |
+| `base_url` | Required URL for a compatible provider. |
+| `api_key_env` | Credential variable name, default `OPENAI_API_KEY`. Resolve from `RunContext.env`, never embed the value in TOML. |
+| `extra_body` | Provider-specific request fields, such as OpenRouter's `provider.only` and `allow_fallbacks`. Cannot replace the run model, input, tools, reasoning, or session settings. Never put credentials here. |
+
+All agents share one configured provider/client, which closes when the runtime exits, including failed MCP startup. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` remain the sole model and effort settings. The compatible Responses path disables server storage, requests encrypted reasoning for local replay, and preserves raw usage. The Chat Completions adapter sends reasoning effort without Responses-only summary/include options. Coding-agent SDK configuration remains the coding agent's responsibility.
+
+The [Argon smoke drop-in](../examples/argon-smoke/scaffold.toml) configures OpenRouter with a Vertex-only route. The operator must separately configure Vertex BYOK and disable shared-capacity fallback on that account, then verify the actual response's billing/provider evidence.
+
 ## Telemetry (`Telemetry`)
 
 `telemetry.py`. Implementations: `LangfuseTelemetry` and `NullTelemetry`. Telemetry is not a registry: `telemetry_from_env` chooses the backend from the environment. A new backend implements the ABC and is chosen there.
@@ -202,6 +218,8 @@ Langfuse v4 stores each observation once, when it ends, so keep observations sho
 
 `usage.py`. `Budget` (`[budget]`) holds hard limits, which the loop checks between iterations. `UsageLedger` tallies tokens per agent and coding agent, and it is persisted with the run state, so a restart keeps the count. The `budget_status` tool shows the agents where they stand. Any new component that calls a model adds its usage to `ctx.usage`. Otherwise the budget does not see it.
 
+`UsageLedger.add(source, input_tokens, output_tokens, *, cached_input_tokens=0, reasoning_output_tokens=0)` accepts the SDK's inclusive input/output totals and their optional detail counts. Cache reads remain part of input and reasoning remains part of output; neither detail is added a second time to `total_tokens`.
+
 ## Testing
 
 Tests never call a model or the network. Use the existing doubles before writing new ones:
@@ -211,6 +229,7 @@ Tests never call a model or the network. Use the existing doubles before writing
 | `ScriptedModel`, `call`, `say`, `StoppedModel` | `tests/scripted.py` | A model, passed to `openai-agents` through `runtime_overrides={"models": …}` |
 | `ScriptedCodingAgent` (`type = "scripted"`) | `tests/scripted.py` | A coding agent that writes declared files |
 | `FakeRuntime`, `ScriptedGate` (`type = "scripted"`) | `tests/fakes.py` | A runtime and gates, for loop tests |
+| Scripted HTTP transport | `tests/test_openrouter.py` | The real SDK's compatible provider adapter, including signed reasoning replay, tools, usage, and traces |
 | `fake_slack_mcp.py` | `tests/` | A stdio MCP server |
 | `BASE_FILES`, `write_tree`, `edit` | `tests/drop_ins.py` | A minimal drop-in directory |
 

@@ -1,0 +1,1 @@
+This workspace is for an operational test of model access, file tools, isolated delegation, token accounting, and tracing. Work only on SMOKE.md. The test needs no external services beyond the model provider and configured telemetry.

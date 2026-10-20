@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Self
 from pydantic import BaseModel
 
 from crux_scaffold.coding_agents import CodingAgent
-from crux_scaffold.components import Component, Registry
+from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.context_strategies import ContextStrategy
 from crux_scaffold.tools import Tool
 from crux_scaffold.workspace import RunContext
@@ -64,8 +64,9 @@ class AgentRuntime(Component):
 
     @classmethod
     @abstractmethod
-    async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry) -> str:
-        """One model call outside any drop-in, used by provisioning to prove the runtime works."""
+    async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry, *,
+                    options: Options | None = None) -> str:
+        """One model call using optional validated runtime settings, without running the drop-in's loop."""
 
 
 RUNTIMES: Registry[AgentRuntime] = Registry("agent runtime")

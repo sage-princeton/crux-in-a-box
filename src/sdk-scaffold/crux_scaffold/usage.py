@@ -26,11 +26,14 @@ class UsageLedger(BaseModel):
 
     by_source: dict[str, TokenUsage] = {}
 
-    def add(self, source: str, input_tokens: int, output_tokens: int) -> None:
+    def add(self, source: str, input_tokens: int, output_tokens: int, *, cached_input_tokens: int = 0,
+            reasoning_output_tokens: int = 0) -> None:
         usage = self.by_source.setdefault(source, TokenUsage())
         usage.requests += 1
         usage.input_tokens += input_tokens
         usage.output_tokens += output_tokens
+        usage.cached_input_tokens += cached_input_tokens
+        usage.reasoning_output_tokens += reasoning_output_tokens
 
     @property
     def total_tokens(self) -> int:
