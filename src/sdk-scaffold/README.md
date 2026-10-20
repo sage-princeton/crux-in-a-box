@@ -197,7 +197,7 @@ python -m crux_scaffold probe --drop-in "$ARGON_SMOKE_DIR/drop-in"
 python -m crux_scaffold run --drop-in "$ARGON_SMOKE_DIR/drop-in" --state-dir "$ARGON_SMOKE_DIR/state"
 ```
 
-In Langfuse, select the lowercased `RUN_SLUG` environment/session. Expect `crux-probe` and `smoke #1` traces, with Argon generations, researcher/reviewer agents, file tools, and the `note_written` gate. The local `state/state.json` retains the token ledger. Shared Langfuse credentials are normally provisioned from the JSON SSM parameter `/crux/system/env`; the SDK CLI itself reads environment variables and does not fetch secrets or load local env files.
+In Langfuse, select the lowercased `RUN_SLUG` environment or the original `RUN_SLUG` session. Expect `crux-probe` and `smoke #1` traces, with Argon generations, researcher/reviewer agents, file tools, and the `note_written` gate. The local `state/state.json` retains the token ledger. Shared Langfuse credentials are normally provisioned from the JSON SSM parameter `/crux/system/env`; the SDK CLI itself reads environment variables and does not fetch secrets or load local env files.
 
 ## Run the demo in Docker
 
