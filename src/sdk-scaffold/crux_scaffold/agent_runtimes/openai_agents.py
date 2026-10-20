@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import replace
@@ -21,20 +22,24 @@ from agents.mcp import MCPServerStdio
 from agents.models.interface import Model
 from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
+from agents.tool import ToolOutputImage, ToolOutputText
 from agents.tool_context import ToolContext
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import Field, ValidationError
 
-from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome
+from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
 from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Options
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.telemetry import Telemetry
-from crux_scaffold.tools import Arguments, Tool
+from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
 from crux_scaffold.usage import UsageLedger
+from crux_scaffold.workspace import ReviewWorkspace, RunContext
+
+JUDGE = "judge"
 
 
 class OpenAIAgentsOptions(Options):
@@ -46,11 +51,12 @@ class BriefArguments(Arguments):
 
 
 class UsageHooks(RunHooks):
-    def __init__(self, ledger: UsageLedger) -> None:
+    def __init__(self, ledger: UsageLedger, source: str | None = None) -> None:
         self.ledger = ledger
+        self.source = source
 
     async def on_llm_end(self, context: RunContextWrapper, agent: Agent, response: ModelResponse) -> None:
-        self.ledger.add(agent.name, response.usage.input_tokens, response.usage.output_tokens)
+        self.ledger.add(self.source or agent.name, response.usage.input_tokens, response.usage.output_tokens)
 
 
 @RUNTIMES.register
@@ -109,6 +115,25 @@ class OpenAIAgentsRuntime(AgentRuntime):
             return TurnOutcome(final_output="", completed=False)
         return TurnOutcome(final_output=str(result.final_output), completed=True)
 
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int,
+                    review_workspace: ReviewWorkspace | None = None) -> Verdict:
+        ctx = self.assembly.context
+        if review_workspace is not None:
+            validate_review_tools([self.assembly.tools[tool] for tool in tools])
+            ctx = replace(ctx, workspace=review_workspace)
+        agent = Agent(name=JUDGE if review_workspace is not None else f"{JUDGE}:{name}",
+                      instructions=rubric, output_type=Verdict, model=self._model(JUDGE),
+                      model_settings=self._settings(),
+                      tools=[self._function_tool(self.assembly.tools[tool], ctx) for tool in tools])
+        try:
+            result = await Runner.run(agent, evidence, context=ctx, max_turns=max_turns,
+                                      hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
+                                      run_config=RunConfig(workflow_name=f"{JUDGE}:{name}"))
+        except MaxTurnsExceeded:
+            return Verdict(passed=False, next_prompt=None,
+                           feedback=f"The judge ran out of turns ({max_turns}) before reaching a verdict.")
+        return result.final_output
+
     def describe(self) -> list[str]:
         self.build()
         config = self.assembly.drop_in.config
@@ -141,12 +166,16 @@ class OpenAIAgentsRuntime(AgentRuntime):
         instructions = (data.model_data.instructions or "") + f"\n\n<resource_status>\n{status}\n</resource_status>"
         return ModelInputData(input=items, instructions=instructions)
 
-    def _function_tool(self, tool: Tool) -> FunctionTool:
-        ctx = self.assembly.context
+    def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
+        ctx = ctx or self.assembly.context
 
-        async def invoke(_: ToolContext[Any], raw: str) -> str:
+        async def invoke(_: ToolContext[Any], raw: str):
             try:
-                return await tool.invoke(ctx, tool.Arguments.model_validate_json(raw or "{}"))
+                output = await tool.invoke(ctx, tool.Arguments.model_validate_json(raw or "{}"))
+                if isinstance(output, list):
+                    return [ToolOutputImage(image_url="data:image/png;base64," + base64.b64encode(item.png).decode())
+                            if isinstance(item, ToolImage) else ToolOutputText(text=item) for item in output]
+                return output
             except (ToolError, ValidationError) as exc:
                 return f"error: {exc}"
 

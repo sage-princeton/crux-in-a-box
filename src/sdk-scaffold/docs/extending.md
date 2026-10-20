@@ -52,7 +52,7 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 
 | Field | Use |
 |---|---|
-| `workspace` | `read_file`, `write_file` and `list_files` are confined to the workspace and raise `ToolError` outside it. `run_shell(command, timeout)` starts in the workspace but is not sandboxed. Its output is capped and prefixed with `exit_code=`. |
+| `workspace` | `read_file`, `read_bytes`, `write_file` and `list_files` are confined to the workspace and raise `ToolError` outside it. `run_shell(command, timeout)` starts in the workspace but is not sandboxed. Its output is capped and prefixed with `exit_code=`. |
 | `state_dir` | The run's own state, from `--state-dir`. It sits outside the workspace and persists across restarts. Each component creates what it writes there. |
 | `model`, `reasoning_effort` | The run's model and effort, for every agent and coding agent. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` are the only place they are set; `model` raises `InvalidDropInError` when `CRUX_MODEL` is unset. |
 | `env` | The scaffold's environment. Read configuration from here, not from `os.environ`, so tests can inject it. |
@@ -64,7 +64,13 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 
 ## Tools (`Tool`)
 
-`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `command`, `rest`, `budget_status`.
+`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status`.
+
+`read_pdf(path, page)` reads one 1-based PDF page from `ctx.workspace.read_bytes`. It returns the page count,
+extracted text (capped at 20,000 characters), and a PNG rendering (at most 1,600 pixels on its longest side).
+Figures reach the model as image content. It reads no PDF metadata or embedded attachments and runs no artifact
+code. Invalid PDFs and page numbers return `ToolError` with no source paths. PDFium and Pillow are pinned
+dependencies; there is no shell command or external converter.
 
 ```python
 class PreviewArguments(Arguments):
@@ -82,7 +88,7 @@ class SitePreview(Tool):
 
 - **`description`** is what the model reads. Make it a class attribute, or a property when an option sets it, as `command` does.
 - **`Arguments`** is the model-facing schema. The runtime sends it in strict mode, so every field is required and should have a `description`. A tool with no arguments keeps the empty base `Arguments`.
-- **`invoke`** returns text for the model. Raise `ToolError` for anything the model should fix. Any other exception is a bug in the tool, not feedback for the model.
+- **`invoke`** returns `ToolOutput`: text, or a list of text and SDK-neutral `ToolImage(png: bytes)` objects. The runtime translates images into native model image content. Raise `ToolError` for anything the model should fix; other exceptions are tool bugs.
 - **`Options`** is the drop-in's configuration of the tool, from `[tools.<name>]`, such as `rest`'s bounds. Policy that limits the agent belongs here, not in `Arguments`.
 - **One instance per declared name** is shared by every agent that lists it. State on the instance, such as `rest`'s time used, is shared too.
 - **Declare** it in an agent's `tools` list. A `[tools.<name>]` table is needed only for options or for a `type` other than the name. For example, `[tools.site_tests]` with `type = "command"`.
@@ -97,12 +103,13 @@ class SitePreview(Tool):
 
 ## Gates (`Gate`)
 
-`gates.py`, registry `GATES`. Built-in: `command`.
+`gates.py`, registry `GATES`. Built-ins: `command`, `llm_judge`.
 
 - **`evaluate(ctx: GateContext) -> GateResult`** decides whether the phase may end. Don't override `check`: it calls `evaluate` and records the result as an `evaluator` observation.
 - **`GateContext`** carries:
   - `run`, the `RunContext`;
   - `drop_in`;
+  - `runtime`, for gates that ask a model;
   - `phase` and `iteration`;
   - `last_output`, the orchestrator's final output for the iteration.
 - **`GateResult`** has:
@@ -111,8 +118,42 @@ class SitePreview(Tool):
   - an optional `next_prompt`, which replaces the continue prompt.
 
   Cap long feedback, as `command` does with `MAX_FEEDBACK_CHARS`.
+- **A judgment gate asks the runtime.** `llm_judge` calls `ctx.runtime.judge(...)`, an isolated agent with no session. It sees the rubric and the evidence the gate assembles, and checks the work with the scaffold tools the gate names. A new judgment gate also calls `judge`, rather than an SDK, so gates stay SDK-neutral.
+- **`tools`** lists the scaffold tools a gate's checks call, by declared name. The scaffold builds them along with the agents' tools. The default is none; `llm_judge` returns its `tools` option (`read_file` and `list_files` unless declared).
+- **`validate_tools(tools)`** runs in the composition root after tools are built and before the runtime is
+  constructed. The default does nothing; `llm_judge` rejects unsafe tools in blind mode at assembly time.
 - **A gate's definition comes from the drop-in,** never from files the agents can edit. That is what lets a gate judge the agents' work.
 - **Declare** it under `[gates.<name>]` and list it in a phase's `gates`.
+
+### Blind `llm_judge` evidence policy
+
+Ordinary judging is unchanged: `rubric`, `inspect`, `tools` and `max_turns` work as before. `blind` defaults to
+false. With `blind = true`, `artifacts` must be a nonempty alias-to-workspace-path mapping and `inspect` must be
+empty. Artifact sources must be relative file paths without `..`; aliases must match
+`[A-Za-z0-9][A-Za-z0-9_.-]*`. `artifacts` is rejected outside blind mode. Unknown options remain errors.
+
+Each evaluation creates a new `ReviewWorkspace.snapshot` from those exact files, using descriptor-relative opens
+with no symlink following at the workspace root or in any source component. Only regular files up to 32 MiB each
+are accepted. Missing or
+inaccessible submissions fail the gate with an alias-only error, without a model call. The snapshot holds bytes in
+memory, so later source edits cannot change that review's evidence. No original path, timestamp or directory tree
+is exposed. `read_file` and `read_bytes` accept exact aliases; `list_files(".")` returns only aliases. Other reads,
+directory listings, path resolution, writes and shell commands fail. Errors do not echo physical paths.
+
+The gate sends only the fixed rubric and sorted alias list to `runtime.judge`, passing the snapshot as
+`review_workspace`. Only exact built-in `read_file`, `list_files` and `read_pdf` implementations are allowed;
+subclasses and custom commands cannot bypass the boundary. Those tools can have declared names, which must also
+be neutral. A fresh reviewer agent uses no session, delegate, MCP server, standing context or context strategy.
+It has the neutral agent name `judge`; the operator-facing workflow and ledger still identify `judge:<gate>`.
+Each model call counts, including calls before turn exhaustion, and `Gate.check` records the reviewer-authored
+structured result as an evaluator observation. Previous verdicts never return to the next reviewer.
+
+The drop-in supplies the rubric, artifact selection and anonymized contents, including any acceptance threshold.
+Do not permit author conversations, plans/logs, previous reviews, expected scores or revision cues. This policy
+restricts evidence access; it does not remove identifying text or labels inside an explicitly permitted artifact.
+Read-only verification compares permitted text/data and PDF text/figures; blind mode does not execute submitted
+code or provide an unsandboxed command tool. Exercise the real runtime with the configured formats and rubric
+before a research run; automated tests must stay offline.
 
 ## Loops (`Loop`)
 
@@ -138,7 +179,7 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 `context_strategies.py`, registry `CONTEXT_STRATEGIES`. Built-in: `persistent`.
 
 - **`session(session_id, state_dir)`** returns the orchestrator's durable conversation store. The default is SQLite in `state_dir`, which survives restarts.
-- **`select(items)`** returns the items sent on the next model call. The runtime applies it to every model call, delegated agents included. The stored history is unchanged.
+- **`select(items)`** returns the items sent on the next model call. The runtime applies it to orchestrator and delegate model calls; isolated judges use their own evidence. The stored history is unchanged.
 - **Standing context is never trimmed.** Personas and standing context are the agents' instructions, not conversation items, so `select` never sees them.
 - **Strategies use the runtime's types.** Items and `Session` are OpenAI Agents SDK types today, so a strategy targets the `openai-agents` runtime. A second runtime decides whether to adapt them or to take strategies of its own.
 
@@ -168,6 +209,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 |---|---|
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
+| `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent. |
 | `describe()` | One line per agent, printed by `check`. |
 | `probe(env, prompt, telemetry)` (classmethod) | One traced model call outside any drop-in, which provisioning uses to prove the runtime works. |
 
@@ -184,7 +226,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
   - A delegated agent or coding agent is a tool whose call starts from a fresh context holding only the caller's brief.
   - A coding agent is called through `CodingAgent.run`.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
-- **Context.** Apply `context_strategy.select` to every model call, then append `await ctx.budget_status()` to ephemeral instructions. The status must survive trimming and must not accumulate in stored history; delegated SDK agents receive it too.
+- **Context.** Apply `context_strategy.select` to orchestrator and delegate model calls, then append `await ctx.budget_status()` to ephemeral instructions. The status must survive trimming and must not accumulate in stored history; delegated SDK agents receive it too. Isolated judges skip this filter so run metadata and resource status cannot enter their evidence.
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
 - **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).
