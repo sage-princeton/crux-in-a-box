@@ -59,3 +59,89 @@ sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
   /usr/bin/python3 /usr/local/lib/crux/run_provision.py check \
   --manifest /etc/crux-provision.json
 ```
+
+## Manual gog authentication
+
+Provisioning installs `gog`; the operator authorizes the mailbox before starting
+`crux-sdk-run`. Keep manifest `checks` limited to installation checks, since they
+also run during provisioning, before this manual setup.
+
+Enable the Gmail API and create a **Desktop app** OAuth client in Google Cloud.
+Securely copy its client JSON to the box outside the checkout (mode 600).
+For long runs, avoid Google's seven-day refresh-token expiry for apps in Testing;
+see the [pinned upstream setup guide](https://github.com/openclaw/gogcli/blob/v0.28.0/README.md#avoid-the-seven-day-oauth-expiry).
+
+SSH into the box **as `ubuntu`**, with the run stopped, then authorize:
+
+```bash
+umask 077
+export PATH="/opt/crux-run-tools/bin:$PATH"
+export GOG_HOME="$HOME/.config/crux-gog" GOG_KEYRING_BACKEND=file
+export GOG_ACCOUNT='review-mailbox@example.com' # replace with your mailbox
+read -rsp 'Choose a gog keyring password: ' GOG_KEYRING_PASSWORD
+printf '\n'
+export GOG_KEYRING_PASSWORD
+install -d -m 700 "$GOG_HOME"
+gog auth credentials /secure/client_secret.json # your copied JSON
+gog auth add "$GOG_ACCOUNT" --services gmail --manual
+```
+
+Open the printed consent URL in your local browser and follow gog's instructions
+to paste the resulting redirect URL back into SSH. The client JSON alone does
+not grant mailbox access; this consent stores the refresh token.
+
+Shell exports do not reach systemd. Create a separate root-only environment file
+(`sudo install -m 600 /dev/null /etc/crux-gog.env`, then
+`sudoedit /etc/crux-gog.env`) containing the same values:
+
+```ini
+GOG_HOME=/home/ubuntu/.config/crux-gog
+GOG_KEYRING_BACKEND=file
+GOG_ACCOUNT=review-mailbox@example.com
+GOG_KEYRING_PASSWORD="the password chosen above"
+```
+
+Keep this file, the client JSON, and gog's state out of git and logs. Do not add
+these values to `/etc/crux-run.env`, which reprovisioning overwrites. Install a
+systemd drop-in to load the separate file and keep refreshed state private:
+
+```bash
+sudo install -d /etc/systemd/system/crux-sdk-run.service.d
+sudo tee /etc/systemd/system/crux-sdk-run.service.d/gog.conf >/dev/null <<'EOF'
+[Service]
+EnvironmentFile=/etc/crux-gog.env
+UMask=0077
+EOF
+sudo systemctl daemon-reload
+```
+
+After the remaining prelaunch steps, check read-only Gmail access as the run user
+with both environment files and the workspace directory; start only on success:
+
+```bash
+sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
+  --property=EnvironmentFile=/etc/crux-run.env \
+  --property=EnvironmentFile=/etc/crux-gog.env \
+  --property=UMask=0077 \
+  --working-directory=/srv/crux-run/run-harness/workspace \
+  /opt/crux-run-tools/bin/gog --no-input --json gmail labels list >/dev/null &&
+  sudo systemctl start crux-sdk-run
+```
+
+Expose gog through a drop-in `command` tool and include it in the intended
+agent's `tools` list, for example:
+
+```toml
+[tools.review_mailbox]
+type = "command"
+description = "List the review mailbox's Gmail labels."
+command = "gog --no-input --json gmail labels list"
+timeout_seconds = 30
+```
+
+Command tools inherit the service environment; MCP servers need explicit
+`GOG_*` environment mappings. Codex shells have separate secret filtering and
+sandbox rules, so use the command/MCP tool for mailbox access. If access fails,
+leave the run stopped, repeat authorization as `ubuntu` with the same home and
+keyring password, and rerun the access check. Reprovisioning preserves this
+manual state and service drop-in; a replacement box needs setup again.
