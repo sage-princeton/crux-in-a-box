@@ -36,7 +36,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
 | Context management and standing-context injection | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
-| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status`, `escalate` |
+| Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; `escalate` outbox |
 | Observability | `Telemetry` | Langfuse, or off |
@@ -195,6 +195,14 @@ Gates, context strategies, coding agents, loops and runtimes extend the same way
 
 A CRUX with different needs changes declarations, not code. The same drop-in could, for example:
 
+- **Let an agent choose shell commands.** Add `run_shell` to its tools and optionally set a timeout (default 600 seconds). Commands run through Bash from the workspace root and return the exit code and combined output.
+  ```toml
+  [agents.product_manager]
+  tools = ["read_file", "run_shell"]
+
+  [tools.run_shell]
+  timeout_seconds = 300
+  ```
 - **Judge the outcome, not just the tests.** Add an isolated `llm_judge` gate to the `implement` phase. The judge is an agent with no access to the orchestrator's conversation. It starts from its rubric, the orchestrator's final output and the workspace files listed in `inspect`, then verifies the work with its `tools`: `read_file` and `list_files` by default, plus any declared tool, such as a `command` tool that runs the tests. Running out of `max_turns` fails the gate. Have the rubric ask the judge to cite what it checked. It can write the next prompt itself.
   ```toml
   [[loop.phases]]
