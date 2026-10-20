@@ -241,6 +241,8 @@ Set `AGENT_PLATFORM=openai-agents` and `DROP_IN_PATH=<drop-in directory>` in the
 3. It installs system Bubblewrap and Ubuntu's AppArmor profile for it, then checks sandboxed shell execution and file write/readback before running `probe --coding-agent codex`. `workspace-write` remains the default; global user-namespace restrictions are unchanged.
 4. It installs `crux-sdk-run.service`, but does not start it.
 
+The automated EC2 flow currently supports direct OpenAI only: its preflight rejects `MODEL_PROVIDER=openrouter`, and its provisioning probe does not load the drop-in's provider settings and always probes Codex too. Use the CLI workflow above for Argon. Provisioning needs those assumptions removed before it can launch a compatible-provider run; this runtime change does not configure the separate Codex harness.
+
 ## Development
 
 ```bash
