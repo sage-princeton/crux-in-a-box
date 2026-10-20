@@ -33,7 +33,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 
 | Responsibility | Interface (registry) | Built-in types |
 |---|---|---|
-| Agent orchestration, model configuration | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
+| Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents` |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
 | Context management and standing-context injection | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status` |
@@ -108,6 +108,49 @@ context_max_chars = 32000                # total snapshot limit, including trunc
 Static files must exist at launch. Dynamic paths may be created during the run; absent files appear as `[Not created yet.]`. Paths stay within their declared root, including symlinks. Files are read when the strategy injects a snapshot. `persistent` injects once on the first turn and keeps that snapshot across restarts. `openai_compaction` also injects on the first turn after compaction. `trim_recent` refreshes when the previous snapshot falls outside its recent history and retains it throughout tool calls. Personas remain model instructions on every call.
 
 Snapshots are developer messages saved with the conversation. They are capped at `context_max_chars` (default 32,000; minimum 200), with a notice directing the agent to read the full files when truncated. Each fresh agent delegate and each coding brief reads its own current snapshot. For coding agents it becomes developer instructions in their fresh SDK session; their coding harness manages subsequent context. A persistent conversation does not refresh files on every turn, so agents still read files they need updated between snapshots.
+
+## Rest while coding delegates work
+
+Coding delegates normally return only when their work finishes. This already waits without repeated orchestrator model calls, but the orchestrator cannot check progress or revise its wait during the call. Enable `background_coding` to let the orchestrator start a coding delegate, choose a rest duration, and check the result afterward.
+
+Merge this fragment into a drop-in that already declares its loop, prompts and workspace, and supply `personas/pi.md`:
+
+```toml
+orchestrator = "pi"
+
+[runtime]
+type = "openai-agents"
+background_coding = true
+
+[agents.pi]
+persona = "personas/pi.md"
+tools = ["rest"]
+delegates = ["engineer"]
+
+[coding_agents.engineer]
+type = "codex"
+description = "Implement the coding task in the brief and report the changes and verification."
+sandbox = "workspace-write"
+
+[tools.rest]
+min_seconds = 10
+max_seconds = 900
+total_seconds = 3600
+```
+
+The PI's persona can instruct it to estimate task duration from the brief and progress, then choose each wait. For example:
+
+1. Start a short task with `engineer(brief="...")`, then request `rest(seconds=30, reason="Allow time for the small change and its tests")`.
+2. Call `engineer_result(wait=false)`. If it is still running, revise the estimate and request `rest(seconds=90, reason="Allow more time for verification")`, then check again.
+3. After collecting that result, start a larger task and choose `rest(seconds=600, reason="Allow time for the broader implementation and test suite")` before checking its result.
+
+The worker continues during each rest. The PI chooses the estimates; the scaffold does not calculate them. A rest requires no repeated PI model calls, and does not wake early when the worker finishes or an operator posts a message. The generated result tool returns immediately with status or a completed result when `wait=false`; `wait=true` waits for completion without polling or further PI model calls. Use that native wait when the explicit rest allowance is exhausted. It does not consume rest allowance or impose a coding-task wall-time limit.
+
+With the settings above, a request for 1 second grants 10 seconds, and a request for 1200 grants 900. Each grant is also capped by the remaining allowance, even when fewer than 10 seconds remain. At zero allowance, `rest` returns an exhaustion message without sleeping. Tool inputs show the request; the response reports the granted duration and remaining allowance. The defaults are 10 seconds minimum, 300 maximum and 3600 cumulative; increasing `max_seconds` enables longer waits.
+
+Rest allowance belongs to the declared tool instance, shared by every agent using that name, and resets when the scaffold is assembled again. Use sequential rest calls as in this example: concurrent calls to the same instance can overcommit its remaining allowance because usage is recorded after each sleep completes.
+
+Each declared coding delegate has one outstanding task shared by its callers. Collect its result before starting another brief. Tasks live within the current runtime call: before returning to the loop's gates and state save, the runtime awaits outstanding work, appends any uncollected results to the turn output, and records them in the PI's existing session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Errors or cancellation cancel and await remaining tasks. Pending tasks are not restored after restart; ordinary SDK delegates retain their blocking behavior. Run-wide delegation limits and automatic operator steering are separate capabilities; see the [runtime contract](docs/extending.md#agent-runtimes-agentruntime).
 
 ## Extending
 

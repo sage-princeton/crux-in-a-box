@@ -93,6 +93,14 @@ class SitePreview(Tool):
 - **One instance per declared name** is shared by every agent that lists it. State on the instance, such as `rest`'s time used, is shared too.
 - **Declare** it in an agent's `tools` list. A `[tools.<name>]` table is needed only for options or for a `type` other than the name. For example, `[tools.site_tests]` with `type = "command"`.
 
+### Rest bounds and allowance
+
+`rest` takes agent-selected `seconds` (an integer) and `reason`. Its `RestOptions` are `min_seconds` (default 10), `max_seconds` (300) and `total_seconds` (3600). Each call grants `min(max(seconds, min_seconds), max_seconds, remaining)`, then awaits `ctx.sleep(granted)`. Declare sensible bounds with `min_seconds <= max_seconds`; increasing `max_seconds` permits waits longer than the default five minutes. The remainder can shorten the final wait below the minimum. Exhausted allowance returns feedback immediately without sleeping.
+
+The return value reports the granted duration and remaining allowance; the tool-call input preserves the requested duration. Waiting itself requires no model calls. Rest does not interrupt on coding completion or incoming steering. The PI chooses its estimate and can change it between calls; see the [configuration and calling example](../README.md#rest-while-coding-delegates-work).
+
+Allowance is mutable state on the shared tool instance, not persisted run state. Reassembling the scaffold resets it. Usage is added after sleeping, so simultaneous calls can overcommit the remaining allowance; use sequential calls when the cumulative allowance must hold. `total_seconds` limits this tool's explicit sleeps, not coding execution time or the native completion wait of a delegate.
+
 ## MCP servers (steering and external systems)
 
 `[mcp_servers.<name>]` in `scaffold.toml`, with `McpServerConfig` in `config.py`. These are not components. Any stdio MCP server becomes a set of tools for the agents whose `mcp_servers` list names it. A steering channel, such as the demo's Slack integration, is an MCP server, so adding a channel normally needs no scaffold code.
@@ -200,6 +208,7 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 - **Long turns stream progress.** Send each finished step as `ctx.telemetry.record(...)` while the turn runs, as `codex` does with each item.
 - **Sandboxing is the coding agent's own,** declared in its options, such as `codex`'s `sandbox`.
 - **Declare** it under `[coding_agents.<name>]` and list it in an agent's `delegates`. The runtime exposes it as a tool that takes one `brief` argument.
+- **Background execution** is an option of the `openai-agents` runtime. `CodingAgent.run` and `execute` still run one brief to completion; the runtime owns the task and exposes result retrieval to callers.
 
 ## Agent runtimes (`AgentRuntime`)
 
@@ -235,6 +244,20 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
 - **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).
+
+### Optional background coding
+
+`[runtime] background_coding = true` enables background coding delegates in `openai-agents`; the default is `false`, retaining the synchronous delegation contract. It does not change ordinary SDK-agent delegates.
+
+- Calling a coding delegate, such as `engineer(brief)`, starts `CodingAgent.run` in an asynchronous task and returns its running status. The worker continues while the caller uses other tools, including `rest`.
+- Every agent that can delegate to `engineer` also receives the generated `engineer_result` tool. Its required boolean `wait` selects an immediate status/result check (`false`) or an await of the result (`true`). A native wait needs no repeated model calls and does not use `rest` allowance.
+- There is one outstanding task per declared coding-agent name across all callers. A second start is rejected until the first result is collected, including when the worker has already finished. The result is shared across callers and collection releases the slot for another brief.
+- Generated result-tool names must not conflict with other tools or delegates. Declared-name conflicts are rejected while assembling; MCP tool-name conflicts are checked when connecting the servers. Both checks happen before any model call.
+- Before `runtime.run` returns normally or because `max_turns` was reached, it awaits every outstanding coding task, appends uncollected outputs to `TurnOutcome.final_output`, and records them in the existing PI session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Thus phase gates and the loop's state/usage save run after the work finishes. Finishing the PI's response does not detach a worker; persisting completed results does not resume pending tasks.
+- On exceptions or cancellation, the runtime cancels and awaits outstanding tasks. Background tasks are ephemeral: there is no durable job registry, restart attachment, or recovery contract.
+- Coding usage and progress keep the existing `CodingAgent.run` telemetry/ledger path. Waiting imposes no cumulative coding wall-time limit; the loop still checks its token budget between iterations.
+
+The one-task-per-name rule is not a run-wide concurrency/depth policy and does not constrain native subagents inside a coding harness. That policy is tracked separately in [AE-259](https://linear.app/agent-evals/issue/AE-259/add-configurable-delegation-concurrency-and-depth-limits-to-the-sdk). Operator messages still reach the model through its MCP reads; `rest` and native result waits do not add automatic steering or interruption. Defined steering boundaries are tracked in [AE-263](https://linear.app/agent-evals/issue/AE-263/support-reliable-operator-steering-and-agent-escalations-in-the-sdk).
 
 ## Telemetry (`Telemetry`)
 
