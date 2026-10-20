@@ -125,6 +125,8 @@ python -m crux_scaffold run --drop-in DIR --state-dir STATE     # run the loop; 
 python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (plus one Codex turn)
 ```
 
+`probe --coding-agent codex` retries temporary-directory cleanup for up to 3.1 seconds when Codex's background plugin checkout is still writing files after its session closes. Other cleanup errors, or a directory that remains busy, still fail the probe.
+
 `check` and `probe` are the first two of the team's testing protocols: nothing in the environment is broken, and the agent can do anything at all. Exit codes:
 
 - 0: the loop completed.

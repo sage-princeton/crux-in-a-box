@@ -1,3 +1,4 @@
+import errno
 import signal
 
 import pytest
@@ -101,3 +102,69 @@ def test_the_state_directory_is_required(drop_in_dir, command, capsys):
         main([command, "--drop-in", str(drop_in_dir)], env={"CRUX_MODEL": "unscripted"})
     assert exit_info.value.code == 2
     assert "--state-dir" in capsys.readouterr().err
+
+
+def test_coding_probe_retries_temporary_directory_cleanup(monkeypatch):
+    import asyncio
+
+    from crux_scaffold.coding_agents import CodexCodingAgent, CodingResult
+    from crux_scaffold.telemetry import NullTelemetry
+    from crux_scaffold.usage import TokenUsage
+
+    cleanup = cli.tempfile.TemporaryDirectory.cleanup
+    directories, attempts, delays = [], [], []
+
+    async def answer(self, request, ctx):
+        directories.append(ctx.workspace.root)
+        (ctx.state_dir / "plugins").mkdir(parents=True)
+        return CodingResult(completed=True, final_response=request, usage=TokenUsage())
+
+    def racing_cleanup(directory):
+        attempts.append(directory.name)
+        if len(attempts) == 1:
+            raise OSError(errno.ENOTEMPTY, "Directory not empty", "plugins")
+        cleanup(directory)
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    monkeypatch.setattr(CodexCodingAgent, "run", answer)
+    monkeypatch.setattr(cli.tempfile.TemporaryDirectory, "cleanup", racing_cleanup)
+    monkeypatch.setattr(cli.asyncio, "sleep", sleep)
+    assert asyncio.run(cli.probe_coding_agent("codex", {"CRUX_MODEL": "test"}, NullTelemetry(),
+                                            cli.PROBE_MARKER)) == cli.PROBE_MARKER
+    assert len(attempts) == 2
+    assert delays == [0.1]
+    assert all(not directory.exists() for directory in directories)
+
+
+@pytest.mark.parametrize("error,expected_attempts", [(errno.ENOTEMPTY, 6), (errno.EACCES, 1)])
+def test_coding_probe_does_not_hide_cleanup_errors(monkeypatch, tmp_path, error, expected_attempts):
+    import asyncio
+
+    from crux_scaffold.coding_agents import CodexCodingAgent, CodingResult
+    from crux_scaffold.telemetry import NullTelemetry
+    from crux_scaffold.usage import TokenUsage
+
+    attempts = []
+
+    class BusyDirectory:
+        name = str(tmp_path)
+
+        def cleanup(self):
+            attempts.append(1)
+            raise OSError(error, "cleanup failed")
+
+    async def answer(self, request, ctx):
+        return CodingResult(completed=True, final_response=request, usage=TokenUsage())
+
+    async def sleep(delay):
+        pass
+
+    monkeypatch.setattr(CodexCodingAgent, "run", answer)
+    monkeypatch.setattr(cli.tempfile, "TemporaryDirectory", BusyDirectory)
+    monkeypatch.setattr(cli.asyncio, "sleep", sleep)
+    with pytest.raises(OSError) as exc:
+        asyncio.run(cli.probe_coding_agent("codex", {"CRUX_MODEL": "test"}, NullTelemetry(), cli.PROBE_MARKER))
+    assert exc.value.errno == error
+    assert len(attempts) == expected_attempts

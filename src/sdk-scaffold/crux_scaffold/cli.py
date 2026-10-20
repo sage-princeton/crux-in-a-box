@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import os
 import signal
 import sys
@@ -125,6 +126,17 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
 async def probe_coding_agent(type_name: str, env: Mapping[str, str], telemetry: Telemetry, request: str) -> str:
     cls, options = CODING_AGENTS.resolve("probe", {"type": type_name, "description": "provisioning probe"})
     agent = cls("probe", options)
-    with tempfile.TemporaryDirectory() as tmp:
-        ctx = RunContext(Workspace(Path(tmp)), Path(tmp) / ".state", env, UsageLedger(), Budget(), telemetry)
+    directory = tempfile.TemporaryDirectory()
+    try:
+        root = Path(directory.name)
+        ctx = RunContext(Workspace(root), root / ".state", env, UsageLedger(), Budget(), telemetry)
         return (await agent.run(request, ctx)).final_response
+    finally:
+        for attempt in range(6):
+            try:
+                directory.cleanup()
+                break
+            except OSError as exc:
+                if exc.errno != errno.ENOTEMPTY or attempt == 5:
+                    raise
+                await asyncio.sleep(0.1 * 2 ** attempt)
