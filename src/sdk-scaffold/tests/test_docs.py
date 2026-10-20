@@ -12,12 +12,14 @@ from crux_scaffold.components import Registry
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS
+from crux_scaffold.resources import RESOURCE_PROVIDERS
 from crux_scaffold.tools import TOOLS
 
 DOC = Path(__file__).resolve().parents[1] / "docs" / "extending.md"
 EXTENSION_POINTS = [("Tool", "TOOLS", TOOLS), ("Gate", "GATES", GATES), ("Loop", "LOOPS", LOOPS),
                     ("ContextStrategy", "CONTEXT_STRATEGIES", CONTEXT_STRATEGIES),
-                    ("CodingAgent", "CODING_AGENTS", CODING_AGENTS), ("AgentRuntime", "RUNTIMES", RUNTIMES)]
+                    ("CodingAgent", "CODING_AGENTS", CODING_AGENTS), ("AgentRuntime", "RUNTIMES", RUNTIMES),
+                    ("ResourceProvider", "RESOURCE_PROVIDERS", RESOURCE_PROVIDERS)]
 
 
 def built_ins(registry: Registry) -> list[str]:

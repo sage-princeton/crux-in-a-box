@@ -12,8 +12,10 @@ from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.drop_in import DropInDirectory
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS, LoopOutcome, StateFile
+from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import TOOLS, Tool
 from crux_scaffold.workspace import RunContext, Sleep, Workspace
@@ -30,6 +32,12 @@ class Scaffold:
         self.state = self.store.load()
         self.context = RunContext(Workspace(drop_in.workspace), state_dir, env, self.state.usage, config.budget,
                                   telemetry, sleep)
+        providers = {name: RESOURCE_PROVIDERS.create(name, table) for name, table in config.resources.items()}
+        for provider in providers.values():
+            provider.validate(env)
+        if config.budget.max_cost_usd is not None and config.budget.model_resource not in providers:
+            raise InvalidDropInError("budget.model_resource must name a declared resource when max_cost_usd is set")
+        self.context.resources = ResourceMonitor(providers) if providers else None
         self.strategy = CONTEXT_STRATEGIES.create("context", config.context)
         self.loop = LOOPS.create("loop", config.loop, gates={name: GATES.create(name, table)
                                                              for name, table in config.gates.items()})
@@ -50,16 +58,23 @@ class Scaffold:
         return agents
 
     async def run(self) -> LoopOutcome:
+        if self.state.usage.started_at is None:
+            self.state.usage.started_at = self.context.now()
+        self.store.save(self.state)
         try:
             async with self.runtime:
                 return await self.loop.run(self.runtime, self.drop_in, self.context, self.state, self.store)
         finally:
-            self.context.telemetry.flush()
+            try:
+                self.store.save(self.state)
+            finally:
+                self.context.telemetry.flush()
 
     def describe(self) -> list[str]:
         config = self.drop_in.config
         return [f"drop-in {self.drop_in.root}; runtime {self.runtime.type_name}; orchestrator {config.orchestrator}",
-                f"context {self.strategy.type_name}; budget {config.budget.max_total_tokens or 'none'} tokens",
+                f"context {self.strategy.type_name}; budget {config.budget.model_dump(exclude_none=True)}",
+                *(f"resource {name}: {table.get('type', name)}" for name, table in config.resources.items()),
                 *self.runtime.describe(),
                 *(f"{name}: coding agent {agent.type_name}" for name, agent in self.coding_agents.items()),
                 *self.loop.describe(),

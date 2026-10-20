@@ -25,6 +25,7 @@ Prefer the first option that works:
 | Which agent SDK runs the agents | [`AgentRuntime`](#agent-runtimes-agentruntime) | `[runtime]` |
 | Where traces go | [`Telemetry`](#telemetry-telemetry) | Langfuse environment variables |
 | Hard resource limits | [`Budget`](#budget-and-usage) | `[budget]` |
+| External consumption and credits | [`ResourceProvider`](#resource-providers-resourceprovider) | `[resources.<name>]` |
 
 ## The component pattern
 
@@ -55,7 +56,9 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 | `state_dir` | The run's own state, from `--state-dir`. It sits outside the workspace and persists across restarts. Each component creates what it writes there. |
 | `model`, `reasoning_effort` | The run's model and effort, for every agent and coding agent. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` are the only place they are set; `model` raises `InvalidDropInError` when `CRUX_MODEL` is unset. |
 | `env` | The scaffold's environment. Read configuration from here, not from `os.environ`, so tests can inject it. |
-| `usage`, `budget` | The token ledger and its limits. See [Budget and usage](#budget-and-usage). |
+| `usage`, `budget` | The token ledger, persisted start time, and budget limits. See [Budget and usage](#budget-and-usage). |
+| `resources` | Optional `ResourceMonitor` assembled from declared providers. `await budget_status()` refreshes and formats all usage; `budget_exhausted()` checks known limits. |
+| `now` | UTC clock callable, replaceable in tests. |
 | `telemetry` | See [Telemetry](#telemetry-telemetry). |
 | `sleep` | Every wait goes through this, so tests run without real time passing. |
 
@@ -125,7 +128,7 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
   - call `store.save(state)` after every iteration, so a restarted scaffold resumes where it stopped;
   - an iteration interrupted by a stop reruns.
 - **Bounded:**
-  - check `ctx.budget.exhausted(ctx.usage)` before each iteration;
+  - `await ctx.refresh_resources()` then check `ctx.budget_exhausted()` before each iteration;
   - return `budget_exhausted` or `iterations_exhausted` instead of running on. The CLI exits 3 for both.
 - **Traced:** wrap each iteration in `ctx.telemetry.trace(...)`, one trace per iteration.
 - **Inspectable:** `describe()` returns the lines that `check` prints.
@@ -181,7 +184,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
   - A delegated agent or coding agent is a tool whose call starts from a fresh context holding only the caller's brief.
   - A coding agent is called through `CodingAgent.run`.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
-- **Context.** Apply `context_strategy.select` to every model call.
+- **Context.** Apply `context_strategy.select` to every model call, then append `await ctx.budget_status()` to ephemeral instructions. The status must survive trimming and must not accumulate in stored history; delegated SDK agents receive it too.
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
 - **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).
@@ -200,7 +203,26 @@ Langfuse v4 stores each observation once, when it ends, so keep observations sho
 
 ## Budget and usage
 
-`usage.py`. `Budget` (`[budget]`) holds hard limits, which the loop checks between iterations. `UsageLedger` tallies tokens per agent and coding agent, and it is persisted with the run state, so a restart keeps the count. The `budget_status` tool shows the agents where they stand. Any new component that calls a model adds its usage to `ctx.usage`. Otherwise the budget does not see it.
+`usage.py`. `Budget` (`[budget]`) declares finite nonnegative `max_total_tokens`, `max_cost_usd` (model USD), and `max_wall_seconds`, all optional. `model_resource` defaults to `models` and identifies the provider with `cost_usd`/`USD` and `total_tokens`/`tokens` metrics. A configured dollar budget requires that resource to be declared. The token limit uses `max(local, reported)`, avoiding overlap. External spending is reported independently; use per-provider limits for it.
+
+`UsageLedger` persists tokens per agent/coding agent and the timezone-aware `started_at`. The composition root saves the start before entering the runtime and saves again on exit, including interruption. The phased loop rolls back an unfinished iteration's counter, so restarting reruns it without resetting time or tokens. New model-calling components must add tokens to `ctx.usage`.
+
+`RunContext.budget_status(force=False)` refreshes the providers and formats local/remote usage, limits and remaining amounts. The runtime uses it before every model call; `budget_status` uses `force=True` to bypass cache intervals. `budget_exhausted()` checks the last known measurements. The loop enforces between iterations; delayed, missing and stale external data are visible, and outages alone do not stop a run. No provider totals are added together automatically.
+
+## Resource providers (`ResourceProvider`)
+
+`resources.py`, registry `RESOURCE_PROVIDERS`. Built-in: `langfuse`.
+
+Providers are separate from tools because they run deterministically without a model choosing to call them. They are separate from telemetry because they read external services, including non-model resources. They follow the same `Component`, `Options`, `Registry` pattern and are constructed only by `scaffold.py` from `[resources.<name>]`.
+
+- **`Options`** subclasses `ResourceOptions`: `refresh_seconds` (0), `timeout_seconds` (10), `limits` (empty map). Unknown options fail assembly. Limits compare consumption to a maximum in the metric's unit; remaining-credit measurements are informative, not consumption limits.
+- **`validate(env)`** rejects missing/invalid settings with `InvalidDropInError` during assembly. It must not query external services. Read settings from the supplied environment or `ctx.env`, never `os.environ`.
+- **`async read(ctx) -> ResourceSnapshot`** fetches measurements scoped to this run. Return `as_of` (aware timestamp), a `metrics` mapping of names to `ResourceMetric(value, unit)`, and a concise `note` describing scope/lag. Values must be finite and nonnegative. Missing measurements stay absent; do not substitute zero. Apply network timeouts and do not return raw provider payloads, credentials or prompts.
+- **`ResourceMonitor`** refreshes providers concurrently with bounded timeouts, serializes overlapping refreshes, honors caching, and retains last successful measurements on failure. `snapshot(name)`, `status(name)`, `describe(now)` and `exhausted()` expose the results. Reports show observation age, cache/error state, units and configured limits; exceptions are sanitized.
+- **`ResourceReadError`** carries a safe operator-facing recovery message. Build it only from fixed text or validated configuration, never a raw upstream exception, response body or credential. Other exceptions receive a generic unavailable message. Empty responses after populated measurements retain the prior snapshot as stale.
+- **`langfuse`** uses `url_env` (`COST_TRACKER_URL`) and `token_env` (`COST_TRACKER_TOKEN`) plus `RUN_SLUG`. It posts the persisted start to AE-225's endpoint, validates the returned run/time window, and reports `cost_usd`, `input_tokens`, `output_tokens`, `total_tokens`. No observations means unknown measurements, with an explicit note.
+
+To add refine.ink credits or another API, register a `ResourceProvider` in the drop-in's extension module and declare its type under `[resources.<name>]`. For example, report a `credits_used` metric with unit `credits`, then configure `limits = { credits_used = 100 }`. Its response automatically appears in every status block and participates in limit checks without changing the runtime or budget formatter. Tests should supply a fake provider, clock and HTTP/subprocess responses; never query a real account.
 
 ## Testing
 

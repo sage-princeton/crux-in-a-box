@@ -26,7 +26,8 @@ def test_agent_delegate_sees_its_persona_and_brief_but_not_the_callers_context(d
     reviewer = ScriptedModel(say("looks fine"))
     pm = ScriptedModel(call("reviewer", {"input": "Review NOTE.md"}, "p1"), say("Reviewed."))
     asyncio.run(assemble(drop_in_dir, {"pm": pm, "reviewer": reviewer}).run())
-    assert reviewer.instructions == ["You are the reviewer."]
+    assert len(reviewer.instructions) == 1
+    assert reviewer.instructions[0].split("\n\n<resource_status>")[0] == "You are the reviewer."
     assert "Review NOTE.md" in str(reviewer.inputs[0])
     assert "Handle the request" not in str(reviewer.inputs[0])
 
