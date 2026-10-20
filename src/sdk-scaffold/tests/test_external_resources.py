@@ -14,7 +14,7 @@ from pydantic import ValidationError
 from crux_scaffold import external_resources
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.external_resources import AwsCompute, AwsComputeOptions, Runpod, RunpodOptions
-from crux_scaffold.resources import ResourceReadError
+from crux_scaffold.resources import ResourceMonitor, ResourceReadError
 
 from scripted import ScriptedModel, call, say
 
@@ -23,8 +23,8 @@ START = datetime(2026, 10, 14, 12, 15, tzinfo=UTC)
 ENV = {"AWS_PROFILE": "test-profile", "RUN_SLUG": "run-one", "RUNPOD_API_KEY": "private-test-value"}
 
 
-def context():
-    return SimpleNamespace(env=ENV, now=lambda: NOW, usage=SimpleNamespace(started_at=START))
+def context(state_dir=None):
+    return SimpleNamespace(env=ENV, now=lambda: NOW, usage=SimpleNamespace(started_at=START), state_dir=state_dir)
 
 
 def aws_group(cost="2.50", quantity="3.0", usage_type="USE1-BoxUsage:t3.medium", unit="Hrs"):
@@ -88,9 +88,13 @@ def billing(pod, *, amount=2.5, records=True):
         "bucketSize": "hour"}}}
 
 
-def pod(pod_id, *, status="RUNNING", count=2):
+def pod(pod_id, *, status="RUNNING", count=2, run_slug="run-one"):
     return {"id": pod_id, "status": status, "gpu": {"count": count}, "cost": 1.25 if status == "RUNNING" else 0,
-            "env": {"SECRET": "private-pod-secret"}, "runtime": {"uptime": 3600}}
+            "env": {"CRUX_RUN_SLUG": run_slug, "SECRET": "private-pod-secret"}, "runtime": {"uptime": 3600}}
+
+
+def pod_page(*pods, cursor=None):
+    return {"pods": list(pods), "pagination": {"nextCursor": cursor, "hasNextPage": cursor is not None}}
 
 
 def mock_runpod(monkeypatch, responses):
@@ -109,6 +113,123 @@ def mock_runpod(monkeypatch, responses):
 
     monkeypatch.setattr(external_resources._HTTP, "open", open_request)
     return requests
+
+
+def test_runpod_discovers_only_owned_pods_created_after_initial_refresh(monkeypatch, tmp_path):
+    requests = mock_runpod(monkeypatch, [pod_page(pod("foreign", run_slug="run-two")),
+                                        pod_page(pod("foreign", run_slug="run-two"), pod("new-pod")),
+                                        billing("new-pod")])
+    provider = Runpod("gpu", RunpodOptions())
+    assert asyncio.run(provider.read(context(tmp_path))).metrics["cost_usd"].value == 0
+    result = asyncio.run(provider.read(context(tmp_path)))
+    assert result.metrics["cost_usd"].value == 2.5
+    assert result.metrics["running_gpus"].value == 2
+    queried = [parse_qs(urlsplit(r.full_url).query)["podId"] for r in requests
+               if urlsplit(r.full_url).path == "/v2/billing/pods"]
+    assert queried == [["new-pod"]]
+
+
+def test_runpod_retains_discovered_ids_after_termination_and_process_restart(monkeypatch, tmp_path):
+    mock_runpod(monkeypatch, [pod_page(pod("short-lived")), billing("short-lived"),
+                             pod_page(), billing("short-lived", amount=4)])
+    first = Runpod("gpu", RunpodOptions())
+    asyncio.run(first.read(context(tmp_path)))
+    restored = Runpod("gpu", RunpodOptions())
+    result = asyncio.run(restored.read(context(tmp_path)))
+    assert result.metrics["cost_usd"].value == 4
+    assert result.metrics["running_pods"].value == result.metrics["running_gpus"].value == 0
+    files = list(tmp_path.rglob("*.json"))
+    assert len(files) == 1
+    saved = files[0].read_text()
+    assert json.loads(saved)["pod_ids"] == ["short-lived"]
+    assert "private-pod-secret" not in saved and "private-test-value" not in saved
+
+
+def test_runpod_persists_discovery_before_a_billing_failure(monkeypatch, tmp_path):
+    mock_runpod(monkeypatch, [pod_page(pod("brief-pod")), TimeoutError(), pod_page(), billing("brief-pod")])
+    with pytest.raises(ValueError):
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    result = asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    assert result.metrics["cost_usd"].value == 2.5
+
+
+def test_runpod_discovers_across_pages_with_exact_marker_not_name_or_prefix(monkeypatch, tmp_path):
+    untagged = {**pod("untagged"), "name": "run-one-training", "env": {}}
+    requests = mock_runpod(monkeypatch, [pod_page(untagged, pod("foreign", run_slug="run-one-extra"), cursor="next"),
+                                        pod_page(pod("owned")), billing("owned")])
+    result = asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    assert result.metrics["cost_usd"].value == 2.5
+    assert parse_qs(urlsplit(requests[0].full_url).query) == {"includeClusterPods": ["true"], "limit": ["100"]}
+    assert parse_qs(urlsplit(requests[1].full_url).query)["cursor"] == ["next"]
+    assert json.loads(next(tmp_path.rglob("*.json")).read_text())["pod_ids"] == ["owned"]
+
+
+@pytest.mark.parametrize("failure", [pod_page(cursor="same"),
+                                   pod_page(pod("owned")), {"pods": [], "pagination": {"hasNextPage": True}},
+                                   TimeoutError()])
+def test_runpod_keeps_discovered_ids_when_a_later_discovery_page_fails(monkeypatch, tmp_path, failure):
+    mock_runpod(monkeypatch, [pod_page(pod("owned"), cursor="same"), failure,
+                             pod_page(), billing("owned")])
+    with pytest.raises((ValueError, KeyError)):
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    result = asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    assert result.metrics["cost_usd"].value == 2.5
+
+
+@pytest.mark.parametrize("change", ["slug", "start", "corrupt"])
+def test_runpod_never_reuses_inventory_for_another_run_or_silently_discards_corruption(monkeypatch, tmp_path, change):
+    requests = mock_runpod(monkeypatch, [pod_page(pod("owned")), billing("owned")])
+    asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    ctx = context(tmp_path)
+    if change == "slug":
+        ctx.env = {**ENV, "RUN_SLUG": "another-run"}
+    elif change == "start":
+        ctx.usage.started_at = NOW
+    else:
+        next(tmp_path.rglob("*.json")).write_text("not-json")
+    with pytest.raises((ResourceReadError, ValidationError)):
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(ctx))
+    assert len(requests) == 2
+
+
+def test_runpod_does_not_bill_a_known_pod_reassigned_to_another_run(monkeypatch, tmp_path):
+    mock_runpod(monkeypatch, [pod_page(pod("owned")), billing("owned"),
+                             pod_page(pod("owned", run_slug="another-run"))])
+    asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    with pytest.raises(ResourceReadError, match="changed ownership"):
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+
+
+def test_runpod_retains_discovery_during_pending_billing_and_recovers_after_restart(monkeypatch, tmp_path):
+    mock_runpod(monkeypatch, [pod_page(), pod_page(pod("new")), billing("new", records=False),
+                             pod_page(), billing("new", amount=4)])
+    monitor = ResourceMonitor({"gpu": Runpod("gpu", RunpodOptions())})
+    ctx = context(tmp_path)
+    asyncio.run(monitor.refresh(ctx, force=True))
+    first = monitor.snapshot("gpu")
+    asyncio.run(monitor.refresh(ctx, force=True))
+    assert monitor.status("gpu") == "stale" and monitor.snapshot("gpu") == first
+    restored = ResourceMonitor({"gpu": Runpod("gpu", RunpodOptions())})
+    asyncio.run(restored.refresh(ctx, force=True))
+    assert restored.status("gpu") == "fresh"
+    assert restored.snapshot("gpu").metrics["cost_usd"].value == 4
+
+
+def test_runpod_failed_inventory_replace_preserves_saved_ids_and_skips_billing(monkeypatch, tmp_path):
+    requests = mock_runpod(monkeypatch, [pod_page(pod("first")), billing("first"),
+                                        pod_page(pod("second"))])
+    asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    path = next(tmp_path.rglob("*.json"))
+    before = path.read_bytes()
+
+    def failed_replace(*args):
+        raise OSError("disk unavailable")
+
+    monkeypatch.setattr(type(path), "replace", failed_replace)
+    with pytest.raises(OSError):
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
+    assert path.read_bytes() == before and list(path.parent.iterdir()) == [path]
+    assert len(requests) == 3
 
 
 def test_aws_uses_run_tag_and_account_across_pages_without_mixing_usage_units(monkeypatch):
@@ -195,10 +316,10 @@ print(json.dumps(result))
     assert "private-test-value" not in log.read_text()
 
 
-def test_runpod_scopes_each_pod_and_shows_current_resources_not_invented_gpu_hours(monkeypatch):
-    requests = mock_runpod(monkeypatch, [billing("pod-one"), pod("pod-one"),
-                                        billing("pod-two", amount=4), pod("pod-two", status="EXITED")])
-    result = asyncio.run(Runpod("gpu", RunpodOptions(pod_ids=["pod-one", "pod-two"])).read(context()))
+def test_runpod_scopes_each_pod_and_shows_current_resources_not_invented_gpu_hours(monkeypatch, tmp_path):
+    requests = mock_runpod(monkeypatch, [pod_page(pod("pod-one"), pod("pod-two", status="EXITED")),
+                                        billing("pod-one"), billing("pod-two", amount=4)])
+    result = asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
     assert result.metrics["cost_usd"].value == 6.5
     assert result.metrics["gpu_cost_usd"].value == 5.5
     assert result.metrics["running_gpus"].value == 2
@@ -206,7 +327,7 @@ def test_runpod_scopes_each_pod_and_shows_current_resources_not_invented_gpu_hou
     assert "gpu_hours" not in result.metrics
     assert "hour" in result.note and "2026-10-14" in result.note
     assert "private-pod-secret" not in result.model_dump_json()
-    for request, identifier in zip(requests[::2], ["pod-one", "pod-two"], strict=True):
+    for request, identifier in zip(requests[1:], ["pod-one", "pod-two"], strict=True):
         query = parse_qs(urlsplit(request.full_url).query)
         assert query["podId"] == [identifier]
         assert query["bucketSize"] == ["hour"]
@@ -214,40 +335,33 @@ def test_runpod_scopes_each_pod_and_shows_current_resources_not_invented_gpu_hou
         assert query["endTime"] == ["2026-10-15T16:00:00Z"]
 
 
-def test_runpod_keeps_terminated_pod_billing(monkeypatch):
-    mock_runpod(monkeypatch, [billing("pod-one"), HTTPError("", 404, "missing", {}, None)])
-    result = asyncio.run(Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).read(context()))
-    assert result.metrics["cost_usd"].value == 2.5
-    assert result.metrics["running_gpus"].value == 0
-
-
-def test_runpod_accepts_equivalent_time_formats_and_additional_query_metadata(monkeypatch):
+def test_runpod_accepts_equivalent_time_formats_and_additional_query_metadata(tmp_path, monkeypatch):
     body = billing("pod-one")
     body["metadata"]["query"].update(startTime="2026-10-14T12:00:00.000Z",
                                        endTime="2026-10-15T16:00:00+00:00", lastN=None)
-    mock_runpod(monkeypatch, [body, pod("pod-one")])
-    result = asyncio.run(Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).read(context()))
+    mock_runpod(monkeypatch, [pod_page(pod("pod-one")), body])
+    result = asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
     assert result.metrics["cost_usd"].value == 2.5
 
 
 @pytest.mark.parametrize("response", ["x" * external_resources.MAX_BYTES, TimeoutError("private-test-value")])
-def test_runpod_bounds_requests_and_does_not_expose_response_data(monkeypatch, response):
+def test_runpod_bounds_requests_and_does_not_expose_response_data(tmp_path, monkeypatch, response):
     mock_runpod(monkeypatch, [response])
     with pytest.raises(ValueError) as error:
-        asyncio.run(Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).read(context()))
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
     assert "private-test-value" not in str(error.value)
 
 
-def test_runpod_missing_billing_is_pending_not_free_compute(monkeypatch):
-    mock_runpod(monkeypatch, [billing("pod-one", records=False), pod("pod-one")])
-    result = asyncio.run(Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).read(context()))
+def test_runpod_missing_billing_is_pending_not_free_compute(tmp_path, monkeypatch):
+    mock_runpod(monkeypatch, [pod_page(pod("pod-one")), billing("pod-one", records=False)])
+    result = asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
     assert "cost_usd" not in result.metrics
     assert result.metrics["running_gpus"].value == 2
     assert "pending" in result.note
 
 
 @pytest.mark.parametrize("change", ["scope", "count", "negative", "time"])
-def test_runpod_rejects_misattributed_or_incomplete_billing(monkeypatch, change):
+def test_runpod_rejects_misattributed_or_incomplete_billing(tmp_path, monkeypatch, change):
     body = billing("pod-one")
     if change == "scope":
         body["records"][0]["podId"] = "someone-else"
@@ -257,15 +371,15 @@ def test_runpod_rejects_misattributed_or_incomplete_billing(monkeypatch, change)
         body["records"][0]["totalAmount"] = -1
     else:
         body["records"][0]["startTime"] = "2025-01-01T00:00:00Z"
-    mock_runpod(monkeypatch, [body])
+    mock_runpod(monkeypatch, [pod_page(pod("pod-one")), body])
     with pytest.raises(ValueError):
-        asyncio.run(Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).read(context()))
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
 
 
-def test_runpod_does_not_turn_forbidden_or_redirects_into_zero(monkeypatch):
+def test_runpod_does_not_turn_forbidden_or_redirects_into_zero(tmp_path, monkeypatch):
     mock_runpod(monkeypatch, [HTTPError("", 403, "private-test-value", {}, None)])
     with pytest.raises(ValueError) as error:
-        asyncio.run(Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).read(context()))
+        asyncio.run(Runpod("gpu", RunpodOptions()).read(context(tmp_path)))
     assert "private-test-value" not in str(error.value)
     assert external_resources._NoRedirect().redirect_request(None, None, 302, "", {}, "https://elsewhere") is None
 
@@ -273,18 +387,20 @@ def test_runpod_does_not_turn_forbidden_or_redirects_into_zero(monkeypatch):
 def test_provider_validation_fails_before_calls_without_credentials_or_scope(monkeypatch):
     monkeypatch.setattr(external_resources.shutil, "which", lambda *args, **kwargs: "/test/aws")
     AwsCompute("aws", AwsComputeOptions()).validate(ENV)
-    Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).validate(ENV)
+    Runpod("gpu", RunpodOptions()).validate(ENV)
     for environment in [{}, {"AWS_PROFILE": "test"}]:
         with pytest.raises(InvalidDropInError):
             AwsCompute("aws", AwsComputeOptions()).validate(environment)
     with pytest.raises(InvalidDropInError):
-        Runpod("gpu", RunpodOptions(pod_ids=["pod-one"])).validate({})
+        Runpod("gpu", RunpodOptions()).validate({})
     monkeypatch.setattr(external_resources.shutil, "which", lambda *args, **kwargs: None)
     with pytest.raises(InvalidDropInError, match="AWS CLI"):
         AwsCompute("aws", AwsComputeOptions()).validate(ENV)
-    for ids in [[], ["pod", "pod"], ["../pod"]]:
-        with pytest.raises(ValidationError):
-            RunpodOptions(pod_ids=ids)
+    for environment in [{"RUNPOD_API_KEY": "test"}, {**ENV, "RUN_SLUG": ""}, {**ENV, "RUN_SLUG": "bad\nslug"}]:
+        with pytest.raises(InvalidDropInError):
+            Runpod("gpu", RunpodOptions()).validate(environment)
+    with pytest.raises(ValidationError):
+        RunpodOptions(pod_ids=["pod-one"])
 
 
 def test_declared_compute_providers_reach_every_model_call_and_reuse_cached_billing(
@@ -296,10 +412,9 @@ type = "aws-compute"
 
 [resources.gpu]
 type = "runpod"
-pod_ids = ["pod-one"]
 ''')
     aws_calls = mock_aws(monkeypatch, [aws_page()])
-    pod_requests = mock_runpod(monkeypatch, [billing("pod-one", amount=4), pod("pod-one")])
+    pod_requests = mock_runpod(monkeypatch, [pod_page(pod("pod-one")), billing("pod-one", amount=4)])
     monkeypatch.setattr(external_resources.shutil, "which", lambda *args, **kwargs: "/test/aws")
     pm = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "read-standing-context"), say("done"))
     scaffold = assemble(drop_in_dir, {"pm": pm}, env={**ENV, "CRUX_MODEL": "test"})

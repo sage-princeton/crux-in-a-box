@@ -202,7 +202,6 @@ limits = { cost_usd = 200.0 }
 
 [resources.gpu]
 type = "runpod"
-pod_ids = ["your-run-pod-id"]
 refresh_seconds = 60
 limits = { cost_usd = 200.0 }
 ```
@@ -222,16 +221,38 @@ AWS billing is daily, can lag more than a day, and Cost Explorer charges per
 request; the default refresh is hourly. Empty billing is shown as unknown,
 even when a live instance count is available. See [AWS Cost Explorer](https://docs.aws.amazon.com/cost-management/latest/userguide/ce-what-is.html).
 
-`runpod` requires `RUNPOD_API_KEY` (or its `api_key_env` option) and explicit,
-unique pod IDs dedicated to the run. Include terminated pods in the list to
-retain their spending. The API v2 collector reports total/GPU/CPU/disk spend,
-running pods/GPUs, and the current hourly rate. Billing uses hour-aligned
-windows; AWS uses day-aligned windows, so both can include time before the
-scaffold started. Neither extrapolates an invoice from a current rate.
+`runpod` requires `RUNPOD_API_KEY` (or `api_key_env`) and a unique `RUN_SLUG`
+(or `run_slug_env`). No pod IDs are needed before launch. When creating a pod,
+set its environment variable `CRUX_RUN_SLUG` to the run slug. The status block
+supplies the exact value to use. The collector pages through the account's pods
+on each refresh and adopts only exact marker matches, including cluster members;
+names, creation time and other runs' pods do not establish ownership.
+
+Discovered IDs are saved atomically under `state_dir/resources/runpod-*.json`
+before billing is queried. They remain tracked after termination and process
+restart, so delayed charges are still counted when the pod disappears from the
+live list. Preserve the whole state directory when resuming. Inventory is bound
+to the provider name, run slug and persisted start time; corruption or a scope
+mismatch fails the refresh instead of forgetting prior spending. Never reuse a
+pod or run slug across runs, or change a tracked pod's ownership marker.
+
+Discovery polls at `refresh_seconds`. After creating a short-lived pod, call
+`budget_status` before terminating it to force discovery; a pod created and
+terminated entirely between refreshes cannot be attributed from billing alone.
+Pods already terminated before first discovery are outside coverage. With no
+discovered pods a successful complete list reports zero; once pods are known,
+missing billing is unknown, not zero. Discovery/billing failures retain the
+last complete snapshot as stale.
+
+The API v2 collector reports total/GPU/CPU/disk spend, running pods/GPUs, and
+the current hourly rate. Billing uses hour-aligned windows; AWS uses day-aligned
+windows, so both can include time before the scaffold started. Neither
+extrapolates an invoice from a current rate. Account-wide balance changes are
+not used to attribute shared-account spend to a run.
 RunPod's billing API does not report GPU-hours; the provider labels that
 limitation. Serverless and separate network-volume spending are outside this
 collector. See [RunPod billing](https://docs.runpod.io/api-reference-v2/billing/get-pod-billing-history)
-and [pod status](https://docs.runpod.io/api-reference-v2/pods/get-a-pod).
+and [pod discovery](https://docs.runpod.io/api-reference-v2/pods/list-pods).
 
 Each provider has a 30-second overall read deadline. A failed or incomplete
 refresh retains the previous complete snapshot as stale, including known
@@ -258,7 +279,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` | HTTPS endpoint and bearer credential for a declared `langfuse` resource provider; `RUN_SLUG` is also required. |
 | `AWS_PROFILE` | Required explicit profile for `aws-compute`; the profile and AWS CLI must be available in the scaffold's environment. |
-| `RUNPOD_API_KEY` | Read access to the declared pods and their billing for `runpod`. |
+| `RUNPOD_API_KEY` | List access to pods (including their ownership environment marker) and read access to pod billing for `runpod`. |
 | Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |
 
 ## Run the demo in Docker

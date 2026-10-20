@@ -6,22 +6,26 @@ and docs.runpod.io/api-reference-v2/billing/get-pod-billing-history.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated
 
-from pydantic import Field, field_validator
+from pydantic import AwareDatetime, Field
 
+from crux_scaffold.components import Options
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.resources import (
     RESOURCE_PROVIDERS,
@@ -203,17 +207,15 @@ class AwsCompute(ResourceProvider):
 
 class RunpodOptions(ResourceOptions):
     api_key_env: str = Field("RUNPOD_API_KEY", min_length=1)
-    pod_ids: list[str] = Field(min_length=1, max_length=50)
+    run_slug_env: str = Field("RUN_SLUG", min_length=1)
     refresh_seconds: float = Field(60, ge=0, allow_inf_nan=False)
     timeout_seconds: float = Field(30, gt=0, allow_inf_nan=False)
 
-    @field_validator("pod_ids")
-    @classmethod
-    def distinct_pods(cls, values: list[str]) -> list[str]:
-        if (len(values) != len(set(values))
-                or any(not re.fullmatch(r"[\w-]{1,128}", value, re.ASCII) for value in values)):
-            raise ValueError("pod_ids must be unique pod identifiers")
-        return values
+
+class _RunpodInventory(Options):
+    run_slug: str
+    started_at: AwareDatetime
+    pod_ids: list[Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,128}$")]] = Field(max_length=1000)
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -234,13 +236,14 @@ class Runpod(ResourceProvider):
     Options = RunpodOptions
 
     def validate(self, env: Mapping[str, str]) -> None:
-        _require(env, self.options.api_key_env)
+        _require(env, self.options.api_key_env, self.options.run_slug_env)
+        if not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", env[self.options.run_slug_env]):
+            raise InvalidDropInError("runpod requires a run slug of 1-128 letters, digits, dots, underscores or hyphens")
 
     async def read(self, ctx: RunContext) -> ResourceSnapshot:
         return await asyncio.to_thread(self._read, ctx)
 
-    def _get(self, ctx: RunContext, deadline: float, path: str, query: dict | None = None,
-             *, allow_missing: bool = False) -> dict | None:
+    def _get(self, ctx: RunContext, deadline: float, path: str, query: dict | None = None) -> dict:
         url = "https://api.runpod.io/v2/" + path
         if query:
             url += "?" + urllib.parse.urlencode(query)
@@ -251,8 +254,6 @@ class Runpod(ResourceProvider):
                 raw = response.read(MAX_BYTES + 1)
         except urllib.error.HTTPError as error:
             error.close()
-            if allow_missing and error.code == 404:
-                return None
             raise ValueError("Runpod resource request unavailable") from None
         except (OSError, TimeoutError):
             raise ValueError("Runpod resource request unavailable") from None
@@ -263,9 +264,75 @@ class Runpod(ResourceProvider):
             raise TypeError("invalid Runpod resource response")
         return body
 
+    def _inventory(self, ctx: RunContext, started: datetime, slug: str) -> tuple[Path, _RunpodInventory]:
+        key = hashlib.sha256(self.name.encode()).hexdigest()
+        path = ctx.state_dir / "resources" / f"runpod-{key}.json"
+        try:
+            with path.open("rb") as stream:
+                raw = stream.read(MAX_BYTES + 1)
+        except FileNotFoundError:
+            return path, _RunpodInventory(run_slug=slug, started_at=started, pod_ids=[])
+        if len(raw) > MAX_BYTES:
+            raise ValueError("Runpod inventory too large")
+        saved = _RunpodInventory.model_validate_json(raw)
+        if saved.run_slug != slug or saved.started_at != started:
+            raise ResourceReadError("Runpod inventory belongs to another run; use a new state directory")
+        return path, saved
+
+    def _remember(self, path: Path, inventory: _RunpodInventory, identifiers: set[str]) -> None:
+        saved = _RunpodInventory(run_slug=inventory.run_slug, started_at=inventory.started_at,
+                                pod_ids=sorted(identifiers))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+            temporary = Path(stream.name)
+            try:
+                stream.write(saved.model_dump_json(indent=2))
+                stream.flush()
+                os.fsync(stream.fileno())
+                temporary.replace(path)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    def _discover(self, ctx: RunContext, deadline: float, path: Path,
+                  inventory: _RunpodInventory) -> tuple[set[str], dict[str, dict]]:
+        known, live, seen, cursors = set(inventory.pod_ids), {}, set(), set()
+        persisted = known.copy()
+        query = {"includeClusterPods": "true", "limit": 100}
+        for _ in range(MAX_PAGES):
+            body = self._get(ctx, deadline, "pods", query)
+            rows, pagination = body["pods"], body["pagination"]
+            cursor, more = pagination["nextCursor"], pagination["hasNextPage"]
+            if (not isinstance(rows, list) or type(more) is not bool
+                    or (more and (not isinstance(cursor, str) or not cursor or cursor in cursors))
+                    or (not more and cursor is not None)):
+                raise ValueError("invalid Runpod pod pagination")
+            for row in rows:
+                identifier = row["id"]
+                if (not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", identifier)
+                        or identifier in seen or not isinstance(row.get("env", {}), dict)):
+                    raise ValueError("invalid or duplicated Runpod pod")
+                seen.add(identifier)
+                owned = row.get("env", {}).get("CRUX_RUN_SLUG") == inventory.run_slug
+                if identifier in known and not owned:
+                    raise ResourceReadError("A tracked Runpod pod changed ownership; do not share pods between runs")
+                if owned:
+                    known.add(identifier)
+                    live[identifier] = row
+            if known != persisted or not path.exists():
+                self._remember(path, inventory, known)
+                persisted = known.copy()
+            if not more:
+                return known, live
+            cursors.add(cursor)
+            query["cursor"] = cursor
+        raise ValueError("Runpod pod pagination limit reached")
+
     def _read(self, ctx: RunContext) -> ResourceSnapshot:
         started, now = _window(ctx)
         deadline = time.monotonic() + self.options.timeout_seconds
+        slug = ctx.env[self.options.run_slug_env]
+        path, inventory = self._inventory(ctx, started, slug)
+        identifiers, live = self._discover(ctx, deadline, path, inventory)
         start = started.replace(minute=0, second=0, microsecond=0)
         end = now.replace(minute=0, second=0, microsecond=0)
         if end < now or end == start:
@@ -273,7 +340,7 @@ class Runpod(ResourceProvider):
         totals = dict.fromkeys(("totalAmount", "gpuAmount", "cpuAmount", "diskAmount"), 0.0)
         billed_pods = running_pods = running_gpus = 0
         hourly = 0.0
-        for identifier in self.options.pod_ids:
+        for identifier in sorted(identifiers):
             query = {"podId": identifier, "startTime": _timestamp(start), "endTime": _timestamp(end),
                      "bucketSize": "hour"}
             body = self._get(ctx, deadline, "billing/pods", query)
@@ -294,11 +361,9 @@ class Runpod(ResourceProvider):
                 for field in totals:
                     totals[field] += _number(row[field])
             billed_pods += bool(records)
-            pod = self._get(ctx, deadline, "pods/" + identifier, allow_missing=True)
+            pod = live.get(identifier)
             if pod is None:
                 continue
-            if pod["id"] != identifier:
-                raise ValueError("Runpod returned another pod")
             hourly += _number(pod["cost"])
             if pod["status"] == "RUNNING":
                 running_pods += 1
@@ -310,9 +375,12 @@ class Runpod(ResourceProvider):
                    "running_gpus": ResourceMetric(value=running_gpus, unit="GPUs"),
                    "current_hourly_usd": ResourceMetric(value=hourly, unit="USD/hour")}
         note = (f"Runpod billing window {_timestamp(start)} to {_timestamp(end)} (end exclusive); "
-                "hour buckets can include time before the run started. Pod IDs must be dedicated to this run. "
+                f"create pods with env CRUX_RUN_SLUG={slug} to attribute them to this run. "
+                f"Tracking {len(identifiers)} persisted pod IDs, including terminated pods; "
+                "force budget_status after creating a short-lived pod, before terminating it. "
+                "Hour buckets can include time before the run started; use a unique slug and dedicated pods. "
                 "Current resources are live; billed totals may lag and GPU-hours are unavailable.")
-        if billed_pods == len(self.options.pod_ids):
+        if billed_pods == len(identifiers):
             for field, key in zip(totals, ("cost_usd", "gpu_cost_usd", "cpu_cost_usd", "disk_cost_usd"), strict=True):
                 metrics[key] = ResourceMetric(value=totals[field], unit="USD")
         else:
