@@ -17,6 +17,7 @@ from crux_scaffold.usage import Budget, UsageLedger
 
 if TYPE_CHECKING:
     from crux_scaffold.resources import ResourceMonitor
+    from crux_scaffold.steering import Steering
     from crux_scaffold.telemetry import Telemetry
 
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
@@ -171,6 +172,7 @@ class RunContext:
     sleep: Sleep = asyncio.sleep
     resources: ResourceMonitor | None = None
     now: Clock = utc_now
+    steering: Steering | None = None
 
     async def refresh_resources(self, *, force: bool = False) -> None:
         if self.resources is not None:
@@ -196,6 +198,23 @@ class RunContext:
         else:
             lines.append("external resources: not configured")
         return "\n".join(lines)
+
+    async def wait(self, seconds: float) -> float:
+        """Wait up to seconds, waking for pending operator steering. Return the time spent sleeping."""
+        if self.steering is None:
+            await self.sleep(seconds)
+            return seconds
+        waited = 0.0
+        while waited < seconds:
+            if self.steering.pending():
+                break
+            await self.steering.poll()
+            if self.steering.pending():
+                break
+            chunk = min(seconds - waited, self.steering.options.poll_interval_seconds)
+            await self.sleep(chunk)
+            waited += chunk
+        return waited
 
     @property
     def model(self) -> str:

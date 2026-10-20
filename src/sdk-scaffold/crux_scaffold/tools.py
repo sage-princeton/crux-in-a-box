@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.errors import InvalidDropInError, ToolError
+from crux_scaffold.steering import Escalation
 from crux_scaffold.workspace import MAX_OUTPUT_CHARS, RunContext
 
 
@@ -176,9 +177,10 @@ class Rest(Tool):
             return (f"Rest budget exhausted ({self.used_seconds:g}s used of {policy.total_seconds:g}s). "
                     "Do not wait any longer: continue with what you have and record any assumption you make.")
         granted = min(max(args.seconds, policy.min_seconds), policy.max_seconds, remaining)
-        await ctx.sleep(granted)
-        self.used_seconds += granted
-        return (f"Rested {granted:g}s ({args.reason}). "
+        waited = await ctx.wait(granted)
+        self.used_seconds += waited
+        wake = " Woke early for operator steering." if waited < granted else ""
+        return (f"Rested {waited:g}s ({args.reason}).{wake} "
                 f"Rest budget left: {policy.total_seconds - self.used_seconds:g}s.")
 
 
@@ -189,3 +191,17 @@ class BudgetStatus(Tool):
 
     async def invoke(self, ctx: RunContext, args: Arguments) -> str:
         return await ctx.budget_status(force=True)
+
+
+@TOOLS.register
+class Escalate(Tool):
+    type_name = "escalate"
+    description = ("Ask the operator to fix a broken resource or take another action. Include the failure, "
+                   "diagnosis, requested action and independent work you will continue. Reuse request_id "
+                   "for retries of the same request. Replies arrive through operator steering.")
+    Arguments = Escalation
+
+    async def invoke(self, ctx: RunContext, args: Escalation) -> str:
+        if ctx.steering is None:
+            raise ToolError("escalate requires runtime.steering")
+        return await ctx.steering.escalate(args)

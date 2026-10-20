@@ -18,6 +18,7 @@ from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS, LoopOutcome, StateFile
 from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
+from crux_scaffold.steering import Steering
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import TOOLS, Tool
 from crux_scaffold.workspace import RunContext, Sleep, Workspace
@@ -49,6 +50,13 @@ class Scaffold:
             gate.validate_tools(tools)
         assembly = Assembly(drop_in, self.context, tools, self.coding_agents, self.strategy)
         self.runtime = RUNTIMES.create("runtime", config.runtime, assembly=assembly, **(runtime_overrides or {}))
+        steering = getattr(self.runtime.options, "steering", None)
+        if steering:
+            if steering.server not in config.mcp_servers:
+                raise InvalidDropInError(f"steering uses undefined MCP server '{steering.server}'")
+            self.context.steering = Steering(steering, state_dir, None, telemetry, recipient=config.orchestrator)
+        elif any(tool.type_name == "escalate" for tool in assembly.tools.values()):
+            raise InvalidDropInError("escalate requires runtime.steering")
 
     def _tools(self) -> dict[str, Tool]:
         config = self.drop_in.config
@@ -82,6 +90,8 @@ class Scaffold:
         return [f"drop-in {self.drop_in.root}; runtime {self.runtime.type_name}; orchestrator {config.orchestrator}",
                 f"context {self.strategy.type_name}; budget {config.budget.model_dump(exclude_none=True)}",
                 *(f"resource {name}: {table.get('type', name)}" for name, table in config.resources.items()),
+                *([(f"steering: {config.orchestrator} via MCP {self.context.steering.options.server}; "
+                    f"status {self.context.steering.state['status']}")] if self.context.steering else []),
                 *self.runtime.describe(),
                 *(f"{name}: coding agent {agent.type_name}" for name, agent in self.coding_agents.items()),
                 *self.loop.describe(),
