@@ -125,6 +125,8 @@ python -m crux_scaffold run --drop-in DIR --state-dir STATE     # run the loop; 
 python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (plus one Codex turn)
 ```
 
+`probe --coding-agent codex` retries temporary-directory cleanup for up to 3.1 seconds when Codex's background plugin checkout is still writing files after its session closes. Other cleanup errors, or a directory that remains busy, still fail the probe.
+
 `check` and `probe` are the first two of the team's testing protocols: nothing in the environment is broken, and the agent can do anything at all. Exit codes:
 
 - 0: the loop completed.
@@ -185,6 +187,15 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
    - `docker/demo.sh reset` deletes the volume so the next run starts fresh.
 
 Inside the container, Codex runs with `sandbox = "full-access"` because its Linux sandbox (bubblewrap) cannot create namespaces in an unprivileged container. The container is the boundary instead: it runs as a non-root user, and the volume at `/work` is its only persistent storage. A run box keeps `workspace-write`.
+
+## On a run box
+
+Set `AGENT_PLATFORM=openai-agents` and `DROP_IN_PATH=<drop-in directory>` in the workspace base config; see [`../ec2-workspaces/README.md`](../ec2-workspaces/README.md). Provisioning does four things, and creates no AgentRQ workspace:
+
+1. It stages this directory, root-owned, at `/opt/crux-sdk-scaffold`, and the drop-in at `/srv/crux-run/run-harness`.
+2. It writes the environment above to `/etc/crux-run.env`.
+3. It installs system Bubblewrap and Ubuntu's AppArmor profile for it, then checks sandboxed shell execution and file write/readback before running `probe --coding-agent codex`. `workspace-write` remains the default; global user-namespace restrictions are unchanged.
+4. It installs `crux-sdk-run.service`, but does not start it.
 
 ## Development
 

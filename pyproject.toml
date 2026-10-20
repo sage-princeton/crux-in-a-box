@@ -2,11 +2,11 @@
 target-version = "py312"
 line-length = 120
 include = ["pyproject.toml", "src/**/*.py", "tests/**/*.py"]
-src = ["src/monitoring", "src/sdk-scaffold", "src/ec2-workspaces", "tests/codex-observability"]
+src = ["src/monitoring", "src/sdk-scaffold", "src/ec2-workspaces", "tests/codex-observability", "tests/workspace-provisioning"]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
-testpaths = ["src/monitoring/tests", "src/sdk-scaffold/tests", "tests/codex-observability"]
+testpaths = ["src/monitoring/tests", "src/sdk-scaffold/tests", "tests/codex-observability", "tests/workspace-provisioning"]
 pythonpath = [
     "src/monitoring",
     "src/sdk-scaffold",
