@@ -69,7 +69,7 @@ load_agent_config all
 
 MISSING=()
 REQUIRED="AWS_REGION RUN_SLUG OPERATOR_CIDR INSTANCE_TYPE ROOT_DISK_GB KEY_NAME"
-[ -z "$ACP_COMMAND" ] || REQUIRED="$REQUIRED ACP_GATEWAY_VERSION"
+[ -z "$ACP_COMMAND" ] || REQUIRED="$REQUIRED ACP_GATEWAY_VERSION ACP_GATEWAY_TARBALL_URL ACP_GATEWAY_SHA256"
 for k in $REQUIRED; do
   [ -n "${CFG[$k]:-}" ] || MISSING+=("$k")
 done
@@ -109,13 +109,19 @@ CODEX_REASONING_EFFORT="${CFG[CODEX_REASONING_EFFORT]:-}"
 CODEX_VERSION="${CFG[CODEX_VERSION]:-}"
 CODEX_ACP_VERSION="${CFG[CODEX_ACP_VERSION]:-}"
 ACP_GATEWAY_VERSION="${CFG[ACP_GATEWAY_VERSION]:-}"
+ACP_GATEWAY_TARBALL_URL="${CFG[ACP_GATEWAY_TARBALL_URL]:-}"
+ACP_GATEWAY_SHA256="${CFG[ACP_GATEWAY_SHA256]:-}"
+if [ -n "$ACP_COMMAND" ]; then
+  [[ "$ACP_GATEWAY_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+    || die "ACP_GATEWAY_SHA256 must be the tarball's sha256 as 64 lowercase hex characters."
+fi
 CLAUDE_MODEL="${CFG[CLAUDE_MODEL]:-}"
 CLAUDE_EFFORT="${CFG[CLAUDE_EFFORT]:-}"
 CLAUDE_VERSION="${CFG[CLAUDE_VERSION]:-}"
 CLAUDE_ACP_VERSION="${CFG[CLAUDE_ACP_VERSION]:-}"
 TRACING_PLUGIN_VERSION="${CFG[TRACING_PLUGIN_VERSION]:-}"
 TRACING_HOOK_TRUSTED_HASH="${CFG[TRACING_HOOK_TRUSTED_HASH]:-}"
-CODEX_TRACE_MODE="${CFG[CODEX_TRACE_MODE]:-stop-hook}"
+CODEX_TRACE_MODE="${CFG[CODEX_TRACE_MODE]:-live}"
 case "$CODEX_TRACE_MODE" in
   stop-hook|live) ;;
   *) die "CODEX_TRACE_MODE must be stop-hook|live (got '$CODEX_TRACE_MODE')." ;;
@@ -130,7 +136,7 @@ OPENAI_AGENTS_REASONING_EFFORT="${CFG[OPENAI_AGENTS_REASONING_EFFORT]:-}"
 }
 [ "$AGENT_PLATFORM" = claude ] || { CLAUDE_MODEL=; CLAUDE_EFFORT=; CLAUDE_VERSION=; CLAUDE_ACP_VERSION=; }
 [ "$AGENT_PLATFORM" = openai-agents ] || { OPENAI_AGENTS_MODEL=; OPENAI_AGENTS_REASONING_EFFORT=; }
-[ -n "$ACP_COMMAND" ] || ACP_GATEWAY_VERSION=
+[ -n "$ACP_COMMAND" ] || { ACP_GATEWAY_VERSION=; ACP_GATEWAY_TARBALL_URL=; ACP_GATEWAY_SHA256=; }
 
 # A comma-separated list, each entry optionally CIDR=LABEL. This script does
 # not create SSH rules — make-control-box.sh owns crux-run-sg's ingress — so it
@@ -304,7 +310,7 @@ if [ "$DRY_RUN" = 1 ]; then
     EIP_PLAN_LINE="  elastic ip        associated to $SLUG      (stable address across stop/start)"
   fi
   if [ -n "$ACP_COMMAND" ]; then
-    PINS_LINE="  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION"
+    PINS_LINE="  pins              $ACP_COMMAND@$(cfg "${AGENT_PLATFORM^^}_ACP_VERSION"), acp-gateway@$ACP_GATEWAY_VERSION (sha256 ${ACP_GATEWAY_SHA256:0:12}…)"
   else
     PINS_LINE="  pins              src/sdk-scaffold/requirements.txt -> /opt/crux-sdk-scaffold/.venv"
   fi
@@ -542,6 +548,7 @@ scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
 scp -q "$SCRIPT_DIR/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
 ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
   AGENT_PLATFORM='$AGENT_PLATFORM' \
+  ACP_GATEWAY_TARBALL_URL='$ACP_GATEWAY_TARBALL_URL' ACP_GATEWAY_SHA256='$ACP_GATEWAY_SHA256' \
   CLAUDE_VERSION='$CLAUDE_VERSION' CLAUDE_ACP_VERSION='$CLAUDE_ACP_VERSION' \
   CODEX_VERSION='$CODEX_VERSION' \
   CODEX_ACP_VERSION='$CODEX_ACP_VERSION' ACP_GATEWAY_VERSION='$ACP_GATEWAY_VERSION' \

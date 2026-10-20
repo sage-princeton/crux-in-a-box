@@ -3,8 +3,9 @@
 # install-run.sh and configure-run.sh source this file (copied to the box as scaffold.sh) and call its hooks.
 # configure-run.sh also requires CONTROL_MCP_BASE; Codex requires its tracing pin and hash, and
 # codex-flush-turns.py, codex-live-trace.py and live_trace/ beside it; Claude requires langfuse_hook.py.
-# Optional CODEX_TRACE_MODE: stop-hook (default, the tracing plugin's Stop hook)
-# or live (codex-live-trace.py streams each observation as it completes).
+# Codex uses model_reasoning_summary = "auto" for the most detailed available summary.
+# Optional CODEX_TRACE_MODE: live (default, includes reasoning summaries) or
+# stop-hook (the tracing plugin's Stop hook; does not export reasoning summaries).
 # Function bodies keep the code's original top-level indentation so heredoc output is unchanged.
 
 scaffold_install_preflight() {
@@ -102,7 +103,7 @@ scaffold_preflight() {
   if [ "$AGENT_PLATFORM" = codex ]; then
     : "${TRACING_PLUGIN_VERSION:?}" "${TRACING_HOOK_TRUSTED_HASH:?}"
     [ -f "$SCRIPT_DIR/codex-flush-turns.py" ] || die "codex-flush-turns.py was not copied alongside configure-run.sh."
-    CODEX_TRACE_MODE="${CODEX_TRACE_MODE:-stop-hook}"
+    CODEX_TRACE_MODE="${CODEX_TRACE_MODE:-live}"
     case "$CODEX_TRACE_MODE" in
       stop-hook) ;;
       live)
@@ -191,6 +192,7 @@ cat > "$CODEX_DIR/config.toml" <<TOML
 personality = "pragmatic"
 model = "$CODEX_MODEL"
 model_reasoning_effort = "$CODEX_REASONING_EFFORT"
+model_reasoning_summary = "auto"
 model_provider = "${MODEL_PROVIDER/direct/openai}"
 
 [features]
