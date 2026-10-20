@@ -175,7 +175,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             return f"[coding agent running] {name}. Use rest before checking again, or call {name}_result(wait=true)."
         try:
             return (await task).as_tool_output()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - Worker failures return to the PI; cancellation propagates.
             return f"error: Coding agent '{name}' failed: {exc}"
         finally:
             if self._coding_tasks.get(name) is task:
