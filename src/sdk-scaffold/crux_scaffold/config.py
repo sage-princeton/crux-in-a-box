@@ -71,6 +71,11 @@ class DelegationConfig(Options):
     max_depth: int | None = Field(None, strict=True, ge=0)
 
 
+class PreambleConfig(Options):
+    enabled: bool = True
+    append: str = ""
+
+
 class ScaffoldConfig(Options):
     """The whole of `scaffold.toml`. `agents` run in the agent runtime; `coding_agents` are coding harnesses
     (`CodingAgent`) that agents delegate code changes to."""
@@ -84,6 +89,7 @@ class ScaffoldConfig(Options):
     budget: Budget = Budget()
     resources: dict[str, ComponentTable] = Field(default_factory=dict)
     delegation: DelegationConfig = DelegationConfig()
+    preamble: PreambleConfig = PreambleConfig()
     agents: dict[str, AgentConfig]
     coding_agents: dict[str, ComponentTable] = Field(default_factory=dict)
     tools: dict[str, ComponentTable] = Field(default_factory=dict)

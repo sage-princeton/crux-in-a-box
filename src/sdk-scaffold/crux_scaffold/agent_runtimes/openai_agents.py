@@ -108,7 +108,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 tools += [self._coding_result_tool(delegate) for delegate in spec.delegates
                           if delegate in self.assembly.coding_agents]
             self.agents[name] = Agent(
-                name=name, instructions=self.assembly.drop_in.instructions(name), tools=tools,
+                name=name, instructions=self._instructions, tools=tools,
                 mcp_servers=[self.servers[server] for server in spec.mcp_servers],
                 model=self._model(name), model_settings=self._settings())
 
@@ -268,6 +268,9 @@ class OpenAIAgentsRuntime(AgentRuntime):
     def _settings(self) -> ModelSettings:
         effort = self.assembly.context.reasoning_effort
         return ModelSettings(reasoning=Reasoning(effort=effort, summary="auto"))
+
+    def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
+        return self.assembly.instructions(agent.name)
 
     async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
         steering = self.assembly.context.steering
