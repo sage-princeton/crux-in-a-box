@@ -44,7 +44,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
-The orchestrator receives a generated setup preamble before its persona and standing context. It describes the current phase and its gates, available delegates and tools, connected MCP servers, token and rest limits, and restart behavior. It is rendered from the assembled scaffold on each model call, so phase changes and resumed progress stay current. MCP launch arguments and environment values are excluded. Delegate instructions stay scoped to each delegate.
+The orchestrator receives a generated setup preamble before its persona. It describes the current phase and gates, delegate execution and limits, tools and MCP access, configured operator steering and escalation, budget/resource policies, remaining rest allowance, standing-context strategy and restart behavior. Optional limits are explicitly unlimited when omitted; phase iteration limits retain their configured value (default 1). It is rendered from the assembled scaffold on each model call, so phase changes and resumed progress stay current. MCP launch arguments and environment values are excluded. Delegate instructions stay scoped to each delegate.
 
 A drop-in can append guidance or disable the generated setup in `scaffold.toml`:
 
@@ -54,7 +54,7 @@ enabled = true  # false disables the generated setup
 append = "Use the operator channel for questions about scope."
 ```
 
-Both keys are optional. `append` is inline text placed after the generated setup and before the persona; it still applies when `enabled = false`. Personas and standing-context files continue to define the CRUX's task-specific instructions.
+Both keys are optional. `append` is inline text placed after the generated setup and before the persona; it still applies when `enabled = false`. Disabling generation also removes the generated steering guidance. Personas define task-specific instructions on every model call; standing-context snapshots are delivered separately through the context strategy.
 
 The web-cms-product-change demo in this design, as a C4 container view:
 
@@ -156,7 +156,7 @@ The PI's persona can instruct it to estimate task duration from the brief and pr
 2. Call `engineer_result(wait=false)`. If it is still running, revise the estimate and request `rest(seconds=90, reason="Allow more time for verification")`, then check again.
 3. After collecting that result, start a larger task and choose `rest(seconds=600, reason="Allow time for the broader implementation and test suite")` before checking its result.
 
-The worker continues during each rest. The PI chooses the estimates; the scaffold does not calculate them. A rest requires no repeated PI model calls, and does not wake early when the worker finishes or an operator posts a message. The generated result tool returns immediately with status or a completed result when `wait=false`; `wait=true` waits for completion without polling or further PI model calls. Use that native wait when the explicit rest allowance is exhausted. It does not consume rest allowance or impose a coding-task wall-time limit.
+The worker continues during each rest. The PI chooses the estimates; the scaffold does not calculate them. A rest requires no repeated PI model calls, and does not wake early when the worker finishes. Configured automatic operator steering can wake rest early. The generated result tool returns immediately with status or a completed result when `wait=false`; `wait=true` waits for completion without polling or further PI model calls. Use that native wait when the explicit rest allowance is exhausted. It does not consume rest allowance or impose a coding-task wall-time limit.
 
 With the settings above, a request for 1 second grants 10 seconds, and a request for 1200 grants 900. Each grant is also capped by the remaining allowance, even when fewer than 10 seconds remain. At zero allowance, `rest` returns an exhaustion message without sleeping. Tool inputs show the request; the response reports the granted duration and remaining allowance. The defaults are 10 seconds minimum, 300 maximum and 3600 cumulative; increasing `max_seconds` enables longer waits.
 
