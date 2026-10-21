@@ -270,3 +270,9 @@ def test_live_tool_allowance_updates_on_every_model_call(drop_in_dir, assemble):
     assert "50s remaining" in pm.instructions[1]
     assert "timeout 17s" in pm.instructions[0]
     assert all(text.count("<resource_status>") == 1 for text in pm.instructions)
+
+
+def test_orchestrator_turn_limit_comes_from_runtime_not_delegate_defaults(drop_in_dir, assemble):
+    with (drop_in_dir / "scaffold.toml").open("a") as stream:
+        stream.write('\n[runtime]\ntype = "openai-agents"\nmax_turns = 12\n')
+    assert "up to 12 model turns" in assemble(drop_in_dir).assembly.instructions("pm")

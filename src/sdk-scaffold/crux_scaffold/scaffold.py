@@ -85,11 +85,13 @@ class Scaffold:
         spec = config.agents[config.orchestrator]
         lines = ["# Scaffold setup", "",
                  f"You are `{config.orchestrator}`, the orchestrator in the `{self.runtime.type_name}` agent runtime.",
-                 (f"The scaffold sends you one prompt per loop iteration, with up to {spec.max_turns} model turns. "
+                 ("The scaffold sends you one prompt per loop iteration. "
                   "Your persona follows this generated setup."),
                  "", "## Loop and gates", "", *self._loop_instructions(),
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
+        if turns := getattr(self.runtime.options, "max_turns", None):
+            lines.append(f"The runtime allows up to {turns} model turns per orchestrator iteration.")
         lines += [f"- `{name}`: {self.assembly.tools[name].description}" for name in spec.tools]
         for name in spec.tools:
             tool = self.assembly.tools[name]
