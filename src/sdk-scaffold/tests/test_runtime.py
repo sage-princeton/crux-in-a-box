@@ -84,6 +84,16 @@ def test_unknown_tool_type_is_a_config_error(drop_in_dir, assemble):
         assemble(drop_in_dir)
 
 
+def test_agent_can_run_a_shell_command_and_read_its_result(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", 'tools = ["read_file", "write_file", "rest"]', 'tools = ["run_shell"]')
+    pm = ScriptedModel(call("run_shell", {"command": "printf shell-ok > RESULT.txt; cat RESULT.txt"}, "p1"),
+                       say("done"))
+    outcome = asyncio.run(assemble(drop_in_dir, {"pm": pm}).run())
+    assert outcome.status == "completed"
+    assert (drop_in_dir / "workspace/RESULT.txt").read_text() == "shell-ok"
+    assert tool_outputs(pm.inputs[-1]) == ["exit_code=0\nshell-ok"]
+
+
 def test_every_agent_takes_the_run_model_and_effort_from_the_env(drop_in_dir, assemble):
     scaffold = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "low"})
     scaffold.runtime.build()

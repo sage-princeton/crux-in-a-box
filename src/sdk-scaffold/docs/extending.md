@@ -66,7 +66,13 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 
 ## Tools (`Tool`)
 
-`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `read_pdf`, `command`, `rest`, `budget_status`, `escalate`.
+`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate`.
+
+`run_shell(command)` lets the agent supply a Bash command. Its `timeout_seconds` option defaults to 600.
+It delegates to `ctx.workspace.run_shell`, starting in the workspace root without an additional sandbox.
+The result contains the exit code and combined stdout/stderr, retaining the last 20,000 output characters.
+On timeout, the workspace kills the process group and returns `exit_code=timeout after <seconds>s`.
+The existing `command` tool instead runs a fixed command declared by the drop-in.
 
 `read_pdf(path, page)` reads one 1-based PDF page from `ctx.workspace.read_bytes`. It returns the page count,
 extracted text (capped at 20,000 characters), and a PNG rendering (at most 1,600 pixels on its longest side).
