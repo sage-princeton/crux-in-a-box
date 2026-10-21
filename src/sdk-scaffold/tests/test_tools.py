@@ -1,5 +1,9 @@
 import asyncio
+import os
+from contextlib import suppress
 from pathlib import Path
+
+import pytest
 
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.tools import TOOLS, Arguments
@@ -61,3 +65,24 @@ def test_run_shell_runs_the_agents_command_with_the_declared_timeout(tmp_path):
     ctx = context(tmp_path, [])
     assert asyncio.run(tool.invoke(ctx, tool.Arguments(command="echo hi"))) == "exit_code=0\nhi\n"
     assert asyncio.run(tool.invoke(ctx, tool.Arguments(command="sleep 5"))) == "exit_code=timeout after 1s"
+
+
+def test_shell_yields_and_cancellation_reaps_its_process(tmp_path):
+    tool = TOOLS.create("run_shell", {})
+    ctx = context(tmp_path, [])
+
+    async def exercise():
+        task = asyncio.create_task(tool.invoke(ctx, tool.Arguments(command="echo $$ > pid; exec sleep 5")))
+        for _ in range(100):
+            if (ctx.workspace.root / "pid").exists():
+                break
+            await asyncio.sleep(0.01)
+        assert not task.done(), "Shell execution blocked the resource monitor"
+        pid = int((ctx.workspace.root / "pid").read_text())
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        with pytest.raises(ProcessLookupError):
+            os.kill(pid, 0)
+
+    asyncio.run(exercise())

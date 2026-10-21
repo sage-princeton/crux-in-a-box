@@ -105,7 +105,20 @@ workspace/               where agents work; AGENTS.md and other standing context
 OPERATOR_GUIDE.md        how to resolve placeholders and launch; operator notes live only here
 ```
 
+The [TabPFN research example](examples/tabpfn/OPERATOR_GUIDE.md) combines a PI,
+research assistants, background Codex workers, blind PDF reviews, compaction,
+Slack steering and resource-driven finalization. Its only resource caps are six
+hours, $200 model spend and $100 RunPod; it declares no token or delegation limits.
+Its local loop monitors reported resource caps during work and cancels unfinished
+turns at the deadline. Billing delays still allow dollar overshoot.
+
 The run stops before any model call if an operator-facing file or standing-context file still contains a `{{KEY}}` or `{{KEY|default}}` placeholder. The error lists each one as `file:line`.
+
+`max_turns = "unlimited"` disables the turn limit in `[runtime]`, an `[agents]`
+entry or an `llm_judge` gate. `max_iterations = "unlimited"` disables a phase's
+iteration limit. Existing numeric defaults remain unchanged. The built-in phased
+loop checks budgets between iterations; unlimited turns alone do not enforce
+spending or deadlines within an iteration.
 
 Each agent and coding agent chooses its own standing context in `scaffold.toml`:
 

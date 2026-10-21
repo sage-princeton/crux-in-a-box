@@ -1,0 +1,120 @@
+orchestrator = "pi"
+extensions = ["tabpfn_extensions.py"]
+
+[runtime]
+type = "openai-agents"
+max_turns = "unlimited"
+background_coding = true
+
+[runtime.steering]
+server = "slack"
+channel_id = "{{SLACK_CHANNEL_ID}}"
+operator_ids = ["{{SLACK_OPERATOR_ID}}"]
+after_ts = "{{SLACK_AFTER_TS}}"
+poll_interval_seconds = 30
+
+[context]
+type = "openai_compaction"
+trigger_items = 200
+
+[budget]
+max_wall_seconds = 21600
+max_cost_usd = 200
+
+[resources.models]
+type = "langfuse"
+refresh_seconds = 30
+
+[resources.gpu]
+type = "runpod"
+refresh_seconds = 30
+limits = { cost_usd = 100 }
+
+[loop]
+type = "tabpfn_research"
+reserve_wall_seconds = 3600
+reserve_fraction = 0.1
+poll_seconds = 15
+
+[[loop.phases]]
+name = "research"
+prompt = "PROMPT.md"
+continue_prompt = "prompts/research-continue.md"
+gates = ["research_review"]
+max_iterations = "unlimited"
+
+[[loop.phases]]
+name = "finalize"
+prompt = "prompts/finalize.md"
+continue_prompt = "prompts/finalize-continue.md"
+gates = ["final_review"]
+max_iterations = "unlimited"
+
+[gates.research_review]
+type = "tabpfn_review"
+rubric = "prompts/review.md"
+blind = true
+artifacts = { "submission.pdf" = "paper/paper.pdf" }
+tools = ["read_file", "list_files", "read_pdf"]
+max_turns = "unlimited"
+
+[gates.final_review]
+type = "tabpfn_review"
+rubric = "prompts/review.md"
+blind = true
+artifacts = { "submission.pdf" = "paper/paper.pdf" }
+tools = ["read_file", "list_files", "read_pdf"]
+max_turns = "unlimited"
+final = true
+
+[agents.pi]
+persona = "personas/pi.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md", "REVIEW_STATUS.json"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest", "escalate"]
+mcp_servers = ["slack"]
+delegates = ["research_assistant", "worker_a", "worker_b", "worker_c"]
+max_turns = "unlimited"
+
+[agents.research_assistant]
+persona = "personas/ra.md"
+description = "Research assistant for a self-contained literature, theory, implementation, or analysis brief. Multiple independent calls may run concurrently."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
+max_turns = "unlimited"
+
+[coding_agents.worker_a]
+type = "codex"
+description = "Full Codex research assistant: investigate, implement, experiment, or write within the brief's file scope. May use native subagents."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_b]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_c]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[tools.run_shell]
+timeout_seconds = 600
+
+[tools.rest]
+min_seconds = 1
+max_seconds = 300
+total_seconds = 21600
+
+[mcp_servers.slack]
+command = "npx"
+args = ["-y", "slack-mcp-server@1.3.0", "--transport", "stdio"]
+timeout_seconds = 60
+env = { SLACK_MCP_XOXB_TOKEN = "${SLACK_BOT_TOKEN}", SLACK_MCP_ADD_MESSAGE_TOOL = "{{SLACK_CHANNEL_ID}}" }

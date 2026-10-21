@@ -129,7 +129,7 @@ class PhasedLoop(Loop):
                                                  completed=turn.completed, gates=results))
             if all(result.passed for result in results):
                 state.phase_index, state.iteration, state.next_prompt = state.phase_index + 1, 0, None
-            elif state.iteration >= phase.max_iterations:
+            elif phase.max_iterations != "unlimited" and state.iteration >= phase.max_iterations:
                 store.save(state)
                 return LoopOutcome(status="iterations_exhausted", phase=phase.name, final_output=last_output)
             else:
