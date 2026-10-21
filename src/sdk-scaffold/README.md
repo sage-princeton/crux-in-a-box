@@ -381,6 +381,9 @@ The phased loop checks token, time, model-cost and resource limits between
 iterations, using available measurements. An in-flight turn can overshoot a
 limit. Providers refresh independently and may use cached data; the status
 shows timestamps, cache state, missing measurements and retained stale values.
+Partial updates publish fresh measurements and retain missing values with their
+original timestamps. Retained values still participate in limit checks, but their
+current usage and remaining allowance are shown as unknown.
 An outage does not silently become zero usage or halt the run on its own.
 Reported spend can lag or omit unexported/unpriced generations, so these are
 pacing controls rather than guarantees against an invoice exceeding a limit.
@@ -449,8 +452,9 @@ Discovery polls at `refresh_seconds`. After creating a short-lived pod, call
 terminated entirely between refreshes cannot be attributed from billing alone.
 Pods already terminated before first discovery are outside coverage. With no
 discovered pods a successful complete list reports zero; once pods are known,
-missing billing is unknown, not zero. Discovery/billing failures retain the
-last complete snapshot as stale.
+missing billing is unknown, not zero. Pending billing does not hide fresh pod
+counts or hourly rates. Discovery/billing request failures retain the last
+successful snapshot as stale.
 
 The API v2 collector reports total/GPU/CPU/disk spend, running pods/GPUs, and
 the current hourly rate. Billing uses hour-aligned windows; AWS uses day-aligned
@@ -462,9 +466,10 @@ limitation. Serverless and separate network-volume spending are outside this
 collector. See [RunPod billing](https://docs.runpod.io/api-reference-v2/billing/get-pod-billing-history)
 and [pod discovery](https://docs.runpod.io/api-reference-v2/pods/list-pods).
 
-Each provider has a 30-second overall read deadline. A failed or incomplete
-refresh retains the previous complete snapshot as stale, including known
-costs and their timestamp. Keep credentials outside the repository and pass
+Each provider has a 30-second overall read deadline. Failed or entirely empty
+refreshes retain previous measurements as stale. Partial refreshes keep each
+missing measurement's last known value and timestamp separately from the fresh
+measurements, so known costs cannot disappear or appear newly measured. Keep credentials outside the repository and pass
 only the required credentials/profile into the scaffold process or container.
 
 ## Tracing
