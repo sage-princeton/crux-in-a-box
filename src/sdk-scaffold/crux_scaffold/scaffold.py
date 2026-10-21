@@ -182,8 +182,8 @@ class Scaffold:
         cost = "unlimited" if budget.max_cost_usd is None else f"{budget.max_cost_usd:g} USD"
         wall = "unlimited" if budget.max_wall_seconds is None else f"{budget.max_wall_seconds:g}s"
         lines = [f"Token limit: {tokens}. Model spend limit: {cost}. Wall-clock limit: {wall}.",
-                 ("Usage is shared across agents, coding agents, judges and compaction. The loop checks limits "
-                  "before each iteration; it does not interrupt an in-flight iteration. The saved run start "
+                 ("Usage is shared across agents, coding agents, judges and compaction. The configured loop owns "
+                  "budget enforcement; the built-in phased loop checks before each iteration. The saved run start "
                   "survives restart, so elapsed time includes downtime. Current usage, remaining allowances and "
                   "measurement freshness arrive in the resource_status block on each SDK model call. budget_status, when "
                   "available, forces a refresh. Token accounting uses the larger of local and reported tokens, "
