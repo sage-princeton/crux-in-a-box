@@ -90,7 +90,7 @@ def test_argon_tools_delegates_billing_and_session_state(router, drop_in_dir, as
     assert all(request["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False} for request in requests)
     assert all(request["reasoning"] == {"effort": "low", "summary": "auto"} for request in requests)
     assert all("reasoning.encrypted_content" in request["include"] for request in requests)
-    assert requests[1]["instructions"] == "You are the reviewer."
+    assert requests[1]["instructions"].startswith("You are the reviewer.\n\n<resource_status>")
     assert "Handle the request" not in str(requests[1]["input"])
     assert any(item.get("encrypted_content") == "signed-state" for item in requests[2]["input"])
     assert scaffold.context.usage.total_tokens == 390
@@ -122,6 +122,24 @@ def test_the_same_provider_settings_apply_to_the_probe(router, drop_in_dir):
     assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "Say SCAFFOLD-PROBE", NullTelemetry(),
                                                options=options)) == "SCAFFOLD-PROBE"
     assert requests[0]["provider"]["only"] == ["google-vertex"] and requests[0]["store"] is False
+
+
+def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop_in_dir, assemble):
+    requests, pending, configs = router
+    pending.append(response(say(json.dumps({"passed": True, "feedback": "Checked.", "next_prompt": None}))))
+    scaffold = assemble(drop_in_dir, env=ENV)
+
+    async def judge():
+        async with scaffold.runtime as runtime:
+            return await runtime.judge("quality", "Check the evidence.", "Evidence.", tools=[], max_turns=1)
+
+    assert asyncio.run(judge()).passed
+    assert len(configs) == 1
+    assert requests[0]["model"] == ENV["CRUX_MODEL"]
+    assert requests[0]["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False}
+    usage = scaffold.context.usage.by_source["judge:quality"]
+    assert usage.requests == 1 and usage.total_tokens == 130
+    assert usage.cached_input_tokens == 25 and usage.reasoning_output_tokens == 20
 
 
 def test_missing_provider_credentials_fail_before_any_request(router, drop_in_dir, assemble):

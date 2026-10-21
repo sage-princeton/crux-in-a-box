@@ -7,6 +7,7 @@ from agents import Runner, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
 from openai.types.responses import ResponseReasoningItem
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from test_blind_review import configure_blind
 
 from crux_scaffold import cli
 from crux_scaffold.agent_runtimes.openai_agents import OpenAIAgentsRuntime
@@ -63,7 +64,12 @@ def test_each_iteration_is_one_trace_holding_sdk_spans_gates_and_coding_agent_wo
     assert set(root.attributes["langfuse.trace.tags"]) == set(RunIdentity.from_env(ENV).tags())
     assert {"pm", "engineer"} <= {span.name for span in spans}
     workflows = [span for span in spans if span.parent and span.parent.span_id == root.context.span_id]
-    assert workflows and {span.name for span in workflows} == {"main"}
+    assert workflows and {span.name for span in workflows} == {"main", "standing_context:pm"}
+    snapshots = [span for span in spans if span.name.startswith("standing_context:")]
+    assert {span.name for span in snapshots} == {"standing_context:pm", "standing_context:engineer"}
+    for span in snapshots:
+        output = json.loads(span.attributes["langfuse.observation.output"])
+        assert output["characters"] > 0 and output["truncated"] is False
     assert "Agent workflow" not in {span.name for span in spans}
     assert {span.context.trace_id for span in spans} == {root.context.trace_id}
 
@@ -79,6 +85,25 @@ def test_traces_are_grouped_by_the_run_session(langfuse):
     assert [span.name for span in roots] == ["clarify #1", "clarify #2"]
     assert len({span.context.trace_id for span in roots}) == 2
     assert {span.attributes["session.id"] for span in roots} == {"Demo-Slug"}
+
+
+def test_blind_review_traces_every_call_and_the_reviewer_authored_verdict(langfuse, drop_in_dir, assemble):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    configure_blind(drop_in_dir)
+    judge = ScriptedModel(call("read_pdf", {"path": "submission.pdf", "page": 1}, "pdf"),
+                          say('{"passed":true,"feedback":"Verified the blue figure.","next_prompt":null}'))
+    scaffold = assemble(drop_in_dir, {"pm": ScriptedModel(say("private")), "judge": judge}, telemetry=telemetry)
+    asyncio.run(scaffold.run())
+    spans = exporter.get_finished_spans()
+    generations = [span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]
+    assert len(generations) == 3
+    for span in generations:
+        assert span.attributes["llm.token_count.prompt"] == 10
+        assert span.attributes["llm.token_count.completion"] == 5
+    evaluation = next(span for span in spans if span.name == "gate:revision_7")
+    assert "Verified the blue figure." in evaluation.attributes["langfuse.observation.output"]
+    assert scaffold.context.usage.by_source["judge:revision_7"].requests == 2
 
 
 def test_a_stopped_scaffold_sends_what_finished_and_marks_what_did_not(langfuse):

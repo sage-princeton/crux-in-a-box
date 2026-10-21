@@ -1,4 +1,5 @@
 import errno
+import json
 import signal
 
 import pytest
@@ -36,6 +37,15 @@ def test_unresolved_placeholders_stop_the_run_before_any_model_call(drop_in_dir,
     assert pm.inputs == []
 
 
+def test_excessive_delegation_depth_stops_before_any_model_call(drop_in_dir, tmp_path, capsys):
+    with (drop_in_dir / "scaffold.toml").open("a") as config:
+        config.write("\n[delegation]\nmax_depth = 0\n")
+    pm = ScriptedModel(say("should not run"))
+    assert run_cli(drop_in_dir, tmp_path, {"pm": pm}) == 2
+    assert "delegation.max_depth=0" in capsys.readouterr().err
+    assert pm.inputs == []
+
+
 def test_run_prints_the_outcome_and_warns_when_tracing_is_off(drop_in_dir, tmp_path, capsys):
     assert run_cli(drop_in_dir, tmp_path, {"pm": ScriptedModel(say("All done."))}) == 0
     captured = capsys.readouterr()
@@ -55,7 +65,9 @@ def test_a_loop_that_does_not_complete_exits_3(drop_in_dir, tmp_path, capsys):
 def test_sigterm_stops_the_run_cleanly_so_a_restart_resumes_it(drop_in_dir, tmp_path, capsys):
     assert run_cli(drop_in_dir, tmp_path, {"pm": StoppedModel()}) == 128 + signal.SIGTERM
     assert "stopped by SIGTERM" in capsys.readouterr().err
-    assert not (tmp_path / "state" / "state.json").exists()
+    saved = json.loads((tmp_path / "state" / "state.json").read_text())
+    assert saved["usage"]["started_at"] is not None
+    assert saved["iteration"] == 0 and saved["history"] == []
     assert signal.getsignal(signal.SIGTERM) is signal.SIG_DFL
 
 

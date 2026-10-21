@@ -16,15 +16,19 @@ def _record(entry: dict) -> None:
 
 
 @server.tool()
-def conversations_history(channel_id: str, limit: str = "10") -> str:
+def conversations_history(channel_id: str, limit: str = "10", cursor: str = "") -> str:
     _record({"tool": "conversations_history", "channel_id": channel_id,
              "saw_openai_key": "OPENAI_API_KEY" in os.environ})
+    if os.environ.get("FAKE_SLACK_INBOX"):
+        return Path(os.environ["FAKE_SLACK_INBOX"]).read_text()
     return f"ts,user,text\n1700000000.000100,U_OPERATOR,{REQUEST}"
 
 
 @server.tool()
-def conversations_replies(channel_id: str, thread_ts: str, limit: str = "10") -> str:
+def conversations_replies(channel_id: str, thread_ts: str, limit: str = "10", cursor: str = "") -> str:
     _record({"tool": "conversations_replies", "channel_id": channel_id, "thread_ts": thread_ts})
+    if os.environ.get("FAKE_SLACK_INBOX"):
+        return Path(os.environ["FAKE_SLACK_INBOX"]).read_text()
     return f"ts,user,text\n1700000000.000200,U_OPERATOR,{REPLY}"
 
 

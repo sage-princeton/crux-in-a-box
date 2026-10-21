@@ -306,6 +306,13 @@ For an SDK box:
   before any model call; inspect `/var/log/crux-agent-probe-sandbox.log`. Next it
   runs `crux_scaffold probe --coding-agent codex`: one traced model call and one
   Codex turn. It then installs `crux-sdk-run.service`, but does not start it.
+- **Run software:** optionally commit `provision.json` alongside `scaffold.toml`
+  to install OS packages and pinned CLIs. Declared commands are checked as the
+  run user during provisioning and at every SDK start. See
+  [the provisioning contract and example](provisioning.md).
+- **Gmail authentication:** after provisioning and before launch, follow
+  [manual `gog` setup](provisioning.md#manual-gog-authentication) to authorize the
+  mailbox and give the systemd service its credentials.
 - **Launching:** resolve the drop-in's placeholders on the box (see its
   `OPERATOR_GUIDE.md`), then run `sudo systemctl start crux-sdk-run`. Watch it
   with `journalctl -u crux-sdk-run -f`.

@@ -44,11 +44,20 @@ def test_budget_status_reports_usage_against_the_limit(tmp_path):
     ctx.usage.add("pm", 300, 100)
     ctx.usage.add("engineer", 50, 50)
     report = asyncio.run(TOOLS.create("budget_status", {}).invoke(ctx, Arguments()))
-    assert report.splitlines() == ["total tokens: 500 of 1,000", "  engineer: 100 tokens over 1 requests",
-                                   "  pm: 400 tokens over 1 requests"]
+    assert "total tokens: 500 of 1,000" in report
+    assert "tokens remaining: 500" in report
+    assert "  engineer: 100 tokens over 1 requests\n  pm: 400 tokens over 1 requests" in report
+    assert "model spend: unavailable" in report
 
 
 def test_command_tool_runs_its_declared_command(tmp_path):
     tool = TOOLS.create("site_tests", {"type": "command", "command": "echo checked", "description": "Run checks."})
     assert tool.description == "Run checks."
     assert asyncio.run(tool.invoke(context(tmp_path, []), Arguments())) == "exit_code=0\nchecked\n"
+
+
+def test_run_shell_runs_the_agents_command_with_the_declared_timeout(tmp_path):
+    tool = TOOLS.create("run_shell", {"timeout_seconds": 1})
+    ctx = context(tmp_path, [])
+    assert asyncio.run(tool.invoke(ctx, tool.Arguments(command="echo hi"))) == "exit_code=0\nhi\n"
+    assert asyncio.run(tool.invoke(ctx, tool.Arguments(command="sleep 5"))) == "exit_code=timeout after 1s"

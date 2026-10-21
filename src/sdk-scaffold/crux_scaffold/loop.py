@@ -107,16 +107,21 @@ class PhasedLoop(Loop):
         last_output = ""
         while state.phase_index < len(phases):
             phase = phases[state.phase_index]
-            if ctx.budget.exhausted(ctx.usage):
+            await ctx.refresh_resources()
+            if ctx.budget_exhausted():
                 return LoopOutcome(status="budget_exhausted", phase=phase.name, final_output=last_output)
             prompt = state.next_prompt or drop_in.prompt(phase.prompt)
             state.iteration += 1
-            with ctx.telemetry.trace(f"{phase.name} #{state.iteration}", {"phase": phase.name,
-                                                                          "iteration": state.iteration}):
-                turn = await runtime.run(prompt, workflow=phase.name)
-                last_output = turn.final_output
-                gate_ctx = GateContext(ctx, drop_in, phase.name, state.iteration, last_output)
-                results = [await self.gates[gate].check(gate_ctx) for gate in phase.gates]
+            try:
+                with ctx.telemetry.trace(f"{phase.name} #{state.iteration}", {"phase": phase.name,
+                                                                              "iteration": state.iteration}):
+                    turn = await runtime.run(prompt, workflow=phase.name)
+                    last_output = turn.final_output
+                    gate_ctx = GateContext(ctx, drop_in, runtime, phase.name, state.iteration, last_output)
+                    results = [await self.gates[gate].check(gate_ctx) for gate in phase.gates]
+            except BaseException:
+                state.iteration -= 1
+                raise
             if not turn.completed:
                 results.insert(0, GateResult(gate="turn", passed=False,
                                              feedback="Your previous turn ran out of turns before it finished."))
@@ -131,7 +136,7 @@ class PhasedLoop(Loop):
                 state.next_prompt = self.continuation(drop_in, phase, state.iteration, results)
             store.save(state)
             if state.next_prompt and phase.interval_seconds:
-                await ctx.sleep(phase.interval_seconds)
+                await ctx.wait(phase.interval_seconds)
         return LoopOutcome(status="completed", phase=phases[-1].name, final_output=last_output)
 
     def continuation(self, drop_in: DropInDirectory, phase: PhaseConfig, iteration: int,

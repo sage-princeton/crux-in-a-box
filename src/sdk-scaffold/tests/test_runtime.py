@@ -3,6 +3,7 @@ import json
 
 import pytest
 
+from crux_scaffold.agent_runtimes.base import Verdict
 from crux_scaffold.errors import InvalidDropInError
 
 from drop_ins import add_fake_slack, edit
@@ -26,9 +27,29 @@ def test_agent_delegate_sees_its_persona_and_brief_but_not_the_callers_context(d
     reviewer = ScriptedModel(say("looks fine"))
     pm = ScriptedModel(call("reviewer", {"input": "Review NOTE.md"}, "p1"), say("Reviewed."))
     asyncio.run(assemble(drop_in_dir, {"pm": pm, "reviewer": reviewer}).run())
-    assert reviewer.instructions == ["You are the reviewer."]
+    assert len(reviewer.instructions) == 1
+    assert reviewer.instructions[0].split("\n\n<resource_status>")[0] == "You are the reviewer."
     assert "Review NOTE.md" in str(reviewer.inputs[0])
     assert "Handle the request" not in str(reviewer.inputs[0])
+
+
+def test_each_delegate_invocation_reads_current_workspace_context(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", 'description = "Reviews a change and reports problems."',
+         'description = "Reviews a change and reports problems."\nworkspace_context = ["REQUEST.md"]')
+    edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/ENGINEERING.md"]',
+         'context = ["workspace/ENGINEERING.md"]\nworkspace_context = ["REQUEST.md"]')
+    reviewer = ScriptedModel(say("first review"), say("second review"))
+    pm = ScriptedModel(call("reviewer", {"input": "review"}, "p1"),
+                       call("write_file", {"path": "REQUEST.md", "content": "New acceptance criteria."}, "p2"),
+                       call("reviewer", {"input": "review again"}, "p3"),
+                       call("engineer", {"brief": "implement"}, "p4"), say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm, "reviewer": reviewer})
+    asyncio.run(scaffold.run())
+    assert "Not created yet" in str(reviewer.inputs[0])
+    assert "New acceptance criteria." in str(reviewer.inputs[1])
+    assert "first review" not in str(reviewer.inputs[1])
+    assert "PM standing context." not in str(reviewer.inputs)
+    assert "New acceptance criteria." in scaffold.coding_agents["engineer"].instructions[0]
 
 
 def test_subagent_out_of_turns_reports_an_error_to_its_caller(drop_in_dir, assemble):
@@ -63,12 +84,22 @@ def test_unknown_tool_type_is_a_config_error(drop_in_dir, assemble):
         assemble(drop_in_dir)
 
 
+def test_agent_can_run_a_shell_command_and_read_its_result(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", 'tools = ["read_file", "write_file", "rest"]', 'tools = ["run_shell"]')
+    pm = ScriptedModel(call("run_shell", {"command": "printf shell-ok > RESULT.txt; cat RESULT.txt"}, "p1"),
+                       say("done"))
+    outcome = asyncio.run(assemble(drop_in_dir, {"pm": pm}).run())
+    assert outcome.status == "completed"
+    assert (drop_in_dir / "workspace/RESULT.txt").read_text() == "shell-ok"
+    assert tool_outputs(pm.inputs[-1]) == ["exit_code=0\nshell-ok"]
+
+
 def test_every_agent_takes_the_run_model_and_effort_from_the_env(drop_in_dir, assemble):
     scaffold = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "low"})
     scaffold.runtime.build()
-    assert {name: (agent.model, agent.model_settings.reasoning.effort, agent.model_settings.reasoning.summary)
-            for name, agent in scaffold.runtime.agents.items()} == {"pm": ("gpt-test", "low", "auto"),
-                                                                     "reviewer": ("gpt-test", "low", "auto")}
+    assert {name: (agent.model, agent.model_settings.reasoning.effort)
+            for name, agent in scaffold.runtime.agents.items()} == {"pm": ("gpt-test", "low"),
+                                                                     "reviewer": ("gpt-test", "low")}
 
 
 def test_a_run_without_crux_model_is_a_config_error(drop_in_dir, assemble):
@@ -106,3 +137,36 @@ def test_mcp_server_gets_its_declared_env_but_not_the_scaffold_secrets(drop_in_d
     assert [entry["tool"] for entry in entries] == ["conversations_history", "conversations_add_message"]
     assert entries[0]["saw_openai_key"] is False
     assert entries[1]["payload"] == "Which pages?"
+
+
+def test_the_judge_is_an_isolated_agent_that_checks_the_work_with_its_tools(drop_in_dir, assemble):
+    verdict = Verdict(passed=False, feedback="AGENTS.md says nothing about tests", next_prompt="Add tests.")
+    judge = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "j1"), say(verdict.model_dump_json()))
+    pm = ScriptedModel()
+    scaffold = assemble(drop_in_dir, {"judge": judge, "pm": pm})
+    scaffold.runtime.build()
+    result = asyncio.run(scaffold.runtime.judge("request_met", "Pass if tested.", "The evidence.",
+                                                tools=["read_file"], max_turns=4))
+    assert result == verdict
+    assert judge.instructions == ["Pass if tested.", "Pass if tested."]
+    assert "The evidence." in str(judge.inputs[0])
+    assert tool_outputs(judge.inputs[1]) == ["PM standing context.\n"]
+    assert scaffold.context.usage.by_source["judge:request_met"].requests == 2
+    assert pm.inputs == []
+
+
+def test_a_judge_that_runs_out_of_turns_fails_with_the_reason(drop_in_dir, assemble):
+    judge = ScriptedModel(*[call("read_file", {"path": "AGENTS.md"}, f"j{i}") for i in range(3)])
+    scaffold = assemble(drop_in_dir, {"judge": judge})
+    scaffold.runtime.build()
+    result = asyncio.run(scaffold.runtime.judge("request_met", "rubric", "evidence", tools=["read_file"],
+                                                max_turns=2))
+    assert (result.passed, result.next_prompt) == (False, None)
+    assert "judge ran out of turns (2)" in result.feedback
+
+
+def test_the_scaffold_builds_the_tools_a_judge_names(drop_in_dir, assemble):
+    (drop_in_dir / "rubric.md").write_text("Judge it.")
+    with (drop_in_dir / "scaffold.toml").open("a") as toml:
+        toml.write('\n[gates.review]\ntype = "llm_judge"\nrubric = "rubric.md"\ntools = ["list_files"]\n')
+    assert "list_files" in assemble(drop_in_dir).runtime.assembly.tools
