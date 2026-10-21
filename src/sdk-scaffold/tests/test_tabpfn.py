@@ -163,6 +163,15 @@ def test_deadline_cancels_an_unlimited_inflight_turn_and_saves_state(scaffold, m
     assert scaffold.store.load().iteration == 0
 
 
+def test_completed_run_stays_completed_after_deadline(scaffold, monkeypatch):
+    monkeypatch.setattr(sys.modules["crux_drop_in.tabpfn_extensions"], "cleanup_pods", lambda env: {})
+    scaffold.context.usage.started_at = scaffold.context.now() - timedelta(hours=7)
+    scaffold.state.phase_index = 2
+    outcome = asyncio.run(scaffold.loop.run(SimpleNamespace(), scaffold.drop_in, scaffold.context,
+                                            scaffold.state, scaffold.store))
+    assert outcome.status == "completed"
+
+
 def test_cleanup_deletes_only_exact_run_owned_pods_and_checks_pagination(scaffold):
     extension = sys.modules["crux_drop_in.tabpfn_extensions"]
     calls = []

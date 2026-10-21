@@ -121,6 +121,8 @@ class ResearchLoop(PhasedLoop):
         if ctx.budget.max_wall_seconds is not None:
             remaining = max(0, ctx.budget.max_wall_seconds - ctx.budget.elapsed(ctx.usage, ctx.now()))
         try:
+            if state.phase_index >= len(self.options.phases):
+                return await super().run(runtime, drop_in, ctx, state, store)
             async with asyncio.timeout(remaining):
                 return await self._run(runtime, drop_in, ctx, state, store)
         except TimeoutError:
