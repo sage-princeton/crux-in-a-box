@@ -64,12 +64,18 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 | `wait(seconds)` | Returns seconds slept; polls steering and wakes early for pending messages. Use for cooperative waits. |
 | `steering` | Optional durable `Steering` inbox/outbox assembled by `scaffold.py`; runtime binds its MCP connection. |
 
+`workspace.run_shell_async(command, timeout)` is the cancellable counterpart to
+`run_shell`. It yields during process execution and kills/reaps the shell process
+group on timeout or cancellation. Both return the same bounded text format;
+`ReviewWorkspace` rejects both. Explicitly detached child sessions are outside
+that process group and need run-owned cleanup.
+
 ## Tools (`Tool`)
 
 `tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate`.
 
 `run_shell(command)` lets the agent supply a Bash command. Its `timeout_seconds` option defaults to 600.
-It delegates to `ctx.workspace.run_shell`, starting in the workspace root without an additional sandbox.
+It delegates to `ctx.workspace.run_shell_async`, starting in the workspace root without an additional sandbox.
 The result contains the exit code and combined stdout/stderr, retaining the last 20,000 output characters.
 On timeout, the workspace kills the process group and returns `exit_code=timeout after <seconds>s`.
 The existing `command` tool instead runs a fixed command declared by the drop-in.
@@ -179,6 +185,15 @@ First try adding phases, gates, continue prompts and `interval_seconds` to `phas
 
 A drop-in always declares its `[loop]`; there is no default. Every phase names its `continue_prompt`, a `string.Template` with `$phase`, `$iteration` and `$feedback`.
 
+`PhaseConfig.max_iterations` accepts a positive integer (default 1) or the string
+`"unlimited"`. The latter skips iteration exhaustion while retaining budget checks.
+`AgentConfig.max_turns` (default 30), `OpenAIAgentsOptions.max_turns` (default 50),
+and `JudgeOptions.max_turns` (default 20) accept the same `CountLimit` type.
+`count_limit` maps `"unlimited"` to `None` for the SDK's native unbounded runner.
+Existing numeric defaults are preserved. These settings do not disable budget
+checks or delegation policies. A resource-driven drop-in must additionally monitor
+in-flight work if it disables turn limits; `phased` only checks between iterations.
+
 - It is constructed with the declared `gates` as a dependency. `run(runtime, drop_in, ctx, state, store) -> LoopOutcome` drives `runtime.run(prompt, workflow=…)` until it is done.
 - **Resumable:**
   - keep progress in `RunState`;
@@ -230,7 +245,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 
 The generated setup uses assembled tool and coding-agent descriptions and only capabilities listed on the orchestrator. For the built-in `phased` loop it includes the current phase and iteration, phase limits and intervals, and referenced gates (including `command` criteria). Other loops supply their summary through `Loop.describe()` without assuming phased control flow. Rest bounds come from each available `rest` tool, and the token limit comes from `RunContext.budget`. MCP servers are identified by declared name; their commands, arguments and environment are never included.
 
-`[preamble]` in `scaffold.toml` has two optional keys: `enabled` (default `true`) controls generation, and `append` (default empty string) supplies inline text after the setup and before the persona. Appended text remains enabled even if generation is disabled, and follows the normal unresolved-placeholder validation. These settings affect only the orchestrator; disabling generation also removes the configured steering guidance. The setup renders live phase state and remaining rest allowance, assembled tools and delegate capabilities, delegation limits, budget/resource policies, context strategy and configured steering semantics. Optional limits use explicit unlimited wording; phase limits remain finite (default 1). It excludes provider endpoints/credentials and MCP launch commands/arguments/environment values. Current resource measurements continue to be added separately by the runtime input filter, including with generation disabled. This is scaffold instruction composition, not a new component registry.
+`[preamble]` in `scaffold.toml` has two optional keys: `enabled` (default `true`) controls generation, and `append` (default empty string) supplies inline text after the setup and before the persona. Appended text remains enabled even if generation is disabled, and follows the normal unresolved-placeholder validation. These settings affect only the orchestrator; disabling generation also removes the configured steering guidance. The setup renders live phase state and remaining rest allowance, assembled tools and delegate capabilities, delegation limits, budget/resource policies, context strategy and configured steering semantics. Optional limits use explicit unlimited wording; phase limits default to 1 and may explicitly be unlimited. It excludes provider endpoints/credentials and MCP launch commands/arguments/environment values. Current resource measurements continue to be added separately by the runtime input filter, including with generation disabled. This is scaffold instruction composition, not a new component registry.
 
 **Methods:**
 
@@ -238,7 +253,7 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 |---|---|
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
-| `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent. |
+| `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). `max_turns` is a positive integer or `None` for no turn limit. When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent. |
 | `describe()` | One line per agent, printed by `check`. |
 | `delegation_slot(*, background=False)` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
 | `delegation_wait()` (base implementation) | Suspend a delegated caller while awaiting independently scheduled background work; reacquire its capacity before resuming. Does not acquire a new slot. |

@@ -140,7 +140,7 @@ class RunShell(Tool):
     Options = ShellOptions
 
     async def invoke(self, ctx: RunContext, args: ShellArguments) -> str:
-        return ctx.workspace.run_shell(args.command, self.options.timeout_seconds)
+        return await ctx.workspace.run_shell_async(args.command, self.options.timeout_seconds)
 
 
 class CommandOptions(Options):

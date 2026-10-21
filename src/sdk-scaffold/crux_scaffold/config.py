@@ -11,7 +11,7 @@ from typing import Any
 
 from pydantic import Field, ValidationError, model_validator
 
-from crux_scaffold.components import Options, describe
+from crux_scaffold.components import CountLimit, Options, describe
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import Budget
 
@@ -36,7 +36,7 @@ class AgentConfig(StandingContextOptions):
     mcp_servers: list[str] = Field(default_factory=list)
     delegates: list[str] = Field(default_factory=list)
     description: str = ""
-    max_turns: int = Field(30, ge=1)
+    max_turns: CountLimit = 30
 
 
 class McpServerConfig(Options):
@@ -62,7 +62,7 @@ class PhaseConfig(Options):
     prompt: str
     continue_prompt: str
     gates: list[str] = Field(default_factory=list)
-    max_iterations: int = Field(1, ge=1)
+    max_iterations: CountLimit = 1
     interval_seconds: float = Field(0, ge=0)
 
 

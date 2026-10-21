@@ -1,0 +1,2 @@
+This scaffold will become a paper on detecting harmful distribution shift in
+prior-fitted networks. No empirical or theoretical result is claimed at launch.

@@ -4,12 +4,17 @@ built by a Registry from a TOML table of the form {type = "<type_name>", ...opti
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from crux_scaffold.errors import InvalidDropInError
 
+CountLimit = Annotated[int, Field(strict=True, ge=1)] | Literal["unlimited"]
+
+
+def count_limit(value: CountLimit) -> int | None:
+    return None if value == "unlimited" else value
 
 class Options(BaseModel):
     """A component's declared options. Unknown keys are errors so typos fail at load time."""

@@ -6,6 +6,7 @@ import signal
 import stat
 import subprocess
 from collections.abc import Awaitable, Callable, Mapping
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -94,6 +95,24 @@ class Workspace:
             output = f"... {omitted} earlier characters omitted\n" + output[-MAX_OUTPUT_CHARS:]
         return f"exit_code={process.returncode}\n{output}"
 
+    async def run_shell_async(self, command: str, timeout_seconds: float) -> str:
+        process = await asyncio.create_subprocess_exec(
+            "bash", "-c", command, cwd=self.root, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+        try:
+            output, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+        except (TimeoutError, asyncio.CancelledError) as exc:
+            with suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.communicate()
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            return f"exit_code=timeout after {timeout_seconds:g}s"
+        text = output.decode(errors="replace")
+        if len(text) > MAX_OUTPUT_CHARS:
+            text = f"... {len(text) - MAX_OUTPUT_CHARS} earlier characters omitted\n" + text[-MAX_OUTPUT_CHARS:]
+        return f"exit_code={process.returncode}\n{text}"
+
 
 class ReviewWorkspace(Workspace):
     """A fresh, read-only snapshot addressed only by the drop-in's submission aliases."""
@@ -156,6 +175,9 @@ class ReviewWorkspace(Workspace):
         raise ToolError("review workspace is read-only")
 
     def run_shell(self, command: str, timeout_seconds: float) -> str:
+        raise ToolError("review workspace is read-only")
+
+    async def run_shell_async(self, command: str, timeout_seconds: float) -> str:
         raise ToolError("review workspace is read-only")
 
 
