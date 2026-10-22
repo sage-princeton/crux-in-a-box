@@ -108,6 +108,25 @@ def test_probe_passes_only_when_every_probed_agent_answers(monkeypatch, probe_te
     assert "codex did not answer SCAFFOLD-PROBE" in capsys.readouterr().err
 
 
+def test_probe_uses_the_drop_ins_runtime_options(drop_in_dir, monkeypatch, probe_telemetry):
+    with (drop_in_dir / "scaffold.toml").open("a") as config:
+        config.write('\n[runtime]\ntype = "openai-agents"\nmax_turns = 17\n')
+    seen = []
+
+    async def answer(env, prompt, telemetry, *, options):
+        seen.append(options.max_turns)
+        return cli.PROBE_MARKER
+
+    monkeypatch.setattr(RUNTIMES.get("openai-agents"), "probe", answer)
+    assert main(["probe", "--drop-in", str(drop_in_dir)], env={}, telemetry=probe_telemetry) == 0
+    assert seen == [17]
+
+
+def test_probe_rejects_a_conflicting_runtime(drop_in_dir, capsys):
+    assert main(["probe", "--drop-in", str(drop_in_dir), "--runtime", "other"], env={}) == 2
+    assert "disagrees" in capsys.readouterr().err
+
+
 @pytest.mark.parametrize("command", ["check", "run"])
 def test_the_state_directory_is_required(drop_in_dir, command, capsys):
     with pytest.raises(SystemExit) as exit_info:

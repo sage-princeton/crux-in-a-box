@@ -39,7 +39,7 @@ Built-in components register themselves when their module is imported. `scaffold
 
 **`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. A new dependency between components is passed in there, as a constructor keyword or through `Assembly`; components do not build one another.
 
-**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
+**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
 
 **Errors have two kinds:**
 
@@ -237,7 +237,7 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 ## Agent runtimes (`AgentRuntime`)
 
-`agent_runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `agent_runtimes/openai_agents.py`.
+`agent_runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `agent_runtimes/openai_agents_sdk.py`.
 
 A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, and the context strategy. `runtime_overrides` add further keyword arguments, such as the test models that `openai-agents` takes. A new runtime module must be imported by `scaffold.py` so it registers. Its SDK stays inside that module.
 
@@ -254,10 +254,10 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
 | `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). `max_turns` is a positive integer or `None` for no turn limit. When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent. |
-| `describe()` | One line per agent, printed by `check`. |
+| `describe()` | Assembly details, including provider and one line per agent, printed by `check`. |
 | `delegation_slot(*, background=False)` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
 | `delegation_wait()` (base implementation) | Suspend a delegated caller while awaiting independently scheduled background work; reacquire its capacity before resuming. Does not acquire a new slot. |
-| `probe(env, prompt, telemetry)` (classmethod) | One traced model call outside any drop-in, which provisioning uses to prove the runtime works. |
+| `probe(env, prompt, telemetry, *, options=None)` (classmethod) | One traced model call without running a loop. Optional validated runtime options let `probe --drop-in` use the run's model provider; provisioning can omit them for the default provider. |
 
 **The behavior the rest of the scaffold relies on:**
 
@@ -278,6 +278,22 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
 - **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export the SDK's spans through OpenTelemetry so they land in the current trace. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).
+
+### Model providers in `openai-agents`
+
+The existing runtime's `model_provider` options configure the SDK's `OpenAIProvider`; this is not another component registry. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy.
+
+| `[runtime.model_provider]` key | Contract |
+|---|---|
+| `type` | `openai` (default), or `openai-compatible`. OpenAI keeps the existing Responses behavior. |
+| `api` | `responses` (default) or `chat-completions`; custom settings require `openai-compatible`. |
+| `base_url` | Required URL for a compatible provider. |
+| `api_key_env` | Credential variable name, default `OPENAI_API_KEY`. Resolve from `RunContext.env`, never embed the value in TOML. |
+| `extra_body` | Provider-specific request fields, such as OpenRouter's `provider.only` and `allow_fallbacks`. Cannot replace the run model, input, tools, reasoning, or session settings. Never put credentials here. |
+
+All agents and judges share one configured provider/client, which closes when the runtime exits, including failed MCP startup. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` remain the sole model and effort settings. The compatible Responses path disables server storage, requests encrypted reasoning for local replay, and preserves raw usage. The Chat Completions adapter sends reasoning effort without Responses-only summary/include options. Coding-agent SDK configuration remains the coding agent's responsibility.
+
+The [Google Argon smoke test drop-in](../examples/google-argon-smoke-test/scaffold.toml) configures OpenRouter with a Vertex-only route. The operator must separately configure Vertex BYOK and disable shared-capacity fallback on that account, then verify the actual response's billing/provider evidence.
 
 ### Optional background coding
 
@@ -324,6 +340,8 @@ Langfuse v4 stores each observation once, when it ends, so keep observations sho
 
 `UsageLedger` persists tokens per agent/coding agent and the timezone-aware `started_at`. The composition root saves the start before entering the runtime and saves again on exit, including interruption. The phased loop rolls back an unfinished iteration's counter, so restarting reruns it without resetting time or tokens. New model-calling components must add tokens to `ctx.usage`.
 
+`UsageLedger.add(source, input_tokens, output_tokens, *, cached_input_tokens=0, reasoning_output_tokens=0)` accepts the SDK's inclusive input/output totals and their optional detail counts. Cache reads remain part of input and reasoning remains part of output; neither detail is added a second time to `total_tokens`.
+
 `RunContext.budget_status(force=False)` refreshes the providers and formats local/remote usage, limits and remaining amounts. The runtime uses it before every model call; `budget_status` uses `force=True` to bypass cache intervals. `budget_exhausted()` checks the last known measurements. The loop enforces between iterations; delayed, missing and stale external data are visible, and outages alone do not stop a run. No provider totals are added together automatically.
 
 ## Resource providers (`ResourceProvider`)
@@ -352,6 +370,7 @@ Tests never call a model or the network. Use the existing doubles before writing
 | `ScriptedModel`, `call`, `say`, `StoppedModel` | `tests/scripted.py` | A model, passed to `openai-agents` through `runtime_overrides={"models": …}` |
 | `ScriptedCodingAgent` (`type = "scripted"`) | `tests/scripted.py` | A coding agent that writes declared files |
 | `FakeRuntime`, `ScriptedGate` (`type = "scripted"`) | `tests/fakes.py` | A runtime and gates, for loop tests |
+| Scripted HTTP transport | `tests/test_openrouter.py` | The real SDK's compatible provider adapter, including signed reasoning replay, tools, usage, and traces |
 | `fake_slack_mcp.py` | `tests/` | A stdio MCP server |
 | `BASE_FILES`, `write_tree`, `edit` | `tests/drop_ins.py` | A minimal drop-in directory |
 

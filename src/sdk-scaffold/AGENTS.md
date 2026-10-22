@@ -33,7 +33,7 @@ Don't add special cases for one drop-in to the package. Don't add an extension p
 - **`scaffold.py` is the only composition root.** Components receive their dependencies and never build one another.
 - **Agent SDKs stay in their modules.**
   - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK.
-  - The OpenAI Agents SDK stays in `agent_runtimes/openai_agents.py` and `context_strategies.py`.
+  - The OpenAI Agents SDK stays in `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`.
   - Codex stays in `coding_agents.py`.
 - **Configuration is declarative and strict.**
   - Options models forbid unknown keys.
@@ -65,6 +65,7 @@ If the change is user-facing, update the README in the same change. That include
 
 ## Test and check
 
+- For live provider smoke tests, load shared Langfuse settings from AWS SSM `/crux/system/env` in `us-east-1` and verify that the keys resolve to the `CRUX` project before any model call. Keep fetched credentials in process memory. The local `run-system-secrets.json` is not the source for these tests.
 - Write the test first. Tests never call a model or the network. Use the doubles listed in `docs/extending.md`, such as scripted models, the scripted coding agent, the fake runtime and the fake Slack MCP server, before writing new ones.
 - Run the full CI (`.github/workflows/sdk-scaffold-checks.yml`) before pushing:
 
