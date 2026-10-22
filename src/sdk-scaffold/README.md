@@ -547,8 +547,12 @@ Live checks on 2026-10-22 exercised file write, isolated reviewer delegation, fi
 | `google/gemini-3.8-flash` | Google Vertex BYOK | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/644d5daf2ae06cff198f8c1e668c1d6f) |
 | `google/gemini-4-argon` | Google Vertex BYOK | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/dfe33d289f874d77b7a9b8db2b85f15a) |
 | `qwen/qwen3-coder` | DeepInfra through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/d85f408bf2f2f4607f7e920e5a345905) |
+| `openai/gpt-6-astra` | OpenAI through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/eafbfa00f2dc920981f0bb51a0a088b0) |
+| `anthropic/claude-sonnet-5.5` | Anthropic through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/233c4a37211e560bcdcb6ca878b08005) |
 
 Qwen's Vertex attempt returned a 404 indicating that the GCP project could not access the publisher model in `us-south1`. Its successful retry changed the temporary drop-in's provider restriction to `only = ["deepinfra"]`, retaining `allow_fallbacks = false`; those calls used OpenRouter billing (`is_byok = false`). The checked-in Argon example keeps its Vertex-only route.
+
+Astra and Sonnet used temporary provider restrictions of `only = ["openai"]` and `only = ["anthropic"]`, respectively, with `allow_fallbacks = false` and `CRUX_REASONING_EFFORT=low`. Both completed the probe and smoke workflow, and all six generation receipts per model confirmed the expected provider and model. These calls used OpenRouter billing (`is_byok = false`).
 
 ## Run the demo in Docker
 
