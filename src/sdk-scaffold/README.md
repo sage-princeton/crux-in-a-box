@@ -43,7 +43,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Observability | `Telemetry` | Langfuse, or off |
 | Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `AgentRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`; delegation concurrency and depth limits |
 
-`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
+`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
 The orchestrator receives a generated setup preamble before its persona. It describes the current phase and gates, delegate execution and limits, tools and MCP access, configured operator steering and escalation, budget/resource policies, remaining rest allowance, standing-context strategy and restart behavior. Optional limits are explicitly unlimited when omitted; phase iteration limits retain their configured value (default 1). It is rendered from the assembled scaffold on each model call, so phase changes and resumed progress stay current. MCP launch arguments and environment values are excluded. Delegate instructions stay scoped to each delegate.
 
@@ -524,21 +524,31 @@ Set `CRUX_MODEL=google/gemini-4-argon` and `CRUX_REASONING_EFFORT=low`, `medium`
 
 The Responses path uses `store=false` and the complete local SDK session, including encrypted reasoning, across tool calls and restarts. Returned summaries reach Langfuse through the existing SDK instrumentation; cache and reasoning counts also reach the persisted usage ledger. Chat Completions uses the SDK's corresponding adapter; reasoning replay and tool compatibility depend on the selected endpoint. The runtime remains `openai-agents` in trace metadata because that is the scaffold executing the model calls. Langfuse's catalog cost estimate is separate from the provider's actual BYOK billing receipt.
 
-`examples/argon-smoke` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness with its own provider setup; changing this runtime's provider does not configure Codex or add an Antigravity adapter.
+`examples/google-argon-smoke-test` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness with its own provider setup; changing this runtime's provider does not configure Codex or add an Antigravity adapter.
 
-With the model-provider key and Langfuse variables exported, run from `src/sdk-scaffold`:
+For live tests, load the shared Langfuse settings from AWS SSM `/crux/system/env` in `us-east-1` and verify that the keys resolve to the **CRUX** project before making a model call. Keep fetched credentials in process memory. With the model-provider key and these Langfuse variables exported, run from `src/sdk-scaffold`:
 
 ```bash
 export CRUX_MODEL=google/gemini-4-argon CRUX_REASONING_EFFORT=low
-ARGON_SMOKE_DIR=$(mktemp -d)
-cp -R examples/argon-smoke "$ARGON_SMOKE_DIR/drop-in"
-export RUN_SLUG="argon-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
-python -m crux_scaffold check --drop-in "$ARGON_SMOKE_DIR/drop-in" --state-dir "$ARGON_SMOKE_DIR/state"
-python -m crux_scaffold probe --drop-in "$ARGON_SMOKE_DIR/drop-in"
-python -m crux_scaffold run --drop-in "$ARGON_SMOKE_DIR/drop-in" --state-dir "$ARGON_SMOKE_DIR/state"
+GOOGLE_ARGON_SMOKE_TEST_DIR=$(mktemp -d)
+cp -R examples/google-argon-smoke-test "$GOOGLE_ARGON_SMOKE_TEST_DIR/drop-in"
+export RUN_SLUG="google-argon-smoke-test-$(date -u +%Y%m%dT%H%M%SZ)"
+python -m crux_scaffold check --drop-in "$GOOGLE_ARGON_SMOKE_TEST_DIR/drop-in" --state-dir "$GOOGLE_ARGON_SMOKE_TEST_DIR/state"
+python -m crux_scaffold probe --drop-in "$GOOGLE_ARGON_SMOKE_TEST_DIR/drop-in"
+python -m crux_scaffold run --drop-in "$GOOGLE_ARGON_SMOKE_TEST_DIR/drop-in" --state-dir "$GOOGLE_ARGON_SMOKE_TEST_DIR/state"
 ```
 
-In Langfuse, select the lowercased `RUN_SLUG` environment or the original `RUN_SLUG` session. Expect `crux-probe` and `smoke #1` traces, with Argon generations, researcher/reviewer agents, file tools, and the `note_written` gate. The local `state/state.json` retains the token ledger. Shared Langfuse credentials are normally provisioned from the JSON SSM parameter `/crux/system/env`; the SDK CLI itself reads environment variables and does not fetch secrets or load local env files.
+In Langfuse's **CRUX** project, select the lowercased `RUN_SLUG` environment or the original `RUN_SLUG` session. Expect `crux-probe` and `smoke #1` traces, with Argon generations, researcher/reviewer agents, file tools, and the `note_written` gate. The local `state/state.json` retains the token ledger. The SDK CLI itself reads environment variables and does not fetch secrets or load local env files.
+
+Live checks on 2026-10-22 exercised file write, isolated reviewer delegation, file read, the command gate, persisted token accounting, and trace retrieval from the shared CRUX project using the Responses API:
+
+| Model | Provider route | Result and trace |
+|---|---|---|
+| `google/gemini-3.8-flash` | Google Vertex BYOK | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/644d5daf2ae06cff198f8c1e668c1d6f) |
+| `google/gemini-4-argon` | Google Vertex BYOK | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/dfe33d289f874d77b7a9b8db2b85f15a) |
+| `qwen/qwen3-coder` | DeepInfra through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/d85f408bf2f2f4607f7e920e5a345905) |
+
+Qwen's Vertex attempt returned a 404 indicating that the GCP project could not access the publisher model in `us-south1`. Its successful retry changed the temporary drop-in's provider restriction to `only = ["deepinfra"]`, retaining `allow_fallbacks = false`; those calls used OpenRouter billing (`is_byok = false`). The checked-in Argon example keeps its Vertex-only route.
 
 ## Run the demo in Docker
 

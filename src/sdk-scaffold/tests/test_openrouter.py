@@ -10,7 +10,7 @@ from openai import APIStatusError, AsyncOpenAI
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES
-from crux_scaffold.agent_runtimes.openai_agents import OpenAIAgentsRuntime
+from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.telemetry import NullTelemetry, RunIdentity, telemetry_from_env
@@ -69,7 +69,7 @@ def router(monkeypatch, drop_in_dir):
         configs.append(kwargs)
         return AsyncOpenAI(**kwargs, max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)))
 
-    monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents.AsyncOpenAI", client)
+    monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.AsyncOpenAI", client)
     return requests, pending, configs
 
 
@@ -180,7 +180,7 @@ def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble):
 def test_openrouter_generations_reach_langfuse_with_model_reasoning_and_usage(router, drop_in_dir, assemble):
     _, pending, _ = router
     exporter = InMemorySpanExporter()
-    env = {**ENV, "RUN_SLUG": "Argon-Smoke", "LANGFUSE_PUBLIC_KEY": "pk-or-test",
+    env = {**ENV, "RUN_SLUG": "Google-Argon-Smoke-Test", "LANGFUSE_PUBLIC_KEY": "pk-or-test",
            "LANGFUSE_SECRET_KEY": "sk-or-test", "LANGFUSE_BASE_URL": "http://127.0.0.1:9"}
     telemetry = telemetry_from_env(env, RunIdentity.from_env(env), span_exporter=exporter)
     pending.append(response({"type": "reasoning", "id": "rs-test", "summary": [
@@ -192,7 +192,7 @@ def test_openrouter_generations_reach_langfuse_with_model_reasoning_and_usage(ro
     generation = generations[0]
     assert generation.attributes["llm.model_name"] == ENV["CRUX_MODEL"]
     assert "Compared the alternatives" in generation.attributes["output.value"]
-    assert generation.attributes["session.id"] == "Argon-Smoke"
+    assert generation.attributes["session.id"] == "Google-Argon-Smoke-Test"
     assert generation.attributes["llm.token_count.prompt"] == 100
     assert generation.attributes["llm.token_count.completion"] == 30
 

@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 from crux_scaffold.agent_runtimes.base import Verdict
-from crux_scaffold.agent_runtimes.openai_agents import OpenAIAgentsOptions
+from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsOptions
 from crux_scaffold.config import AgentConfig, PhaseConfig
 from crux_scaffold.gates import JudgeOptions
 
