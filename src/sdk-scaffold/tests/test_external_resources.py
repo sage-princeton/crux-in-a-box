@@ -206,9 +206,10 @@ def test_runpod_retains_discovery_during_pending_billing_and_recovers_after_rest
     monitor = ResourceMonitor({"gpu": Runpod("gpu", RunpodOptions())})
     ctx = context(tmp_path)
     asyncio.run(monitor.refresh(ctx, force=True))
-    first = monitor.snapshot("gpu")
     asyncio.run(monitor.refresh(ctx, force=True))
-    assert monitor.status("gpu") == "stale" and monitor.snapshot("gpu") == first
+    assert monitor.status("gpu") == "fresh"
+    assert monitor.snapshot("gpu").metrics["running_pods"].value == 1
+    assert monitor.snapshot("gpu").metrics["cost_usd"].stale
     restored = ResourceMonitor({"gpu": Runpod("gpu", RunpodOptions())})
     asyncio.run(restored.refresh(ctx, force=True))
     assert restored.status("gpu") == "fresh"
@@ -358,6 +359,43 @@ def test_runpod_missing_billing_is_pending_not_free_compute(tmp_path, monkeypatc
     assert "cost_usd" not in result.metrics
     assert result.metrics["running_gpus"].value == 2
     assert "pending" in result.note
+
+
+def test_runpod_monitor_tracks_new_pods_while_billing_is_pending_then_recovers(tmp_path, monkeypatch):
+    mock_runpod(monkeypatch, [pod_page(), pod_page(pod("new-pod")), billing("new-pod", records=False),
+                             pod_page(pod("new-pod")), billing("new-pod", records=False),
+                             pod_page(pod("new-pod")), billing("new-pod")])
+    monitor = ResourceMonitor({"gpu": Runpod("gpu", RunpodOptions(limits={"cost_usd": 2}))})
+    ctx = context(tmp_path)
+
+    async def run():
+        await monitor.refresh(ctx, force=True)
+        assert monitor.snapshot("gpu").metrics["running_pods"].value == 0
+        assert monitor.snapshot("gpu").metrics["cost_usd"].value == 0
+        for _ in range(2):
+            await monitor.refresh(ctx, force=True)
+            pending = monitor.snapshot("gpu")
+            assert monitor.status("gpu") == "fresh"
+            assert pending.metrics["running_pods"].value == 1
+            assert pending.metrics["running_gpus"].value == 2
+            assert pending.metrics["current_hourly_usd"].value == 1.25
+            assert pending.metrics["cost_usd"].stale
+            assert "Tracking 1 persisted pod IDs" in pending.note
+            report = monitor.describe(NOW)
+            assert "cost_usd: unknown; limit 2; remaining unknown" in report
+            assert "Billing pending" in report
+            assert not monitor.exhausted()
+        await monitor.refresh(ctx, force=True)
+
+    asyncio.run(run())
+    billed = monitor.snapshot("gpu")
+    assert billed.metrics["running_pods"].value == 1
+    assert billed.metrics["cost_usd"].value == 2.5
+    assert not billed.metrics["cost_usd"].stale
+    assert monitor.exhausted()
+    assert "cost_usd: 2.5 USD" in monitor.describe(NOW)
+    inventory = next((tmp_path / "resources").glob("runpod-*.json"))
+    assert json.loads(inventory.read_text())["pod_ids"] == ["new-pod"]
 
 
 @pytest.mark.parametrize("change", ["scope", "count", "negative", "time"])

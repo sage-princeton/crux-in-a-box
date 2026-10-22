@@ -155,7 +155,7 @@ def test_sanitized_resource_errors_are_visible_and_clear_after_success():
     assert action not in monitor.describe(NOW)
 
 
-def test_partial_refresh_retains_previous_cost_and_timestamp_without_merging_live_counts():
+def test_partial_refresh_updates_live_counts_and_retains_cost_with_its_original_timestamp():
     previous = ResourceSnapshot(as_of=NOW, metrics={"cost_usd": ResourceMetric(value=2, unit="USD"),
                                                    "running_pods": ResourceMetric(value=1, unit="pods")})
     partial = ResourceSnapshot(as_of=NOW + timedelta(minutes=1), metrics={
@@ -168,12 +168,59 @@ def test_partial_refresh_retains_previous_cost_and_timestamp_without_merging_liv
 
     asyncio.run(run())
     assert monitor.exhausted()
-    assert monitor.status("compute") == "stale"
-    assert monitor.snapshot("compute") == previous
+    assert monitor.status("compute") == "fresh"
+    retained = monitor.snapshot("compute")
+    assert retained.as_of == partial.as_of
+    assert retained.metrics["running_pods"].value == 0
+    assert not retained.metrics["running_pods"].stale
+    assert retained.metrics["cost_usd"].value == 2
+    assert retained.metrics["cost_usd"].stale
+    assert retained.metrics["cost_usd"].as_of == NOW
     report = monitor.describe(NOW + timedelta(minutes=1))
-    assert "incomplete measurements" in report
+    assert "billing pending" in report
+    assert "cost_usd: unknown; limit 2; remaining unknown" in report
+    assert "last known 2 USD" in report
+    assert "2026-10-15T13:00:00Z" in report
     assert "age 60s" in report
-    assert "running_pods: 1 pods" in report
+    assert "running_pods: 0 pods" in report
+
+
+def test_repeated_partial_refreshes_and_failure_do_not_refresh_retained_cost_age():
+    original = snapshot(2)
+    partials = [ResourceSnapshot(as_of=NOW + timedelta(minutes=i), metrics={
+        "running_pods": ResourceMetric(value=1, unit="pods")}, note="billing pending") for i in (1, 2)]
+    provider = ScriptedResource(original, *partials, RuntimeError("secret-test"), snapshot(3),
+                                refresh_seconds=60, limits={"cost_usd": 2})
+    monitor = ResourceMonitor({"compute": provider})
+    ctx = context()
+
+    async def run():
+        await monitor.refresh(ctx, force=True)
+        for _ in partials:
+            await monitor.refresh(ctx, force=True)
+            metric = monitor.snapshot("compute").metrics["cost_usd"]
+            assert metric.stale and metric.as_of == NOW
+            assert monitor.exhausted()
+        await monitor.refresh(ctx)
+        assert monitor.status("compute") == "cached"
+        await monitor.refresh(ctx, force=True)
+        assert monitor.status("compute") == "stale"
+        assert monitor.snapshot("compute").metrics["running_pods"].value == 1
+        assert monitor.snapshot("compute").metrics["cost_usd"].as_of == NOW
+        assert "age 180s" in monitor.describe(NOW + timedelta(minutes=3))
+        await monitor.refresh(ctx, force=True)
+
+    asyncio.run(run())
+    assert monitor.status("compute") == "fresh"
+    metric = monitor.snapshot("compute").metrics["cost_usd"]
+    assert metric.value == 3 and not metric.stale
+    assert "cost_usd: 3 USD" in monitor.describe(NOW)
+
+
+def test_metric_measurement_timestamps_require_timezone():
+    assert ResourceMetric(value=2, unit="USD", as_of=NOW).as_of == NOW
+    with pytest.raises(ValidationError):
+        ResourceMetric(value=2, unit="USD", as_of=NOW.replace(tzinfo=None))
 
 
 def test_cache_expires_and_unknown_limited_metric_is_reported():

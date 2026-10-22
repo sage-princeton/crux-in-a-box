@@ -35,7 +35,7 @@ from pydantic import Field, HttpUrl, ValidationError, model_validator
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
-from crux_scaffold.components import Options
+from crux_scaffold.components import CountLimit, Options, count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.steering import SteeringOptions
@@ -70,7 +70,7 @@ class ModelProviderOptions(Options):
 
 
 class OpenAIAgentsOptions(Options):
-    max_turns: int = Field(50, ge=1)
+    max_turns: CountLimit = 50
     model_provider: ModelProviderOptions = ModelProviderOptions()
     background_coding: bool = False
     steering: SteeringOptions | None = None
@@ -195,7 +195,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
         try:
             try:
                 result = await Runner.run(orchestrator, input, context=self.assembly.context,
-                                          max_turns=self.options.max_turns, hooks=self.hooks, session=self.session,
+                                          max_turns=count_limit(self.options.max_turns), hooks=self.hooks,
+                                          session=self.session,
                                           run_config=replace(self.run_config, workflow_name=workflow))
             except MaxTurnsExceeded:
                 outcome = TurnOutcome(final_output="", completed=False)
@@ -254,7 +255,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                             on_invoke_tool=invoke,
                             params_json_schema=ensure_strict_json_schema(CodingResultArguments.model_json_schema()))
 
-    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int,
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int | None,
                     review_workspace: ReviewWorkspace | None = None) -> Verdict:
         ctx = self.assembly.context
         if review_workspace is not None:
@@ -374,7 +375,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             return self._coding_tool(self.assembly.coding_agents[name])
         spec = config.agents[name]
         tool = self.agents[name].as_tool(
-            tool_name=name, tool_description=spec.description, max_turns=spec.max_turns, hooks=self.hooks,
+            tool_name=name, tool_description=spec.description, max_turns=count_limit(spec.max_turns), hooks=self.hooks,
             run_config=self.run_config,
             input_builder=lambda data: self._turn_input(name, data["params"]["input"], []))
         invoke_tool = tool.on_invoke_tool

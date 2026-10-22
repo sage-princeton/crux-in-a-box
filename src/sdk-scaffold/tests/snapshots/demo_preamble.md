@@ -42,7 +42,7 @@ Automatic operator steering is not configured. Use the connected MCP tools to re
 ## Budget and resting
 
 Token limit: 3,000,000. Model spend limit: unlimited. Wall-clock limit: unlimited.
-Usage is shared across agents, coding agents, judges and compaction. The loop checks limits before each iteration; it does not interrupt an in-flight iteration. The saved run start survives restart, so elapsed time includes downtime. Current usage, remaining allowances and measurement freshness arrive in the resource_status block on each SDK model call. budget_status, when available, forces a refresh. Token accounting uses the larger of local and reported tokens, never their sum. Model spend uses resource `models` when configured.
+Usage is shared across agents, coding agents, judges and compaction. The configured loop owns budget enforcement; the built-in phased loop checks before each iteration. The saved run start survives restart, so elapsed time includes downtime. Current usage, remaining allowances and measurement freshness arrive in the resource_status block on each SDK model call. budget_status, when available, forces a refresh. Token accounting uses the larger of local and reported tokens, never their sum. Model spend uses resource `models` when configured.
 No external resource providers are configured; external measurements are unavailable.
 `rest` bounds each requested wait to 30–300s and 1800s total (1800s remaining), shared by all callers of this tool. Remaining allowance can shorten a wait below the minimum. Only completed sleep time is charged. At exhaustion, continue independent work or use a native coding result wait when available. Rest counters reset on scaffold assembly/restart; sequential rest calls avoid overcommitting the allowance.
 

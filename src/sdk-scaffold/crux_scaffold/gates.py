@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, StrictBool, model_validator
 
-from crux_scaffold.components import Component, Options, Registry
+from crux_scaffold.components import Component, CountLimit, Options, Registry, count_limit
 from crux_scaffold.errors import ToolError
 from crux_scaffold.tools import Tool, validate_review_tools
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
@@ -94,7 +94,7 @@ class JudgeOptions(Options):
     rubric: str
     inspect: list[str] = Field(default_factory=list)
     tools: list[str] = Field(default_factory=lambda: ["read_file", "list_files"])
-    max_turns: int = Field(20, ge=1)
+    max_turns: CountLimit = 20
     blind: StrictBool = False
     artifacts: dict[str, str] = Field(default_factory=dict)
 
@@ -137,11 +137,11 @@ class LlmJudgeGate(Gate):
             except ToolError as exc:
                 return GateResult(gate=self.name, passed=False, feedback=str(exc))
             verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx),
-                                              tools=self.tools, max_turns=self.options.max_turns,
+                                              tools=self.tools, max_turns=count_limit(self.options.max_turns),
                                               review_workspace=workspace)
             return GateResult(gate=self.name, **verdict.model_dump())
         verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx),
-                                          tools=self.tools, max_turns=self.options.max_turns)
+                                          tools=self.tools, max_turns=count_limit(self.options.max_turns))
         return GateResult(gate=self.name, **verdict.model_dump())
 
     def evidence(self, ctx: GateContext) -> str:

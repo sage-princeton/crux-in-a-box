@@ -141,7 +141,7 @@ class AgentRuntime(Component):
         """Send one prompt to the orchestrator, continuing its session. `workflow` names the turn in traces."""
 
     @abstractmethod
-    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int,
+    async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int | None,
                     review_workspace: ReviewWorkspace | None = None) -> Verdict:
         """Ask an isolated judge agent for a verdict. It has the named scaffold tools and no session, so it sees
         only the rubric, the evidence and what it checks itself. With review_workspace, bind every tool to that

@@ -91,7 +91,8 @@ class Scaffold:
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
         if turns := getattr(self.runtime.options, "max_turns", None):
-            lines.append(f"The runtime allows up to {turns} model turns per orchestrator iteration.")
+            lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
+                         else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
         lines += [f"- `{name}`: {self.assembly.tools[name].description}" for name in spec.tools]
         for name in spec.tools:
             tool = self.assembly.tools[name]
@@ -181,8 +182,8 @@ class Scaffold:
         cost = "unlimited" if budget.max_cost_usd is None else f"{budget.max_cost_usd:g} USD"
         wall = "unlimited" if budget.max_wall_seconds is None else f"{budget.max_wall_seconds:g}s"
         lines = [f"Token limit: {tokens}. Model spend limit: {cost}. Wall-clock limit: {wall}.",
-                 ("Usage is shared across agents, coding agents, judges and compaction. The loop checks limits "
-                  "before each iteration; it does not interrupt an in-flight iteration. The saved run start "
+                 ("Usage is shared across agents, coding agents, judges and compaction. The configured loop owns "
+                  "budget enforcement; the built-in phased loop checks before each iteration. The saved run start "
                   "survives restart, so elapsed time includes downtime. Current usage, remaining allowances and "
                   "measurement freshness arrive in the resource_status block on each SDK model call. budget_status, when "
                   "available, forces a refresh. Token accounting uses the larger of local and reported tokens, "
@@ -243,8 +244,9 @@ class Scaffold:
         phases = loop.options.phases
         if self.state.phase_index < len(phases):
             phase = phases[self.state.phase_index]
+            bound = "with no iteration limit" if phase.max_iterations == "unlimited" else f"of at most {phase.max_iterations}"
             lines += [(f"Current phase: `{phase.name}`; iteration {max(1, self.state.iteration)} "
-                       f"of at most {phase.max_iterations}.")]
+                       f"{bound}.")]
         else:
             lines.append("All phases are complete.")
         lines += [("Phases run in order. After each iteration the loop evaluates the phase's gates. "

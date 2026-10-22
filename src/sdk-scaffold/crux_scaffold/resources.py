@@ -30,6 +30,8 @@ class ResourceReadError(Exception):
 class ResourceMetric(Options):
     value: Nonnegative
     unit: str = Field(min_length=1)
+    as_of: AwareDatetime | None = None
+    stale: bool = False
 
 
 class ResourceSnapshot(Options):
@@ -85,8 +87,13 @@ class ResourceMonitor:
             if not isinstance(result, ResourceSnapshot):
                 raise TypeError("resource provider did not return a snapshot")
             previous = self.snapshot(name)
-            if previous is not None and previous.metrics.keys() - result.metrics.keys():
-                raise ResourceReadError("latest refresh returned incomplete measurements")
+            if previous is not None:
+                missing = previous.metrics.keys() - result.metrics.keys()
+                if missing and not result.metrics:
+                    raise ResourceReadError("latest refresh returned incomplete measurements")
+                retained = {key: previous.metrics[key].model_copy(update={
+                    "as_of": previous.metrics[key].as_of or previous.as_of, "stale": True}) for key in missing}
+                result = result.model_copy(update={"metrics": {**retained, **result.metrics}})
             self._snapshots[name] = result
             self._statuses[name] = "fresh"
             self._errors.pop(name, None)
@@ -132,10 +139,15 @@ class ResourceMonitor:
             for key in sorted(metrics.keys() | provider.options.limits.keys()):
                 limit = provider.options.limits.get(key)
                 metric = metrics.get(key)
-                if metric is None:
+                if metric is None or metric.stale:
                     line = f"    {key}: unknown"
                     if limit is not None:
                         line += f"; limit {limit:g}; remaining unknown"
+                    if metric is not None:
+                        measured = metric.as_of or snapshot.as_of
+                        age = max(0, (now - measured).total_seconds())
+                        line += (f"; stale last known {metric.value:g} {metric.unit} "
+                                 f"as_of {_timestamp(measured)}; age {age:.0f}s")
                 else:
                     line = f"    {key}: {metric.value:g} {metric.unit}"
                     if limit is not None:
