@@ -61,6 +61,7 @@ umask 077
 backup="/srv/agentrq/backups/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$backup"
 image="$(docker inspect --format '{{.Image}}' agentrq)"
+docker inspect --format '{{.Config.Image}}' agentrq > "$backup/image-ref"
 docker image save "$image" | gzip > "$backup/controller-image.tar.gz"
 printf '%s\n' "$image" > "$backup/image-id"
 cp /etc/systemd/system/agentrq.service "$backup/agentrq.service"
@@ -78,7 +79,9 @@ new gateway version, tarball URL and hash together; they override the example.
 
 To roll back, stop the gateways and controller, preserve the upgraded state in
 a separate directory, restore `_storage`, `_certs`, `agentrq.env` and the unit
-from the same backup, and `docker image load` its saved image. Run
+from the same backup, and `docker image load` its saved image. Tag the recorded
+`image-id` with the recorded `image-ref` if the old unit used a tag (saving by
+image ID does not preserve that tag). Run
 `systemctl daemon-reload` and start `agentrq`, then restore each workspace's
 previous gateway pins and reinstall/configure it between turns. Restore the
 image and database together; rollback discards changes made after the backup.
