@@ -33,6 +33,17 @@ from them. Keep Caddy's trusted HTTPS endpoint and hostname routing; no extra
 port or insecure TLS override is needed. The agent CLI and adapter pins remain
 in the workspace configuration, and Node 22 or later is required.
 
+The SQLite DSN uses `_txlock=immediate`: task updates read and then write in one
+transaction while native ACP records tool activity concurrently. Taking the
+write lock at the start avoids failed read-to-write upgrades (`SQLITE_BUSY`),
+which the busy timeout cannot retry. Upstream still enables WAL and its five
+second busy timeout. The database file stays at `/_storage/agentrq.db`.
+
+Native ACP queues follow-ups until the current agent turn ends. Leave the task
+ongoing when expecting another message, and end the turn; polling for a pushed
+reply inside that same turn cannot receive it. Mark the task completed only
+after processing the final follow-up.
+
 ### Upgrade and rollback between runs
 
 Never apply this upgrade during a task. Stop the workspace gateways between

@@ -21,6 +21,7 @@ DATA_DIR=/srv/agentrq
 # Upstream v0.13.4 includes the long-task SQLite fix and native ACP v1.
 # Upgrade the controller and gateway together, between runs (see README.md).
 AGENTRQ_IMAGE=agentrq/agentrq:0.13.4@sha256:da4dd7cd017d15a1bceb158bceb238856c638aea826fc2121b530a26b39c2736
+AGENTRQ_SQLITE_DSN='file:/_storage/agentrq.db?_txlock=immediate'
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 
 # ====== PACKAGES ======
@@ -82,7 +83,7 @@ ENV_DOMAIN="$TLS_HOSTNAME"
 info "Rewriting AGENTRQ_BASE_URL / AGENTRQ_DOMAIN to $ENV_DOMAIN"
 sed -i -E "s#^AGENTRQ_BASE_URL=.*#AGENTRQ_BASE_URL=${PUBLIC_BASE}#" "$ENV_FILE"
 sed -i -E "s#^AGENTRQ_DOMAIN=.*#AGENTRQ_DOMAIN=${ENV_DOMAIN}#" "$ENV_FILE"
-sed -i -E "s#^AGENTRQ_SQLITE_DSN=.*#AGENTRQ_SQLITE_DSN=/_storage/agentrq.db#" "$ENV_FILE"
+sed -i -E "s#^AGENTRQ_SQLITE_DSN=.*#AGENTRQ_SQLITE_DSN=$AGENTRQ_SQLITE_DSN#" "$ENV_FILE"
 ok "$(grep -E '^(AGENTRQ_BASE_URL|AGENTRQ_DOMAIN|AGENTRQ_SQLITE_DSN)=' "$ENV_FILE" | tr '\n' ' ')"
 
 # ====== SYSTEMD UNIT ======
