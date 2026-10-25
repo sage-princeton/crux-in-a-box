@@ -438,7 +438,25 @@ policy for instances in the isolated account: EC2 Instance Connect
 Command. That means an agent can get into an instance without the SSH key
 pair it was launched with — which matters when the agent that launched it is
 long gone. Instance Connect needs the instance's security group to allow port
-22 from where the agent connects. SSM needs the SSM agent on the instance and
+22 from where the agent connects. After the run instance's public IP is assigned,
+`provision-workspace-aws-resources.sh` uses `aux_instance_access.py` to allow that
+specific IP (`/32`, TCP 22) on SSH-enabled security groups attached to existing
+aux-account EC2 instances, across enabled regions. This applies to both ACP and
+SDK workspaces with `PROVISION_EC2=1`; unrelated workspaces receive no access.
+The helper verifies the configured account and current role owner, verifies the
+new rules before removing predecessor rules, and reconciles changed public IPs
+on reprovisioning. Only rules marked `crux-workspace-ssh:<slug>` are managed;
+manual rules (including legacy rules allowing an earlier workspace's IP) stay
+unchanged. Instances created later still need their SSH access configured by
+the agent. SSH authentication through Instance Connect or a key is still required.
+
+Teardown removes only its own managed SSH rules before terminating the run box
+or releasing its IP, including with `--keep-aux`; a stale slug cannot remove the
+successor's rule. Disabling `PROVISION_EC2` and reprovisioning removes managed
+SSH access. Discovery, authorization and verification failures stop provisioning
+before its agent is configured; cleanup failures stop teardown before termination.
+
+SSM needs the SSM agent on the instance and
 an instance role carrying the SSM agent's permissions; `crux-app-boundary`
 permits that traffic (`ssm`/`ssmmessages`/`ec2messages`), and the agent can add
 it to an existing `crux-app-*` role with `iam:PutRolePolicy`.
@@ -454,13 +472,17 @@ To end one run and start a follow-up that continues with what the first built
    EC2, Route53, CloudFront, ACM, `crux-agent-devops` with its policies, the
    `crux-app-*` roles and `crux-app-boundary` — and so does the old slug's
    `crux-run-<old>` role. **Kept resources keep billing.**
+   The old workspace's managed SSH allowlist is removed before its IP can be
+   released or reused.
 2. Create the follow-up with `make-new-workspace.sh`, keeping the same
    `PROVISION_*` flags and `AUX_RESOURCE_PROFILE` in `placeholders-base.txt`.
    `provision-aux-aws-resources.sh` re-trusts `crux-agent-devops` to the new
    slug's role, then deletes `crux-run-<old>` (unless an instance still uses
    its instance profile), so ownership moves cleanly and the old slug's
    teardown can no longer sweep the new run's account. The new agent finds
-   the existing resources through the same role.
+   the existing resources through the same role. Once its instance has a public
+   IP, workspace provisioning allowlists that IP on the retained SSH-enabled
+   instance groups before configuring either scaffold.
 3. When the follow-up is torn down without `--keep-aux`, it sweeps everything.
    If no follow-up ever starts, run the old teardown again without
    `--keep-aux` to delete it all.

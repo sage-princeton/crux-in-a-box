@@ -338,6 +338,7 @@ if [ "$DRY_RUN" = 1 ]; then
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
   instance profile  $RUN_IAM_PROFILE      $PROFILE_DESC
+$(if [ -n "$AUX_RESOURCE_ACCOUNT_ID" ]; then printf '  aux SSH access    reconcile this instance public IPv4 /32 on retained SSH-enabled instance groups\n'; fi)
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
@@ -515,6 +516,8 @@ fi
 PRIVATE_IP="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
   --query 'Reservations[0].Instances[0].PrivateIpAddress' --output text)"
 ok "Public $PUBLIC_IP / private $PRIVATE_IP"
+
+python3 "$SCRIPT_DIR/aux_instance_access.py" reconcile "$CONFIG_FILE" "$PUBLIC_IP"
 
 # ====== SSH CONFIG ENTRY ======
 info "~/.ssh/config entry for '$SLUG'"

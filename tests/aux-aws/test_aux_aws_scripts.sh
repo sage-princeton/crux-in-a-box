@@ -85,6 +85,7 @@ write_config() {
 
 install_workspace_teardown() {
   cp "$SRC/teardown-workspace-aws-resources.sh" "$CASE_DIR/scripts/"
+  cp "$SRC/aux_instance_access.py" "$CASE_DIR/scripts/"
   cat > "$CASE_DIR/scripts/teardown-aux-aws-resources.sh" <<'STUB'
 #!/usr/bin/env bash
 touch "$AUX_MARKER"

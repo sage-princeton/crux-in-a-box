@@ -97,6 +97,9 @@ elif [ "$KEEP_AUX" = 1 ]; then
   echo "  (--keep-aux: no aux AWS resources were provisioned for '$SLUG'; nothing to keep)"
 fi
 echo "  remove ~/.ssh/config entry for $SLUG"
+if [ -n "$(cfg AUX_RESOURCE_ACCOUNT_ID)" ]; then
+  echo "  remove this run's managed aux SSH allowlist before releasing its IP"
+fi
 echo
 echo "Keeping (shared): crux-run-sg, the key pair, crux-system-role/profile,"
 echo "/crux/system/env, and the control box."
@@ -111,6 +114,8 @@ if [ "$ASSUME_YES" != 1 ]; then
   read -r reply
   [ "$reply" = "$SLUG" ] || die "Did not match. Nothing was deleted."
 fi
+
+python3 "$SCRIPT_DIR/aux_instance_access.py" cleanup "$CONFIG_FILE"
 
 if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   info "Terminating $INSTANCE_ID"
