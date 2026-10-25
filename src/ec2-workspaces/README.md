@@ -211,21 +211,20 @@ the SDK scaffold resumes but reruns the interrupted iteration. `sudo needrestart
 -b` lists either service once it is running on stale libraries; restart it by
 hand between runs, never while a turn is in flight.
 
-The gateway is not installed from npm. Upstream `@agentrq/acp-gateway` starts
-waiting for a permission verdict only once AgentRQ has acknowledged the request,
-but AgentRQ can send an auto-approval before that; the verdict is dropped and the
-turn is cancelled after 30 minutes. Boxes run a CRUX build with the fix instead:
-`crux/*` branches of
-[sage-princeton/agentrq-acp-gateway](https://github.com/sage-princeton/agentrq-acp-gateway)
-are built by hand and uploaded there as a GitHub release: the `npm pack`
-tarball plus its sha256. `install-run.sh` downloads `ACP_GATEWAY_TARBALL_URL`,
-refuses it unless it matches `ACP_GATEWAY_SHA256`, and checks the installed
-version is `ACP_GATEWAY_VERSION`. To move the pin, release a new
-`crux-v<version>` from the fork and copy its URL and `.sha256`; once upstream ships
-the fix, point the URL at its npm tarball
-(`https://registry.npmjs.org/@agentrq/acp-gateway/-/acp-gateway-<version>.tgz`)
-and pin that hash. A re-installed gateway only takes effect when it next
-restarts, which must be between turns.
+The gateway is upstream `@agentrq/acp-gateway` **0.4.1**, paired with AgentRQ
+**v0.13.4**. It forwards the agent's ACP v1 stream over authenticated WSS to
+`/api/acp/v1`; the controller now handles sessions and permissions. This
+replaces the patched 0.2.17 MCP bridge and its permission-notification waiter.
+The existing `.mcp.json` workspace URL/token and trusted HTTPS endpoint are still
+used. `--handshake` continues to run `--agent-info` without the controller.
+
+`scaffolds/acp.sh` downloads `ACP_GATEWAY_TARBALL_URL` from the npm registry,
+refuses it unless it matches `ACP_GATEWAY_SHA256`, and checks its package version
+is `ACP_GATEWAY_VERSION` before installation. Update these three pins together,
+including overrides in existing per-run placeholder files. Upgrade the controller
+first and follow the [backup, validation and rollback procedure](../ec2-control/README.md#upgrade-and-rollback-between-runs).
+Install and restart gateways between turns. A 0.4.1 gateway requires a controller
+with native ACP v1; the previous controller cannot serve it.
 
 On Codex boxes the tracing plugin uploads a turn to Langfuse from Codex's `Stop`
 hook, which fires only when the turn ends. A turn cut off by a gateway stop,
