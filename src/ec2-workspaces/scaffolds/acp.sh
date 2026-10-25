@@ -63,13 +63,7 @@ else
 fi
 
 # ====== PINNED AGENT PACKAGES ======
-# The gateway is installed from a release tarball checked against a pinned
-# sha256, not from npm by version: the CRUX build (sage-princeton/
-# agentrq-acp-gateway) carries a fix upstream lacks. Upstream starts waiting
-# for a permission verdict only once AgentRQ has acknowledged the request, but
-# AgentRQ can send an auto-approval before that; the verdict is dropped and the
-# turn is cancelled after 30 minutes. A tarball that does not match the hash is
-# never installed.
+# Verify the upstream release tarball before npm installs it.
 info "$AGENT_BIN@$AGENT_VERSION and acp-gateway@$ACP_GATEWAY_VERSION"
 GW_DIR="$(mktemp -d)"
 GW_TARBALL="$GW_DIR/acp-gateway.tgz"
