@@ -3,9 +3,8 @@
 # Keep the provider key in run-secrets-base.json and shared Langfuse keys in
 # SSM /crux/system/env. Upload them with --put-system-secrets.
 
-# AWS region. Leave AWS_PROFILE empty to use ambient environment credentials
-# (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN).
-AWS_PROFILE=
+# Use an explicit named profile for provisioning and durable archival.
+AWS_PROFILE=crux-2-acct-admin-access
 AWS_REGION=us-east-1
 
 

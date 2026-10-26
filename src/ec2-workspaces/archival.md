@@ -87,8 +87,9 @@ credential verification requests. Findings report paths only.
 Only a scanned bundle crosses SSH. Teardown verifies the content manifest,
 uploads (using multipart transfer when necessary), downloads the exact S3
 version, checks SHA-256, extracts safely and rechecks every file before removing
-SSH rules, the instance, EIP or legacy secret parameters. It prints a receipt
-under `~/.local/state/crux/archives/`; preserve that receipt. Retries create new
+SSH rules, the instance, EIP or legacy secret parameters. It verifies a durable
+`receipt.json` beside the S3 bundle and prints a local copy under
+`~/.local/state/crux/archives/`; preserve that receipt. Retries create new
 objects and preserve previous archives. Failures leave the box present and its
 services stopped. To resume deliberately, remove `/run/crux-archive.lock`, then
 start the appropriate service. The runtime conditions disappear at reboot.
