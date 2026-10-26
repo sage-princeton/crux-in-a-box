@@ -97,7 +97,9 @@ log prefixes across iterations/restarts. These are cooperative scaffold controls
 shell/cloud access is not a hard publication sandbox. Independently review outcomes.
 
 An empty queue or completed request does not end maintenance. To end, post
-`approve stop run <run-slug>` in an operator thread, have the manager verify it,
+`approve stop run <run-slug>` as a new top-level channel message so steering wakes
+an idle manager, and have it verify approval using that message's thread timestamp.
+Replies in closed request threads do not automatically reach the manager. Then
 close/cancel open requests and write COMPLETION_REPORT.md. Stop the service safely
 between turns before teardown and prepare ARCHIVE.json requiring the full drop-in,
 state/state.json, handoff, editable source, request logs and screenshots. Preserve

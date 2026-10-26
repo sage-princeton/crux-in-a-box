@@ -78,8 +78,10 @@ an open request is awaiting thread feedback/approval, check that thread every
 30–60 seconds and rest between checks. Reuse current verification evidence until
 something changes rather than repeatedly running checks while waiting.
 Budget exhaustion is a reported incomplete run, not
-success. To finish, obtain `approve stop run <run-slug>` in an operator thread and
-verify it with cms_approval. Resolve/cancel every open request explicitly. Write
+success. To finish, obtain `approve stop run <run-slug>` as a new top-level channel
+message and verify it with cms_approval using that message's thread timestamp.
+Tell the operator to use a top-level message if asking how to stop; closed request
+threads are not automatically polled. Resolve/cancel every open request explicitly. Write
 COMPLETION_REPORT.md with request outcomes, remaining issues, resource/secret
 references, final release, verification and visual evidence, backup/rollback
 status, and successor instructions. Update the archive manifest for this SDK run

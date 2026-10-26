@@ -144,3 +144,44 @@ def test_thread_approval_is_verified_via_transport_and_logged(tmp_path):
     assert '"kind": "approval"' in (tmp_path / "REQUESTS.jsonl").read_text()
     with pytest.raises(ToolError):
         asyncio.run(tool.invoke(ctx,args.model_copy(update={"revision":"v3"})))
+
+
+@pytest.mark.parametrize("missing", ["before", "during", "after", "publish", "implement", None])
+def test_completed_proactive_fix_requires_visual_evidence_and_both_approvals(tmp_path, missing):
+    module = extension()
+    state = tmp_path / "state"
+    state.mkdir()
+    rows = [{"request_id": "fix", "kind": "proactive"}]
+    if missing != "implement":
+        rows.append({"request_id": "fix", "kind": "approval", "purpose": "implement", "revision": "scope1"})
+    for phase in ("before", "during", "after"):
+        if missing != phase:
+            rows.append({"request_id": "fix", "kind": "snapshot", "phase": phase, "revision": "release2"})
+    if missing != "publish":
+        rows.append({"request_id": "fix", "kind": "approval", "purpose": "publish", "revision": "release2"})
+    rows.extend([{"request_id": "fix", "kind": "completed"},
+                 {"request_id": "run", "kind": "approval", "purpose": "stop", "revision": "pilot"}])
+    (tmp_path / "REQUESTS.jsonl").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    (tmp_path / "COMPLETION_REPORT.md").write_text("Published release2; evidence retained.")
+    ctx = SimpleNamespace(run=SimpleNamespace(workspace=Workspace(tmp_path), state_dir=state))
+    gate = module.MaintenanceCycle("maintenance_cycle", module.MaintenanceCycle.Options())
+    result = asyncio.run(gate.evaluate(ctx))
+    assert result.passed is (missing is None), result.feedback
+
+
+def test_idle_run_needs_stop_approval_closed_requests_and_completion_report(tmp_path):
+    module = extension()
+    state = tmp_path / "state"
+    state.mkdir()
+    ctx = SimpleNamespace(run=SimpleNamespace(workspace=Workspace(tmp_path), state_dir=state))
+    gate = module.MaintenanceCycle("maintenance_cycle", module.MaintenanceCycle.Options())
+    assert not asyncio.run(gate.evaluate(ctx)).passed
+    module.append_record(tmp_path, {"request_id": "r1", "kind": "request"})
+    module.append_record(tmp_path, {"request_id": "run", "kind": "approval", "purpose": "stop", "revision": "pilot"})
+    (tmp_path / "COMPLETION_REPORT.md").write_text("Outstanding request will be cancelled.")
+    assert not asyncio.run(gate.evaluate(ctx)).passed
+    module.append_record(tmp_path, {"request_id": "r1", "kind": "cancelled"})
+    (tmp_path / "COMPLETION_REPORT.md").unlink()
+    assert not asyncio.run(gate.evaluate(ctx)).passed
+    (tmp_path / "COMPLETION_REPORT.md").write_text("Cancelled request r1; no deployment.")
+    assert asyncio.run(gate.evaluate(ctx)).passed
