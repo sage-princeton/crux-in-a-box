@@ -21,7 +21,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR=/srv/agentrq
 # Upstream v0.13.4 includes the long-task SQLite fix and native ACP v1.
 # Upgrade the controller and gateway together, between runs (see README.md).
-AGENTRQ_IMAGE="$(jq -r .services.agentrq.image "$SCRIPT_DIR/compose.yaml")"
 AGENTRQ_SQLITE_DSN='file:/_storage/agentrq.db?_txlock=immediate'
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 
@@ -30,6 +29,7 @@ info "Installing docker, jq, unzip"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq docker.io docker-compose-v2 jq unzip curl >/dev/null
+AGENTRQ_IMAGE="$(jq -r .services.agentrq.image "$SCRIPT_DIR/compose.yaml")"
 systemctl enable --now docker >/dev/null
 ok "docker $(docker --version | awk '{print $3}' | tr -d ,)"
 
