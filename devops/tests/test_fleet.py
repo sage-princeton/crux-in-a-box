@@ -12,8 +12,6 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from devops.tests.test_aws import box, run, scope
 
-pytest_plugins = ['devops.tests.test_aws']
-
 
 def test_launch_retries_only_profile_propagation_with_same_request():
     ec2=Mock()
