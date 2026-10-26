@@ -74,19 +74,8 @@ def main():
             invoker = Invoker(lifecycle, SSH(args.ssh_key, args.state.parent/(args.command+'.log'), args.known_hosts))
             result = invoker.start() if args.command == 'start' else invoker.health()
         elif args.command == 'destroy':
-            with lifecycle.locked(create=False) as (state, context):
-                deployment = state.get('deployment')
-                box = next(r for r in run.resources if r.id == run.box)
-                state['phase'] = 'destroying'
-                lifecycle.save(state)
-                if box.type == 'aws.ec2' and box.ownership == 'managed':
-                    lifecycle.drivers[box.type].stop(box, state['resources'].get(box.id, {}).get('outputs', {}), context)
-                elif deployment:
-                    if not args.ssh_key:
-                        raise ValueError('destroy of a configured Box requires --ssh-key to stop its Run before resource cleanup')
-                    SSH(args.ssh_key, args.state.parent/'stop.log', args.known_hosts).stop(
-                        host=deployment['host'], owner=context.owner, bundle_sha256=deployment['sha256'])
-            result = lifecycle.destroy()
+            transport = SSH(args.ssh_key, args.state.parent/'stop.log', args.known_hosts) if args.ssh_key else None
+            result = Invoker(lifecycle, transport).destroy()
         else:
             result = lifecycle.apply()
         print(json.dumps({'run': run.name, 'phase': result['phase'], 'state': str(args.state)}, indent=2))

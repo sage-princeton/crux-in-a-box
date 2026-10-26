@@ -70,3 +70,17 @@ def test_invalid_secrets_fail_before_mutation(lifecycle, values):
     with pytest.raises(ValueError):
         validate_secrets(lifecycle.run, values)
     assert not lifecycle.path.exists()
+
+
+def test_teardown_stops_run_before_cleanup_and_blocks_if_stop_fails(lifecycle):
+    lifecycle.apply()
+    transport = Mock()
+    invoker = Invoker(lifecycle, transport)
+    invoker.configure({'path': '/private/bundle.tar.gz', 'sha256': 'c'*64}, {'OPENAI_API_KEY': 'fixture'})
+    transport.stop.side_effect = RuntimeError('Box unavailable')
+    with pytest.raises(RuntimeError, match='unavailable'):
+        invoker.destroy()
+    lifecycle.drivers['test.box'].destroy.assert_not_called()
+    transport.stop.side_effect = None
+    invoker.destroy()
+    lifecycle.drivers['test.box'].destroy.assert_called_once()

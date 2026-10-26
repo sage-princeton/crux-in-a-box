@@ -104,12 +104,12 @@ so updates cannot interrupt a turn. Restart them between Runs after inspection.
 ## Cleanup and migration
 
 ```bash
-crux destroy ~/crux/research/run.json --state ~/crux/research/state.json
+crux destroy ~/crux/research/run.json --state ~/crux/research/state.json --ssh-key ~/.ssh/crux.pem
 ```
 
-Cleanup stops a managed AWS Box before removing grants/resources in reverse
-dependency order. A configured external Box requires `--ssh-key` to stop its
-Run. Retained assets and external resources survive; ownership changes block
+Cleanup first stops the configured Run over SSH, leaving its Box reachable for
+finalization, then removes grants/resources in reverse dependency order. A stop
+failure blocks deletion; configured Boxes require `--ssh-key`. Retained assets and external resources survive; ownership changes block
 mutations. Keep the immutable Run document and receipt until teardown succeeds;
 retry with that same pair after failure. Start a new deployment with a new
 Run/state file after teardown. Never reuse receipts to adopt existing Boxes.

@@ -26,6 +26,24 @@ class Invoker:
     def __init__(self, lifecycle, transport):
         self.lifecycle, self.transport = lifecycle, transport
 
+    def destroy(self):
+        lifecycle = self.lifecycle
+        with lifecycle.locked(create=False) as (state, context):
+            deployment = state.get('deployment')
+            state['phase'] = 'destroying'
+            lifecycle.save(state)
+            if deployment:
+                if self.transport is None:
+                    raise ValueError('Configured Box teardown requires SSH to stop the Run before finalization and resource cleanup')
+                self.transport.stop(host=deployment['host'], owner=context.owner,
+                                    bundle_sha256=deployment['sha256'])
+            else:
+                box = next(r for r in lifecycle.run.resources if r.id == lifecycle.run.box)
+                driver = lifecycle.drivers[box.type]
+                if box.ownership == 'managed' and hasattr(driver, 'stop'):
+                    driver.stop(box, state['resources'].get(box.id, {}).get('outputs', {}), context)
+        return lifecycle.destroy()
+
     def health(self):
         lifecycle = self.lifecycle
         with lifecycle.locked(create=False) as (state, context):

@@ -107,3 +107,12 @@ It authenticates before creation, recovers by a stable owner/resource marker,
 rejects name collisions and checks ownership again before deletion. Its receipt
 stores only ID/URL. `bindings` resolves workspace credentials privately for
 configuration; those tokens never enter the bundle or deployment receipt.
+
+Configured-Run teardown first stops its services through the authenticated
+transport, leaving the Box reachable for finalization. A failing stop blocks all
+resource deletion. PR #84's archive/verification step can be a resource whose
+dependencies include the Box and auxiliary grants: reverse teardown executes
+that finalizer before removing any dependency. Its `destroy` must fail if the
+archive/restore checks fail, and retain a verified receipt for retries. The
+archive bucket itself can declare `retain`. This layer does not implement archive
+capture or claim that a successful resource cleanup preserves research outputs.
