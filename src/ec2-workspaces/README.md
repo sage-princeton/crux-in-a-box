@@ -2,6 +2,10 @@
 
 # `ec2-workspaces/` — Workspace-level scripts
 
+Teardown first requires a scanned, restore-verified S3 archive. Prepare the
+required handoff manifest and stop the run safely as described in
+[Archive and hand off a run](archival.md). This applies with `--yes` and `--keep-aux`.
+
 ## Onboarding: first-time laptop setup
 
 This assumes the AgentRQ controller (`crux-control`) is already provisioned and

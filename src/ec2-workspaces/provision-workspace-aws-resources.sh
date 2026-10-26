@@ -579,10 +579,19 @@ if [ "$SCAFFOLD_MODULE" = sdk ]; then
 fi
 
 info "Staging $DROP_IN_PATH/ on $SLUG"
+python3 "$SCRIPT_DIR/archive_workspace.py" grant-read "$CONFIG_FILE"
 ssh "$SLUG" 'sudo install -d -o ubuntu -g ubuntu /srv/crux-run /srv/crux-run/run-harness'
 git -C "$SCRIPT_DIR/../.." archive --prefix=run-harness/ "HEAD:$DROP_IN_PATH" \
   | ssh "$SLUG" 'tar -x -C /srv/crux-run'
 ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before launch"
+python3 - "$SCRIPT_DIR/../.." "$DROP_IN_PATH" <<'PY' | ssh "$SLUG" 'sudo sh -c "umask 022; cat > /etc/crux-source.json"'
+import json, subprocess, sys
+root, drop_in = sys.argv[1:]
+def git(*args):
+    return subprocess.check_output(["git", "-C", root, *args], text=True).strip()
+print(json.dumps({"revision": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain")),
+                  "staging": "committed HEAD via git archive", "drop_in": drop_in}))
+PY
 
 if [ "$SCAFFOLD_MODULE" = sdk ]; then
   info "Staging src/sdk-scaffold/ on $SLUG at /opt/crux-sdk-scaffold"

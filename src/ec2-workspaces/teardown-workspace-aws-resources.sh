@@ -23,11 +23,12 @@ ok()   { printf "\033[1;32m✓ %s\033[0m\n" "$*"; }
 warn() { printf "\033[1;33m! %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
-CONFIG_FILE=""; ASSUME_YES=0; KEEP_AUX=0
+CONFIG_FILE=""; ASSUME_YES=0; KEEP_AUX=0; ARCHIVE_RECEIPT=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) ASSUME_YES=1; shift ;;
     --keep-aux) KEEP_AUX=1; shift ;;
+    --archive-receipt) ARCHIVE_RECEIPT="${2:?--archive-receipt needs a file}"; shift 2 ;;
     -*) die "Unknown flag: $1" ;;
     *) CONFIG_FILE="$1"; shift ;;
   esac
@@ -98,6 +99,7 @@ elif [ "$KEEP_AUX" = 1 ]; then
   echo "  (--keep-aux: no aux AWS resources were provisioned for '$SLUG'; nothing to keep)"
 fi
 echo "  remove ~/.ssh/config entry for $SLUG"
+echo "  require a scanned, uploaded and restore-verified S3 archive BEFORE deletion"
 if [ -n "$(cfg AUX_RESOURCE_ACCOUNT_ID)" ]; then
   echo "  remove this run's managed aux SSH allowlist before releasing its IP"
 fi
@@ -114,6 +116,15 @@ if [ "$ASSUME_YES" != 1 ]; then
   printf "Type the slug to confirm: "
   read -r reply
   [ "$reply" = "$SLUG" ] || die "Did not match. Nothing was deleted."
+fi
+
+if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
+  ARCHIVE_ARGS=()
+  [ "$KEEP_AUX" != 1 ] || ARCHIVE_ARGS+=(--keep-aux)
+  python3 "$SCRIPT_DIR/archive_workspace.py" capture "$CONFIG_FILE" "${ARCHIVE_ARGS[@]}"
+else
+  [ -n "$ARCHIVE_RECEIPT" ] || die "No run box to archive. Supply --archive-receipt PATH to reverify its previous S3 archive before cleanup."
+  python3 "$SCRIPT_DIR/archive_workspace.py" verify "$CONFIG_FILE" --receipt "$ARCHIVE_RECEIPT"
 fi
 
 python3 "$SCRIPT_DIR/aux_instance_access.py" cleanup "$CONFIG_FILE"

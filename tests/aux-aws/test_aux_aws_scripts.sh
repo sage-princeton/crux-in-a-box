@@ -87,12 +87,14 @@ write_config() {
 install_workspace_teardown() {
   cp "$SRC/teardown-workspace-aws-resources.sh" "$CASE_DIR/scripts/"
   cp "$SRC/aux_instance_access.py" "$CASE_DIR/scripts/"
+  printf 'import sys\nsys.exit(0)\n' > "$CASE_DIR/scripts/archive_workspace.py"
   cat > "$CASE_DIR/scripts/teardown-aux-aws-resources.sh" <<'STUB'
 #!/usr/bin/env bash
 touch "$AUX_MARKER"
 STUB
   chmod +x "$CASE_DIR/scripts/"*.sh
   export AUX_MARKER="$CASE_DIR/aux-teardown-called"
+  export STUB_INSTANCES=i-test
 }
 
 echo "policy templates"
