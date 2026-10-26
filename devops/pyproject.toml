@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crux-devops"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Shared CRUX Box and Run deployment contracts"
+
+[project.scripts]
+crux = "crux_devops.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["crux_devops*"]
