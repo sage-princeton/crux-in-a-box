@@ -1,0 +1,7 @@
+*
+!requirements.txt
+!crux_scaffold/
+!run-harness/web-cms-product-change/
+!docker/entrypoint.sh
+**/__pycache__
+**/.state

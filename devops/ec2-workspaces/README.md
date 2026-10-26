@@ -1,0 +1,338 @@
+<!-- FIXME: clean this up, becoming a mess -->
+
+# `ec2-workspaces/` — Workspace-level scripts
+
+## Onboarding: first-time laptop setup
+
+This assumes the AgentRQ controller (`crux-control`) is already provisioned and
+running (`../ec2-control/make-control-box.sh`) — this section only covers what a
+new operator needs to create their own workspace against an existing controller.
+
+### 1. Prerequisites
+
+- AWS CLI authenticated with the account's profile: `aws sts get-caller-identity --profile <profile>`.
+- `jq`, `ssh`, `python3`, `curl` installed.
+- **bash ≥ 4.** These scripts use associative arrays (`declare -A`). macOS ships
+  bash 3.2 permanently (Apple won't ship GPLv3 bash), so `env bash` — what the
+  `#!/usr/bin/env bash` shebang resolves to — silently picks up the ancient one
+  unless a newer bash is installed and earlier in `PATH`:
+  ```bash
+  brew install bash
+  export PATH="/opt/homebrew/bin:$PATH"   # put this in your shell profile
+  which bash   # must print /opt/homebrew/bin/bash, not /bin/bash
+  ```
+  Symptom if you skip this: `provision-workspace-aws-resources.sh` fails
+  immediately with `declare: -A: invalid option`, after the AgentRQ workspace
+  has already been minted — the box itself never gets created.
+
+### 2. Get the shared SSH key
+
+Workspaces reuse the control box's key pair (`KEY_NAME`, default `crux-acp`).
+Its private key is **not recoverable from AWS** — EC2 only offers it once, at
+creation. Get `crux-acp.pem` from whoever holds it, over a secure channel (not
+Slack/email), then:
+```bash
+chmod 400 ~/.ssh/crux-acp.pem
+```
+
+### 3. Get your IP whitelisted (SSH to both the controller and run boxes)
+
+SSH access is gated by **two separate security groups**, and whitelisting one
+does not whitelist the other:
+- `crux-control-sg` — gates SSH (and HTTPS) to the controller itself.
+- `crux-run-sg` — gates SSH to every workspace/run box. This is the one that
+  actually matters for `make-new-workspace.sh`.
+
+`OPERATOR_CIDR` in a per-workspace config file is only shape-checked by
+`provision-workspace-aws-resources.sh` — it does **not** open a security group
+rule. The scripts don't create SSH rules for you; add your `/32` to both
+groups by hand:
+```bash
+MY_IP="$(curl -s https://checkip.amazonaws.com)"
+for SG_NAME in crux-control-sg crux-run-sg; do
+  SG_ID="$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$SG_NAME" \
+    --query 'SecurityGroups[0].GroupId' --output text)"
+  aws ec2 authorize-security-group-ingress --group-id "$SG_ID" \
+    --ip-permissions "IpProtocol=tcp,FromPort=22,ToPort=22,IpRanges=[{CidrIp=${MY_IP}/32,Description=\"$(whoami)\"}]"
+done
+```
+(`../ec2-control/make-control-box.sh` can also add these via its
+`OPERATOR_CIDR` config, but re-running it restarts the live `agentrq` and
+`caddy` services on the controller — avoid that on a shared controller when
+all you need is a new operator rule.)
+
+If your IP changes later (common on residential ISPs), SSH will time out
+rather than refuse — re-run the snippet above with the new `MY_IP`.
+
+Confirm SSH to the controller works before going further — workspace creation
+mints its AgentRQ workspace over this connection:
+```bash
+ssh -o ConnectTimeout=10 -o BatchMode=yes crux-control true && echo OK
+```
+
+### 4. (Optional) Log into the AgentRQ dashboard
+
+`make-new-workspace.sh` does **not** need this — it mints workspaces over the
+SSH connection from step 3, fetching the root token itself on the controller
+side (`../ec2-control/bootstrap-workspace.sh` greps it out of
+`/srv/agentrq/agentrq.env` via `sudo`). You only need this if you want to log
+into the AgentRQ web dashboard yourself (e.g. to browse/manage workspaces by
+hand).
+
+The root login credential, `AGENTRQ_AUTH_ROOT_ACCESS_TOKEN`, lives in AWS SSM
+Parameter Store as a `SecureString` — pull it directly, no SSH required:
+```bash
+aws ssm get-parameter --name /crux/control/env --with-decryption \
+  --query 'Parameter.Value' --output text | grep '^AGENTRQ_AUTH_ROOT_ACCESS_TOKEN=' | cut -d= -f2-
+```
+Treat the output as a secret: don't paste it into chat, tickets, or shell
+history you'll share. It logs you in at `POST /api/v1/auth/root/login` (the
+dashboard's login form does this for you) against the controller's public
+HTTPS base (`CONTROL_MCP_BASE`, e.g. `https://<dashed-eip>.sslip.io`).
+
+To reach the dashboard in a browser at all, your IP also needs port 443 on
+`crux-control-sg` (separate from the SSH rule in step 3):
+```bash
+aws ec2 authorize-security-group-ingress --group-id "$(aws ec2 describe-security-groups \
+  --filters "Name=group-name,Values=crux-control-sg" --query 'SecurityGroups[0].GroupId' --output text)" \
+  --ip-permissions "IpProtocol=tcp,FromPort=443,ToPort=443,IpRanges=[{CidrIp=${MY_IP}/32,Description=\"$(whoami)\"}]"
+```
+
+### 5. Configure and create your workspace
+
+```bash
+cp placeholders-base.txt.example placeholders-base.txt
+```
+Fill in at least:
+- `AWS_PROFILE` / `AWS_REGION` — **no quotes** around the value; these files
+  are parsed with `sed`, not a shell, so `AWS_PROFILE='foo'` is read as the
+  literal 5-character string with quotes attached and authentication fails.
+- `KEY_NAME`, `CONTROL_SSH_ALIAS` — usually the defaults (`crux-acp`, `crux-control`).
+- `CONTROL_PRIVATE_DNS` — a hint only (provisioning looks up the live value
+  and warns if this is stale), but set it from the running instance:
+  ```bash
+  aws ec2 describe-instances --filters "Name=tag:Name,Values=crux-control" "Name=instance-state-name,Values=running" \
+    --query 'Reservations[0].Instances[0].PrivateDnsName' --output text
+  ```
+- `CONTROL_MCP_BASE` — the controller's public HTTPS base, e.g. `https://<dashed-eip>.sslip.io`.
+- `AGENT_PLATFORM` and its model/effort keys (`CODEX_MODEL`/`CODEX_REASONING_EFFORT`
+  or `CLAUDE_MODEL`/`CLAUDE_EFFORT`). There's no fixed list here — it's whatever
+  model string your API key has access to; check with the team for a known-good value.
+
+```bash
+cp run-secrets.json.example run-secrets-base.json   # or run-secrets-claude.json.example for Claude
+```
+Fill in the provider API key.
+
+Optionally, add API keys the agent's own tools need for this run, such as `WAVE_API_KEY` (the WebAIM WAVE accessibility API) or `PAGESPEED_API_KEY` (Google PageSpeed Insights). Every key in the base secrets file other than the provider keys (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENROUTER_API_KEY`) and `AGENTRQ_*` is copied into each workspace's `run-secrets-<slug>.json`, and `configure-run.sh` writes it into `/etc/crux-run.env`, which is the agent process's environment. So the agent sees everything else in this file: keep operator-only secrets out of it. Names must be `UPPER_SNAKE_CASE`, and values that are empty or still placeholders fail preflight. A key that would override a variable the env file already sets (`PATH`, `HOME`, or a provider setting such as `ANTHROPIC_BASE_URL`) fails on the box before the gateway starts. Unused provider keys and the AgentRQ token never reach the agent.
+
+```json
+{
+  "ANTHROPIC_API_KEY": "...",
+  "WAVE_API_KEY": "...",
+  "PAGESPEED_API_KEY": "..."
+}
+```
+
+Then:
+```bash
+./make-new-workspace.sh <slug> --dry-run   # validates everything, creates nothing
+./make-new-workspace.sh <slug>
+```
+`<slug>` is letters/digits/hyphens only — it becomes the EC2 `Name` tag, the
+`~/.ssh/config` alias, the AgentRQ workspace name, and a Langfuse environment.
+
+### Known failure modes
+
+- **`VcpuLimitExceeded` / `AddressLimitExceeded`** on the "Instance" or
+  "Elastic IP" step — the account's vCPU or Elastic IP quota is exhausted by
+  other running boxes (`aws service-quotas get-service-quota --service-code ec2
+  --quota-code L-1216C47A` for vCPUs, `L-0263D0A3` for EIPs). Check
+  `aws ec2 describe-instances --filters Name=instance-state-name,Values=running`
+  for what's actually running before assuming you need a quota increase —
+  live experiment boxes, not leftover ones, are the usual cause.
+- If a run dies partway through `provision-workspace-aws-resources.sh`, the
+  AgentRQ workspace and `placeholders-<slug>.txt` / `run-secrets-<slug>.json`
+  are already written — don't re-run `make-new-workspace.sh` with the same
+  slug (it refuses, to avoid orphaning the first workspace token). Resume
+  directly instead:
+  ```bash
+  ./provision-workspace-aws-resources.sh --secrets run-secrets-<slug>.json placeholders-<slug>.txt
+  ```
+
+## Usage
+
+### Make a new workspace
+
+This will:
+
+- Create the AWS assets
+- Create the workspace in Agent RQ
+
+**`make-new-workspace.sh`** — laptop, and the one you normally want:
+`./make-new-workspace.sh <slug>` mints the workspace, writes the per-box config and
+secrets, and calls `provision-workspace-aws-resources.sh`. ~2 minutes. All AWS checks run _before_
+the workspace is minted, so bad credentials cost nothing.
+
+By default each workspace gets its own Elastic IP, allocated and tagged to its slug.
+Set `USE_ELASTIC_IP=false` to skip it entirely (e.g. test boxes when the account's EIP
+quota is exhausted) and fall back to the instance's ephemeral public IP — that address
+changes after stop/start, so rerun provisioning to refresh the SSH alias when using it.
+Set `ELASTIC_IP_ADDRESS=<public ip>` in the config file instead (the base config, so
+it flows through to every box built from it, or the per-box one) to reuse an existing
+address — e.g. one a web host has allowlisted for crawling, that needs to stay stable
+across pilots and workspaces. That config file is the only place this is set — there's
+no separate flag — so provisioning and teardown always agree on it. An EIP can only be
+associated with one running instance at a time, so only one workspace can hold it live
+at once; provisioning fails fast if it's already in use by another live workspace. Tear
+that workspace down (or use a different address) first.
+Use `../../devops/aws/manage-elastic-ips.sh` to allocate, list and release the standalone
+addresses these overrides point at, independent of any one workspace.
+
+Set `MODEL_PROVIDER=openrouter` in a separate base config to use OpenRouter
+with either agent. Set `CODEX_MODEL` or `CLAUDE_MODEL` to its full OpenRouter
+model ID, and put `OPENROUTER_API_KEY` in the base secrets JSON. Omitting
+`MODEL_PROVIDER` keeps direct OpenAI/Anthropic billing.
+
+OpenRouter access alone does not establish Google Cloud billing. That requires
+a configured Vertex AI BYOK account and a model served by Vertex. To require
+that billing path, restrict routing to Vertex and disable shared-capacity
+fallback in OpenRouter; verify the actual provider and BYOK usage before a run.
+An OpenRouter preset can enforce `provider.only=["google-vertex"]` and
+`allow_fallbacks=false`; select it with `google/gemini-3.5-flash@preset/<slug>`
+as the model. The BYOK key's shared-capacity fallback setting is still required.
+
+Boxes keep Ubuntu's daily unattended security upgrades, and needrestart still
+restarts the services they touch, except the run services `crux-acp-gateway`
+and `crux-sdk-run`: `install-run.sh` excludes them via
+`/etc/needrestart/conf.d/crux.conf`, because a restart kills the agent mid-turn.
+The gateway then moves on to the next queued task instead of resuming the run;
+the SDK scaffold resumes but reruns the interrupted iteration. `sudo needrestart
+-b` lists either service once it is running on stale libraries; restart it by
+hand between runs, never while a turn is in flight.
+
+The gateway is upstream `@agentrq/acp-gateway` **0.4.1**, paired with AgentRQ
+**v0.13.4**. It forwards the agent's ACP v1 stream over authenticated WSS to
+`/api/acp/v1`; the controller now handles sessions and permissions. This
+replaces the patched 0.2.17 MCP bridge and its permission-notification waiter.
+The existing `.mcp.json` workspace URL/token and trusted HTTPS endpoint are still
+used. `--handshake` continues to run `--agent-info` without the controller.
+
+`scaffolds/acp.sh` downloads `ACP_GATEWAY_TARBALL_URL` from the npm registry,
+refuses it unless it matches `ACP_GATEWAY_SHA256`, and checks its package version
+is `ACP_GATEWAY_VERSION` before installation. Update these three pins together,
+including overrides in existing per-run placeholder files. Upgrade the controller
+first and follow the [backup, validation and rollback procedure](../ec2-control/README.md#upgrade-and-rollback-between-runs).
+Install and restart gateways between turns. A 0.4.1 gateway requires a controller
+with native ACP v1; the previous controller cannot serve it.
+
+On Codex boxes the tracing plugin uploads a turn to Langfuse from Codex's `Stop`
+hook, which fires only when the turn ends. A turn cut off by a gateway stop,
+crash or reboot never gets one, so the gateway unit runs
+`/usr/local/lib/crux/codex-flush-turns.py` after every exit (`ExecStopPost`) and
+before every start (`ExecStartPre`). It uploads the last turn of each main
+rollout that the plugin hasn't recorded, with its subagents nested under it, and
+tags it `flush:gateway-stop` or `flush:gateway-start`. A rollout another live
+codex still holds open is left alone. See what it did with
+`journalctl -u crux-acp-gateway | grep codex-flush`, or list what it would upload
+with `sudo -iu ubuntu python3 /usr/local/lib/crux/codex-flush-turns.py --plugin <dist/index.mjs> --reason manual --check`.
+
+`CODEX_TRACE_MODE=live` (the default) shows a turn in Langfuse while it runs
+and exports Codex's reasoning summaries with each model generation. Codex is
+configured with `model_reasoning_summary = "auto"`, which selects the most
+detailed summarizer available for the model. Codex writes these summaries to
+its rollout; they are not the model's private reasoning tokens. The legacy
+`stop-hook` mode uses the Langfuse plugin and does not export reasoning
+summaries.
+Langfuse v4 never updates an observation it has stored, so instead of the
+plugin's `Stop` hook a service, `crux-codex-live-trace`, reads the rollouts every
+30s and sends each observation once, as soon as it is complete:
+
+- a `Codex Turn started` event with the turn's input, when the prompt is written
+- an `LLM` generation per model response, with its tool calls and token usage
+- a tool span per call, once its output is written
+- anything else the turn recorded, as a span (under code mode, each shell command
+  `exec` ran) or, for a line the exporter does not recognise, an event; the root
+  lists unrecognised line types in `codex.unrecognized_types`, and the service logs them
+- the `Codex Turn` root, with the input and output, when the turn ends
+
+Ids come from the thread, turn and call, so children point at their root before
+it arrives and nothing is sent twice. Until the root arrives, the turn shows in
+the trace detail, session and observations views, not in lists built from root
+observations. Subagent turns nest under the turn that was running when they
+started. In this mode the gateway unit runs `codex-live-trace.py --once
+--finalize` instead of the plugin flush, which ends a killed turn with a
+`WARNING` root. Live mode doesn't install the plugin, since `codex plugin add`
+re-enables it and every turn would be traced twice; provisioning fails if its
+`Stop` hook still runs. Follow the exporter with `journalctl -u crux-codex-live-trace`.
+
+The exporter is the `live_trace/` package, installed to `/usr/local/lib/crux/`
+with its `codex-live-trace.py` entry point. Only `live_trace/codex.py` knows the
+Codex rollout format; the turn model, the Langfuse observation schema, the ledger
+of sent ids and the OTLP sink are shared. Tracing another agent means one more
+`TranscriptSource` subclass and entry point; `live_trace/__init__.py` describes
+the design.
+
+### SDK scaffold boxes (`AGENT_PLATFORM=openai-agents`)
+
+Each platform declares a scaffold module in `scaffolds/` and the environment
+features it needs (`SCAFFOLD_MODULE`, `SCAFFOLD_NEEDS` in `agent-config.sh`).
+The laptop scripts handle the shared parts: AWS, SSH, secrets delivery, and
+staging the drop-in directory. They create an AgentRQ workspace and route to
+the control box only for platforms that need AgentRQ. On the box,
+`install-run.sh` and `configure-run.sh` do the shared setup, then call the
+module's hooks:
+
+| Module | Platforms | Needs | Box |
+|---|---|---|---|
+| `scaffolds/acp.sh` | `codex`, `claude` | `agentrq` | CLI, ACP adapter, `crux-acp-gateway.service` taking AgentRQ tasks |
+| `scaffolds/sdk.sh` | `openai-agents` | nothing | `crux_scaffold` venv at `/opt/crux-sdk-scaffold`, `crux-sdk-run.service` |
+
+For an SDK box:
+
+- **Base config:** set `AGENT_PLATFORM=openai-agents`, `OPENAI_AGENTS_MODEL`,
+  `OPENAI_AGENTS_REASONING_EFFORT`, and `DROP_IN_PATH` (e.g.
+  `scaffolds/sdk/run-harness/web-cms-product-change`). The drop-in must be committed,
+  because provisioning stages `HEAD`.
+- **Base secrets:** `OPENAI_API_KEY`, plus any keys the drop-in's MCP servers
+  read, such as `SLACK_BOT_TOKEN`. Like every non-provider key in the base
+  secrets, it reaches the run's environment.
+- **Sandbox prerequisites:** the SDK installer adds system `bubblewrap` and
+  loads Ubuntu's `bwrap-userns-restrict` AppArmor profile when required. Existing
+  profiles are preserved; the global namespace restriction stays enabled.
+- **Provisioning** writes `/etc/crux-run.env`, then checks a sandboxed shell
+  can create and read back a temporary workspace file. Failure stops provisioning
+  before any model call; inspect `/var/log/crux-agent-probe-sandbox.log`. Next it
+  runs `crux_scaffold probe --coding-agent codex`: one traced model call and one
+  Codex turn. It then installs `crux-sdk-run.service`, but does not start it.
+- **Run software:** optionally commit `provision.json` alongside `scaffold.toml`
+  to install OS packages and pinned CLIs. Declared commands are checked as the
+  run user during provisioning and at every SDK start. See
+  [the provisioning contract and example](provisioning.md).
+- **Gmail authentication:** after provisioning and before launch, follow
+  [manual `gog` setup](provisioning.md#manual-gog-authentication) to authorize the
+  mailbox and give the systemd service its credentials.
+- **Launching:** resolve the drop-in's placeholders on the box (see its
+  `OPERATOR_GUIDE.md`), then run `sudo systemctl start crux-sdk-run`. Watch it
+  with `journalctl -u crux-sdk-run -f`.
+- **Resuming:** loop state and sessions live in `/srv/crux-run/state`. A crash
+  restarts the unit and resumes the run. A configuration error (exit 2) or a
+  loop that stopped early (exit 3) does not restart. `sudo systemctl stop
+  crux-sdk-run` stops the run cleanly: open traces are flushed and marked
+  stopped, and `systemctl start` resumes the unfinished iteration.
+
+See [`../../scaffolds/sdk/README.md`](../../scaffolds/sdk/README.md) for the scaffold
+itself.
+
+### Teardown a workspace
+
+This will:
+
+- Delete the AWS assets
+- **Keep** the workspace in Agent RQ
+
+**`teardown-workspace-aws-resources.sh`** — laptop. Terminates one box, releases its Elastic IP,
+removes the ssh alias. Deliberately keeps the shared SG / key pair / IAM —
+and the AgentRQ workspace, which outlives its box. If `ELASTIC_IP_ADDRESS` was set in the
+box's config, that address is left allocated (just disassociated) so the next workspace
+can reuse it — set the same `ELASTIC_IP_ADDRESS` for that one.

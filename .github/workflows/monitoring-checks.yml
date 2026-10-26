@@ -34,7 +34,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m ruff check .
-      - run: python -m ruff format --check src/monitoring
+      - run: python -m ruff format --check monitoring/service
   monitoring:
     name: Monitoring behavior and image
     needs: python-lint
@@ -60,32 +60,32 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - run: python -m pip install -r src/monitoring/web-requirements.txt -r requirements-dev.txt 'moto[s3,ec2,ssm]>=5,<6' PyYAML==6.0.3
+      - run: python -m pip install -r monitoring/service/web-requirements.txt -r requirements-dev.txt 'moto[s3,ec2,ssm]>=5,<6' PyYAML==6.0.3
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
       - name: Check incident-selection JavaScript
-        run: node --check src/monitoring/static/incidents.js
+        run: node --check monitoring/service/static/incidents.js
       - name: Verify compiled Tailwind stylesheet
-        working-directory: src/monitoring
+        working-directory: monitoring/service
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build:css
           git diff --exit-code -- static/app.css
       - name: Verify Alembic upgrade, rollback and upgrade
         run: |
-          alembic -c src/monitoring/alembic.ini upgrade head
-          alembic -c src/monitoring/alembic.ini downgrade base
-          alembic -c src/monitoring/alembic.ini upgrade head
+          alembic -c monitoring/service/alembic.ini upgrade head
+          alembic -c monitoring/service/alembic.ini downgrade base
+          alembic -c monitoring/service/alembic.ini upgrade head
       - name: Monitoring behavior against PostgreSQL
-        run: python -m pytest -q src/monitoring/tests
+        run: python -m pytest -q monitoring/service/tests
       - name: Build app and HTTPS proxy images
         run: |
-          docker build --platform linux/amd64 -t crux-monitoring:check src/monitoring
+          docker build --platform linux/amd64 -t crux-monitoring:check monitoring/service
           docker run --rm --read-only --network none crux-monitoring:check python worker.py --help
           docker run --rm --read-only --network none crux-monitoring:check python -c 'from web import create_app'
           docker run --rm --network host --read-only --tmpfs /tmp -e DATABASE_URL crux-monitoring:check alembic upgrade head
-          docker build --platform linux/amd64 -f src/monitoring/Dockerfile.proxy -t crux-proxy:check src/monitoring
+          docker build --platform linux/amd64 -f monitoring/service/Dockerfile.proxy -t crux-proxy:check monitoring/service
           docker run --rm --read-only --network none crux-proxy:check caddy version
       - name: Install Trivy
         id: trivy
@@ -96,16 +96,16 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/security"
           pip install bandit==1.9.4
-          bandit -r src/monitoring -x src/monitoring/tests --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
-          bandit -r src/monitoring -x src/monitoring/tests -ll
-          trivy fs --scanners misconfig,secret --skip-dirs src/monitoring/tests --skip-dirs src/monitoring/node_modules --format json --output "$RUNNER_TEMP/security/source.json" src/monitoring
-          trivy fs --scanners secret --skip-dirs src/monitoring/tests --skip-dirs src/monitoring/node_modules --exit-code 1 src/monitoring
+          bandit -r monitoring/service -x monitoring/service/tests --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
+          bandit -r monitoring/service -x monitoring/service/tests -ll
+          trivy fs --scanners misconfig,secret --skip-dirs monitoring/service/tests --skip-dirs monitoring/service/node_modules --format json --output "$RUNNER_TEMP/security/source.json" monitoring/service
+          trivy fs --scanners secret --skip-dirs monitoring/service/tests --skip-dirs monitoring/service/node_modules --exit-code 1 monitoring/service
       - name: Scan worker image
         if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
-        run: bash src/monitoring/ci/scan-image.sh crux-monitoring:check "$RUNNER_TEMP/security/worker.json"
+        run: bash monitoring/service/ci/scan-image.sh crux-monitoring:check "$RUNNER_TEMP/security/worker.json"
       - name: Scan HTTPS proxy image
         if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
-        run: bash src/monitoring/ci/scan-image.sh crux-proxy:check "$RUNNER_TEMP/security/proxy.json"
+        run: bash monitoring/service/ci/scan-image.sh crux-proxy:check "$RUNNER_TEMP/security/proxy.json"
       - name: Upload security reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -120,7 +120,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: src/monitoring/terraform
+        working-directory: monitoring/service/terraform
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

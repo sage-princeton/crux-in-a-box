@@ -42,7 +42,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number || inputs.pull_request }}
-        run: python3 src/monitoring/ci/pr_plan.py context
+        run: python3 monitoring/service/ci/pr_plan.py context
 
   plan:
     name: Plan live monitoring infrastructure
@@ -82,9 +82,9 @@ jobs:
       - name: Plan checked-in settings and deployed image digests against read-only state
         env:
           MONITORING_CONFIG_BUCKET: ${{ vars.MONITORING_CONFIG_BUCKET }}
-          PLAN_DIRECTORY: candidate/src/monitoring/terraform
+          PLAN_DIRECTORY: candidate/monitoring/service/terraform
           PLAN_REPORT: ${{ runner.temp }}/plan-report/report.json
-        run: python automation/src/monitoring/ci/pr_plan.py plan
+        run: python automation/monitoring/service/ci/pr_plan.py plan
       - name: Save resource addresses and actions only
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -122,4 +122,4 @@ jobs:
           PR_SHA: ${{ needs.context.outputs.sha }}
           PLAN_JOB_RESULT: ${{ needs.plan.result }}
           PLAN_REPORT: ${{ runner.temp }}/plan-report/report.json
-        run: python3 src/monitoring/ci/pr_plan.py report
+        run: python3 monitoring/service/ci/pr_plan.py report
