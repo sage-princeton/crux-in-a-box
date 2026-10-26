@@ -52,8 +52,10 @@ class AWS:
 
 
 def tags(resource, context):
+    controller = getattr(context.run, 'kind', None) == 'controller'
     return [{'Key': k, 'Value': v} for k, v in {
-        'Name': context.run.name, 'CruxRole': 'run', 'MonitorWithCruxMonitor': '1',
+        'Name': context.run.name, 'CruxRole': 'control' if controller else 'run',
+        **({} if controller else {'MonitorWithCruxMonitor': '1'}),
         'CruxOwner': context.owner, 'CruxResource': resource.id,
         'CruxToken': context.token(resource),
     }.items()]

@@ -85,3 +85,13 @@ def test_controller_box_writes_private_credentials_and_explicit_service_config(t
 def test_controller_rejects_missing_placeholder_and_duplicate_credentials(value):
     with pytest.raises(ValueError):
         validate_environment(value)
+
+
+def test_controller_tags_preserve_control_role_without_run_enrollment():
+    from crux_devops.aws import tags
+    from crux_devops.lifecycle import Context
+    controller=Controller.parse(specification())
+    context=Context(controller, '39c16178-f8dd-438d-bb29-e1173839cc39')
+    actual={t['Key']:t['Value'] for t in tags(controller.resources[0],context)}
+    assert actual['CruxRole']=='control'
+    assert 'MonitorWithCruxMonitor' not in actual
