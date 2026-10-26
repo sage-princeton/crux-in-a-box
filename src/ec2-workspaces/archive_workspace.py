@@ -156,12 +156,26 @@ def capture(config, receipt_path, keep_aux):
             store.download(receipt, downloaded)
             restore(downloaded, Path(temp) / "s3-restore")
             receipt["restoration_verified"] = True
+            durable_receipt = Path(temp) / "receipt.json"
+            durable_receipt.write_text(json.dumps(receipt, indent=2) + "\n")
+            receipt_key = key.rsplit("/", 1)[0] + "/receipt.json"
+            store.aws("s3", "cp", str(durable_receipt), f"s3://{store.bucket}/{receipt_key}",
+                      "--sse", "AES256", "--only-show-errors")
+            receipt_head = store.aws("s3api", "head-object", "--bucket", store.bucket, "--key", receipt_key)
+            if not receipt_head.get("VersionId"):
+                raise ArchiveError("Durable archive receipt has no S3 version; teardown blocked.")
+            copied_receipt = Path(temp) / "downloaded-receipt.json"
+            store.aws("s3api", "get-object", "--bucket", store.bucket, "--key", receipt_key,
+                      "--version-id", receipt_head["VersionId"], str(copied_receipt))
+            if digest(copied_receipt) != digest(durable_receipt):
+                raise ArchiveError("Durable archive receipt integrity check failed.")
             receipt_path.parent.mkdir(parents=True, exist_ok=True)
             with receipt_path.open("x") as stream:
                 json.dump(receipt, stream, indent=2)
                 stream.write("\n")
             print(f"Archive verified: s3://{store.bucket}/{key} (version {head['VersionId']})")
             print(f"Keep this receipt outside the checkout: {receipt_path}")
+            print(f"Durable receipt: s3://{store.bucket}/{receipt_key} (version {receipt_head['VersionId']})")
     finally:
         command(["ssh", "-o", "BatchMode=yes", store.slug, "sudo rm -f " + shlex.quote(remote_path)])
 
