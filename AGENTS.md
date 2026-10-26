@@ -1,36 +1,56 @@
-# AGENTS.md — working on this repo
+# Working on CRUX in a box
 
-This repo provisions and steers **CRUX runs**: autonomous research agents (OpenClaw on EC2) that take a research question and produce a paper. `linux/` provisions boxes, `run-harness/` is the scaffold the agent lives in, `harness-overview.html` explains it to humans.
+Read the root README for the Box, Run, Scaffold, Invoker, Agent and Harness
+terminology. Use these terms consistently in code and documentation. The active
+Scaffolds are AgentRQ/ACP and Agents SDK. The legacy OpenClaw implementation
+was deleted; recover historical code and operational guidance from Git history.
 
-## Pull request scope
+## Boundaries
 
-Every PR should have a precise scope and add a testable unit of functionality. Keep PRs small when possible (for example, under 800 changed lines) so humans can review them. When a feature, story, or issue needs a larger implementation, prefer splitting it across multiple stacked PRs using GitHub's stacked PR feature.
+- `devops/` owns declarative configuration, preflight, Box/resource lifecycle,
+  bundle assembly and Scaffold configuration. Validate before mutation, configure
+  before starting a Run, and keep resource ownership and teardown policy explicit.
+- Use Python-native AWS/HTTP/configuration/packaging operations. Keep apt and
+  systemd administration in focused shell scripts; do not wrap shell programs
+  in Python as a substitute for extracting their native operations.
+- `scaffolds/` owns execution, operator-message interfaces and scaffold-specific
+  Run inputs. Follow its nested AGENTS.md. Reuse existing component interfaces.
+- `monitoring/` owns observations, costs and incident assessment. Component-specific
+  deployment files and tests stay with that component.
+- `utilities/` holds reusable support tools. Do not retain deleted implementations
+  in an archive directory; Git history is the recovery mechanism.
+- Keep software dependencies in package-manager manifests and install from those
+  same declarations. Avoid a second set of versions hidden in shell or examples.
 
-The main activity here is **post-run scaffold revision**: a run finishes, something went wrong or could be better, and we fold the lesson into the scaffold for the next run. Follow this process.
+## Changes and validation
 
-## The post-run revision loop
+Use worktrees and small, testable stacked PRs, preferably under 800 changed lines.
+Keep mechanical moves separate from behavior changes. Diagnose from actual
+artifacts, fix the failure class, and update every active reference to a changed
+concept. Repository design conversation notes are local working files, not commits.
 
-1. **Diagnose from evidence before editing anything.** Name the failure precisely from run artifacts — the run repo / local mirrors, `LOG.md` entries, the exported run record (`utils/export-run.sh` → `runs-export/<name>/run_events.jsonl`), box gateway logs. "The paper got verbose" is not a diagnosis; "review fixes accreted hedges because nothing counter-pressured them and the terminal readability pass couldn't restructure" is.
+Run the component's lint/tests and the shared root checks. Every relevant PR must
+also be exercised through `ciab-devenv` using only that PR stack, the production
+provisioning path and a named isolated Ubuntu Box. Reprovision when source or
+configuration changes. Inspect actual service behavior, traces and work products.
+Record revisions, commands, assertions, outcomes, models/services, evidence paths
+and gaps in PR descriptions/comments. PR-specific verification stays outside Git;
+`ciab-devenv` contains infrastructure and generic fixtures, not feature scenarios.
+Stop the named environment after each PR, including failures and interruptions,
+and verify that its containers and machine stopped. Preserve evidence and volumes.
 
-2. **Fix the class, not the instance.** A guard that matches one observed failure string will miss the next variant (this bit us: a watchdog matched one API error message and missed its sibling). Gates match patterns/shapes; allowlists hold the known exceptions; extending either is a deliberate change, not a hotfix.
+## Credentials and live Boxes
 
-3. **Design in the harness's grammar.** New mechanisms must fit the existing posture:
-   - **Cooperative by default** — the agent runs checks and honors exit codes; only shipping is optionally hard-enforced.
-   - **Two halves per quality mechanism**: a _mechanical_ half (a grep/script in `gate_artifact.sh`, behind a `REQUIRE_*=1` flag) and a _judgment_ half (an isolated critic or cold-reader subagent the agent cannot author). Never an agent-typed certification string.
-   - **Heuristics over hard rules** in the prose files — state the why, trust deliberation; counters and ceremony are what the V2 redesign removed.
-   - Operator-tunable values go in as `{{KEY|default}}` placeholders (resolved by `configure.sh`; document overrides in `linux/placeholders.txt.example`).
+Always use an explicit AWS profile. If authentication fails, stop cloud operations
+and ask the user to reauthenticate; never fall back to other credentials.
+Secrets, private config and raw sessions stay outside source snapshots and Git.
+Never print credential values. Scan changed files with
+`python utilities/security/scan-secrets.py PATH...` before every commit.
+Never pull raw sessions or telemetry into the checkout. Historical exports must
+be scrubbed on the Box before transfer.
 
-4. **Propagate to every file that references the concept.** The scaffold is a web of cross-references; a change applied to one file leaves the others lying. `grep -ri` the concept name across `run-harness/`, `linux/`, `utils/` and `harness-overview.html`, and update **all** of:
-   - `run-harness/workspace/` — `AGENTS.md` (the one standing context file), `PLAN.md` (milestone table **and** its rules), `HEARTBEAT.md`, `LOG.md` (its header and entry format), `scripts/` (`gate_artifact.sh`, `session_costs.py`, `telemetry_costs.py`), `templates/`
-   - `run-harness/PROMPT.md` (the launch message), `FINAL_PASS.md` (the auto-injected final-stage message), and `OPERATOR_GUIDE.md` (incl. the pre-launch checklist, the box-side cron table, the export section, and the design-rationale table)
-   - `harness-overview.html` (the human-facing overview — lifecycle steps, workspace cards, gates boxes, failure table, operator section)
-   - `linux/placeholders.txt.example` and, for provisioning-level changes, `linux/src/install.sh` (software bake — no secrets) and `linux/src/configure.sh` (per-run config, watchdog/final-pass install, gateway start) plus the box-side scripts they install from `linux/src/` (`crux-thinking-watchdog.sh`, `crux-auth-watchdog.sh`, `crux-session-snapshot.sh`, `final-pass-injector.sh`, `monitor.sh`), `linux/status.sh` (its checks echo the same recovery instructions), and `utils/` for anything the export pipeline touches
-   A rename (e.g. "Readability" → "Presentation Overhaul") isn't done until a grep for the old name returns nothing meaningful; the same goes for a recovery instruction or a path — every copy must say the same thing.
-
-5. **Test gates with fixtures before trusting them.** For any new `gate_artifact.sh` check: a passing case, one fixture per failure mode, and a flag-off case proving it stays dormant at earlier milestones. Run them in the scratchpad, not the repo.
-
-6. **Hygiene before commit.** Secrets live only in gitignored files (`linux/placeholders-*.txt`, `telegram_bots.json`, `gog-home.tar.gz`). The raw session store (`~/.openclaw/agents/main/sessions/`) and the plugin telemetry (`telemetry.jsonl*`, unredacted by construction) both hold live credentials — and non-vendor secrets the agent echoed (portal tokens, OAuth URLs, a `cat`ed credential file) that no vendor-prefix regex finds: `sk-ant-`/`ghp_`/`rpa_` scans found nothing in a run holding 187 real token occurrences. Never pull either raw into the repo tree. The post-run pipeline is `utils/export-run.sh`: extract and scrub on the box (`utils/extract_run_log.py --scrub`, blacklist built there by `utils/make-blacklist.sh` and never pulled), scan on the box with `utils/scan-secrets.py` (class-shape patterns + blacklist, counts only, never the matches) before anything is pulled, then pull only the scrubbed outputs into gitignored `runs-export/`. Before any commit, run `utils/scan-secrets.py` over the changed files.
-
-## Live boxes
-
-Running instances are in `~/.ssh/config` (e.g. `tabpfn2`, `personas2`). Treat them read-only unless asked: operator messages and config changes are interventions the run logs. **Never restart the gateway while a turn is in flight** — the abort/resume boundary triggers the thinking-block corruption bug. Each box runs three crons under `~/.openclaw/watchdog/`: the thinking watchdog (auto-recovers wedged sessions; `watchdog.log`), the auth watchdog (halts the gateway and pages the operator when the provider rejects every call — revoked key, no permission, exhausted credit; `auth-watchdog.log`), and the session snapshot (`session-snapshot.log`, copies under `~/.openclaw/session-snapshots/`). Check `~/.openclaw/watchdog/*.log` and whether the `auth-halt` marker exists before diagnosing a "stuck" box by hand: while the marker is there the gateway is stopped on purpose. Recovery: put the new key in `~/.openclaw/.env`, then either re-run `openclaw gateway install` (it regenerates `~/.openclaw/gateway.systemd.env` from the managed keys — the unit's `EnvironmentFile`, which is what the running gateway carries; editing `.env` alone changes nothing) or edit `~/.openclaw/gateway.systemd.env` to match; `systemctl --user start openclaw-gateway`; then `rm ~/.openclaw/watchdog/auth-halt` (the watchdog also clears the marker itself once the gateway is active and a new error-free turn has landed). If the watchdog hit its daily halt cap it pages once and leaves the gateway running with the dead key — stop it by hand first. Revoke keys after stopping the gateway, not before.
+Live Boxes are read-only unless the user authorizes an intervention. Do not
+restart an active Run or gateway mid-turn. Preserve existing state and credentials
+on reprovisioning, stop before revoking keys, and act only on resources owned by
+the selected deployment. Auxiliary resources may outlive the Box; teardown must
+honor their declared retention and current ownership.
