@@ -25,12 +25,12 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - run: python -m pip install -r src/sdk-scaffold/requirements.txt -r requirements-dev.txt
-      - run: python -m pytest -q src/sdk-scaffold/tests
+      - run: python -m pip install -r scaffolds/sdk/requirements.txt -r requirements-dev.txt
+      - run: python -m pytest -q scaffolds/sdk/tests
       - name: Demo site tests
-        run: python -m unittest discover -s src/sdk-scaffold/examples/web-cms-product-change/workspace/site
+        run: python -m unittest discover -s scaffolds/sdk/run-harness/web-cms-product-change/workspace/site
       - name: Lint the demo's Docker scripts
-        run: shellcheck src/sdk-scaffold/docker/*.sh
+        run: shellcheck scaffolds/sdk/docker/*.sh
 
   demo-image:
     name: Demo image builds and checks the drop-in
@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 15
     defaults:
       run:
-        working-directory: src/sdk-scaffold
+        working-directory: scaffolds/sdk
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:

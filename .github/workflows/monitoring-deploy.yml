@@ -47,11 +47,11 @@ jobs:
         run: |
           account=$(aws sts get-caller-identity --query Account --output text)
           jq -e --arg account "$account" '.account_id == $account and .account_id == "881004720495"' \
-            src/monitoring/terraform/production.auto.tfvars.json > /dev/null
+            monitoring/service/terraform/production.auto.tfvars.json > /dev/null
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           jq -n --arg revision "$GITHUB_SHA" '{revision: $revision}' > "$RUNNER_TEMP/release.tfvars.json"
       - name: Build and scan immutable images
-        working-directory: src/monitoring
+        working-directory: monitoring/service
         run: |
           name=$(jq -r .name terraform/production.auto.tfvars.json)
           account=$(jq -r .account_id terraform/production.auto.tfvars.json)
@@ -82,22 +82,22 @@ jobs:
         with:
           python-version: '3.12'
       - name: Initialize shared Terraform state
-        working-directory: src/monitoring/terraform
+        working-directory: monitoring/service/terraform
         run: terraform init -input=false -lockfile=readonly -backend-config=backend.hcl
       - name: Plan infrastructure
-        working-directory: src/monitoring/terraform
+        working-directory: monitoring/service/terraform
         run: terraform plan -input=false -lock-timeout=5m -var-file="$RUNNER_TEMP/release.tfvars.json" -out="$RUNNER_TEMP/deploy.tfplan"
       - name: Retire old monitoring pipelines and data
         run: |
           pip install boto3==1.42.73
-          python src/monitoring/ci/reset.py
+          python monitoring/service/ci/reset.py
       - name: Apply infrastructure
-        working-directory: src/monitoring/terraform
+        working-directory: monitoring/service/terraform
         run: terraform apply -input=false -lock-timeout=5m "$RUNNER_TEMP/deploy.tfplan"
       - name: Refresh trusted PR planning role
-        run: aws iam update-assume-role-policy --role-name crux-monitoring-plan --policy-document file://src/monitoring/ci/plan-trust.json
+        run: aws iam update-assume-role-policy --role-name crux-monitoring-plan --policy-document file://monitoring/service/ci/plan-trust.json
       - name: Read deployment outputs
-        working-directory: src/monitoring/terraform
+        working-directory: monitoring/service/terraform
         run: terraform output -json > "$RUNNER_TEMP/deployment-outputs.json"
       - name: Reconcile web service
         run: |

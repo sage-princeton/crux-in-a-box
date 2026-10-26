@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "components": {
+    "workspace": "devops/ec2-workspaces",
+    "controller": "devops/ec2-control",
+    "sdk": "scaffolds/sdk",
+    "codex_tracing": "monitoring/tracing/codex",
+    "claude_tracing": "monitoring/tracing/claude",
+    "cost": "monitoring/costs/langfuse"
+  }
+}

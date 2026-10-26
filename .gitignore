@@ -43,12 +43,25 @@ clean-room-old
 logs-for-release
 
 # Monitoring deployment state, plans, and operator configuration.
-src/monitoring/terraform/.terraform/
+monitoring/service/terraform/.terraform/
 *.tfstate
 *.tfstate.*
 *.tfplan
-src/monitoring/terraform/*.tfvars
-src/monitoring/registry.json
-src/monitoring/.venv/
-src/monitoring/node_modules/
+monitoring/service/terraform/*.tfvars
+monitoring/service/registry.json
+monitoring/service/.venv/
+monitoring/service/node_modules/
 .ruff_cache/
+
+# Component-local operator files.
+**/placeholders*.txt
+!**/placeholders*.txt.example
+**/*secrets*.json
+!**/*secrets*.json.example
+**/node_modules/
+**/.venv/
+**/.terraform/
+.envrc
+.envrc.*
+.direnv/
+docs/superpowers/
