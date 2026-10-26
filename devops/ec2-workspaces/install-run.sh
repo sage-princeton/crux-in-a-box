@@ -27,8 +27,7 @@ RUN_HOME="/home/$RUN_USER"
 # ====== BASE PACKAGES ======
 info "Base packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y -qq curl unzip jq git ca-certificates python3 python3-venv >/dev/null
+bash "$CRUX_SOURCE_ROOT/devops/apt/install.sh" base
 ok "apt packages in"
 
 # ====== NEEDRESTART ======
@@ -69,8 +68,7 @@ info "Node.js 22"
 if command -v node >/dev/null 2>&1 && [ "$(node -v | cut -c2- | cut -d. -f1)" -ge 22 ]; then
   ok "already present ($(node -v))"
 else
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
-  apt-get install -y -qq nodejs >/dev/null
+  bash "$CRUX_SOURCE_ROOT/devops/apt/install.sh" node
   ok "node $(node -v), npm $(npm -v)"
 fi
 

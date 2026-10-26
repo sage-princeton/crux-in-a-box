@@ -57,3 +57,38 @@ Standalone addresses use `crux-addresses list|create|delete` (or the forwarding
 `--name`, plus `--yes`. Only detached `CruxRole=shared-eip` allocations can be
 deleted; Run-owned addresses remain under their deployment lifecycle. Shared
 allocations can be referenced as external resources by a Run or controller.
+
+## Dependency updates
+
+`.github/dependabot.yml` checks weekly on Monday at 09:00 America/New_York.
+Version updates are grouped by component/ecosystem; security updates exclude all
+packages from grouping and are driven immediately by Dependabot alerts, independent
+of the version schedule. Enable dependency graph, Dependabot alerts and security
+updates in repository settings. Security groups deliberately match no packages,
+so repository-wide grouping cannot combine these patches. No target branch,
+cooldown or security-update ignore rule delays supported security fixes.
+
+Production installs consume the manifests Dependabot edits: DevOps Python bootstrap
+requirements, SDK requirements/pyproject, Scaffold npm locks, controller Compose,
+monitoring Python/npm/Go/Terraform, and Dockerfiles for runtime/CI tools. CI exports
+Trivy and Terraform from their declared images; secret scans run their declared
+image and omit raw findings from logs. New dependencies belong in these consumed
+manifests, not duplicate version strings in shell or workflow inputs.
+
+APT packages are declared in `devops/apt/*.txt`; the same installer supplies Box
+and daily Ubuntu audit image packages. The audit exports SPDX and vulnerability
+JSON as Actions artifacts and prints fixable high/critical findings for review.
+These reports are informational, not a new merge gate. Ubuntu's unattended security
+updates remain enabled; agent units remain exempt from disruptive mid-turn restarts.
+NodeSource and Caddy repositories are included in the audit. Refresh installed
+packages between Runs and inspect the actual Box inventory, since the audit image
+is not a snapshot of every deployed Box or kernel.
+
+APT is not a Dependabot ecosystem. Submitting SPDX would not give Dependabot
+support for Debian/Ubuntu package fixes, so these artifacts are retained for
+inspection rather than advertised as automatic apt updates. Remaining external
+inputs include the official AWS CLI v2 installer (agent utility; the Invoker uses
+manifest-managed boto3), selected EC2 AMIs, vendor apt repository setup/key URLs,
+and operator-declared Run software. Those require upstream/OS review and fresh
+provisioning; they do not silently become Dependabot-managed. GitHub-hosted runner
+software and runtime major lines remain selected by their respective CI actions.

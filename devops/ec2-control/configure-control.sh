@@ -5,8 +5,7 @@ export DEBIAN_FRONTEND=noninteractive
 for unit in agentrq caddy; do
   if [ "$(systemctl show "$unit" --property=LoadState --value)" = loaded ]; then systemctl stop "$unit"; fi
 done
-apt-get update -qq
-apt-get install -y -qq docker.io docker-compose-v2 jq curl ca-certificates >/dev/null
+bash "$CRUX_CONTROLLER_BUNDLE/source/devops/apt/install.sh" controller
 systemctl enable --now docker >/dev/null
 
 DATA_DIR=/srv/agentrq
@@ -39,13 +38,7 @@ mkdir -p "$DATA_DIR/_storage" "$DATA_DIR/_certs"
 chown -R 65534:65534 "$DATA_DIR/_storage" "$DATA_DIR/_certs"
 
 if ! command -v caddy >/dev/null 2>&1; then
-  apt-get install -y -qq debian-keyring debian-archive-keyring apt-transport-https >/dev/null
-  curl -1fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
-    | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
-    > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -qq
-  apt-get install -y -qq caddy >/dev/null
+  bash "$CRUX_CONTROLLER_BUNDLE/source/devops/apt/install.sh" caddy
 fi
 /opt/crux-bootstrap/bin/python "$CRUX_CONTROLLER_BUNDLE/source/devops/ec2-control/controller_stage.py" \
   configure "$CRUX_CONTROLLER_BUNDLE" "$CRUX_CONTROLLER_SETTINGS"
