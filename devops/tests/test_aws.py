@@ -1,4 +1,5 @@
 import json
+import os
 from dataclasses import replace
 
 import boto3
@@ -10,7 +11,11 @@ from moto import mock_aws
 
 
 @pytest.fixture
-def aws():
+def aws(monkeypatch):
+    for key in list(os.environ):
+        if key.startswith('AWS_ENDPOINT_URL') or key == 'AWS_PROFILE':
+            monkeypatch.delenv(key)
+    monkeypatch.setenv('AWS_IGNORE_CONFIGURED_ENDPOINT_URLS', 'true')
     with mock_aws():
         session = boto3.Session(region_name='us-east-1')
         scopes = []
