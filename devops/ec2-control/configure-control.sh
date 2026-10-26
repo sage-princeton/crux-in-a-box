@@ -14,7 +14,10 @@ DEVICE=
 while read -r device serial; do
   if [ "$serial" = "${DATA_VOLUME_ID//-/}" ]; then DEVICE="$device"; fi
 done < <(lsblk --nodeps --noheadings --paths --output NAME,SERIAL)
-[ -n "$DEVICE" ] && [ -b "$DEVICE" ] || { echo 'Declared EBS data volume is not visible.' >&2; exit 1; }
+if [ -z "$DEVICE" ] || [ ! -b "$DEVICE" ]; then
+  echo 'Declared EBS data volume is not visible.' >&2
+  exit 1
+fi
 if ! blkid "$DEVICE" >/dev/null; then
   [ "${INITIALIZE_DATA:-false}" = true ] || { echo 'Data volume has no recognized filesystem; initialization was not authorized.' >&2; exit 1; }
   # blkid returns 2 for a device without a recognized filesystem.
