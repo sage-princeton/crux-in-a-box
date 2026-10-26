@@ -1,0 +1,62 @@
+# Deployment contracts
+
+The Invoker reads a versioned JSON Run: its name, selected Box resource,
+Scaffold and resource graph. `PYTHONPATH=devops python -m crux_devops plan RUN.json`
+validates the contract without network access or mutations. `validate` performs
+the same validation without displaying the plan. Install `devops/` as a Python
+package to use the `crux` entry point.
+
+A resource has an `id`, registered `type`, provider-specific `config`, optional
+`depends_on` IDs, `ownership` (`managed` or `external`) and `teardown` (`delete`
+or `retain`). External resources must be retained. Unknown fields, duplicates,
+missing dependencies and cycles fail before creation. Scaffold types currently
+implemented are `sdk`/`openai-agents` and `agentrq`/`codex` or `claude`; additional
+providers can extend these without changing resource lifecycle.
+
+```json
+{
+  "version": 1,
+  "name": "research",
+  "box": "box",
+  "scaffold": {
+    "type": "sdk", "platform": "openai-agents", "model": "gpt-5.4-mini",
+    "effort": "low", "drop_in": "scaffolds/sdk/run-harness/slack-roundtrip"
+  },
+  "resources": [{"id": "box", "type": "aws.ec2", "config": {}}]
+}
+```
+
+This illustrates the common contract; actual drivers validate their required
+configuration before provisioning. A generic plan does not authenticate or
+establish that a provider-specific deployment is possible. Secrets belong in
+private input files or inherited environment variables, never in Run JSON.
+
+## Driver interface and recovery
+
+`Lifecycle` receives a registry of resource type to Driver. `preflight` must
+validate inputs/access without mutation. All preflights run before any ensure.
+`ensure` receives the previous receipt, dependency outputs and a stable
+`Context.token(resource)` for idempotent creation. The returned JSON receipt
+contains identifiers and safe outputs, never credentials. Resource providers
+must tag objects with `context.owner`, recover creations by token after a crash,
+and recheck ownership before deleting anything. External resources are validated
+and resolved, never silently adopted or mutated.
+
+State is atomic, private (0600), locked against concurrent Invokers and bound to
+the immutable Run fingerprint. Keep it outside source and preserve it until
+cleanup completes. Failures retain the receipt so the operator can retry or
+explicitly destroy. No implicit rollback destroys retained research assets.
+Teardown runs in reverse dependency order and records retained IDs; it can retry
+an interrupted deletion. Once teardown starts, apply cannot recreate resources.
+
+Model auxiliary grants separately from auxiliary assets: a grant can depend on
+the Box and be deleted first, while a dataset or bucket declares `retain`.
+PR #16 can implement those drivers, including its account boundary and successor
+handoff checks, using the same registry. A driver must refuse deletion if the
+remote owner changed after a handoff; a stale receipt is not authority. This
+contract does not itself grant cross-account access or enumerate cloud assets.
+
+The lifecycle package performs no shell orchestration. AWS, HTTP, archive and
+configuration drivers belong in Python. Apt/systemd operations remain focused
+Box-side shell programs. Provision/configure and explicit Run start are separate
+operations; a successful resource apply alone does not mean a Run has started.

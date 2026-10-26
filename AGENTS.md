@@ -36,8 +36,10 @@ configuration changes. Inspect actual service behavior, traces and work products
 Record revisions, commands, assertions, outcomes, models/services, evidence paths
 and gaps in PR descriptions/comments. PR-specific verification stays outside Git;
 `ciab-devenv` contains infrastructure and generic fixtures, not feature scenarios.
-Stop the named environment after each PR, including failures and interruptions,
-and verify that its containers and machine stopped. Preserve evidence and volumes.
+Export and cite relevant evidence outside the disposable environment after each
+PR, including failures and interruptions. Then reset the named environment and
+verify that its machine, containers and volumes are absent. Follow ciab-devenv's
+AGENTS.md for cleanup; do not accumulate stopped machines or their data.
 
 ## Credentials and live Boxes
 
