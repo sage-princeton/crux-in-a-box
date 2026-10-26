@@ -45,3 +45,8 @@ paths and systemd identities are unchanged by the repository move.
 The paired `ciab-devenv` reads `layout.json` and can still select older PRs without
 that manifest. Its fixtures remain in that repository; its configuration adapters
 are in `devops/` and report execution in `monitoring/`.
+
+`src/monitoring/terraform` temporarily links to the relocated Terraform directory
+so the trusted planning workflow on the default branch can validate this layout
+PR before that workflow itself is merged. New automation uses
+`monitoring/service/terraform`; the link contains no duplicate implementation.
