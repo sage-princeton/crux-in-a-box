@@ -50,3 +50,10 @@ are in `devops/` and report execution in `monitoring/`.
 so the trusted planning workflow on the default branch can validate this layout
 PR before that workflow itself is merged. New automation uses
 `monitoring/service/terraform`; the link contains no duplicate implementation.
+
+Standalone addresses use `crux-addresses list|create|delete` (or the forwarding
+`devops/aws/manage-elastic-ips.sh`) with explicit `--profile`, `--region` and
+`--account`. Creation takes `--name`; deletion takes `--allocation-id` or a unique
+`--name`, plus `--yes`. Only detached `CruxRole=shared-eip` allocations can be
+deleted; Run-owned addresses remain under their deployment lifecycle. Shared
+allocations can be referenced as external resources by a Run or controller.

@@ -140,18 +140,7 @@ class Run:
         return cls.parse(json.loads(Path(path).read_text()))
 
     def ordered(self):
-        pending = list(self.resources)
-        ordered = []
-        ids = {r.id for r in pending}
-        if any(set(r.depends_on) - ids for r in pending):
-            raise ValueError("Resource dependency does not exist")
-        while pending:
-            ready = [r for r in pending if set(r.depends_on) <= {r.id for r in ordered}]
-            if not ready:
-                raise ValueError("Resource dependency cycle")
-            ordered.extend(ready)
-            pending = [r for r in pending if r not in ready]
-        return tuple(ordered)
+        return ordered_resources(self.resources)
 
     @property
     def fingerprint(self):
@@ -166,3 +155,18 @@ class Run:
                           "configure-scaffold", "health", "start-run"],
                 "resources": [{"id": r.id, "type": r.type, "depends_on": list(r.depends_on),
                                "ownership": r.ownership, "teardown": r.teardown} for r in self.ordered()]}
+
+
+def ordered_resources(resources):
+    pending = list(resources)
+    ordered = []
+    ids = {r.id for r in pending}
+    if any(set(r.depends_on) - ids for r in pending):
+        raise ValueError("Resource dependency does not exist")
+    while pending:
+        ready = [r for r in pending if set(r.depends_on) <= {r.id for r in ordered}]
+        if not ready:
+            raise ValueError("Resource dependency cycle")
+        ordered.extend(ready)
+        pending = [r for r in pending if r not in ready]
+    return tuple(ordered)

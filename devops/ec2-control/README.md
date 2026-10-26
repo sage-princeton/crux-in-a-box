@@ -1,87 +1,65 @@
-# `ec2-control/` — Controller-level scripts
+# AgentRQ controller
 
-## Usage
+`crux-controller` provisions shared controller infrastructure from a declarative
+JSON specification. Install the Invoker with `python3 -m pip install ./devops`.
+The old `make-control-box.sh` path forwards the same arguments to this CLI;
+sourced shell configuration and automatic SSH-key generation are replaced.
 
-### Create a controller
+Copy `controller.example.json` outside the checkout. Set the authenticated AWS
+profile, account, region, Ubuntu 24.04 AMI, VPC, subnet/availability zone, SSH public
+key name and ingress CIDRs. A custom `configuration.hostname` needs a DNS A record
+pointing at the declared address; otherwise the public IP's sslip.io name is used.
+Keep the private SSH key, verified SSH known-hosts entries, credentials, state and
+bundles outside source. No command accepts an unverified SSH host key.
 
-**`make-control-box.sh`** — run on your laptop. Provisions or updates the
-control box: key pair, `crux-control-sg` + `crux-run-sg`, IAM role, Elastic
-IP, data volume, instance, `~/.ssh/config` entry — then hands off to
-`configure-control.sh`. Idempotent; `--dry-run` prints the plan.
-
-`OPERATOR_CIDR` (SSH) and `TLS_INGRESS_CIDR` (HTTPS) each take a
-comma-separated list, so several people can be whitelisted. Entries may be
-labelled `CIDR=LABEL`, and the label becomes the AWS rule's Description — the
-only way `describe-security-groups` tells you whose address a rule is. Every
-`OPERATOR_CIDR` entry must be a `/32`; `TLS_INGRESS_CIDR` may use ranges.
-
-### The control-plane image
-
-The controller uses upstream **AgentRQ v0.13.4**, pinned by its multi-platform
-OCI digest in `configure-control.sh`. Docker verifies the selected platform's
-contents when pulling it. The release includes the fix for task updates failing
-with more than 4,095 tool calls: reads return a recent page and writes update
-only task columns. It replaces `agentrq-crux:0.6.3-45c3692-crux.1`.
-
-Pair it with **ACP gateway v0.4.1** from
-`scaffolds/codex/package.json and scaffolds/claude/package.json`. This is a coordinated
-upgrade: the gateway now forwards ACP v1 over `/api/acp/v1` WebSocket to the
-controller, which owns task sessions and permissions. The old MCP permission
-notification/waiter race is absent from this path. `.mcp.json` still supplies
-the workspace URL and token; the gateway derives the authenticated WSS endpoint
-from them. Keep Caddy's trusted HTTPS endpoint and hostname routing; no extra
-port or insecure TLS override is needed. The agent CLI and adapter pins remain
-in the workspace configuration, and Node 22 or later is required.
-
-The SQLite DSN uses `_txlock=immediate`: task updates read and then write in one
-transaction while native ACP records tool activity concurrently. Taking the
-write lock at the start avoids failed read-to-write upgrades (`SQLITE_BUSY`),
-which the busy timeout cannot retry. Upstream still enables WAL and its five
-second busy timeout. The database file stays at `/_storage/agentrq.db`.
-
-Native ACP queues follow-ups until the current agent turn ends. Leave the task
-ongoing when expecting another message, and end the turn; polling for a pushed
-reply inside that same turn cannot receive it. Mark the task completed only
-after processing the final follow-up.
-
-### Upgrade and rollback between runs
-
-Never apply this upgrade during a task. Stop the workspace gateways between
-turns, then back up the old controller **before running**
-`make-control-box.sh`. Its configure phase starts the new image and upstream
-migrates SQLite automatically. Check upstream release notes and validate a copy
-of the old database first; an older image must not open the upgraded database.
-
-On the controller, as root, preserve the old image, unit, credentials and all
-storage (including SQLite WAL files) while the service is stopped:
-
-```bash
-set -euo pipefail
-umask 077
-backup="/srv/agentrq/backups/$(date -u +%Y%m%dT%H%M%SZ)"
-mkdir -p "$backup"
-image="$(docker inspect --format '{{.Image}}' agentrq)"
-docker inspect --format '{{.Config.Image}}' agentrq > "$backup/image-ref"
-docker image save "$image" | gzip > "$backup/controller-image.tar.gz"
-printf '%s\n' "$image" > "$backup/image-id"
-cp /etc/systemd/system/agentrq.service "$backup/agentrq.service"
-systemctl stop agentrq
-tar -C /srv/agentrq -czf "$backup/state.tar.gz" _storage _certs agentrq.env
-printf 'Rollback backup: %s\n' "$backup"
+```sh
+crux-controller plan /private/controller.json
+crux-controller put-secrets /private/controller.json --state /private/controller/state.json --secrets /private/controller.env
+crux-controller preflight /private/controller.json --state /private/controller/state.json
+crux-controller provision /private/controller.json --state /private/controller/state.json --source "$PWD" --ssh-key /private/controller.pem --known-hosts /private/known_hosts --confirm-idle
+crux-controller health /private/controller.json --state /private/controller/state.json --ssh-key /private/controller.pem --known-hosts /private/known_hosts
+crux-controller start /private/controller.json --state /private/controller/state.json --ssh-key /private/controller.pem --known-hosts /private/known_hosts
 ```
 
-Keep this root-only backup on the persistent volume; it contains credentials.
-Upgrade the controller first, then install/configure the gateway on a disposable
-workspace. Verify login, workspace-token scope, a fresh task, concurrent
-approvals, a follow-up and completion through trusted HTTPS before upgrading
-remaining idle workspaces. Existing per-run placeholder files must receive the
-new gateway version, tarball URL and hash together; they override the example.
+The private env file must contain `AGENTRQ_AUTH_ROOT_ACCESS_TOKEN` and any other
+AgentRQ settings. It is uploaded directly to the declared SSM SecureString.
+The Box fetches that parameter through its narrowly scoped instance role.
+`configuration.initialize_data: true` allows formatting a newly managed blank
+volume on the first configuration only; existing/external volumes are never
+initialized. The EBS serial must match the declared volume ID. Configuration
+leaves AgentRQ and Caddy inactive; `start` validates DNS, starts them and waits
+for trusted HTTPS. `health` checks configuration and, when started, HTTPS.
+Use `create` for resources alone and `configure` to configure an existing receipt.
 
-To roll back, stop the gateways and controller, preserve the upgraded state in
-a separate directory, restore `_storage`, `_certs`, `agentrq.env` and the unit
-from the same backup, and `docker image load` its saved image. Tag the recorded
-`image-id` with the recorded `image-ref` if the old unit used a tag (saving by
-image ID does not preserve that tag). Run
-`systemctl daemon-reload` and start `agentrq`, then restore each workspace's
-previous gateway pins and reinstall/configure it between turns. Restore the
-image and database together; rollback discards changes made after the backup.
+Controller deployments use the same ownership checks, dependency ordering,
+private receipts and retry handling as Runs, without a research Scaffold.
+Security groups, a public SSH key import, an SSM-scoped instance role, EBS volumes
+and attachments can also be declared by Runs. Box settings accept either existing
+IDs/names or declared `security_group_resources`, `key_resource` and
+`identity_resource` dependencies. Auxiliary drivers can extend this registry;
+finalizers must precede the resources they need in reverse teardown order.
+
+`destroy ... --confirm-idle` stops services, unmounts data, detaches attachments
+and deletes owned resources in reverse dependency order. The example retains
+its address and data volume. Preserve the receipt and recorded resource IDs;
+a replacement deployment can reference them with `ownership: external`,
+`teardown: retain` and `allocation_id` / `volume_id`. Changing a live specification
+is rejected; use a new state path for replacement. A controller is shared: inspect
+its dependent Runs before passing `--confirm-idle`, configuring or destroying it.
+
+## Upgrades and recovery
+
+The running image comes from `compose.yaml`; workspace gateway and adapter versions
+come from each Scaffold's npm lockfile. Configuration pulls the declared image
+without starting it. Controller SQLite migrations occur at explicit start.
+Before an upgrade, stop dependent gateways between turns, stop AgentRQ and back up
+its complete data directory (including SQLite WAL files), private env, Compose
+files, systemd unit and the current image to protected storage. Validate the new
+image against a copy of that database first. Restore image, configuration and
+database from the same backup when rolling back; never open a migrated database
+with an older image. Rollback discards writes since the backup.
+
+New Run specifications declare `agentrq.workspace` resources for native HTTPS
+workspace registration and private credential binding. The former SSH/curl
+`bootstrap-workspace.sh` implementation has been removed. Registering a workspace
+and configuring a Run do not start its agent.

@@ -1,10 +1,12 @@
 import json
 import os
 from dataclasses import replace
+from unittest.mock import Mock
 
 import boto3
 import pytest
 from crux_devops.aws import AWS
+from crux_devops.invoker import Invoker
 from crux_devops.lifecycle import Lifecycle
 from crux_devops.spec import Resource, Run, Scaffold
 from moto import mock_aws
@@ -70,6 +72,39 @@ def test_changed_remote_owner_blocks_teardown(aws, tmp_path):
     aws.test_session.client('ec2').create_tags(Resources=[instance_id], Tags=[{'Key': 'CruxOwner', 'Value': 'successor'}])
     with pytest.raises(ValueError, match='ownership changed'):
         lifecycle.destroy()
+
+
+def test_changed_remote_owner_blocks_starting_configured_run(aws, tmp_path):
+    lifecycle = Lifecycle(run([box(aws)]), tmp_path/'state.json', aws.registry())
+    state = lifecycle.apply()
+    transport = Mock()
+    invoker = Invoker(lifecycle, transport)
+    invoker.configure({'path':'fixture.tgz','sha256':'a'*64},{'OPENAI_API_KEY':'fixture-key'})
+    instance_id = state['resources']['box']['outputs']['instance_id']
+    aws.test_session.client('ec2').create_tags(Resources=[instance_id], Tags=[{'Key':'CruxOwner','Value':'successor'}])
+    with pytest.raises(ValueError,match='ownership'):
+        invoker.start()
+    transport.start.assert_not_called()
+
+
+def test_configured_teardown_retries_after_box_termination_without_ssh(aws, tmp_path):
+    lifecycle = Lifecycle(run([box(aws)]), tmp_path/'state.json', aws.registry())
+    lifecycle.apply()
+    transport = Mock()
+    invoker = Invoker(lifecycle, transport)
+    invoker.configure({'path':'fixture.tgz','sha256':'a'*64},{'OPENAI_API_KEY':'fixture-key'})
+    driver = lifecycle.drivers['aws.ec2']
+    destroy = driver.destroy
+    def interrupted(*args):
+        destroy(*args)
+        raise RuntimeError('terminated before receipt update')
+    driver.destroy = interrupted
+    with pytest.raises(RuntimeError):
+        invoker.destroy()
+    driver.destroy = destroy
+    transport.stop.side_effect = RuntimeError('SSH no longer exists')
+    assert invoker.destroy()['phase'] == 'destroyed'
+    transport.stop.assert_called_once()
 
 
 def test_box_is_stopped_before_releasing_run_resources(aws, tmp_path):
