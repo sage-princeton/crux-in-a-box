@@ -1,66 +1,54 @@
 # CRUX in a box
 
-This repository is designed to facilitate creating the architecture for [CRUX-style](https://cruxevals.com/) experiments: autonomous research agents (OpenClaw on an EC2 box) that take a research question and produce a paper.
+Provision a Box, configure a Scaffold, and start an autonomous research Run.
+The supported Scaffolds are AgentRQ/ACP with Codex or Claude, and the custom
+Agents SDK Scaffold. The legacy OpenClaw implementation has been removed; Git history retains it.
 
-> [!NOTE]
-> This code is set up specifically to support [CRUX](https://cruxevals.com/) evaluations.
-> We strongly encourage you to remix, adapt, and reuse this scaffold to conduct
-> your own CRUX-style experiments, and to meet your specific research goals.
+## Concepts
 
-## Prerequisites
+| Term | Meaning |
+| --- | --- |
+| Box | The remote execution environment (EC2 in production, isolated Ubuntu locally). |
+| Run | One CRUX task executed on a Box. |
+| Scaffold | The execution environment, agent orchestration and operator-message interface. |
+| Invoker | The environment from which a Run is deployed and started, usually a developer's laptop. |
+| Agent | The outer-loop agent or any delegate participating in a Run. |
+| Harness | The assembled Scaffold, Agents, context and configuration on a Box for a Run. |
 
-- AWS CLI with authentication (`aws sts get-caller-identity` works)
-- `ssh`, `scp`, `jq`
-- A Telegram bot token in `telegram_bots.json` (see the `.example`)
+An AgentRQ workspace is a controller object. A workspace directory is the
+Agent's working directory. Neither is the Box's lifecycle identity.
 
-## Getting started
+## Start a Run
 
-1. Deploy the cost-tracking Lambda (`lambda/anthropic_cost_tracker/deploy.sh`, or `lambda/openai_cost_tracker/deploy.sh` for OpenAI). This lets agents track their costs/usage in near-real-time.
-2. Run `utils/bootstrap-gog.sh` once to build the pre-authenticated Gmail bundle.
-3. In `linux/`, bake the base AMI once with `./build-ami.sh` and record the AMI ID.
-4. Still in `linux/`, copy `placeholders.txt.example`, fill it in, and run `./create-new-crux-box.sh --ami <AMI_ID> placeholders.txt`. This will configure the CRUX system automatically. It will create AWS resources for your bot. (Omit `--ami` to install from raw Ubuntu instead.)
-5. Set up Telegram (the operator channel): DM your bot, then on the box run `openclaw pairing approve telegram <CODE>`.
-6. Verify accounts per `run-harness/OPERATOR_GUIDE.md`, then send `PROMPT.md`.
-7. When the run is over — while the box is still up and before any key is revoked — pull the record with `utils/export-run.sh --host <alias>` (see the Operator Guide, § Post-run).
+1. Read [DevOps](devops/README.md) and prepare private configuration and credentials.
+2. Validate the inputs on the Invoker before creating resources.
+3. Create the Box and its declared auxiliary resources.
+4. Assemble and transfer the configuration bundle, configure the Scaffold and verify health.
+5. Start the Run explicitly through the selected Scaffold.
 
-## External services for your agent to use
+Current command examples and prerequisites are in the
+[Box runbook](devops/ec2-workspaces/README.md). AgentRQ also requires a
+[controller](devops/ec2-control/README.md). The
+[SDK guide](scaffolds/sdk/README.md) explains its Run inputs and start command.
+For local execution use the paired `ciab-devenv` checkout: select this worktree,
+reprovision, inspect artifacts, then stop the named environment.
 
-Installed by default:
+## Components
 
-| Service              | How it's configured                           | How to authenticate                          |
-| -------------------- | --------------------------------------------- | -------------------------------------------- |
-| Version control      | local `git` (no remote)                       | none — commits stay on the box, no credentials |
-| Gmail                | `gog` CLI via [gogcli.sh](https://gogcli.sh/) | pre-built bundle (`GOG_*` keys), no browser  |
-| RunPod (GPUs)        | `RUNPOD_API_KEY` in `~/.openclaw/.env`        | key in the config                            |
-| refine.ink (reviews) | `REFINE_INK_API_KEY` in `~/.openclaw/.env`    | key in the config                            |
-| AWS                  | `aws` CLI                                     | not authenticated on install                 |
+| Path | Responsibility |
+| --- | --- |
+| `devops/` | Box/resource lifecycle, configuration bundles and deployment contracts. |
+| `monitoring/service/` | Monitoring application, tests and deployment configuration. |
+| `monitoring/tracing/` | Codex/Claude tracing integrations and their tests. |
+| `monitoring/costs/` | Cross-scaffold Langfuse cost collector and deployment. |
+| `scaffolds/{codex,claude}/` | CLI configuration and scaffold-specific Run inputs. |
+| `scaffolds/sdk/` | SDK engine, tests and `run-harness/` input bundles. |
+| `utilities/` | Secret scanning and reusable bootstrap helpers. |
 
-> [!NOTE]
-> It is important to verify each of these before launch. While the
-> `create-new-crux-box.sh` script attempts to verify each of these is configured
-> correctly on the remote, misconfiguration could lead to an underprovisioned
-> run.
+## Checks
 
-> [!TIP]
-> Asking the agent to confirm that it has access to each of your services can
-> be a useful way to improve your confidence that each service is properly
-> configured.
-
-## Python checks
-
-Install shared check tools with `python -m pip install -r requirements-dev.txt`,
-plus the project dependencies described in the [monitoring](src/monitoring/README.md),
-[SDK scaffold](src/sdk-scaffold/README.md), or [observability](tests/codex-observability/README.md) guide.
-From the repository root, `python -m ruff check .` lints Python under `src/` and
-`tests/`. Use `python -m pytest -q <test-directory>` for one suite, or
-`python -m pytest -q` for all three after installing their dependencies. Monitoring
-tests require a disposable PostgreSQL database as described in its guide.
-
-## Layout
-
-- `lambda/langfuse_cost_tracker/` — [cross-platform Langfuse cost and token API](lambda/langfuse_cost_tracker/README.md) for runs with Langfuse exports; the legacy OpenClaw path above uses the provider trackers
-- `linux/` — provisioning, watchdog, monitoring
-- `run-harness/` — the scaffold the agent lives in; see `OPERATOR_GUIDE.md`
-- `harness-overview.html` — human-facing overview
-- `utils/` — gog bootstrap; the post-run export pipeline (`export-run.sh` drives it: `make-blacklist.sh` and `extract_run_log.py --scrub` run on the box, `scan-secrets.py` checks the result with class-shape patterns, counts only); `manage-elastic-ips.sh` lists/creates/deletes standalone Elastic IPs for reuse via `ELASTIC_IP_ADDRESS` in an `ec2-workspaces` config file
-- `runs-export/` — scrubbed run records pulled by `utils/export-run.sh` (gitignored). The session store is the record; plugin telemetry is a supplement. Raw `sessions/` and raw `telemetry.jsonl*` never leave the box; `run_events.jsonl` / `run_summary.json` are what you share, after a human look
+Install `requirements-dev.txt` and the selected components' dependencies.
+Run `python -m ruff check .` and `python -m pytest -q` from the repository root.
+Monitoring tests require disposable PostgreSQL; see its component runbook.
+Scan changed files with `python utilities/security/scan-secrets.py PATH...`.
+The [migration map](devops/README.md#layout-migration) covers older branches.
