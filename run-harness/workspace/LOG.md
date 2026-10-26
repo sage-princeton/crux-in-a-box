@@ -19,6 +19,7 @@ There are two entry types.
 ### YYYY-MM-DD HH:MM — Iteration N
 - **Target:** <deployed URL> @ <git SHA>
 - **Checks run:** one line each: check name · command · runs/N/<output>
+- **Visual snapshots:** runs/N/screens/index.json; source/target image paths by page and viewport, with the review in runs/N/rubric.md and its visual-check log. Preserve every iteration's files.
 - **Results:** what came back, in numbers, per check
 - **Interpretation:** what the results mean: the causes behind the failures,
   which are systematic and which page-specific, and whether any check itself is suspect

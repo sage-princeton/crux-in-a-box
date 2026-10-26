@@ -91,6 +91,7 @@ There is no outer harness checking your work. You are the only verifier. Verific
 
 1. Create `runs/<N>/`. Every check you run writes its raw output to `runs/<N>/<check>.log`, for example `runs/3/url_parity.log` or `runs/3/zap_target.html`.
 2. Run your checks. You write the check scripts yourself, keep them under `scripts/`, and commit them. The same scripts run in every iteration, so results stay comparable.
+   Save fresh full-page visual snapshots of the migrated site in **every** iteration, including failed and final iterations, at desktop (1440 px) and mobile (390 px) widths. Keep source/target pairs under `runs/<N>/screens/` without overwriting earlier iterations. Write `runs/<N>/screens/index.json` mapping each page URL, viewport, timestamp and deployed Git SHA to its screenshot filepath. Reference that index and the images you examined in `runs/<N>/rubric.md`, the visual-check log and the iteration's `LOG.md` entry; screenshots must remain on disk for archival and maintenance handoff.
 3. Append a **Verification iteration** entry to `LOG.md` (the format is in its header). It covers:
    - what you ran
    - what came back

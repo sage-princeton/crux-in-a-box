@@ -78,11 +78,12 @@ Within the first hour you should see:
   - On the box, check `git -C /srv/crux-run/run-harness/workspace log`, the tail of `LOG.md`, and the `PLAN.md` ledger.
 - **Watch the spend yourself.** The agent reports AWS and LLM spend in its ledger, but its numbers lag or are estimates. Check the auxiliary account's billing and the provider console directly now and then.
 - **When the task returns,** read `COMPLETION_REPORT.md`. A `DONE` return should follow a Verification iteration in `LOG.md` with verdict `DONE`. Any other return is an early stop, and the report says why and what the agent needs.
+  Check that every iteration retains its desktop/mobile screenshots and `runs/<N>/screens/index.json`, and that the rubric, visual-check log and `LOG.md` reference their filepaths.
 
 ## 3. Post-run
 
-1. Copy `/srv/crux-run/run-harness/workspace` off the box (the git repo, `runs/`, `inventory/`) before teardown. It is the run's artifact.
-2. Retrieve the Payload admin passwords from the credentials file named in `COMPLETION_REPORT.md` (it is on the box, outside the repo), and hand them to the admins.
+1. Follow [Archive and hand off a run](../src/ec2-workspaces/archival.md): prepare `/srv/crux-run/ARCHIVE.json`, require the complete source/Git history, `runs/` (including every screenshot/index), `inventory/`, verification scripts/results and completion report, and stop the run safely before teardown. Teardown blocks until its S3 archive has been downloaded and restored successfully. Preserve the printed receipt outside the checkout.
+2. Put runtime and Payload admin credentials in Secrets Manager, including secrets outside the project or only on the CMS host. Put identifiers/versions and retained-resource verification evidence in the archive manifest. Use `--keep-aux` for a maintenance handoff, restore onto the new workspace, then verify source rebuild, secrets and CMS access before starting maintenance.
 3. Review the deployed site against the success criteria yourself. The agent's verdict is evidence, not the evaluation. For criterion 9, log into the admin and try a few routine tasks (add an item, edit something shown in several places, change navigation or a listing's settings), then check the public site.
 
 4. `teardown-workspace-aws-resources.sh <slug>` terminates the box, and also sweeps **everything** in the auxiliary account: the site, database, buckets and DNS. Take anything you need from the site first. The registered domain itself remains until it expires.
