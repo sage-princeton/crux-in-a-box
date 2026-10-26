@@ -75,6 +75,11 @@ class Lifecycle:
         finally:
             os.close(descriptor)
 
+    def check(self):
+        with self.locked() as (_state, context):
+            for resource in self.run.ordered():
+                self.drivers[resource.type].preflight(resource, context)
+
     def apply(self):
         with self.locked() as (state, context):
             if state.get("phase") in ("destroying", "destroyed"):
