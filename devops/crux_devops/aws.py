@@ -1,5 +1,6 @@
 """Native AWS resource drivers; shared infrastructure must be declared explicitly."""
 import re
+import time
 
 import boto3
 from botocore.exceptions import ClientError
@@ -7,6 +8,17 @@ from botocore.exceptions import ClientError
 from .spec import fields
 
 SCOPE = ('profile', 'region', 'account')
+
+
+def launch(ec2, **request):
+    for attempt in range(30):
+        try:
+            return ec2.run_instances(**request)
+        except ClientError as error:
+            details=error.response['Error']
+            if attempt == 29 or details['Code'] != 'InvalidParameterValue' or 'Invalid IAM Instance Profile' not in details.get('Message',''):
+                raise
+            time.sleep(2)
 
 
 class AWS:
@@ -67,6 +79,21 @@ def one(values):
 class EC2:
     def __init__(self, aws):
         self.aws = aws
+
+    def verify(self, resource, receipt, context):
+        instance = self.find(resource, context, receipt)
+        if instance is None:
+            raise ValueError('The recorded Box no longer exists')
+        if resource.ownership == 'managed':
+            owned(instance, resource, context)
+
+    def quiescent(self, resource, receipt, context):
+        instance = self.find(resource, context, receipt)
+        if instance is None:
+            return True
+        if resource.ownership == 'managed':
+            owned(instance, resource, context)
+        return instance['State']['Name'] in ('stopped', 'stopping', 'terminated', 'shutting-down')
 
     def settings(self, resource, context, outputs=None):
         config = dict(resource.config)
@@ -167,7 +194,7 @@ class EC2:
                 elif instance['State']['Name'] not in ('running', 'pending'):
                     raise ValueError('Box is not startable; inspect its current state')
             else:
-                instance = ec2.run_instances(
+                instance = launch(ec2,
                     ImageId=config['image_id'], InstanceType=config['instance_type'],
                     KeyName=config['key_name'], MinCount=1, MaxCount=1,
                     ClientToken=context.token(resource),

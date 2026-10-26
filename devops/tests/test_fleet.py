@@ -1,7 +1,10 @@
 import json
 from dataclasses import replace
+from unittest.mock import Mock, patch
 
 import pytest
+from botocore.exceptions import ClientError
+from crux_devops.aws import launch
 from crux_devops.fleet import Identity, KeyPair, SecurityGroup
 from crux_devops.lifecycle import Lifecycle
 from crux_devops.spec import Resource
@@ -10,6 +13,18 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from devops.tests.test_aws import box, run, scope
 
 pytest_plugins = ['devops.tests.test_aws']
+
+
+def test_launch_retries_only_profile_propagation_with_same_request():
+    ec2=Mock()
+    transient=ClientError({'Error':{'Code':'InvalidParameterValue','Message':'Invalid IAM Instance Profile name'}},'RunInstances')
+    ec2.run_instances.side_effect=[transient, {'Instances':[{'InstanceId':'instance'}]}]
+    with patch('crux_devops.aws.time.sleep'):
+        assert launch(ec2,ClientToken='stable')['Instances'][0]['InstanceId']=='instance'
+    assert ec2.run_instances.call_args_list[0]==ec2.run_instances.call_args_list[1]
+    ec2.run_instances.side_effect=ClientError({'Error':{'Code':'UnauthorizedOperation','Message':'denied'}},'RunInstances')
+    with pytest.raises(ClientError):
+        launch(ec2,ClientToken='stable')
 
 
 def test_security_group_lifecycle_and_cidr_validation(aws, tmp_path):

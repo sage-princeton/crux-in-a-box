@@ -1,0 +1,123 @@
+{
+  "version": 1,
+  "kind": "controller",
+  "name": "crux-control",
+  "box": "box",
+  "configuration": {
+    "parameter": "/crux/control/env",
+    "data_resource": "data",
+    "initialize_data": true
+  },
+  "resources": [
+    {
+      "id": "ingress",
+      "type": "aws.security_group",
+      "config": {
+        "profile": "crux-2-acct-admin-access",
+        "region": "us-east-1",
+        "account": "123456789012",
+        "vpc_id": "vpc-REPLACE",
+        "ingress": [
+          {
+            "port": 22,
+            "cidr": "203.0.113.10/32"
+          },
+          {
+            "port": 80,
+            "cidr": "0.0.0.0/0"
+          },
+          {
+            "port": 443,
+            "cidr": "203.0.113.10/32"
+          }
+        ]
+      }
+    },
+    {
+      "id": "identity",
+      "type": "aws.identity",
+      "config": {
+        "profile": "crux-2-acct-admin-access",
+        "region": "us-east-1",
+        "account": "123456789012",
+        "parameters": [
+          "/crux/control/env"
+        ]
+      }
+    },
+    {
+      "id": "box",
+      "type": "aws.ec2",
+      "config": {
+        "profile": "crux-2-acct-admin-access",
+        "region": "us-east-1",
+        "account": "123456789012",
+        "image_id": "ami-REPLACE",
+        "instance_type": "t3.small",
+        "subnet_id": "subnet-REPLACE",
+        "key_name": "existing-public-key",
+        "identity_resource": "identity",
+        "security_group_resources": [
+          "ingress"
+        ],
+        "disk_gb": 20
+      },
+      "depends_on": [
+        "ingress",
+        "identity"
+      ]
+    },
+    {
+      "id": "address",
+      "type": "aws.elastic_ip",
+      "config": {
+        "profile": "crux-2-acct-admin-access",
+        "region": "us-east-1",
+        "account": "123456789012"
+      },
+      "teardown": "retain"
+    },
+    {
+      "id": "address-binding",
+      "type": "aws.address_attachment",
+      "config": {
+        "profile": "crux-2-acct-admin-access",
+        "region": "us-east-1",
+        "account": "123456789012",
+        "box": "box",
+        "address": "address"
+      },
+      "depends_on": [
+        "box",
+        "address"
+      ]
+    },
+    {
+      "id": "data",
+      "type": "aws.volume",
+      "config": {
+        "profile": "crux-2-acct-admin-access",
+        "region": "us-east-1",
+        "account": "123456789012",
+        "zone": "us-east-1a",
+        "size_gb": 20
+      },
+      "teardown": "retain"
+    },
+    {
+      "id": "data-binding",
+      "type": "aws.volume_attachment",
+      "config": {
+        "profile": "crux-2-acct-admin-access",
+        "region": "us-east-1",
+        "account": "123456789012",
+        "box": "box",
+        "volume": "data"
+      },
+      "depends_on": [
+        "box",
+        "data"
+      ]
+    }
+  ]
+}

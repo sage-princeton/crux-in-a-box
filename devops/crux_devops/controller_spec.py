@@ -31,7 +31,9 @@ class Controller:
         if len(set(ids)) != len(ids) or value['box'] not in ids:
             raise ValueError('Controller resources need unique IDs and a declared Box')
         config = value['configuration']
-        fields(config, ('parameter','hostname','email','port','data_resource'), ('parameter','data_resource'), 'controller configuration')
+        fields(config, ('parameter','hostname','email','port','data_resource','initialize_data'), ('parameter','data_resource'), 'controller configuration')
+        if type(config.get('initialize_data', False)) is not bool:
+            raise ValueError('initialize_data must be a boolean')
         for key, pattern in (('parameter',r'/[A-Za-z0-9_/.-]+'),('hostname',r'[a-zA-Z0-9](?:[a-zA-Z0-9.-]*[a-zA-Z0-9])?'),('email',r'[^\s@;{}]+@[^\s@;{}]+')):
             if key in config and (not isinstance(config[key], str) or not re.fullmatch(pattern, config[key])):
                 raise ValueError(f'Invalid controller {key}')

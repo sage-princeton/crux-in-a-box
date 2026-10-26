@@ -26,20 +26,30 @@ class Invoker:
     def __init__(self, lifecycle, transport):
         self.lifecycle, self.transport = lifecycle, transport
 
+    def verify_box(self, state, context):
+        resource = next(r for r in self.lifecycle.run.resources if r.id == self.lifecycle.run.box)
+        driver = self.lifecycle.drivers[resource.type]
+        if hasattr(driver, 'verify'):
+            driver.verify(resource, state['resources'][resource.id]['outputs'], context)
+
     def destroy(self):
         lifecycle = self.lifecycle
         with lifecycle.locked(create=False) as (state, context):
             deployment = state.get('deployment')
             state['phase'] = 'destroying'
             lifecycle.save(state)
-            if deployment:
+            box = next(r for r in lifecycle.run.resources if r.id == lifecycle.run.box)
+            driver = lifecycle.drivers[box.type]
+            entry = state['resources'].get(box.id, {})
+            stopped = entry.get('status') == 'deleted' or (hasattr(driver, 'quiescent') and
+                driver.quiescent(box, entry.get('outputs', {}), context) is True)
+            if deployment and not stopped:
+                self.verify_box(state, context)
                 if self.transport is None:
                     raise ValueError('Configured Box teardown requires SSH to stop the Run before finalization and resource cleanup')
                 self.transport.stop(host=deployment['host'], owner=context.owner,
                                     bundle_sha256=deployment['sha256'])
-            else:
-                box = next(r for r in lifecycle.run.resources if r.id == lifecycle.run.box)
-                driver = lifecycle.drivers[box.type]
+            elif not deployment:
                 if box.ownership == 'managed' and hasattr(driver, 'stop'):
                     driver.stop(box, state['resources'].get(box.id, {}).get('outputs', {}), context)
         return lifecycle.destroy()
@@ -50,6 +60,7 @@ class Invoker:
             if state['phase'] not in ('configured', 'running') or not state.get('deployment'):
                 raise ValueError('Configure the Scaffold before checking its health')
             deployment = state['deployment']
+            self.verify_box(state, context)
             self.transport.health(host=deployment['host'], owner=context.owner,
                                   bundle_sha256=deployment['sha256'])
             return state
@@ -63,6 +74,7 @@ class Invoker:
             box = state['resources'].get(lifecycle.run.box, {})
             if box.get('status') != 'ready' or not box.get('outputs', {}).get('public_ip'):
                 raise ValueError('Provision a reachable Box before configuring its Scaffold')
+            self.verify_box(state, context)
             resource = next(r for r in lifecycle.run.resources if r.id == lifecycle.run.box)
             host = box['outputs']['public_ip']
             for attachment in lifecycle.run.resources:
@@ -90,6 +102,7 @@ class Invoker:
             if state['phase'] not in ('configured', 'running') or not state.get('deployment'):
                 raise ValueError('The Scaffold must be successfully configured before starting a Run')
             deployment = state['deployment']
+            self.verify_box(state, context)
             self.transport.start(host=deployment['host'], owner=context.owner,
                                  bundle_sha256=deployment['sha256'])
             state['phase'] = 'running'

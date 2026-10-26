@@ -11,6 +11,8 @@ dependencies = ["boto3==1.42.73"]
 
 [project.scripts]
 crux = "crux_devops.__main__:main"
+crux-controller = "crux_devops.controller:main"
+crux-addresses = "crux_devops.addresses:main"
 
 [tool.setuptools.packages.find]
 include = ["crux_devops*"]

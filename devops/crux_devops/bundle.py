@@ -70,9 +70,14 @@ def assemble(source, run, output, *, drop_in=None):
     manifest = {'version': 1, 'run': asdict(run), 'run_fingerprint': run.fingerprint,
                 'source_commit': commit, 'source_diff_sha256': hashlib.sha256(diff).hexdigest(),
                 'files': {name: hashlib.sha256(data).hexdigest() for name, data in sorted(payload.items())}}
-    payload['bundle.json'] = (json.dumps(manifest, sort_keys=True, indent=2)+'\n').encode()
     if git('rev-parse', 'HEAD').decode().strip() != commit or git('diff', '--binary', 'HEAD') != diff:
         raise ValueError('Selected source changed during bundle assembly')
+    return package(payload, manifest, output)
+
+
+def package(payload, manifest, output):
+    output = Path(output)
+    payload = payload | {'bundle.json': (json.dumps(manifest, sort_keys=True, indent=2)+'\n').encode()}
     output.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(prefix='.crux-bundle-', dir=output.parent)
     try:
@@ -89,5 +94,5 @@ def assemble(source, run, output, *, drop_in=None):
         os.replace(temporary, output)
     finally:
         Path(temporary).unlink(missing_ok=True)
-    return {'sha256': hashlib.sha256(output.read_bytes()).hexdigest(), 'source_commit': commit,
+    return {'sha256': hashlib.sha256(output.read_bytes()).hexdigest(), 'source_commit': manifest['source_commit'],
             'source_diff_sha256': manifest['source_diff_sha256'], 'path': str(output)}
