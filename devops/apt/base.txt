@@ -1,0 +1,9 @@
+curl
+unzip
+jq
+git
+ca-certificates
+python3
+python3-venv
+gnupg
+unattended-upgrades

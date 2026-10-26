@@ -59,7 +59,7 @@ def assemble(source, controller, output):
                 'devops/box/operate.sh','devops/requirements-bootstrap.txt']
     payload = {}
     for name in git('ls-files','-z').decode().split('\0'):
-        if name not in required and not name.startswith('devops/crux_devops/'):
+        if name not in required and not name.startswith(('devops/crux_devops/', 'devops/apt/')):
             continue
         path = source/name
         if private_path(Path(name)):

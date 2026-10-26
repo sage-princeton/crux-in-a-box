@@ -1,0 +1,231 @@
+# Weekly version groups; security rules exclude every dependency from grouping.
+# Security updates use repository alerts immediately, independently of this schedule.
+version: 2
+updates:
+- package-ecosystem: pip
+  directories:
+  - /
+  - /devops
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    python-tooling:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: pip
+  directories:
+  - /scaffolds/sdk
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    sdk-python:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: pip
+  directories:
+  - /monitoring/service
+  - /monitoring/service/ci
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    monitoring-python:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: npm
+  directories:
+  - /scaffolds/codex
+  - /scaffolds/claude
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    agents-and-adapters:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: npm
+  directories:
+  - /monitoring/service
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    monitoring-ui:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: docker
+  directories:
+  - /monitoring/service
+  - /scaffolds/sdk/docker
+  - /devops/apt
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    runtime-images:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: docker
+  directories:
+  - /.github/tools/secrets
+  - /.github/tools/trivy
+  - /.github/tools/terraform
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    ci-tools:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: docker-compose
+  directories:
+  - /devops/ec2-control
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    controller:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: gomod
+  directories:
+  - /monitoring/service/ci/caddy
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    proxy-modules:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: terraform
+  directories:
+  - /monitoring/service/terraform
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    infrastructure:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'
+- package-ecosystem: github-actions
+  directories:
+  - /
+  schedule:
+    interval: weekly
+    day: monday
+    time: 09:00
+    timezone: America/New_York
+  open-pull-requests-limit: 5
+  groups:
+    workflow-actions:
+      applies-to: version-updates
+      patterns:
+      - '*'
+    individual-security-updates:
+      applies-to: security-updates
+      patterns:
+      - '*'
+      exclude-patterns:
+      - '*'

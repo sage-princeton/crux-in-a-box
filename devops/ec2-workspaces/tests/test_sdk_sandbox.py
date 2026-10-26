@@ -18,6 +18,11 @@ def test_install_loads_bubblewrap_profile_only_when_required(tmp_path, restricti
         source = source.replace(path, str(tmp_path / path.lstrip("/")))
     module = tmp_path / "sdk.sh"
     module.write_text(source)
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    apt = binaries / "apt-get"
+    apt.write_text("#!/bin/sh\nprintf 'packages:%s\\n' \"$*\" >&2\n")
+    apt.chmod(0o755)
     setting = tmp_path / "proc/sys/kernel/apparmor_restrict_unprivileged_userns"
     setting.parent.mkdir(parents=True)
     if restriction is not None:
@@ -39,7 +44,6 @@ source "$1"
 info() { :; }
 ok() { :; }
 die() { echo "$*" >&2; exit 1; }
-apt-get() { printf 'packages:%s\\n' "$*" >&2; }
 apparmor_parser() { printf 'load:%s\\n' "$*"; }
 scaffold_install_sandbox
 """,
@@ -49,6 +53,7 @@ scaffold_install_sandbox
         capture_output=True,
         text=True,
         check=False,
+        env=dict(os.environ, CRUX_SOURCE_ROOT=str(ROOT), PATH=str(binaries) + os.pathsep + os.environ['PATH']),
     )
     assert result.returncode == 0, result.stderr
     assert "bubblewrap" in result.stderr and "apparmor-profiles" in result.stderr

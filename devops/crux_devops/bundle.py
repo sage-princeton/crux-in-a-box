@@ -36,7 +36,7 @@ def assemble(source, run, output, *, drop_in=None):
     commit = git('rev-parse', 'HEAD').decode().strip()
     diff = git('diff', '--binary', 'HEAD')
     payload = {}
-    selected = ['devops/crux_devops/', 'devops/box/', 'devops/requirements-bootstrap.txt']
+    selected = ['devops/apt/', 'devops/crux_devops/', 'devops/box/', 'devops/requirements-bootstrap.txt']
     if run.scaffold.type == 'sdk':
         selected.append('scaffolds/sdk/')
     else:

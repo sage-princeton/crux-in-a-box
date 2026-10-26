@@ -28,10 +28,12 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: '1.14.8'
-          terraform_wrapper: false
+      - name: Install declared terraform
+        id: terraform
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker build --output "type=local,dest=$RUNNER_TEMP/terraform" .github/tools/terraform
+          echo "$RUNNER_TEMP/terraform" >> "$GITHUB_PATH"
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.MONITORING_AWS_ROLE_ARN }}
@@ -39,10 +41,12 @@ jobs:
           allowed-account-ids: '881004720495'
           role-session-name: monitoring-${{ github.run_id }}
       - uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
-      - name: Install Trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.75.0
+      - name: Install declared trivy
+        id: trivy
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker build --output "type=local,dest=$RUNNER_TEMP/trivy" .github/tools/trivy
+          echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
       - name: Verify deployment target
         run: |
           account=$(aws sts get-caller-identity --query Account --output text)
@@ -89,7 +93,7 @@ jobs:
         run: terraform plan -input=false -lock-timeout=5m -var-file="$RUNNER_TEMP/release.tfvars.json" -out="$RUNNER_TEMP/deploy.tfplan"
       - name: Retire old monitoring pipelines and data
         run: |
-          pip install boto3==1.42.73
+          pip install -r devops/requirements-bootstrap.txt
           python monitoring/service/ci/reset.py
       - name: Apply infrastructure
         working-directory: monitoring/service/terraform
