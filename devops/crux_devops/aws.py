@@ -31,8 +31,12 @@ class AWS:
         return self.sessions[scope]
 
     def registry(self):
+        from .fleet import Identity, KeyPair, SecurityGroup
+        from .storage import Attachment, Volume
         return {'aws.ec2': EC2(self), 'aws.elastic_ip': ElasticIP(self),
-                'aws.address_attachment': AddressAttachment(self)}
+                'aws.address_attachment': AddressAttachment(self), 'aws.volume': Volume(self),
+                'aws.volume_attachment': Attachment(self), 'aws.security_group': SecurityGroup(self),
+                'aws.identity': Identity(self), 'aws.key_pair': KeyPair(self)}
 
 
 def tags(resource, context):
@@ -64,6 +68,37 @@ class EC2:
     def __init__(self, aws):
         self.aws = aws
 
+    def settings(self, resource, context, outputs=None):
+        config = dict(resource.config)
+        resources = {r.id: r for r in context.run.resources}
+        for field, reference, kind, output in (
+            ('key_name', 'key_resource', 'aws.key_pair', 'key_name'),
+            ('instance_profile', 'identity_resource', 'aws.identity', 'instance_profile'),
+            ('security_group_ids', 'security_group_resources', 'aws.security_group', 'group_id'),
+        ):
+            if (field in config) == (reference in config):
+                raise ValueError(f'Box requires exactly one of {field} or {reference}')
+            if reference not in config:
+                value = config[field]
+                if field == 'security_group_ids':
+                    if not isinstance(value, list) or not value or any(not isinstance(v, str) or not v for v in value):
+                        raise ValueError('Box security_group_ids must be a nonempty list')
+                elif not isinstance(value, str) or not value:
+                    raise ValueError(f'Box {field} must be a nonempty string')
+                continue
+            ids = config[reference] if field == 'security_group_ids' else [config[reference]]
+            if not isinstance(ids, list) or not ids or any(not isinstance(i, str) for i in ids):
+                raise ValueError('Box resource references must be nonempty resource IDs')
+            for key in ids:
+                dependency = resources.get(key)
+                if not dependency or dependency.type != kind or key not in resource.depends_on:
+                    raise ValueError(f'{reference} must be a declared {kind} dependency')
+                if any(dependency.config.get(k) != config[k] for k in ('account', 'region')):
+                    raise ValueError('Box resource dependencies must share its AWS scope')
+            values = [outputs[key][output] for key in ids] if outputs is not None else None
+            config[field] = values if field == 'security_group_ids' or values is None else values[0]
+        return config
+
     def find(self, resource, context, receipt=None):
         ec2 = self.aws.session(resource).client('ec2')
         instance = (receipt or {}).get('instance_id') or resource.config.get('instance_id')
@@ -83,13 +118,15 @@ class EC2:
             if not self.find(resource, context):
                 raise ValueError('External Box does not exist')
             return
-        required = (*SCOPE, 'image_id', 'instance_type', 'subnet_id', 'security_group_ids', 'key_name', 'instance_profile')
-        fields(config, (*required, 'disk_gb', 'iops', 'throughput'), required, 'EC2')
-        for key in ('image_id', 'instance_type', 'subnet_id', 'key_name', 'instance_profile'):
+        required = (*SCOPE, 'image_id', 'instance_type', 'subnet_id')
+        fields(config, (*required, 'disk_gb', 'iops', 'throughput', 'security_group_ids', 'key_name',
+                        'instance_profile', 'security_group_resources', 'key_resource', 'identity_resource'), required, 'EC2')
+        config = self.settings(resource, context)
+        for key in ('image_id', 'instance_type', 'subnet_id'):
             if not isinstance(config[key], str) or not config[key]:
                 raise ValueError(f'EC2 {key} must be a nonempty string')
         groups = config['security_group_ids']
-        if not isinstance(groups, list) or not groups or any(not isinstance(v, str) or not v for v in groups):
+        if groups is not None and (not isinstance(groups, list) or not groups or any(not isinstance(v, str) or not v for v in groups)):
             raise ValueError('EC2 security_group_ids must be a nonempty list')
         for key, default in (('disk_gb', 100), ('iops', 6000), ('throughput', 250)):
             value = config.get(key, default)
@@ -101,11 +138,14 @@ class EC2:
         if not images or images[0].get('State') != 'available':
             raise ValueError('Selected AMI is not available')
         subnet = ec2.describe_subnets(SubnetIds=[config['subnet_id']])['Subnets'][0]
-        security = ec2.describe_security_groups(GroupIds=groups)['SecurityGroups']
+        security = ec2.describe_security_groups(GroupIds=groups)['SecurityGroups'] if groups else [
+            {'VpcId': r.config['vpc_id']} for r in context.run.resources if r.id in config['security_group_resources']]
         if any(g['VpcId'] != subnet['VpcId'] for g in security):
             raise ValueError('Box subnet and security groups must belong to the same VPC')
-        ec2.describe_key_pairs(KeyNames=[config['key_name']])
-        session.client('iam').get_instance_profile(InstanceProfileName=config['instance_profile'])
+        if config['key_name'] is not None:
+            ec2.describe_key_pairs(KeyNames=[config['key_name']])
+        if config['instance_profile'] is not None:
+            session.client('iam').get_instance_profile(InstanceProfileName=config['instance_profile'])
         existing = self.find(resource, context)
         if existing:
             owned(existing, resource, context)
@@ -113,7 +153,7 @@ class EC2:
                 raise ValueError('Box was terminated; create a new deployment')
 
     def ensure(self, resource, previous, dependencies, context):
-        config = resource.config
+        config = resource.config if resource.ownership == 'external' else self.settings(resource, context, dependencies)
         ec2 = self.aws.session(resource).client('ec2')
         instance = self.find(resource, context, previous)
         if resource.ownership == 'external':
