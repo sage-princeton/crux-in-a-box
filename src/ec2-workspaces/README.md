@@ -370,9 +370,9 @@ is the one exception.
 together for serving content over a CDN with a cert: a certificate is only
 usable by CloudFront if it was requested in `us-east-1`, regardless of which
 region everything else runs in, so the agent must request ACM certs there.
-Teardown sweeps ACM, CloudFront, and Route53 Domains in `us-east-1`
-specifically for this reason (Route53 Domains has no other-region endpoint
-at all), not whatever region the rest of the sweep uses.
+Teardown sweeps EC2, RDS and ACM in every enabled auxiliary-account region.
+CloudFront and Route53 Domains use their `us-east-1` endpoints. S3 bucket
+cleanup discovers each bucket's actual region independently of the config.
 
 When both `PROVISION_EC2` and `PROVISION_S3` are set, the agent may also give
 its own EC2 instances an IAM role — e.g. so Payload's S3 storage adapter can
@@ -429,6 +429,25 @@ except a registered domain name, which it can only disable auto-renew on
 the run that currently owns the account: if `crux-agent-devops` trusts a
 different run's role (a later workspace took over), the account is left
 untouched and only the old slug's own `crux-run-$SLUG` role is deleted.
+
+To remove retained application resources before a fresh migration, run the
+auxiliary script directly with the previous owner's config:
+
+```bash
+bash src/ec2-workspaces/teardown-aux-aws-resources.sh \
+  src/ec2-workspaces/placeholders-crux-web-pilot3.txt
+```
+
+The confirmation lists all enabled regions. Cleanup terminates auxiliary EC2
+instances before deleting databases and buckets, disables RDS instance deletion
+protection before deletion, and waits for termination/deletion. S3 cleanup removes
+all current objects, historical versions and delete markers in batches of at most
+1,000, then verifies emptiness and deletes each bucket. API errors or per-object
+deletion failures stop cleanup before the remaining IAM roles are removed; retry
+after resolving permissions, Object Lock or MFA Delete requirements. It does not
+bypass those S3 protections. Direct auxiliary teardown deletes the retained CMS
+and its data; prepare the desired backups first. The workspace teardown wrapper's
+archive covers the run box, not these external databases/buckets/hosts.
 
 #### Reaching instances the agent (or an earlier agent) created
 

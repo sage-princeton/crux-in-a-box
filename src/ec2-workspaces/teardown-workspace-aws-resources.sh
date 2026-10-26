@@ -89,6 +89,7 @@ if [ "$AUX_PROVISIONED" = 1 ] && [ "$KEEP_AUX" = 1 ]; then
   echo "  provision-aux-aws-resources.sh takes the account over."
 elif [ "$AUX_PROVISIONED" = 1 ]; then
   echo "  also sweep aux AWS resources for '$SLUG' in the isolated account:"
+  echo "  EC2, RDS and ACM across every enabled region; S3 across all regions"
   echo "  every RDS instance, S3 bucket, EC2 instance, public Route53 zone,"
   echo "  CloudFront distribution, and ACM certificate found there, plus"
   echo "  $RUN_ROLE and crux-agent-devops (registered domain names are not"

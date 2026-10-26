@@ -54,9 +54,10 @@ case "$svc $op" in
   "sts get-caller-identity") if [ "$profile" = aux ]; then echo 222222222222; else echo 111111111111; fi ;;
   "iam get-role")
     if [[ " ${rest[*]} " == *"Principal.AWS"* ]]; then echo "${STUB_AUX_TRUST:-}"; exit 0; fi
-    have "$name" || exit 254 ;;
+    have "$name" || { echo "NoSuchEntity" >&2; exit 254; } ;;
   "iam get-instance-profile") have "$name" || exit 254 ;;
   "ec2 describe-instances") echo "${STUB_INSTANCES:-}" ;;
+  "ec2 describe-regions") echo "us-east-1 us-east-2" ;;
 esac
 exit 0
 STUB
