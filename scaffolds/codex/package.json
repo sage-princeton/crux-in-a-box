@@ -1,0 +1,11 @@
+{
+  "name": "crux-codex-box",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@openai/codex": "0.154.0",
+    "@agentclientprotocol/codex-acp": "1.10.0",
+    "@agentrq/acp-gateway": "0.4.1",
+    "@langfuse/codex-observability-plugin": "0.4.0"
+  }
+}

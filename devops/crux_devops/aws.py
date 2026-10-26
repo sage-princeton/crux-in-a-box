@@ -149,6 +149,25 @@ class EC2:
         return {'instance_id': instance['InstanceId'], 'public_ip': instance.get('PublicIpAddress'),
                 'private_ip': instance.get('PrivateIpAddress')}
 
+    def stop(self, resource, receipt, context):
+        ec2 = self.aws.session(resource).client('ec2')
+        instance = self.find(resource, context, receipt)
+        if not instance:
+            return
+        owned(instance, resource, context)
+        status = instance['State']['Name']
+        if status == 'shutting-down':
+            ec2.get_waiter('instance_terminated').wait(InstanceIds=[instance['InstanceId']])
+            return
+        if status in ('terminated', 'stopped'):
+            return
+        if status == 'pending':
+            ec2.get_waiter('instance_running').wait(InstanceIds=[instance['InstanceId']])
+        if status != 'stopping':
+            ec2.stop_instances(InstanceIds=[instance['InstanceId']])
+        ec2.get_waiter('instance_stopped').wait(InstanceIds=[instance['InstanceId']],
+                                              WaiterConfig={'Delay': 10, 'MaxAttempts': 90})
+
     def destroy(self, resource, receipt, context):
         ec2 = self.aws.session(resource).client('ec2')
         instance = self.find(resource, context, receipt)
@@ -219,6 +238,8 @@ class AddressAttachment:
             raise ValueError('Address attachment requires an EC2 Box and an Elastic IP resource')
         if box.ownership != 'managed' or resource.ownership != 'managed':
             raise ValueError('An address attachment requires a managed Box and managed attachment')
+        if sum(r.type == 'aws.address_attachment' and r.config.get('box') == box.id for r in context.run.resources) > 1:
+            raise ValueError('Only one Elastic IP attachment is supported per Box')
         if not {box.id, address.id} <= set(resource.depends_on):
             raise ValueError('Address attachment must depend on its Box and address')
         for other in (box, address):

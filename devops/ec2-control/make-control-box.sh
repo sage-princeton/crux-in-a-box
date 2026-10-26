@@ -474,7 +474,7 @@ done
 
 # ====== BOX-SIDE CONFIGURE ======
 info "Copying and running configure-control.sh"
-scp -q "$SCRIPT_DIR/configure-control.sh" "$SLUG:/tmp/configure-control.sh"
+scp -q "$SCRIPT_DIR/configure-control.sh" "$SCRIPT_DIR/compose.yaml" "$SLUG:/tmp/"
 ssh "$SLUG" "chmod +x /tmp/configure-control.sh && sudo AWS_REGION='$REGION' \
   SSM_ENV_PARAM='$SSM_ENV_PARAM' AGENTRQ_PORT='$AGENTRQ_PORT' \
   PRIVATE_DNS='$PRIVATE_DNS' PRIVATE_IP='$PRIVATE_IP' \
@@ -489,7 +489,7 @@ $(ok "Control box ready")
   ssh          ssh $SLUG
   state        $VOL_ID mounted at /srv/agentrq
   web UI       https://$TLS_HOSTNAME   (443 from $TLS_SUMMARY)
-  run boxes    set CONTROL_MCP_BASE=https://$TLS_HOSTNAME in placeholders-base.txt
+  run boxes    set scaffold.configuration.control_mcp_base=https://$TLS_HOSTNAME in the Run JSON
 
 If your address changes, both :22 and :443 are gated by it — reopen them with
   aws ec2 authorize-security-group-ingress --group-id $CONTROL_SG_ID \

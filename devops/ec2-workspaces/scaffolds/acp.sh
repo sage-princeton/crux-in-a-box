@@ -9,87 +9,32 @@
 # Function bodies keep the code's original top-level indentation so heredoc output is unchanged.
 
 scaffold_install_preflight() {
-  : "${ACP_GATEWAY_VERSION:?}" "${ACP_GATEWAY_TARBALL_URL:?}" "${ACP_GATEWAY_SHA256:?}"
   case "$AGENT_PLATFORM" in
-    codex) : "${CODEX_VERSION:?}" "${CODEX_ACP_VERSION:?}" ;;
-    claude) : "${CLAUDE_VERSION:?}" "${CLAUDE_ACP_VERSION:?}" ;;
+    codex|claude) ;;
     *) die "AGENT_PLATFORM must be codex|claude." ;;
   esac
+  [ -f "$CRUX_SOURCE_ROOT/scaffolds/$AGENT_PLATFORM/package-lock.json" ] \
+    || die "Missing selected Scaffold npm lockfile."
 }
 
 scaffold_install() {
-# ====== CODEX CLI ======
-# Pinned like the agent packages below. It was previously installed unpinned,
-# which is how two boxes in this fleet ended up on 0.153.4 and 0.154.0.
-#
-# The check compares the INSTALLED VERSION against the pin, not merely whether
-# a `codex` exists on PATH. A presence check makes the pin decorative: any box
-# that already has some codex — a reused instance, a baked AMI — keeps the
-# version it happens to have, and re-running this script never corrects it.
-# That matters beyond tidiness, because TRACING_HOOK_TRUSTED_HASH is validated
-# against one codex/plugin pairing.
-if [ "$AGENT_PLATFORM" = codex ]; then
-info "codex CLI @$CODEX_VERSION"
-CODEX_HAVE="$(codex --version 2>/dev/null | awk '{print $2}' || true)"
-if [ "$CODEX_HAVE" = "$CODEX_VERSION" ]; then
-  ok "already at $CODEX_VERSION"
-else
-  [ -n "$CODEX_HAVE" ] && info "found $CODEX_HAVE, replacing with the pinned $CODEX_VERSION"
-  npm install -g "@openai/codex@${CODEX_VERSION}" >/dev/null 2>&1 \
-    || die "npm install @openai/codex@${CODEX_VERSION} failed. Does that version exist? npm view @openai/codex versions"
-  CODEX_NOW="$(codex --version 2>/dev/null | awk '{print $2}' || true)"
-  [ "$CODEX_NOW" = "$CODEX_VERSION" ] \
-    || die "Installed @openai/codex@${CODEX_VERSION} but codex reports '${CODEX_NOW:-nothing}'."
-  ok "codex $CODEX_NOW"
-fi
-
-  AGENT_PACKAGE="@agentclientprotocol/codex-acp"
-  AGENT_VERSION="$CODEX_ACP_VERSION"
-  AGENT_BIN=codex-acp
-  CLI_BIN=codex
-else
-  info "Claude CLI @$CLAUDE_VERSION"
-  CLAUDE_HAVE="$(claude --version 2>/dev/null | awk '{print $1}' || true)"
-  if [ "$CLAUDE_HAVE" != "$CLAUDE_VERSION" ]; then
-    npm install -g "@anthropic-ai/claude-code@${CLAUDE_VERSION}" >/dev/null 2>&1 \
-      || die "Installing the pinned Claude CLI failed."
+  local package_dir="/opt/crux-agents/$AGENT_PLATFORM" bin
+  install -d -m 755 "$package_dir"
+  install -m 644 "$CRUX_SOURCE_ROOT/scaffolds/$AGENT_PLATFORM/"package*.json "$package_dir/"
+  npm ci --prefix "$package_dir" --omit=dev --no-audit --no-fund \
+    || die "Installing the selected Scaffold lockfile failed."
+  if [ "$AGENT_PLATFORM" = codex ]; then
+    AGENT_BIN=codex-acp
+    CLI_BIN=codex
+  else
+    AGENT_BIN=claude-agent-acp
+    CLI_BIN=claude
   fi
-  CLAUDE_NOW="$(claude --version 2>/dev/null | awk '{print $1}' || true)"
-  [ "$CLAUDE_NOW" = "$CLAUDE_VERSION" ] || die "Claude CLI does not match the requested pin."
-  AGENT_PACKAGE="@agentclientprotocol/claude-agent-acp"
-  AGENT_VERSION="$CLAUDE_ACP_VERSION"
-  AGENT_BIN=claude-agent-acp
-  CLI_BIN=claude
-fi
-
-# ====== PINNED AGENT PACKAGES ======
-# Verify the upstream release tarball before npm installs it.
-info "$AGENT_BIN@$AGENT_VERSION and acp-gateway@$ACP_GATEWAY_VERSION"
-GW_DIR="$(mktemp -d)"
-GW_TARBALL="$GW_DIR/acp-gateway.tgz"
-curl -fsSL "$ACP_GATEWAY_TARBALL_URL" -o "$GW_TARBALL" \
-  || die "Could not download $ACP_GATEWAY_TARBALL_URL"
-GW_SHA256="$(sha256sum "$GW_TARBALL" | awk '{print $1}')"
-[ "$GW_SHA256" = "$ACP_GATEWAY_SHA256" ] \
-  || die "$ACP_GATEWAY_TARBALL_URL has sha256 $GW_SHA256, but ACP_GATEWAY_SHA256 pins $ACP_GATEWAY_SHA256. Not installing it."
-GW_HAVE="$(tar -xOzf "$GW_TARBALL" package/package.json \
-  | node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(0)).version)')"
-[ "$GW_HAVE" = "$ACP_GATEWAY_VERSION" ] \
-  || die "The pinned acp-gateway tarball is version $GW_HAVE, not ACP_GATEWAY_VERSION=$ACP_GATEWAY_VERSION. Not installing it."
-npm install -g \
-  "$AGENT_PACKAGE@$AGENT_VERSION" \
-  "$GW_TARBALL" >/dev/null 2>&1 \
-  || die "npm install of the pinned agent packages failed"
-rm -rf "$GW_DIR"
-ok "installed"
-
-# ====== VERIFY ======
-info "Verifying"
-for bin in aws node npm "$CLI_BIN" "$AGENT_BIN" acp-gateway; do
-  command -v "$bin" >/dev/null 2>&1 || die "$bin is not on PATH after install"
-done
-ok "aws, node, npm, $CLI_BIN, $AGENT_BIN, acp-gateway all resolve"
-ok "acp-gateway $(acp-gateway --help 2>&1 | head -1)"
+  for bin in "$CLI_BIN" "$AGENT_BIN" acp-gateway; do
+    [ -x "$package_dir/node_modules/.bin/$bin" ] || die "Lockfile did not install $bin."
+    ln -sfn "$package_dir/node_modules/.bin/$bin" "/usr/bin/$bin"
+  done
+  ok "$CLI_BIN, $AGENT_BIN and acp-gateway installed from the selected package lockfile"
 }
 
 scaffold_preflight() {
@@ -506,30 +451,10 @@ else
 fi
 
 systemctl daemon-reload
-systemctl enable crux-acp-gateway >/dev/null
-systemctl restart crux-acp-gateway
+systemctl disable crux-acp-gateway >/dev/null
 if [ -f /etc/systemd/system/crux-codex-live-trace.service ]; then
-  systemctl enable crux-codex-live-trace >/dev/null
-  systemctl restart crux-codex-live-trace
+  systemctl disable crux-codex-live-trace >/dev/null
 fi
-ok "Service enabled and started"
-
-# ====== HEALTH ======
-# Require an active service; repeated restarts can leave it activating.
-info "Checking the gateway stays up"
-sleep 8
-STATE="$(systemctl is-active crux-acp-gateway || true)"
-if [ "$STATE" != "active" ]; then
-  printf '\n'
-  journalctl -u crux-acp-gateway -n 30 --no-pager || true
-  die "Gateway is '$STATE', not active. Logs above."
-fi
-ok "Gateway active (restart count $(systemctl show -p NRestarts --value crux-acp-gateway))"
-if [ -f /etc/systemd/system/crux-codex-live-trace.service ]; then
-  [ "$(systemctl is-active crux-codex-live-trace || true)" = active ] || {
-    journalctl -u crux-codex-live-trace -n 30 --no-pager || true
-    die "crux-codex-live-trace is not active, so running turns will not reach Langfuse. Logs above."
-  }
-  ok "Live trace exporter active"
-fi
+systemd-analyze verify /etc/systemd/system/crux-acp-gateway.service
+ok "Scaffold configured and probed; use the Invoker start command to begin the Run"
 }

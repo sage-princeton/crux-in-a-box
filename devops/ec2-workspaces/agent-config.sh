@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034
 # Shared preflight for both local entry points. Callers provide cfg KEY, warn and die.
+load_dependency_config() {
+  CRUX_SOURCE_ROOT="${CRUX_SOURCE_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+  export CRUX_SOURCE_ROOT
+  local values key value
+  values="$(python3 "$CRUX_SOURCE_ROOT/devops/crux_devops/dependencies.py" \
+    --source "$CRUX_SOURCE_ROOT" --platform "$AGENT_PLATFORM")" || die "Invalid dependency manifests."
+  while IFS='=' read -r key value; do
+    if [ -n "$key" ]; then export "$key=$value"; fi
+  done <<< "$values"
+}
+
 # An omitted AGENT_PLATFORM selects Codex. Each platform declares its scaffold:
 #   SCAFFOLD_MODULE  the box-side module in scaffolds/ that installs and configures it
 #   SCAFFOLD_NEEDS   environment features it needs from provisioning: agentrq (an
@@ -13,19 +24,16 @@ load_agent_config() {
       MODEL_KEY=CODEX_MODEL; EFFORT_KEY=CODEX_REASONING_EFFORT
       API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=codex-acp
       SCAFFOLD_MODULE=acp; SCAFFOLD_NEEDS=agentrq
-      PLATFORM_KEYS="CODEX_VERSION CODEX_ACP_VERSION TRACING_PLUGIN_VERSION TRACING_HOOK_TRUSTED_HASH"
       ;;
     claude)
       MODEL_KEY=CLAUDE_MODEL; EFFORT_KEY=CLAUDE_EFFORT
       API_KEY_NAME=ANTHROPIC_API_KEY; ACP_COMMAND=claude-agent-acp
       SCAFFOLD_MODULE=acp; SCAFFOLD_NEEDS=agentrq
-      PLATFORM_KEYS="CLAUDE_VERSION CLAUDE_ACP_VERSION"
       ;;
     openai-agents)
       MODEL_KEY=OPENAI_AGENTS_MODEL; EFFORT_KEY=OPENAI_AGENTS_REASONING_EFFORT
       API_KEY_NAME=OPENAI_API_KEY; ACP_COMMAND=
       SCAFFOLD_MODULE=sdk; SCAFFOLD_NEEDS=
-      PLATFORM_KEYS=""
       ;;
     *) die "AGENT_PLATFORM must be codex|claude|openai-agents (got '$AGENT_PLATFORM')." ;;
   esac
@@ -42,9 +50,6 @@ load_agent_config() {
   MODEL="$(cfg "$MODEL_KEY")"
   EFFORT="$(cfg "$EFFORT_KEY")"
   local key value keys="$MODEL_KEY $EFFORT_KEY"
-  if [ "${1:-}" != settings ] && [ -n "$ACP_COMMAND" ]; then
-    keys="$keys ACP_GATEWAY_VERSION ACP_GATEWAY_TARBALL_URL ACP_GATEWAY_SHA256 $PLATFORM_KEYS"
-  fi
   for key in $keys; do
     value="$(cfg "$key")"
     [ -n "$value" ] || die "$key is not set; $AGENT_PLATFORM boxes require it."
@@ -143,24 +148,4 @@ check_run_api_key_clashes() {
 
 scaffold_needs() {
   [[ " $SCAFFOLD_NEEDS " == *" $1 "* ]]
-}
-
-# The drop-in directory staged at /srv/crux-run/run-harness. Provisioning
-# archives the committed HEAD, so validate against HEAD, not the working tree.
-load_drop_in_path() {
-  DROP_IN_PATH="$(cfg DROP_IN_PATH)"
-  DROP_IN_PATH="${DROP_IN_PATH:-scaffolds/$AGENT_PLATFORM/run-harness}"
-  [[ "$DROP_IN_PATH" =~ ^[A-Za-z0-9._/-]+$ && "$DROP_IN_PATH" != /* && "$DROP_IN_PATH" != *..* ]] \
-    || die "DROP_IN_PATH must be a relative path inside the repository (got '$DROP_IN_PATH')."
-  git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/workspace" 2>/dev/null \
-    || die "$DROP_IN_PATH/workspace is not in the committed HEAD; provisioning stages committed files only."
-  if [ "$SCAFFOLD_MODULE" = sdk ]; then
-    git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/scaffold.toml" 2>/dev/null \
-      || die "$DROP_IN_PATH/scaffold.toml is not in the committed HEAD; openai-agents boxes run a scaffold drop-in."
-  fi
-  if git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
-    git -C "$1" show "HEAD:$DROP_IN_PATH/provision.json" \
-      | python3 "$1/devops/ec2-workspaces/run_provision.py" validate --manifest /dev/stdin \
-      || die "Fix $DROP_IN_PATH/provision.json and commit it before provisioning."
-  fi
 }

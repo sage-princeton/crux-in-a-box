@@ -31,7 +31,7 @@ Current command examples and prerequisites are in the
 [controller](devops/ec2-control/README.md). The
 [SDK guide](scaffolds/sdk/README.md) explains its Run inputs and start command.
 For local execution use the paired `ciab-devenv` checkout: select this worktree,
-reprovision, inspect artifacts, then stop the named environment.
+reprovision, inspect artifacts, then export/cite evidence and reset the named environment.
 
 ## Components
 

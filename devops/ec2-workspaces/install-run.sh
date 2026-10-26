@@ -13,9 +13,12 @@ ok()   { printf "\033[1;32m  ✓ %s\033[0m\n" "$*"; }
 die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=devops/ec2-workspaces/agent-config.sh
+source "$SCRIPT_DIR/agent-config.sh"
 # shellcheck source=devops/ec2-workspaces/scaffolds/acp.sh
 source "$SCRIPT_DIR/scaffold.sh"
 AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
+load_dependency_config
 scaffold_install_preflight
 
 RUN_USER=ubuntu
@@ -25,7 +28,7 @@ RUN_HOME="/home/$RUN_USER"
 info "Base packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq curl unzip jq git ca-certificates python3 >/dev/null
+apt-get install -y -qq curl unzip jq git ca-certificates python3 python3-venv >/dev/null
 ok "apt packages in"
 
 # ====== NEEDRESTART ======
@@ -73,13 +76,13 @@ fi
 
 # ====== UV ======
 # uv runs the tracing hooks and builds Python environments.
-info "uv"
-if [ -x "$RUN_HOME/.local/bin/uv" ]; then
-  ok "already present"
-else
-  su - "$RUN_USER" -c 'curl -fsSL https://astral.sh/uv/install.sh | sh' >/dev/null 2>&1
-  ok "installed to $RUN_HOME/.local/bin/uv"
-fi
+info "Manifest-managed Python bootstrap tools"
+python3 -m venv /opt/crux-bootstrap
+/opt/crux-bootstrap/bin/python -m pip install --quiet --disable-pip-version-check \
+  -r "$CRUX_SOURCE_ROOT/devops/requirements-bootstrap.txt"
+install -d -m 755 "$RUN_HOME/.local/bin"
+ln -sfn /opt/crux-bootstrap/bin/uv "$RUN_HOME/.local/bin/uv"
+ok "uv and boto3 installed from requirements-bootstrap.txt"
 
 scaffold_install
 

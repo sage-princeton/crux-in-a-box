@@ -23,6 +23,8 @@ source "$SCRIPT_DIR/agent-config.sh"
 cfg() { local key="$1"; printf '%s' "${!key:-}"; }
 # shellcheck source=devops/ec2-workspaces/scaffolds/acp.sh
 source "$SCRIPT_DIR/scaffold.sh"
+AGENT_PLATFORM="${AGENT_PLATFORM:-codex}"
+load_dependency_config
 load_agent_config settings
 scaffold_preflight
 # Every config/credential file starts private, including during its creation.
@@ -39,7 +41,7 @@ PROBE_LOG=/var/log/crux-agent-probe.log
 # mode-600 files written below.
 info "Reading per-run secrets from $RUN_SECRETS_PATH"
 [ -f "$RUN_SECRETS_PATH" ] \
-  || die "$RUN_SECRETS_PATH not found. provision-workspace-aws-resources.sh scps it before running this script; a manual re-run needs it scp'd again."
+  || die "$RUN_SECRETS_PATH not found. crux configure transfers it privately; a manual re-run needs the private input again."
 SECRETS="$(cat "$RUN_SECRETS_PATH")"
 
 get() { printf '%s' "$SECRETS" | jq -re --arg k "$1" '.[$k] // empty'; }
@@ -57,9 +59,9 @@ ok "Read $SECRET_COUNT per-run value$([ "$SECRET_COUNT" = 1 ] || echo s) plus pe
 # Shared by every run box; read via the instance's crux-system-role, whose
 # only privilege is GetParameter on this one path.
 info "Fetching system config from SSM $SYSTEM_SSM_PARAM"
-SYS="$(aws ssm get-parameter --region "$AWS_REGION" --name "$SYSTEM_SSM_PARAM" \
-  --with-decryption --query 'Parameter.Value' --output text)" \
-  || die "Could not read $SYSTEM_SSM_PARAM. Upload it once: provision-workspace-aws-resources.sh --put-system-secrets <file>"
+SYS="$(/opt/crux-bootstrap/bin/python -c \
+  'import boto3,os; print(boto3.client("ssm", region_name=os.environ["AWS_REGION"]).get_parameter(Name=os.environ["SYSTEM_SSM_PARAM"], WithDecryption=True)["Parameter"]["Value"])')" \
+  || die "Could not read $SYSTEM_SSM_PARAM. Populate the declared shared SSM parameter using an explicit AWS profile before provisioning."
 
 sys() { printf '%s' "$SYS" | jq -re --arg k "$1" '.[$k] // empty'; }
 

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "name": "research",
+  "box": "box",
+  "scaffold": {
+    "type": "sdk",
+    "platform": "openai-agents",
+    "model": "gpt-5.4-mini",
+    "effort": "low",
+    "drop_in": "scaffolds/sdk/run-harness/slack-roundtrip"
+  },
+  "resources": [
+    {
+      "id": "box",
+      "type": "aws.ec2",
+      "config": {
+        "profile": "YOUR_PROFILE",
+        "region": "us-east-1",
+        "account": "123456789012",
+        "image_id": "ami-REPLACE",
+        "instance_type": "m7i.xlarge",
+        "subnet_id": "subnet-REPLACE",
+        "security_group_ids": [
+          "sg-REPLACE"
+        ],
+        "key_name": "YOUR_KEY",
+        "instance_profile": "YOUR_BOX_PROFILE",
+        "disk_gb": 100
+      }
+    }
+  ]
+}

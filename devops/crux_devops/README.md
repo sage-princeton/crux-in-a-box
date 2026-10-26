@@ -91,3 +91,19 @@ its attachment is removed first. Future auxiliary-role drivers can use the same
 pattern for grants, retained assets and ownership transfer. AWS API semantics
 are implemented through [boto3](https://docs.aws.amazon.com/boto3/latest/reference/services/ec2/client/run_instances.html),
 including EC2 client tokens; no AWS CLI shell program is invoked.
+
+## Bundle and configuration
+
+The [Box runbook](../ec2-workspaces/README.md) covers `bundle`, `provision`,
+`configure`, `health` and `start`, including SSH trust, credential delivery and
+configuration probes. `Invoker` accepts a transport separate from resource
+drivers; `SSH` transfers the verified bundle and invokes focused Box-side
+apt/systemd scripts. `ciab-devenv` uses the selected production bundle and staging
+implementation with OrbStack transport and local connections.
+
+`agentrq.workspace` implements the same resource interface through native HTTPS.
+Its config has `url`, `root_token_env` and, for external workspaces, `workspace_id`.
+It authenticates before creation, recovers by a stable owner/resource marker,
+rejects name collisions and checks ownership again before deletion. Its receipt
+stores only ID/URL. `bindings` resolves workspace credentials privately for
+configuration; those tokens never enter the bundle or deployment receipt.

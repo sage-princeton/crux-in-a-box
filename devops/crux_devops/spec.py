@@ -62,6 +62,7 @@ class Scaffold:
     model: str
     effort: str = "low"
     provider: str = "direct"
+    configuration: dict = field(default_factory=dict)
 
     @classmethod
     def parse(cls, value):
@@ -76,6 +77,14 @@ class Scaffold:
         drop = Path(value["drop_in"])
         if drop.is_absolute() or ".." in drop.parts:
             raise ValueError("scaffold.drop_in must stay inside the selected source")
+        configuration = value.get('configuration', {})
+        fields(configuration, ('system_parameter', 'control_mcp_base', 'workspace_resource'), (), 'Scaffold configuration')
+        if any(not isinstance(v, str) or not v or any(ord(c) < 32 for c in v) for v in configuration.values()):
+            raise ValueError('Scaffold configuration values must be nonempty strings without control characters')
+        if value.get('provider', 'direct') not in ('direct', 'openrouter'):
+            raise ValueError('Unsupported Scaffold provider')
+        if value['type'] == 'sdk' and value.get('provider', 'direct') != 'direct':
+            raise ValueError('The current SDK deployment supports the direct provider only')
         return cls(**value)
 
     @property
@@ -146,7 +155,10 @@ class Run:
 
     @property
     def fingerprint(self):
-        return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+        value = asdict(self)
+        if not value['scaffold']['configuration']:
+            del value['scaffold']['configuration']
+        return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
 
     def plan(self):
         return {"run": self.name, "scaffold": self.scaffold.type, "platform": self.scaffold.platform,

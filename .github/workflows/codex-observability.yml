@@ -5,13 +5,15 @@ on:
     paths:
       - 'devops/ec2-workspaces/**'
       - 'monitoring/tracing/**'
+      - 'scaffolds/codex/package*.json'
+      - 'scaffolds/codex/tracing.json'
       - '.github/workflows/codex-observability.yml'
       - 'pyproject.toml'
       - 'requirements-dev.txt'
   push:
     branches: [main]
   schedule:
-    # codex-acp pins codex by range, so a new upstream codex can reach boxes with no repo change.
+    # Recheck the recorded tracing baseline and its consumed package lock.
     - cron: '17 9 * * 1'
   workflow_dispatch:
 

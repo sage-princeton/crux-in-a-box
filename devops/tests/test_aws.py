@@ -72,6 +72,16 @@ def test_changed_remote_owner_blocks_teardown(aws, tmp_path):
         lifecycle.destroy()
 
 
+def test_box_is_stopped_before_releasing_run_resources(aws, tmp_path):
+    resource = box(aws)
+    lifecycle = Lifecycle(run([resource]), tmp_path/'state.json', aws.registry())
+    state = lifecycle.apply()
+    with lifecycle.locked() as (_state, context):
+        aws.registry()['aws.ec2'].stop(resource, state['resources']['box']['outputs'], context)
+    instance_id = state['resources']['box']['outputs']['instance_id']
+    assert aws.test_session.client('ec2').describe_instances(InstanceIds=[instance_id])['Reservations'][0]['Instances'][0]['State']['Name'] == 'stopped'
+
+
 def test_eip_creation_recovers_without_saved_receipt(aws, tmp_path):
     resource = Resource('address', 'aws.elastic_ip', scope())
     lifecycle = Lifecycle(run([resource]), tmp_path / 'state.json', aws.registry())
