@@ -1,0 +1,69 @@
+orchestrator = "website_manager"
+extensions = ["scaffold_extensions.py"]
+
+[runtime]
+type = "openai-agents"
+max_turns = 60
+
+[runtime.steering]
+server = "slack"
+channel_id = "{{SLACK_CHANNEL_ID}}"
+operator_ids = ["{{SLACK_OPERATOR_ID}}"]
+after_ts = "{{SLACK_AFTER_TS}}"
+poll_interval_seconds = 30
+
+[context]
+type = "trim_recent"
+max_items = 40
+
+[budget]
+max_total_tokens = 3_000_000
+max_wall_seconds = 3_628_800
+
+[loop]
+type = "phased"
+
+[[loop.phases]]
+name = "maintenance"
+prompt = "PROMPT.md"
+continue_prompt = "prompts/continue.md"
+gates = ["maintenance_cycle"]
+max_iterations = "unlimited"
+interval_seconds = 300
+
+[gates.maintenance_cycle]
+type = "cms_maintenance_cycle"
+
+[agents.website_manager]
+persona = "personas/website_manager.md"
+context = ["workspace/AGENTS.md"]
+workspace_context = ["HANDOFF.md", "REQUESTS.jsonl", "LOG.md"]
+context_max_chars = 48_000
+tools = ["read_file", "write_file", "list_files", "run_shell", "budget_status", "rest", "escalate",
+         "cms_event", "cms_snapshot", "cms_approval"]
+mcp_servers = ["slack"]
+delegates = ["engineer"]
+
+[coding_agents.engineer]
+type = "codex"
+description = "Implement a scoped CMS change in the restored editable source. Include the request, acceptance criteria, approved scope, preview deployment procedure, affected files, tests and snapshot requirements in every brief. Return evidence and revision; publication requires a separate operator approval."
+context = ["workspace/ENGINEERING.md"]
+workspace_context = ["HANDOFF.md", "REQUESTS.jsonl", "LOG.md"]
+context_max_chars = 48_000
+sandbox = "workspace-write"
+
+[tools.rest]
+min_seconds = 30
+max_seconds = 300
+total_seconds = 3_628_800
+
+[tools.cms_snapshot]
+live_origin = "{{LIVE_SITE_ORIGIN}}"
+preview_origin = "{{PREVIEW_SITE_ORIGIN}}"
+playwright_version = "1.56.1"
+
+[mcp_servers.slack]
+command = "npx"
+args = ["-y", "slack-mcp-server@1.3.0", "--transport", "stdio"]
+timeout_seconds = 60
+env = { SLACK_MCP_XOXB_TOKEN = "${SLACK_BOT_TOKEN}", SLACK_MCP_ADD_MESSAGE_TOOL = "{{SLACK_CHANNEL_ID}}" }
