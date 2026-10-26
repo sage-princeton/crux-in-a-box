@@ -58,32 +58,18 @@ Codex SDK. Provisioning probes that configuration; do not assume model access.
 
 ## Provision the workspace
 
-In `devops/ec2-workspaces`, prepare the ignored `placeholders-base.txt` using the
-existing fleet/key-pair settings. Set at least:
+Follow the [Box runbook](../../../../devops/ec2-workspaces/README.md). Set a unique
+Run name, `scaffold.type=sdk`, `platform=openai-agents`, `provider=direct`,
+your model with `effort=high`, and `drop_in=scaffolds/sdk/run-harness/tabpfn`.
+Configure the Box resource with `instance_type=m7i.2xlarge`, `disk_gb=100` and
+existing fleet subnet/security group/key/profile IDs. SDK Runs need no AgentRQ.
 
-```ini
-AWS_PROFILE=crux-2-acct-admin-access
-AWS_REGION=us-east-1
-AGENT_PLATFORM=openai-agents
-MODEL_PROVIDER=direct
-OPENAI_AGENTS_MODEL=<your supported model ID>
-OPENAI_AGENTS_REASONING_EFFORT=high
-DROP_IN_PATH=scaffolds/sdk/run-harness/tabpfn
-INSTANCE_TYPE=m7i.2xlarge
-ROOT_DISK_GB=100
-```
-
-Use an existing `KEY_NAME`; remove an inherited `ELASTIC_IP_ADDRESS` unless that
-specific address belongs to this run. SDK runs need no AgentRQ/control box setup.
-Create a private mode-600 `run-secrets-base.json` with **only** `OPENAI_API_KEY`,
+Create a private mode-600 secrets file outside source with **only** `OPENAI_API_KEY`,
 `SLACK_BOT_TOKEN`, `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` and `RUNPOD_API_KEY`.
-Other non-provider base secrets are inherited by provisioning, so do not reuse a
-bundle containing the omitted services. Langfuse keys come from fleet SSM.
-
-```bash
-./make-new-workspace.sh tabpfn-sdk-<unique-suffix> --dry-run
-./make-new-workspace.sh tabpfn-sdk-<unique-suffix>
-```
+Other non-provider keys reach the Agent, so do not reuse a bundle containing
+unrelated services. Langfuse keys come from the declared fleet SSM parameter.
+Run `crux plan`, `crux preflight` and `crux provision` with the Run JSON and private
+receipt path, following that runbook. Provisioning does not start research.
 
 `provision.json` installs LaTeX/latexmk, PDF extraction/rendering, venv and transfer
 utilities. The service's software checks run at provisioning and every start.

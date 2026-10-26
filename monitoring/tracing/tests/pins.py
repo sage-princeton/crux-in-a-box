@@ -1,25 +1,19 @@
-"""Version pins the tests are tied to, read from the committed placeholder example."""
+"""Version pins the tests are tied to, read from the installed npm manifest."""
 from __future__ import annotations
 
-import re
+import json
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-PLACEHOLDERS = REPO / "devops" / "ec2-workspaces" / "placeholders-base.txt.example"
-KEYS = ("CODEX_VERSION", "CODEX_ACP_VERSION", "TRACING_PLUGIN_VERSION")
+MANIFEST = REPO / "scaffolds/codex/package.json"
 HERE = Path(__file__).resolve().parent
 
 
-def read_pins(path: Path = PLACEHOLDERS) -> dict[str, str]:
-    pins = {}
-    for line in path.read_text().splitlines():
-        m = re.match(r"^([A-Z_]+)=(\S*)\s*$", line)
-        if m and m.group(1) in KEYS:
-            pins[m.group(1)] = m.group(2)
-    missing = [k for k in KEYS if not pins.get(k)]
-    if missing:
-        raise RuntimeError(f"{path} has no value for {', '.join(missing)}")
-    return pins
+def read_pins(path: Path = MANIFEST) -> dict[str, str]:
+    dependencies = json.loads(path.read_text())['dependencies']
+    return {key: dependencies[package] for key, package in {
+        'CODEX_VERSION': '@openai/codex', 'CODEX_ACP_VERSION': '@agentclientprotocol/codex-acp',
+        'TRACING_PLUGIN_VERSION': '@langfuse/codex-observability-plugin'}.items()}
 
 
 def fixture_dir(pins: dict[str, str]) -> Path:

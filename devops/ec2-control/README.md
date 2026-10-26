@@ -24,7 +24,7 @@ with more than 4,095 tool calls: reads return a recent page and writes update
 only task columns. It replaces `agentrq-crux:0.6.3-45c3692-crux.1`.
 
 Pair it with **ACP gateway v0.4.1** from
-`devops/ec2-workspaces/placeholders-base.txt.example`. This is a coordinated
+`scaffolds/codex/package.json and scaffolds/claude/package.json`. This is a coordinated
 upgrade: the gateway now forwards ACP v1 over `/api/acp/v1` WebSocket to the
 controller, which owns task sessions and permissions. The old MCP permission
 notification/waiter race is absent from this path. `.mcp.json` still supplies

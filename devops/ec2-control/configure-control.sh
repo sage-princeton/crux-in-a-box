@@ -17,10 +17,10 @@ die()  { printf "\033[1;31m  ✗ %s\033[0m\n" "$*" >&2; exit 1; }
 : "${TLS_HOSTNAME:?TLS_HOSTNAME is required — TLS is mandatory and there is no other access path}"
 TLS_EMAIL="${TLS_EMAIL:-}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR=/srv/agentrq
 # Upstream v0.13.4 includes the long-task SQLite fix and native ACP v1.
 # Upgrade the controller and gateway together, between runs (see README.md).
-AGENTRQ_IMAGE=agentrq/agentrq:0.13.4@sha256:da4dd7cd017d15a1bceb158bceb238856c638aea826fc2121b530a26b39c2736
 AGENTRQ_SQLITE_DSN='file:/_storage/agentrq.db?_txlock=immediate'
 DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 
@@ -28,7 +28,8 @@ DEVICE=/dev/nvme1n1   # /dev/sdf on a nitro instance
 info "Installing docker, jq, unzip"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
-apt-get install -y -qq docker.io jq unzip curl >/dev/null
+apt-get install -y -qq docker.io docker-compose-v2 jq unzip curl >/dev/null
+AGENTRQ_IMAGE="$(jq -r .services.agentrq.image "$SCRIPT_DIR/compose.yaml")"
 systemctl enable --now docker >/dev/null
 ok "docker $(docker --version | awk '{print $3}' | tr -d ,)"
 
@@ -90,6 +91,9 @@ ok "$(grep -E '^(AGENTRQ_BASE_URL|AGENTRQ_DOMAIN|AGENTRQ_SQLITE_DSN)=' "$ENV_FIL
 # Bind AgentRQ to loopback for Caddy and to the private IP for VPC access.
 # Security groups restrict access to the private listener.
 info "Installing agentrq.service"
+install -m 644 "$SCRIPT_DIR/compose.yaml" "$DATA_DIR/compose.yaml"
+printf 'PRIVATE_IP=%s\nAGENTRQ_PORT=%s\n' "$PRIVATE_IP" "$AGENTRQ_PORT" > "$DATA_DIR/compose.env"
+chmod 600 "$DATA_DIR/compose.env"
 cat > /etc/systemd/system/agentrq.service <<UNIT
 [Unit]
 Description=AgentRQ control plane
@@ -100,15 +104,8 @@ Requires=docker.service
 Type=simple
 Restart=always
 RestartSec=5
-ExecStartPre=-/usr/bin/docker rm -f agentrq
-ExecStart=/usr/bin/docker run --rm --name agentrq \\
-  -p 127.0.0.1:${AGENTRQ_PORT}:${AGENTRQ_PORT} \\
-  -p ${PRIVATE_IP}:${AGENTRQ_PORT}:${AGENTRQ_PORT} \\
-  --env-file ${ENV_FILE} \\
-  -v ${DATA_DIR}/_storage:/_storage \\
-  -v ${DATA_DIR}/_certs:/_certs \\
-  ${AGENTRQ_IMAGE}
-ExecStop=/usr/bin/docker stop agentrq
+ExecStart=/usr/bin/docker compose --project-name crux-control --env-file ${DATA_DIR}/compose.env --file ${DATA_DIR}/compose.yaml up --abort-on-container-exit
+ExecStop=/usr/bin/docker compose --project-name crux-control --env-file ${DATA_DIR}/compose.env --file ${DATA_DIR}/compose.yaml down
 
 [Install]
 WantedBy=multi-user.target

@@ -14,7 +14,7 @@ These tests check what the Codex Langfuse plugin (`@langfuse/codex-observability
 | `test_live_trace.py` | | the live exporter for `CODEX_TRACE_MODE=live` (`monitoring/tracing/codex/codex-live-trace.py` and `live_trace/`), including tool-call and line types it has never seen: each test writes a rollout a piece at a time and runs one pass per piece, and every observation must arrive exactly once |
 | `rollout_shape.py` | | reduces rollouts to structure only, for re-recording fixtures from a run box |
 
-The pins are read from `devops/ec2-workspaces/placeholders-base.txt.example`. When the fixture directory or expectations file named by the current pins doesn't exist, the run stops before any test with a banner naming the pin that changed.
+The pins are read from `scaffolds/codex/package.json`. When the fixture directory or expectations file named by the current pins doesn't exist, the run stops before any test with a banner naming the pin that changed.
 
 ## Scenarios
 

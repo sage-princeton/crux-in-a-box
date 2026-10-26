@@ -146,11 +146,9 @@ class AgentConfigTests(unittest.TestCase):
                          'printf "%s|%s" "$SCAFFOLD_MODULE" "$ACP_COMMAND"; '
                          '! scaffold_needs agentrq', SDK), "sdk|")
 
-    def test_acp_requires_release_pins(self):
-        for key in ("ACP_GATEWAY_VERSION", "ACP_GATEWAY_TARBALL_URL", "ACP_GATEWAY_SHA256"):
-            with self.subTest(key=key):
-                values = {k: v for k, v in ACP.items() if k != key}
-                self.assertIn(key, self.shell("load_agent_config all", values, False))
+    def test_acp_model_settings_do_not_duplicate_manifest_versions(self):
+        self.shell("load_agent_config all", {k: ACP[k] for k in
+                   ("CODEX_MODEL", "CODEX_REASONING_EFFORT")})
 
     def test_main_model_effort_rules_survive_sdk_merge(self):
         cases = [("gpt-6-astra", "max", True), ("gpt-6.1-sol", "xhigh", True),

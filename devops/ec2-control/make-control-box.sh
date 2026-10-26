@@ -205,11 +205,11 @@ fi
 info "Default VPC and subnet"
 VPC_ID="$(aws_ ec2 describe-vpcs --filters Name=isDefault,Values=true \
   --query 'Vpcs[0].VpcId' --output text)"
-[ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ] || die "No default VPC in $REGION"
+if [ -z "$VPC_ID" ] || [ "$VPC_ID" = None ]; then die "No default VPC in $REGION"; fi
 SUBNET_ID="$(aws_ ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
   "Name=map-public-ip-on-launch,Values=true" \
   --query 'Subnets[0].SubnetId' --output text)"
-[ "$SUBNET_ID" != "None" ] && [ -n "$SUBNET_ID" ] || die "No public subnet in $VPC_ID"
+if [ -z "$SUBNET_ID" ] || [ "$SUBNET_ID" = None ]; then die "No public subnet in $VPC_ID"; fi
 AZ="$(aws_ ec2 describe-subnets --subnet-ids "$SUBNET_ID" \
   --query 'Subnets[0].AvailabilityZone' --output text)"
 ok "VPC $VPC_ID, subnet $SUBNET_ID ($AZ)"
@@ -313,7 +313,7 @@ info "Ubuntu 24.04 AMI"
 AMI_ID="$(aws_ ssm get-parameters \
   --names /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id \
   --query 'Parameters[0].Value' --output text)"
-[ -n "$AMI_ID" ] && [ "$AMI_ID" != "None" ] || die "Could not resolve the Ubuntu 24.04 AMI"
+if [ -z "$AMI_ID" ] || [ "$AMI_ID" = None ]; then die "Could not resolve the Ubuntu 24.04 AMI"; fi
 ok "AMI $AMI_ID"
 
 # ====== INSTANCE (reuse if one with this Name is already alive) ======
@@ -474,7 +474,7 @@ done
 
 # ====== BOX-SIDE CONFIGURE ======
 info "Copying and running configure-control.sh"
-scp -q "$SCRIPT_DIR/configure-control.sh" "$SLUG:/tmp/configure-control.sh"
+scp -q "$SCRIPT_DIR/configure-control.sh" "$SCRIPT_DIR/compose.yaml" "$SLUG:/tmp/"
 ssh "$SLUG" "chmod +x /tmp/configure-control.sh && sudo AWS_REGION='$REGION' \
   SSM_ENV_PARAM='$SSM_ENV_PARAM' AGENTRQ_PORT='$AGENTRQ_PORT' \
   PRIVATE_DNS='$PRIVATE_DNS' PRIVATE_IP='$PRIVATE_IP' \
@@ -489,7 +489,7 @@ $(ok "Control box ready")
   ssh          ssh $SLUG
   state        $VOL_ID mounted at /srv/agentrq
   web UI       https://$TLS_HOSTNAME   (443 from $TLS_SUMMARY)
-  run boxes    set CONTROL_MCP_BASE=https://$TLS_HOSTNAME in placeholders-base.txt
+  run boxes    set scaffold.configuration.control_mcp_base=https://$TLS_HOSTNAME in the Run JSON
 
 If your address changes, both :22 and :443 are gated by it — reopen them with
   aws ec2 authorize-security-group-ingress --group-id $CONTROL_SG_ID \
