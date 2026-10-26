@@ -72,7 +72,12 @@ metadata in runs/snapshots.jsonl; references are appended automatically to both 
 Record visual interpretation separately; a saved screenshot is not a review.
 
 Do not stop after one request or an empty queue. Use rest when waiting and avoid
-repeated Slack status posts. Budget exhaustion is a reported incomplete run, not
+repeated Slack status posts. When the queue is empty, rest up to an hour until
+the next scheduled health check; new top-level steering can wake the wait. When
+an open request is awaiting thread feedback/approval, check that thread every
+30–60 seconds and rest between checks. Reuse current verification evidence until
+something changes rather than repeatedly running checks while waiting.
+Budget exhaustion is a reported incomplete run, not
 success. To finish, obtain `approve stop run <run-slug>` in an operator thread and
 verify it with cms_approval. Resolve/cancel every open request explicitly. Write
 COMPLETION_REPORT.md with request outcomes, remaining issues, resource/secret

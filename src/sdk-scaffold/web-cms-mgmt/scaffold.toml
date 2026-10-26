@@ -54,7 +54,7 @@ sandbox = "workspace-write"
 
 [tools.rest]
 min_seconds = 30
-max_seconds = 300
+max_seconds = 3600
 total_seconds = 3_628_800
 
 [tools.cms_snapshot]
