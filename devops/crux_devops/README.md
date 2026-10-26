@@ -60,3 +60,34 @@ The lifecycle package performs no shell orchestration. AWS, HTTP, archive and
 configuration drivers belong in Python. Apt/systemd operations remain focused
 Box-side shell programs. Provision/configure and explicit Run start are separate
 operations; a successful resource apply alone does not mean a Run has started.
+
+## AWS resources
+
+`crux preflight RUN.json --state /private/path/state.json` checks provider inputs
+and access without creating resources. `create` provisions the resource graph;
+`destroy` uses the same Run and receipt to remove managed resources. Neither
+operation starts an Agent. Use an explicit `profile`, `region` and 12-digit
+`account` in each AWS resource's config. Authentication/account mismatch fails;
+there is no ambient/default-profile fallback. Reauthenticate the declared
+profile if its session expires.
+
+| Type | Additional config | Behavior |
+| --- | --- | --- |
+| `aws.ec2` | `image_id`, `instance_type`, `subnet_id`, `security_group_ids`, `key_name`, `instance_profile`; optional `disk_gb`, `iops`, `throughput` | Creates an encrypted gp3 Ubuntu Box with IMDSv2, monitoring/ownership tags and a stable creation token; waits for EC2 health. |
+| External `aws.ec2` | `instance_id` | Resolves a running Box without starting or adopting it; requires retention. |
+| `aws.elastic_ip` | none | Allocates an address tagged with deployment ownership; recovers it by tag after interruption. |
+| External `aws.elastic_ip` | `allocation_id` | Resolves an existing address without adopting or releasing it. |
+| `aws.address_attachment` | `box`, `address` resource IDs; both in `depends_on` | Attaches the address to a managed Box in the same account/region, refuses to steal an existing association, and detaches before teardown of dependencies. |
+
+Shared VPC/subnet, security groups, SSH key and instance profile must already
+exist. This resource layer does not alter fleet IAM or controller configuration.
+The selected image must contain Ubuntu and be compatible with the instance type.
+Use a new Run/state file for a new deployment after teardown; keep the original
+Run document with its private receipt until cleanup succeeds. An operator or
+successor changing resource ownership causes deletion to fail for inspection.
+
+Separate resources let an existing allowlisted IP survive Box teardown, while
+its attachment is removed first. Future auxiliary-role drivers can use the same
+pattern for grants, retained assets and ownership transfer. AWS API semantics
+are implemented through [boto3](https://docs.aws.amazon.com/boto3/latest/reference/services/ec2/client/run_instances.html),
+including EC2 client tokens; no AWS CLI shell program is invoked.

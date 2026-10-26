@@ -35,7 +35,7 @@ jobs:
           done
       - name: Invoker contracts and resource lifecycle
         run: |
-          python3 -m pip install -r requirements-dev.txt
+          python3 -m pip install -r requirements-dev.txt -r devops/requirements-test.txt ./devops
           python3 -m pytest -q devops/tests
       - name: ShellCheck
         # SSH commands intentionally expand locally; quoted tildes are remote paths.
