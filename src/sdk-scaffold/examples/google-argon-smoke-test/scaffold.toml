@@ -1,0 +1,43 @@
+orchestrator = "researcher"
+
+[runtime]
+type = "openai-agents"
+max_turns = 8
+
+[runtime.model_provider]
+type = "openai-compatible"
+api = "responses"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+[runtime.model_provider.extra_body.provider]
+only = ["google-vertex"]
+allow_fallbacks = false
+
+[budget]
+max_total_tokens = 30_000
+
+[loop]
+type = "phased"
+
+[[loop.phases]]
+name = "smoke"
+prompt = "PROMPT.md"
+continue_prompt = "PROMPT.md"
+gates = ["note_written"]
+
+[gates.note_written]
+type = "command"
+command = "test -s SMOKE.md"
+
+[agents.researcher]
+persona = "personas/researcher.md"
+context = ["workspace/AGENTS.md"]
+tools = ["write_file"]
+delegates = ["reviewer"]
+
+[agents.reviewer]
+persona = "personas/reviewer.md"
+description = "Independently read the smoke-test file and report its contents."
+tools = ["read_file"]
+max_turns = 3
