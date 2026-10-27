@@ -56,14 +56,18 @@ JUDGE = "judge"
 class ModelProviderOptions(Options):
     """Configure the SDK's provider; model and effort still come only from the run environment."""
 
-    type: Literal["openai", "openai-compatible"] = "openai"
-    api: Literal["responses", "chat-completions"] = "responses"
+    type: Literal["openai", "openai-compatible"] = None
+    api: Literal["responses", "chat-completions"] = None
     base_url: HttpUrl | None = None
     api_key_env: str = Field("OPENAI_API_KEY", pattern=r"^[A-Z_][A-Z0-9_]*$")
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_provider(self) -> Self:
+        if self.type is None:
+            raise ValueError("type must be set to 'openai' or 'openai-compatible'")
+        if self.api is None:
+            raise ValueError("api must be set to 'responses' or 'chat-completions'")
         if self.type == "openai-compatible" and self.base_url is None:
             raise ValueError("openai-compatible model_provider requires base_url")
         if self.type == "openai" and (
