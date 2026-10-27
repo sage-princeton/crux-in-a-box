@@ -45,7 +45,6 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         command.add_argument("--state-dir", type=Path, required=True,
                              help="where the run's state is kept; a rerun with the same directory resumes the run")
     probe = commands.add_parser("probe", help="one traced model call, and optionally one coding-agent turn")
-    probe.add_argument("--runtime", help="runtime type; defaults to openai-agents or the drop-in's runtime")
     probe.add_argument("--drop-in", type=Path, help="use this drop-in's runtime and model-provider settings")
     probe.add_argument("--coding-agent", help="coding agent type to probe too, e.g. codex")
     args = parser.parse_args(argv)
@@ -53,11 +52,9 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     telemetry = telemetry or telemetry_from_env(env, RunIdentity.from_env(env))
     try:
         if args.command == "probe":
-            runtime, options = args.runtime or "openai-agents", None
+            runtime, options = "openai-agents", None
             if args.drop_in:
                 cls, options = RUNTIMES.resolve("runtime", DropInDirectory.load(args.drop_in).config.runtime)
-                if args.runtime and args.runtime != cls.type_name:
-                    raise InvalidDropInError("--runtime disagrees with the drop-in's runtime")
                 runtime = cls.type_name
             return asyncio.run(run_probe(runtime, args.coding_agent, env, telemetry, options=options))
         drop_in = DropInDirectory.load(args.drop_in)

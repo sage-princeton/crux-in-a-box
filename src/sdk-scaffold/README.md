@@ -336,6 +336,8 @@ python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (
 python -m crux_scaffold probe --drop-in DIR           # probe the drop-in's configured model provider
 ```
 
+`probe --drop-in DIR` selects the runtime and its options from `scaffold.toml`. Without `--drop-in`, the probe uses the built-in OpenAI Agents runtime and direct OpenAI provider.
+
 `probe --coding-agent codex` retries temporary-directory cleanup for up to 3.1 seconds when Codex's background plugin checkout is still writing files after its session closes. Other cleanup errors, or a directory that remains busy, still fail the probe.
 
 `check` and `probe` are the first two of the team's testing protocols: nothing in the environment is broken, and the agent can do anything at all. Exit codes:

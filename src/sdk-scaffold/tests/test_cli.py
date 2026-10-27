@@ -122,9 +122,11 @@ def test_probe_uses_the_drop_ins_runtime_options(drop_in_dir, monkeypatch, probe
     assert seen == [17]
 
 
-def test_probe_rejects_a_conflicting_runtime(drop_in_dir, capsys):
-    assert main(["probe", "--drop-in", str(drop_in_dir), "--runtime", "other"], env={}) == 2
-    assert "disagrees" in capsys.readouterr().err
+def test_probe_rejects_the_removed_runtime_argument(drop_in_dir, capsys):
+    with pytest.raises(SystemExit) as exit_info:
+        main(["probe", "--drop-in", str(drop_in_dir), "--runtime", "other"], env={})
+    assert exit_info.value.code == 2
+    assert "unrecognized arguments: --runtime other" in capsys.readouterr().err
 
 
 @pytest.mark.parametrize("command", ["check", "run"])
