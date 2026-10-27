@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Delete an owned auxiliary bucket, including historical versions and delete markers."""
+"""Delete an owned auxiliary bucket, including historical versions and delete markers.
+
+Usage::
+
+    python3 delete_aux_bucket.py --profile AUX_PROFILE --region us-east-1 \
+        --bucket BUCKET --account AUX_ACCOUNT_ID
+"""
 
 import argparse
 import json
@@ -13,6 +19,12 @@ class CleanupError(Exception):
 
 
 def aws(profile, region, *args):
+    """Call AWS with the explicit profile and region and decode its JSON result.
+
+    :param profile: Profile for this operation.
+    :param region: Region for this operation.
+    :param args: Operation arguments.
+    """
     try:
         result = subprocess.run(["aws", "--profile", profile, "--region", region,
                                  "--no-cli-pager", "--output", "json", *args],
@@ -24,11 +36,22 @@ def aws(profile, region, *args):
 
 
 def delete_bucket(profile, seed_region, bucket, account):
+    """Remove all object versions and delete markers, then delete the owned bucket.
+
+    :param profile: Profile for this operation.
+    :param seed_region: Region used to discover the bucket’s actual location.
+    :param bucket: Bucket for this operation.
+    :param account: Expected owning AWS account ID, checked on each bucket request.
+    """
     owner = ["--bucket", bucket, "--expected-bucket-owner", account]
     location = aws(profile, seed_region, "s3api", "get-bucket-location", *owner).get("LocationConstraint")
     region = {None: "us-east-1", "EU": "eu-west-1"}.get(location, location)
 
     def drain(versions):
+        """Delete and re-list object batches until the selected listing is empty.
+
+        :param versions: Whether to enumerate versions/delete markers or current objects.
+        """
         previous = None
         while True:
             operation = "list-object-versions" if versions else "list-objects-v2"
@@ -64,6 +87,10 @@ def delete_bucket(profile, seed_region, bucket, account):
 
 
 def main(argv=None):
+    """Parse explicit account settings and report incomplete bucket cleanup.
+
+    :param argv: Optional CLI arguments; defaults to the process argument list.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ("profile", "region", "bucket", "account"):
         parser.add_argument("--" + name, required=True)

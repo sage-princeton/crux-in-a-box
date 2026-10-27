@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Reconcile workspace SSH access to preserved auxiliary EC2 instances."""
+"""Reconcile workspace SSH access to preserved auxiliary EC2 instances.
+
+Usage::
+
+    python3 aux_instance_access.py reconcile CONFIG PUBLIC_IP
+    python3 aux_instance_access.py cleanup CONFIG
+"""
 
 import argparse
 import ipaddress
@@ -17,6 +23,10 @@ class AccessError(Exception):
 
 
 def load_config(path):
+    """Read workspace key/value settings without evaluating shell expressions.
+
+    :param path: Filesystem path to inspect.
+    """
     config = {}
     for line in Path(path).read_text().splitlines():
         line = line.split("#", 1)[0].strip()
@@ -27,6 +37,12 @@ def load_config(path):
 
 
 def aws(profile, region, *args):
+    """Call AWS with the explicit profile and region and decode its JSON result.
+
+    :param profile: Profile for this operation.
+    :param region: Region for this operation.
+    :param args: Operation arguments.
+    """
     try:
         result = subprocess.run(["aws", "--profile", profile, "--region", region, "--output", "json",
                                  "--no-cli-pager", *args], capture_output=True, text=True, timeout=120, check=True)
@@ -38,20 +54,39 @@ def aws(profile, region, *args):
 
 
 def managed(rule):
+    """Identify ingress rules owned by the CRUX auxiliary-access manager.
+
+    :param rule: Rule for this operation.
+    """
     return re.fullmatch(re.escape(PREFIX) + r"[A-Za-z0-9-]+", rule.get("Description", "")) is not None
 
 
 def ssh_enabled(rule):
+    """Return whether an ingress rule permits TCP port 22.
+
+    :param rule: Rule for this operation.
+    """
     return not rule.get("IsEgress") and (rule.get("IpProtocol") == "-1" or (
         rule.get("IpProtocol") in ("tcp", "6") and rule.get("FromPort", 0) <= 22 <= rule.get("ToPort", 0)))
 
 
 def exact_ssh(rule, cidr):
+    """Match an IPv4 rule restricted to TCP port 22 and the given source CIDR.
+
+    :param rule: Rule for this operation.
+    :param cidr: Cidr for this operation.
+    """
     return (ssh_enabled(rule) and rule.get("FromPort") == rule.get("ToPort") == 22
             and rule.get("CidrIpv4") == cidr)
 
 
 def reconcile(config, mode, public_ip=None):
+    """Grant this workspace SSH access or remove its managed ingress rules.
+
+    :param config: Parsed workspace configuration.
+    :param mode: Mode for this operation.
+    :param public_ip: Public ip for this operation.
+    """
     expected = config.get("AUX_RESOURCE_ACCOUNT_ID")
     enabled = config.get("PROVISION_EC2") == "1"
     if not expected:
@@ -119,6 +154,10 @@ def reconcile(config, mode, public_ip=None):
 
 
 def main(argv=None):
+    """Parse workspace access arguments and report reconciliation failures.
+
+    :param argv: Optional CLI arguments; defaults to the process argument list.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("mode", choices=("reconcile", "cleanup"))
     parser.add_argument("config", type=Path)
