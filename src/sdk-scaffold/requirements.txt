@@ -5,4 +5,4 @@ langfuse==4.15.6
 openinference-instrumentation-openai-agents==2.5.0
 openai-codex==0.159.2
 pypdfium2==5.14.0
-pillow==12.3.0
+pillow==13.0.0

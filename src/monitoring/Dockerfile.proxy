@@ -3,6 +3,6 @@ WORKDIR /src
 COPY ci/caddy/ ./
 RUN CGO_ENABLED=0 go build -mod=readonly -trimpath -ldflags='-s -w' -o /caddy .
 
-FROM caddy:2.11.4-alpine@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+FROM caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
 RUN apk upgrade --no-cache
 COPY --from=build /caddy /usr/bin/caddy
