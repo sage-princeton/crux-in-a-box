@@ -399,7 +399,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
         steering = self.assembly.context.steering
-        instructions = data.model_data.instructions
+        annotations = []
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             await steering.poll()
             pending = steering.pending()
@@ -423,15 +423,18 @@ class OpenAIAgentsRuntime(AgentRuntime):
                         steering.event("delivery_failed", message_id=message["ts"], status=status)
                         raise InvalidDropInError(status) from None
             if steering.state["status"] != "ok":
-                instructions = f"{instructions or ''}\n\nSteering transport status: {steering.state['status']}"
+                annotations.append(f"Steering transport status: {steering.state['status']}")
         items = list(self.assembly.context_strategy.select(list(data.model_data.input)))
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
             # until its next run reloads the durable session, even when a strategy trims older conversation.
             items.extend(item for item in self._steering_items if item not in items)
         status = await self.assembly.context.budget_status()
-        instructions = (instructions or "") + f"\n\n<resource_status>\n{status}\n</resource_status>"
-        return ModelInputData(input=items, instructions=instructions)
+        annotations.append(f"<resource_status>\n{status}\n</resource_status>")
+        # The filter's additions are not stored by Runner. Append after selection so a fresh
+        # snapshot survives trimming without changing the reusable instructions/history prefix.
+        items.append({"role": "developer", "content": "\n\n".join(annotations)})
+        return ModelInputData(input=items, instructions=data.model_data.instructions)
 
     def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
         ctx = ctx or self.assembly.context

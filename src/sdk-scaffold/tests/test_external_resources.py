@@ -460,12 +460,13 @@ type = "runpod"
     scaffold.context.usage.started_at = START
     asyncio.run(scaffold.run())
     assert len(pm.instructions) == 2
-    for instructions in pm.instructions:
-        assert "  aws:" in instructions and "  gpu:" in instructions
-        assert "cost_usd: 2.5 USD" in instructions
-        assert "cost_usd: 4 USD" in instructions
-        assert "running_instances: 1 instances" in instructions
-        assert "running_gpus: 2 GPUs" in instructions
-        assert "current_hourly_usd: 1.25 USD/hour" in instructions
+    for items in pm.inputs:
+        status = items[-1]["content"]
+        assert "  aws:" in status and "  gpu:" in status
+        assert "cost_usd: 2.5 USD" in status
+        assert "cost_usd: 4 USD" in status
+        assert "running_instances: 1 instances" in status
+        assert "running_gpus: 2 GPUs" in status
+        assert "current_hourly_usd: 1.25 USD/hour" in status
     assert len([command for command in aws_calls if "get-cost-and-usage" in command]) == 1
     assert len(pod_requests) == 2
