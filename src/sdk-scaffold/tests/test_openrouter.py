@@ -150,6 +150,8 @@ def test_missing_provider_credentials_fail_before_any_request(router, drop_in_di
 
 
 @pytest.mark.parametrize("old,new,error", [
+    ('type = "openai-compatible"', '', "Field required"),
+    ('api = "responses"', '', "Field required"),
     ('api = "responses"', 'api = "typo"', "responses"),
     ('type = "openai-compatible"', 'type = "typo"', "openai-compatible"),
     ('base_url = "https://openrouter.ai/api/v1"', '', "requires base_url"),

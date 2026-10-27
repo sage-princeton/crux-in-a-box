@@ -281,12 +281,12 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 
 ### Model providers in `openai-agents`
 
-The existing runtime's `model_provider` options configure the SDK's `OpenAIProvider`; this is not another component registry. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy.
+The existing runtime's `model_provider` options configure the SDK's `OpenAIProvider`; this is not another component registry. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy. Omitting `[runtime.model_provider]` uses direct OpenAI with the Responses API; declaring the table requires explicit `type` and `api` values.
 
 | `[runtime.model_provider]` key | Contract |
 |---|---|
-| `type` | `openai` (default), or `openai-compatible`. OpenAI keeps the existing Responses behavior. |
-| `api` | `responses` (default) or `chat-completions`; custom settings require `openai-compatible`. |
+| `type` | Required: `openai` or `openai-compatible`. OpenAI keeps the existing Responses behavior. |
+| `api` | Required: `responses` or `chat-completions`; custom settings require `openai-compatible`. |
 | `base_url` | Required URL for a compatible provider. |
 | `api_key_env` | Credential variable name, default `OPENAI_API_KEY`. Resolve from `RunContext.env`, never embed the value in TOML. |
 | `extra_body` | Provider-specific request fields, such as OpenRouter's `provider.only` and `allow_fallbacks`. Cannot replace the run model, input, tools, reasoning, or session settings. Never put credentials here. |
