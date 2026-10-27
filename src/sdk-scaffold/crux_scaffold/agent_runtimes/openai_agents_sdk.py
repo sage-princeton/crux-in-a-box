@@ -152,7 +152,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             return
         config, ctx = self.assembly.drop_in.config, self.assembly.context
         if self.options.model_provider.type == "openai-compatible":
-            self.client = _compatible_client(self.options.model_provider, ctx.env)
+            self.client = _validate_and_get_client(self.options.model_provider, ctx.env)
             self.provider = OpenAIProvider(
                 openai_client=self.client, use_responses=self.options.model_provider.api == "responses"
             )
@@ -376,7 +376,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         provider_options = (options or OpenAIAgentsOptions()).model_provider
         async with AsyncExitStack() as stack:
             if provider_options.type == "openai-compatible":
-                client = await stack.enter_async_context(_compatible_client(provider_options, env))
+                client = await stack.enter_async_context(_validate_and_get_client(provider_options, env))
                 model = OpenAIProvider(
                     openai_client=client, use_responses=provider_options.api == "responses"
                 ).get_model(model)
@@ -525,11 +525,11 @@ def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str]) -> M
     )
 
 
-def _compatible_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:
-    key = env.get(options.api_key_env)
-    if not key:
+def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:
+    api_key = env.get(options.api_key_env)
+    if not api_key:
         raise InvalidDropInError(f"{options.api_key_env} is not set")
-    return AsyncOpenAI(api_key=key, base_url=str(options.base_url))
+    return AsyncOpenAI(api_key=api_key, base_url=str(options.base_url))
 
 
 def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
