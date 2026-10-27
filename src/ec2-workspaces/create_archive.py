@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
-"""Snapshot and verify a run on its box, before any archive leaves the box."""
+"""Create and verify a stopped workspace archive before transferring it.
 
+Usage::
+
+    sudo /opt/crux-archive/bin/python create_archive.py capture /var/tmp/run.tar.gz
+    python3 create_archive.py restore run.tar.gz --destination /private/tmp/restored
+
+The capture command runs on the workspace. Restore never executes archived code.
+"""
+
+import argparse
 import hashlib
 import json
 import os
@@ -9,9 +18,10 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from importlib.metadata import version
 from pathlib import Path
 
-EXCLUDED = (".mcp.json", ".codex", ".claude", ".aws", ".ssh", "state/codex", "state/sessions",
+EXCLUDED = (".mcp.json", ".aws", ".ssh", "state/sessions",
             "state/sessions.sqlite", "state/sessions.sqlite-wal", "state/sessions.sqlite-shm")
 
 
@@ -20,11 +30,19 @@ class ArchiveError(Exception):
 
 
 def digest(path):
+    """Compute the SHA-256 digest without loading the whole file into memory.
+
+    :param path: Filesystem path to inspect.
+    """
     with path.open("rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
 def relative(value):
+    """Validate a nonempty relative archive path and reject traversal.
+
+    :param value: Value for this operation.
+    """
     path = Path(value)
     if not value or path.is_absolute() or ".." in path.parts or str(path) == ".":
         raise ArchiveError("Archive paths must be nonempty relative paths without '..'.")
@@ -32,17 +50,25 @@ def relative(value):
 
 
 def excluded(path):
+    """Return whether a path belongs to an intentionally omitted operational store.
+
+    :param path: Filesystem path to inspect.
+    """
     return any(path == name or path.startswith(name + "/") for name in EXCLUDED)
 
 
 def plan_for(root):
+    """Validate required paths and external-state evidence in ARCHIVE.json.
+
+    :param root: Root directory of the workspace or snapshot.
+    """
     plan = json.loads((root / "ARCHIVE.json").read_text())
     if (not isinstance(plan, dict) or plan.get("version") != 1
             or not isinstance(plan.get("required_paths"), list) or not plan["required_paths"]
             or not isinstance(plan.get("restore_checks"), list) or not plan["restore_checks"]
             or not all(isinstance(value, str) and value for value in plan["required_paths"] + plan["restore_checks"])
-            or not isinstance(plan.get("external_state"), list) or not isinstance(plan.get("secret_refs"), list)):
-        raise ArchiveError("ARCHIVE.json needs version=1, required_paths, restore_checks, external_state and secret_refs.")
+            or not isinstance(plan.get("external_state"), list)):
+        raise ArchiveError("ARCHIVE.json needs version=1, required_paths, restore_checks, external_state.")
     for value in plan["required_paths"]:
         path = relative(value)
         source = root / path
@@ -57,14 +83,15 @@ def plan_for(root):
         evidence = root / relative(item["evidence_path"])
         if not evidence.is_file() or not evidence.stat().st_size or excluded(item["evidence_path"]):
             raise ArchiveError("External state verification evidence is missing or empty.")
-    for item in plan["secret_refs"]:
-        if (not isinstance(item, dict) or set(item) != {"arn", "region", "version_id"}
-                or not all(isinstance(value, str) and value for value in item.values())):
-            raise ArchiveError("Each Secrets Manager reference needs arn, region and version_id; never include values.")
     return plan
 
 
 def inventory(root, skip_operational=False):
+    """Describe files, directories and internal links for integrity verification.
+
+    :param root: Root directory of the workspace or snapshot.
+    :param skip_operational: Whether to omit excluded operational stores.
+    """
     result = {}
     for path in sorted(root.rglob("*")):
         name = path.relative_to(root).as_posix()
@@ -87,11 +114,22 @@ def inventory(root, skip_operational=False):
 
 
 def snapshot(root, payload, provenance=None):
+    """Copy a stable run tree and write its content manifest and provenance.
+
+    :param root: Root directory of the workspace or snapshot.
+    :param payload: New private snapshot directory.
+    :param provenance: Provisioning and software metadata.
+    """
     plan = plan_for(root)
     if payload.exists():
         raise ArchiveError("Snapshot destination already exists.")
     payload.mkdir(mode=0o700)
     def ignore(directory, names):
+        """Select operational paths to omit from the private snapshot.
+
+        :param directory: Directory for this operation.
+        :param names: Names for this operation.
+        """
         return [name for name in names if excluded((Path(directory) / name).relative_to(root).as_posix())]
     shutil.copytree(root, payload / "run", symlinks=True, ignore=ignore)
     # Compare both sides after copying: another writer must not change the run during archival.
@@ -103,6 +141,11 @@ def snapshot(root, payload, provenance=None):
     for git in (payload / "run").rglob(".git"):
         if git.is_dir():
             def query(*args, directory=git.parent):
+                """Read repository metadata without optional Git index writes.
+
+                :param directory: Directory for this operation.
+                :param args: Operation arguments.
+                """
                 result = subprocess.run(["git", "--no-optional-locks", "-C", str(directory), *args], capture_output=True,
                                         text=True, check=False, timeout=120)
                 return result.stdout.strip() if result.returncode == 0 else None
@@ -115,6 +158,10 @@ def snapshot(root, payload, provenance=None):
 
 
 def verify_tree(root):
+    """Compare restored contents with the manifest and required-path contract.
+
+    :param root: Root directory of the workspace or snapshot.
+    """
     manifest = json.loads((root / "manifest.json").read_text())
     actual = inventory(root)
     actual.pop("manifest.json", None)
@@ -125,34 +172,53 @@ def verify_tree(root):
 
 
 def scan(root):
-    commands = [["filesystem", str(root)]]
-    for git in root.rglob(".git"):
-        if not git.is_dir():
-            raise ArchiveError("Git worktrees must be made self-contained before archiving (.git is not a directory).")
-        commands.append(["git", git.parent.as_uri()])
-    for command in commands:
-        result = subprocess.run(["trufflehog", *command, "--json", "--no-update", "--no-verification",
-                                 "--fail", "--fail-on-scan-errors"], capture_output=True, text=True, timeout=7200,
-                                check=False)
-        locations = set()
-        for line in result.stdout.splitlines():
-            try:
-                data = json.loads(line)["SourceMetadata"]["Data"]
-                for value in data.values():
-                    if isinstance(value, dict):
-                        location = value.get("file", "(history or unknown path)")
-                        locations.add(str(location).replace(str(root) + "/", ""))
-            except (KeyError, TypeError, ValueError):
-                raise ArchiveError("TruffleHog returned invalid output; archive blocked.") from None
-        if locations or result.returncode == 183:
-            safe = ", ".join(json.dumps(value) for value in sorted(locations)) or "(unknown path)"
-            raise ArchiveError(f"Secrets detected in {safe}. Save credentials in a secret manager, remove them "
-                               "from files AND Git history, then retry. No secret values were printed.")
-        if result.returncode:
-            raise ArchiveError("TruffleHog failed; archive blocked. Check installation, permissions and scan limits.")
+    """Scan current files and every reachable Git blob through native Python APIs.
+
+    :param root: Private snapshot directory; failures abort archival.
+    :raises ArchiveError: A pattern matches or any read/scanner operation fails.
+    """
+    try:
+        import git
+        from trufflehog3 import DEFAULT_RULES_FILE
+        from trufflehog3.core import load_rules
+        from trufflehog3.models import File, Pattern
+        from trufflehog3.search import search
+        rules = [rule for rule in load_rules(DEFAULT_RULES_FILE) if isinstance(rule, Pattern)]
+        if not rules:
+            raise ValueError("No scanner rules")
+        def inspect(name, data):
+            """Inspect bytes without allowing inline suppressions or printing secrets."""
+            if search(File(path=name, content=data.decode("utf-8", errors="replace")),
+                      rules, ignore_nosecret=True):
+                raise ArchiveError("Secrets detected in " + json.dumps(name) +
+                                   ". Preserve credentials privately, remove values from files/history, then retry.")
+        for path in root.rglob("*"):
+            if path.is_file() and not path.is_symlink() and ".git" not in path.relative_to(root).parts:
+                inspect(path.relative_to(root).as_posix(), path.read_bytes())
+        for gitdir in root.rglob(".git"):
+            if not gitdir.is_dir():
+                raise ArchiveError("Make linked Git worktrees self-contained before archiving.")
+            repo = git.Repo(gitdir.parent)
+            seen = set()
+            # Read local objects only: no fetch, checkout or repository scan configuration.
+            for commit in repo.iter_commits("--all"):
+                for blob in commit.tree.traverse():
+                    if blob.type == "blob" and blob.hexsha not in seen:
+                        seen.add(blob.hexsha)
+                        inspect(gitdir.parent.relative_to(root).as_posix() + "/" + blob.path,
+                                blob.data_stream.read())
+    except ArchiveError:
+        raise
+    except Exception:  # noqa: BLE001 - never expose scanner diagnostics containing secrets.
+        raise ArchiveError("Secret scan failed; archive blocked. Check scanner installation and readable Git objects.") from None
 
 
 def restore(bundle, destination):
+    """Extract into a new directory after rejecting unsafe archive members.
+
+    :param bundle: Local archive file.
+    :param destination: New directory receiving verified archive contents.
+    """
     if destination.exists():
         raise ArchiveError("Restore destination must not exist.")
     destination.mkdir(mode=0o700)
@@ -170,6 +236,11 @@ def restore(bundle, destination):
 
 
 def remote_capture(root, output):
+    """Create, scan and restore-check a stopped run while preventing service starts.
+
+    :param root: Root directory of the workspace or snapshot.
+    :param output: New archive output path.
+    """
     os.umask(0o077)
     for service in ("crux-sdk-run", "crux-acp-gateway"):
         state = subprocess.run(["systemctl", "is-active", service], capture_output=True, text=True, check=False)
@@ -188,9 +259,10 @@ def remote_capture(root, output):
             provenance[name] = json.loads(Path(source).read_text())
     provenance["runtime"] = {}
     for name, command in {"python": ["python3", "--version"], "node": ["node", "--version"],
-                          "trufflehog": ["trufflehog", "--version"]}.items():
+                          "git": ["git", "--version"]}.items():
         result = subprocess.run(command, capture_output=True, text=True, check=True)
         provenance["runtime"][name] = (result.stdout + result.stderr).strip()
+    provenance["runtime"]["trufflehog3"] = version("trufflehog3")
     with tempfile.TemporaryDirectory(prefix="crux-archive-") as temp:
         payload = Path(temp) / "payload"
         snapshot(root, payload, provenance)
@@ -205,17 +277,30 @@ def remote_capture(root, output):
     print(json.dumps({"sha256": digest(output), "bytes": output.stat().st_size}))
 
 
-if __name__ == "__main__":
+def main(argv=None):
+    """Create on the stopped box or extract locally; see ``--help`` for arguments.
+
+    :param argv: Optional CLI argument sequence.
+    :returns: Zero on verified completion, one on failure.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("action", choices=("capture", "restore"))
+    parser.add_argument("bundle", type=Path)
+    parser.add_argument("--root", type=Path, default=Path("/srv/crux-run"))
+    parser.add_argument("--destination", type=Path)
+    args = parser.parse_args(argv)
     try:
-        if sys.argv[1] == "capture":
-            remote_capture(Path("/srv/crux-run"), Path(sys.argv[2]))
-        elif sys.argv[1] == "restore":
-            print(restore(Path(sys.argv[2]), Path(sys.argv[3])))
+        if args.action == "capture":
+            remote_capture(args.root, args.bundle)
+        elif args.destination:
+            restore(args.bundle, args.destination)
         else:
-            raise ArchiveError("Expected capture or restore.")
+            raise ArchiveError("Restore requires --destination PATH.")
     except (ArchiveError, OSError, ValueError, subprocess.SubprocessError, tarfile.TarError) as exc:
-        # Only ArchiveError carries messages designed to be safe for operator logs.
-        print("CRUX_ARCHIVE_ERROR: " + (str(exc) if isinstance(exc, ArchiveError)
-              else "Archive operation failed; no teardown performed."),
-              file=sys.stderr)
-        sys.exit(1)
+        print(str(exc) if isinstance(exc, ArchiveError) else "Archive operation failed; teardown blocked.", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,118 +1,118 @@
-# Archive and hand off a run
+# Archive a run
 
-Teardown requires an archive, including with `--yes` and `--keep-aux`. It saves
-`/srv/crux-run` to the **main** account's
-`crux-run-archives-<account>-<AWS_REGION>` bucket. The bucket is private,
-versioned, encrypted with SSE-S3 and denies HTTP. Archives have unique keys and
-no automatic expiry. Aux cleanup cannot delete this main-account bucket.
-Main-account administrators can delete archives; this is not Object Lock.
-Budget for retained storage and set eventual retention deliberately.
+Teardown saves `/srv/crux-run` to the main account's
+`crux-run-archives-<account>-<AWS_REGION>` bucket before deleting the run box.
+The bucket is private, encrypted, versioned and HTTPS-only. Archives have unique
+keys and no automatic expiry; administrators can still delete them. Auxiliary
+cleanup cannot delete this main-account bucket. Archives can be retained for
+analysis alone; a successor run is optional.
 
-Provisioning grants run roles read-only access to this account/region's `runs/`
-prefix. No operator credentials are copied to the successor. The operator needs
-S3 bucket configuration/transfer and IAM policy permissions. Set an explicit
-`AWS_PROFILE` in the workspace config.
+Use an explicit `AWS_PROFILE` in the operator's workspace config. Provisioning
+provides **no archive access by default**. To authorize a particular new workspace,
+add comma-separated exact archive directories to its base config before provisioning:
+
+```ini
+ARCHIVE_READ_URIS=s3://crux-run-archives-123456789012-us-east-1/runs/previous-run/20261027T120000Z-archiveid/
+```
+
+This grants only that workspace's `crux-run-<slug>` role read access to the selected
+archives and receipts. It creates a dedicated profile if needed; the shared system
+role receives no grants. Wildcard selectors and other account/region buckets are
+rejected. Permissions replace that role's previous archive policy. Configuring an
+empty selection grants nothing; delete an existing `read-run-archives` policy if
+revoking previously granted access. Deployments of the earlier broad-access
+prototype should also remove its policy from `crux-system-role` and old run roles.
 
 ## Prepare before teardown
 
-Keep the complete editable project under `/srv/crux-run`, including Git history,
-lockfiles, required ignored/untracked assets, URL maps, inventory, scripts,
-fixtures, check results, logs, screenshots and completion/handoff reports.
-Dependencies are included. Make linked Git worktrees self-contained: `.git` files
-pointing elsewhere fail. Broken/external links, sockets and unreadable files also
-block archival. Move necessary external source into the run tree first.
+Keep source, full Git history, lockfiles, ignored/untracked assets, check scripts,
+logs, screenshots and completion reports under `/srv/crux-run`. Make linked Git
+worktrees self-contained. Broken/external links, sockets and unreadable files block
+archival. Adapt `ARCHIVE.json.example` to `/srv/crux-run/ARCHIVE.json`; required
+paths must be present and nonempty. For SDK runs include the complete drop-in,
+software declaration and `state/state.json`. `restore_checks` describes rebuild
+and verification commands; archival never executes project code on the laptop.
 
-Create `/srv/crux-run/ARCHIVE.json`, adapting `ARCHIVE.json.example`. Required
-paths must exist and be nonempty. For SDK runs require the complete `run-harness`
-drop-in, its software declaration and `state/state.json`. `restore_checks` records
-commands a successor must run; archival does **not execute project code** on
-your laptop. Run them on the restored successor before launching its task.
+The operator must identify credentials that need preserving, including those on
+auxiliary hosts, and save them privately on the laptop (for example in a password
+manager). Before archiving, remove credential values from source, Git history and
+traces while retaining useful trace context. Supply credentials to any later run
+through a private `runtime-secrets.json` passed to provisioning's `--base-secrets`;
+its per-run API-key entries become environment variables. Do not put that file,
+password-manager exports or secret values into the archive or Git. This feature
+neither stores secrets in Secrets Manager nor grants secret retrieval permissions.
 
-`secret_refs` holds Secrets Manager references, never values:
+`.codex`, `.claude` and `state/codex` are included for coding-agent trace analysis.
+`.mcp.json`, `.aws`, `.ssh`, `state/sessions` and `state/sessions.sqlite` (including
+WAL/SHM files) remain excluded. Review credential-bearing files inside the included
+trace directories: traces must pass the same scan as source before transfer.
 
-```json
-{"arn":"arn:aws:secretsmanager:us-east-2:123456789012:secret:crux-app-runtime-AbCdEf",
- "region":"us-east-2","version_id":"<actual-version-id>"}
-```
+List dependencies outside the run tree in `external_state` with `description`,
+`location`, `preservation` and an `evidence_path` to a nonempty archived file.
+Record resource IDs/regions, source-to-release mapping, database/media/config/TLS
+backup locations and retention. Verify backups by restoring them. This evidence
+is supplied by the operator/agent; archival does not back up RDS, buckets or CMS
+hosts automatically. Empty `external_state` is valid when no external state is
+needed; retaining an auxiliary account requires preservation evidence.
 
-Save runtime/admin/database/deployment credentials in Secrets Manager. Include
-credentials existing only on aux hosts (for example `/etc/citp/runtime.env`);
-the workspace scanner cannot discover them there. Capture verifies each version
-is retrievable with the explicit main/aux profile without logging values. Restore
-grants the successor main run role or aux devops role `GetSecretValue` on these
-specific ARNs. Customer KMS keys also need an independently configured decrypt
-grant. Verify retrieval using the successor's instance identity/assumed aux role;
-an operator read alone does not establish successor access.
+## Create, transfer and store
 
-For each dependency outside the run box, add an `external_state` entry:
-
-```json
-{"description":"CMS database, media and deployment",
- "location":"account/region/resource identifiers and endpoints",
- "preservation":"retained via --keep-aux; durable backup identifiers/retention",
- "evidence_path":"run-harness/workspace/handoff/external-verification.json"}
-```
-
-Evidence files must exist and be nonempty. Record resource IDs, endpoints, active
-release/source mapping, database/media locations, service configuration,
-TLS/renewal dependencies, timestamps and retention. Verify readable nonempty
-backups **by restoring them**. Verify retained resources with AWS/host checks;
-compare local uploads with S3. These entries are evidence supplied by the
-operator/agent, not automatic external backups or independent validation of their
-contents. Archive creation does not snapshot RDS, media or auxiliary-host `/etc`
-and `/srv`; preserve those separately before approving teardown.
-
-Operational stores (`.mcp.json`, `.codex`, `.claude`, `.aws`, `.ssh` at the run root,
-SDK `state/codex` and raw session databases) are excluded and recorded in the
-manifest. They cannot be required paths. Other SDK state and the whole drop-in
-are preserved. Export needed conversation evidence using the scrub-and-scan
-workflow into the workspace. This is a fresh successor task, not resumption of
-the old private session. Review explicit secret files and Git history as well:
-no scanner proves absence of every possible secret.
-
-## Stop safely, archive, then delete
-
-Finish/pause the current task and stop its gateway/SDK service between turns.
-Stop other writers, including previews and background jobs. Do not interrupt an
-in-flight ACP turn. Capture rejects active/transitioning services, adds runtime start conditions to
-both units, copies a final snapshot and checks it stayed unchanged. TruffleHog
-3.99.7 (checksum-pinned in `install-run.sh`) scans the snapshot and Git history on
-the box. It includes unverified findings, fails on scan errors and disables
-credential verification requests. Findings report paths only.
+Finish/pause the task and stop its gateway or SDK service between turns; stop
+other writers too. Do not interrupt an in-flight ACP turn. The shell coordinator
+connects as the configured SSH alias's ubuntu user, runs archive creation on the
+box, rsyncs the scanned bundle into a temporary laptop directory, then passes that
+local path to the storage controller. It deletes temporary transfer files on exit.
 
 ```sh
-./teardown-workspace-aws-resources.sh placeholders-crux-web-pilot4.txt --keep-aux
+bash src/ec2-workspaces/teardown-workspace-aws-resources.sh \
+  src/ec2-workspaces/placeholders-RUN.txt
 ```
 
-Only a scanned bundle crosses SSH. Teardown verifies the content manifest,
-uploads (using multipart transfer when necessary), downloads the exact S3
-version, checks SHA-256, extracts safely and rechecks every file before removing
-SSH rules, the instance, EIP or legacy secret parameters. It verifies a durable
-`receipt.json` beside the S3 bundle and prints a local copy under
-`~/.local/state/crux/archives/`; preserve that receipt. Retries create new
-objects and preserve previous archives. Failures leave the box present and its
-services stopped. To resume deliberately, remove `/run/crux-archive.lock`, then
-start the appropriate service. The runtime conditions disappear at reboot.
+Add `--keep-aux` only when retaining the auxiliary resources. The archive is
+required with or without that option and with `--yes`.
 
-If the box is already gone and you are finishing cleanup, supply
-`--archive-receipt /absolute/path/to/receipt.json` to redownload and verify that
-run's prior archive. Live boxes always require a fresh capture. There is no bypass.
-
-## Restore onto a provisioned successor
-
-Provision with the same main account/region, aux flags and aux profile. Aux
-provisioning transfers ownership and allowlists its actual public IP for both
-ACP and SDK. Do not start the task yet.
+The individual stages can also be run explicitly (copy `create_archive.py` to the
+box first if it predates this tooling):
 
 ```sh
-python3 archive_workspace.py restore placeholders-crux-web-mgmt-pilot1.txt \
-  --receipt /absolute/path/to/pilot4-receipt.json
+ssh RUN
+sudo /opt/crux-archive/bin/python /path/to/create_archive.py capture /var/tmp/run.tar.gz
+sudo chown ubuntu:ubuntu /var/tmp/run.tar.gz
+exit
+rsync RUN:/var/tmp/run.tar.gz /private/tmp/run.tar.gz
+python3 src/ec2-workspaces/store_workspace_archive.py upload \
+  src/ec2-workspaces/placeholders-RUN.txt --bundle /private/tmp/run.tar.gz
 ```
 
-Restore verifies that immutable version and copies it to
-`run-harness/workspace/handoff/<archive-id>/`, preserving the new harness/state.
-The old run tree is under `run/`; do not launch its harness or replace the new
-state. Read `manifest.json`, run the recorded rebuild/check commands, retrieve
-referenced secrets from the successor, and verify CMS/database/media/TLS access.
-Record evidence before starting maintenance. A deployed bundle alone does not
-establish a reproducible handoff.
+Capture refuses active services and applies runtime start conditions while copying.
+The pinned `trufflehog3==3.0.10` Python package scans current files and every locally
+reachable Git blob using its native pattern rules, without fetching remotes or
+contacting credential providers. Entropy-only rules are omitted because archives
+contain generated assets and trace hashes. Findings report paths only; any read or
+scanner failure blocks archival. No scanner guarantees absence of every secret.
+
+Storage verifies local contents, uploads, downloads the exact S3 version, checks
+SHA-256 and safely restores/rechecks the manifest before allowing teardown. It
+uploads and verifies `receipt.json` beside the bundle and prints its S3 URI.
+**Only the remote receipt persists**; no local receipt is generated. Keep the URI
+in the run record. Retries preserve previous objects. If the box is already gone,
+use `--archive-receipt s3://BUCKET/runs/SLUG/ID/receipt.json` to reverify its archive.
+Live boxes require a fresh capture. On failure the box remains and services stay
+stopped; remove `/run/crux-archive.lock` deliberately before resuming a service.
+
+## Optional restore
+
+Download and restore without executing archived code:
+
+```sh
+python3 src/ec2-workspaces/store_workspace_archive.py restore \
+  src/ec2-workspaces/placeholders-RUN.txt \
+  --receipt s3://BUCKET/runs/SLUG/ID/receipt.json \
+  --destination /private/tmp/restored-run
+```
+
+The destination must not exist. It contains `manifest.json` and the old tree under
+`run/`. For a successor, select that archive during provisioning and transfer the
+verified tree into its `run-harness/workspace/handoff/` directory. Keep its new
+harness and runtime state. Application access checks and launch steps belong to
+the successor's operator guide.

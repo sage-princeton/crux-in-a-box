@@ -13,6 +13,5 @@
     "cd run-harness/workspace/site && npm ci && npm run build",
     "cd run-harness/workspace && ./scripts/verify.sh"
   ],
-  "secret_refs": [],
   "external_state": []
 }

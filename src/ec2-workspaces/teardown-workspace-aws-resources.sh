@@ -28,7 +28,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y) ASSUME_YES=1; shift ;;
     --keep-aux) KEEP_AUX=1; shift ;;
-    --archive-receipt) ARCHIVE_RECEIPT="${2:?--archive-receipt needs a file}"; shift 2 ;;
+    --archive-receipt) ARCHIVE_RECEIPT="${2:?--archive-receipt needs an S3 URI}"; shift 2 ;;
     -*) die "Unknown flag: $1" ;;
     *) CONFIG_FILE="$1"; shift ;;
   esac
@@ -121,10 +121,10 @@ fi
 if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   ARCHIVE_ARGS=()
   [ "$KEEP_AUX" != 1 ] || ARCHIVE_ARGS+=(--keep-aux)
-  python3 "$SCRIPT_DIR/archive_workspace.py" capture "$CONFIG_FILE" "${ARCHIVE_ARGS[@]}"
+  bash "$SCRIPT_DIR/archive-workspace.sh" "$CONFIG_FILE" "${ARCHIVE_ARGS[@]}"
 else
-  [ -n "$ARCHIVE_RECEIPT" ] || die "No run box to archive. Supply --archive-receipt PATH to reverify its previous S3 archive before cleanup."
-  python3 "$SCRIPT_DIR/archive_workspace.py" verify "$CONFIG_FILE" --receipt "$ARCHIVE_RECEIPT"
+  [ -n "$ARCHIVE_RECEIPT" ] || die "No run box to archive. Supply --archive-receipt S3_URI to reverify its previous S3 archive before cleanup."
+  python3 "$SCRIPT_DIR/store_workspace_archive.py" verify "$CONFIG_FILE" --receipt "$ARCHIVE_RECEIPT"
 fi
 
 python3 "$SCRIPT_DIR/aux_instance_access.py" cleanup "$CONFIG_FILE"

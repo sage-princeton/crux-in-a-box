@@ -60,21 +60,10 @@ else
   ok "$(aws --version 2>&1)"
 fi
 
-info "TruffleHog 3.99.7 for fail-closed run archival"
-if ! trufflehog --version 2>/dev/null | grep -q '3.99.7'; then
-  case "$(uname -m)" in
-    x86_64) th_arch=amd64; th_sha=bdbea0508e439b144f49de14e775908de5f902f3d14ea7ae8354bae72b0b72ef ;;
-    aarch64) th_arch=arm64; th_sha=3060f7c9f18c70afdc432984cacabdd1e9103729b5d5fee7fb6755a90d1c59d4 ;;
-    *) die "Unsupported TruffleHog architecture" ;;
-  esac
-  th_temp="$(mktemp -d)"
-  curl -fsSL "https://github.com/trufflesecurity/trufflehog/releases/download/v3.99.7/trufflehog_3.99.7_linux_${th_arch}.tar.gz" \
-    -o "$th_temp/archive.tar.gz" || die "TruffleHog download failed"
-  printf '%s  %s\n' "$th_sha" "$th_temp/archive.tar.gz" | sha256sum -c - >/dev/null || die "TruffleHog checksum mismatch"
-  tar -xzf "$th_temp/archive.tar.gz" -C "$th_temp" trufflehog
-  install -m 755 "$th_temp/trufflehog" /usr/local/bin/trufflehog
-  rm -rf "$th_temp"
-fi
+info "Native Python archive scanner"
+apt-get install -y -qq python3-venv >/dev/null
+python3 -m venv /opt/crux-archive
+/opt/crux-archive/bin/pip install --quiet trufflehog3==3.0.10
 
 # ====== NODE ======
 # The Claude CLI and ACP adapter require Node 22 or later.
