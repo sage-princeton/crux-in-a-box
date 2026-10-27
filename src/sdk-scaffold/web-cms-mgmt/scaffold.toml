@@ -3,7 +3,7 @@ extensions = ["scaffold_extensions.py"]
 
 [runtime]
 type = "openai-agents"
-max_turns = 60
+max_turns = "unlimited"
 
 [runtime.steering]
 server = "slack"
@@ -17,11 +17,19 @@ type = "trim_recent"
 max_items = 40
 
 [budget]
-max_total_tokens = 3_000_000
+max_cost_usd = 100
 max_wall_seconds = 3_628_800
 
+[resources.models]
+type = "langfuse"
+refresh_seconds = 15
+
+[resources.wave]
+type = "wave"
+limits = { credits = {{WAVE_CREDIT_LIMIT}} }
+
 [loop]
-type = "phased"
+type = "cms_maintenance"
 
 [[loop.phases]]
 name = "maintenance"
@@ -35,12 +43,13 @@ interval_seconds = 300
 type = "cms_maintenance_cycle"
 
 [agents.website_manager]
+max_turns = "unlimited"
 persona = "personas/website_manager.md"
 context = ["workspace/AGENTS.md"]
 workspace_context = ["HANDOFF.md", "REQUESTS.jsonl", "LOG.md"]
 context_max_chars = 48_000
 tools = ["read_file", "write_file", "list_files", "run_shell", "budget_status", "rest", "escalate",
-         "cms_event", "cms_snapshot", "cms_approval"]
+         "cms_event", "cms_snapshot", "cms_approval", "wave_check"]
 mcp_servers = ["slack"]
 delegates = ["engineer"]
 
@@ -59,7 +68,7 @@ total_seconds = 3_628_800
 
 [tools.cms_snapshot]
 live_origin = "{{LIVE_SITE_ORIGIN}}"
-preview_origin = "{{PREVIEW_SITE_ORIGIN}}"
+preview_origin = "{{LIVE_SITE_ORIGIN}}"
 playwright_version = "1.56.1"
 
 [mcp_servers.slack]

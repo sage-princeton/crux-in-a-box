@@ -8,7 +8,7 @@ HANDOFF.md. Do not replace this harness or its state with the migration scaffold
 
 First verify the S3-restored manifest and full Git history, install from the
 lockfile, rebuild and run the migration's checks. Verify the actual successor's
-secret retrieval and CMS/SSH/database/media/TLS access. Inspect resource inventory,
+runtime credential availability and CMS/SSH/database/media/TLS access. Inspect resource inventory,
 source-to-release mapping, verification gates, screenshot history and completion
 report. Record commands/results/paths in HANDOFF.md and append a handoff event.
 Missing source, credentials, durable backups or access are blockers; escalate
@@ -29,22 +29,22 @@ For each request:
    using cms_snapshot. Examine them. Record baseline content, navigation,
    functionality, WAVE/accessibility, performance/web-vitals, OWASP/security and
    CMS editorial checks from the migration artifacts. Do not weaken those gates.
-2. Delegate a scoped change and tests to engineer. Use a draft/version and isolated
-   preview deployment with separate data or draft semantics; no unapproved live
+2. Delegate a scoped change and tests to engineer. Use a draft/version and native Payload Preview/Draft Preview with versioned drafts; no unapproved live
    schema/data mutation. Record commands and raw outputs in runs/<id>/<iteration>/.
 3. Capture **during** screenshots of the actual preview at every implementation
    and feedback iteration. Inspect them against the request and baseline. Re-run
    relevant deterministic and editorial checks, interpret failures, and fix them.
    Share the working preview URL, exact immutable source/release revision, evidence
    and known limitations in the original thread. A local-only preview is not a
-   review link. If preview isolation is unavailable, escalate before changing live.
-4. Ask an allowlisted operator to reply `approve publish <id> <revision>` in that
-   thread. Call cms_approval to verify the real message. Feedback or any code,
+   review link. If preview draft/public separation is unavailable, escalate before changing live.
+4. Ask an allowlisted human whether to publish the current preview in ordinary language.
+   Read their reply in context, clarify ambiguity, then use cms_approval to record
+   its actual message ID, your interpretation and the reviewed revision. Feedback or any code,
    content, schema or data change invalidates the earlier approval: publish a new
    preview and obtain approval for its new revision. Approval of an implementation
    plan is not publication approval. No reply means keep waiting.
-5. Publish exactly the approved artifact/content version using the documented
-   deployment procedure, with backup and rollback available. Capture live **after**
+5. Publish exactly the approved artifact/content version using your own tested and documented
+   publication/rollback procedure, with backup and rollback available. Capture live **after**
    screenshots and verify the release, content, forms/navigation, editorial
    workflows, accessibility, performance and security against the accepted
    criteria. Append results, image filepaths, approval message ID, deployed revision,
@@ -56,8 +56,8 @@ availability/TLS, broken links and media, forms/navigation, accessibility,
 performance regressions, security and CMS maintainability. Use existing scripts
 and record baselines, commands, outputs and interpretation. Log each issue as
 `proactive`, notify the operator in a dedicated thread with impact/evidence and a
-proposed fix, then wait for `approve implement <id> <scope-revision>` verified by
-cms_approval before resolving it. Then use the same preview/publication workflow.
+proposed fix, then wait for explicit human agreement in ordinary language before resolving it.
+Record the actual message ID, approved scope/revision and interpretation with cms_approval. Then use the same preview/publication workflow.
 Read-only diagnosis is allowed while waiting. Do not run intrusive security scans
 against external sites or make an unapproved production fix.
 
@@ -78,11 +78,13 @@ an open request is awaiting thread feedback/approval, check that thread every
 30–60 seconds and rest between checks. Reuse current verification evidence until
 something changes rather than repeatedly running checks while waiting.
 Budget exhaustion is a reported incomplete run, not
-success. To finish, obtain `approve stop run <run-slug>` as a new top-level channel
-message and verify it with cms_approval using that message's thread timestamp.
+success. To finish, obtain an explicit natural-language request to stop as a new top-level channel
+message, clarify if ambiguous, and record it with cms_approval using its timestamp.
 Tell the operator to use a top-level message if asking how to stop; closed request
 threads are not automatically polled. Resolve/cancel every open request explicitly. Write
 COMPLETION_REPORT.md with request outcomes, remaining issues, resource/secret
 references, final release, verification and visual evidence, backup/rollback
 status, and successor instructions. Update the archive manifest for this SDK run
 with the complete drop-in and required state, and keep all artifacts for teardown.
+
+Use native Payload admin.preview, versions/drafts and authenticated frontend draft mode. Devise, test, document and execute publication and rollback yourself; preserve the currently published content while preparing drafts. Use wave_check for credit-accounted WAVE audits and budget_status for the $100 Langfuse inference allowance. There is no token or turn cap.
