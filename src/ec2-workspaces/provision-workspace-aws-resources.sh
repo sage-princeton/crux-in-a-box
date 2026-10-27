@@ -223,6 +223,9 @@ fi
 # If provision-aux-aws-resources.sh has run for this slug, it created a
 # per-workspace instance profile scoped to just this run's aux-resource
 # access. Runs that never opted in keep using the shared profile below.
+if [ "$DRY_RUN" != 1 ]; then
+  python3 "$SCRIPT_DIR/store_workspace_archive.py" grant-read "$CONFIG_FILE"
+fi
 RUN_ROLE_NAME="crux-run-$SLUG"
 if aws_iam_ get-instance-profile --instance-profile-name "$RUN_ROLE_NAME" >/dev/null 2>&1; then
   RUN_IAM_PROFILE="$RUN_ROLE_NAME"
@@ -583,6 +586,14 @@ ssh "$SLUG" 'sudo install -d -o ubuntu -g ubuntu /srv/crux-run /srv/crux-run/run
 git -C "$SCRIPT_DIR/../.." archive --prefix=run-harness/ "HEAD:$DROP_IN_PATH" \
   | ssh "$SLUG" 'tar -x -C /srv/crux-run'
 ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before launch"
+python3 - "$SCRIPT_DIR/../.." "$DROP_IN_PATH" <<'PY' | ssh "$SLUG" 'sudo sh -c "umask 022; cat > /etc/crux-source.json"'
+import json, subprocess, sys
+root, drop_in = sys.argv[1:]
+def git(*args):
+    return subprocess.check_output(["git", "-C", root, *args], text=True).strip()
+print(json.dumps({"revision": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain")),
+                  "staging": "committed HEAD via git archive", "drop_in": drop_in}))
+PY
 
 if [ "$SCAFFOLD_MODULE" = sdk ]; then
   info "Staging src/sdk-scaffold/ on $SLUG at /opt/crux-sdk-scaffold"

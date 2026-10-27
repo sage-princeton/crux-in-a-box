@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "required_paths": [
+    "run-harness",
+    "run-harness/workspace/site/.git",
+    "run-harness/workspace/site/package-lock.json",
+    "run-harness/workspace/RESOURCE_INVENTORY.md",
+    "run-harness/workspace/VERIFICATION.md",
+    "run-harness/workspace/LOG.md",
+    "run-harness/workspace/COMPLETION_REPORT.md"
+  ],
+  "restore_checks": [
+    "cd run-harness/workspace/site && npm ci && npm run build",
+    "cd run-harness/workspace && ./scripts/verify.sh"
+  ],
+  "external_state": []
+}

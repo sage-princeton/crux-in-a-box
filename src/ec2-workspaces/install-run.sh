@@ -60,6 +60,11 @@ else
   ok "$(aws --version 2>&1)"
 fi
 
+info "Native Python archive scanner"
+apt-get install -y -qq python3-venv >/dev/null
+python3 -m venv /opt/crux-archive
+/opt/crux-archive/bin/pip install --quiet trufflehog3==3.0.10
+
 # ====== NODE ======
 # The Claude CLI and ACP adapter require Node 22 or later.
 info "Node.js 22"
