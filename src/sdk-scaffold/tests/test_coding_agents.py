@@ -1,6 +1,8 @@
 import asyncio
+import json
 from types import SimpleNamespace
 
+import pytest
 from openai_codex import ApprovalMode, Sandbox
 from openai_codex.generated.v2_all import (
     ItemCompletedNotification,
@@ -8,7 +10,8 @@ from openai_codex.generated.v2_all import (
     TurnCompletedNotification,
 )
 
-from crux_scaffold.coding_agents import CODING_AGENTS
+from crux_scaffold.coding_agents import CODING_AGENTS, codex_client
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.telemetry import GenerationOutcome, NullTelemetry
 from crux_scaffold.usage import Budget, UsageLedger
 from crux_scaffold.workspace import RunContext, Workspace
@@ -170,3 +173,43 @@ def test_codex_loads_current_instructions_for_each_fresh_brief(tmp_path):
     source.write_text("second spec")
     asyncio.run(agent.run("second brief", ctx))
     assert [start["developer_instructions"] for start in fake.starts] == ["first spec", "second spec"]
+
+
+@pytest.mark.parametrize("compatible", [False, True])
+def test_codex_client_uses_the_run_environment_and_provider(tmp_path, monkeypatch, compatible):
+    env = {"CRUX_MODEL": "google/gemini-4-argon@preset/vertex-only", "OPENROUTER_API_KEY": "fixture-router"}
+    if compatible:
+        env.update(CRUX_CODEX_BASE_URL="https://openrouter.ai/api/v1", CRUX_CODEX_API_KEY_ENV="OPENROUTER_API_KEY")
+    seen = []
+    monkeypatch.setattr("crux_scaffold.coding_agents.AsyncCodex", lambda config: seen.append(config))
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(), NullTelemetry())
+    codex_client(ctx)
+    assert seen[0].env == {**env, "CODEX_HOME": str(tmp_path / "state/codex")}
+    overrides = dict(part.split("=", 1) for part in seen[0].config_overrides)
+    if compatible:
+        assert json.loads(overrides["model_provider"]) == "crux-compatible"
+        assert json.loads(overrides["model_providers.crux-compatible.base_url"]) == env["CRUX_CODEX_BASE_URL"]
+        assert json.loads(overrides["model_providers.crux-compatible.auth.args"]) == ["OPENROUTER_API_KEY"]
+        assert json.loads(overrides["model_providers.crux-compatible.wire_api"]) == "responses"
+        assert "fixture-router" not in str(overrides)
+    else:
+        assert overrides == {}
+
+
+def test_compatible_codex_does_not_log_in_to_openai(tmp_path):
+    fake = FakeCodex([item(ANSWER), completed()])
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"}, client_factory=lambda ctx: fake)
+    env = {"CRUX_MODEL": "google/gemini-4-argon@preset/vertex-only", "OPENAI_API_KEY": "fixture-unused",
+           "CRUX_CODEX_BASE_URL": "https://openrouter.ai/api/v1", "CRUX_CODEX_API_KEY_ENV": "OPENROUTER_API_KEY"}
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(), NullTelemetry())
+    assert asyncio.run(agent.run("TASK", ctx)).completed
+    assert fake.logins == []
+    assert fake.starts[0]["model"] == env["CRUX_MODEL"]
+
+
+def test_codex_missing_compatible_key_fails_before_start(tmp_path, monkeypatch):
+    monkeypatch.setattr("crux_scaffold.coding_agents.AsyncCodex", lambda config: pytest.fail("must not start"))
+    env = {"CRUX_CODEX_BASE_URL": "https://models.example.test/v1", "CRUX_CODEX_API_KEY_ENV": "MODEL_API_KEY"}
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(), NullTelemetry())
+    with pytest.raises(InvalidDropInError, match="MODEL_API_KEY"):
+        codex_client(ctx)

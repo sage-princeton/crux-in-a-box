@@ -230,6 +230,7 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
   - Set `completed=False` when the turn failed. Put the error in `final_response` so the calling agent sees it.
 - **Long turns stream progress.** Send each finished step as `ctx.telemetry.record(...)` while the turn runs, as `codex` does with each item.
 - **Sandboxing is the coding agent's own,** declared in its options, such as `codex`'s `sandbox`.
+- **Codex provider selection** comes from `ctx.env`: `CRUX_CODEX_BASE_URL` enables a compatible Responses endpoint and `CRUX_CODEX_API_KEY_ENV` names its credential (default `OPENAI_API_KEY`). The client receives the run environment and uses command-based authentication; a compatible provider skips OpenAI login. Model and effort remain `ctx.model` and `ctx.reasoning_effort`. EC2 provisioning derives these variables from `[runtime.model_provider]`; CLI operators set them explicitly. Codex cannot forward `extra_body`; OpenRouter routing rules require a matching preset referenced in the run's model, such as `google/gemini-4-argon@preset/vertex-only`.
 - **Declare** it under `[coding_agents.<name>]` and list it in an agent's `delegates`. The runtime exposes it as a tool that takes one `brief` argument.
 - **Background execution** is an option of the `openai-agents` runtime. `CodingAgent.run` and `execute` still run one brief to completion; the runtime owns the task and exposes result retrieval to callers.
 
@@ -257,7 +258,7 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 | `describe()` | Assembly details, including provider and one line per agent, printed by `check`. |
 | `delegation_slot(*, background=False)` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
 | `delegation_wait()` (base implementation) | Suspend a delegated caller while awaiting independently scheduled background work; reacquire its capacity before resuming. Does not acquire a new slot. |
-| `probe(env, prompt, telemetry, *, options=None)` (classmethod) | One traced model call without running a loop. Optional validated runtime options let `probe --drop-in` use the run's model provider; provisioning can omit them for the default provider. |
+| `probe(env, prompt, telemetry, *, options=None)` (classmethod) | One traced model call without running a loop. Optional validated runtime options let `probe --drop-in` use the run's model provider. The CLI ignores steering and unresolved prompt/operator placeholders during a probe; `check` and `run` require a fully prepared drop-in. |
 
 **The behavior the rest of the scaffold relies on:**
 

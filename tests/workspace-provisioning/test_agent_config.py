@@ -169,7 +169,7 @@ class AgentConfigTests(unittest.TestCase):
         self.shell("load_agent_config all", {**SDK, "OPENAI_AGENTS_REASONING_EFFORT": "low"})
         self.shell("load_agent_config all", {**SDK, "OPENAI_AGENTS_REASONING_EFFORT": "minimal"}, False)
         self.shell("load_agent_config all", {**SDK, "OPENAI_AGENTS_REASONING_EFFORT": "invalid"}, False)
-        self.shell("load_agent_config all", {**SDK, "MODEL_PROVIDER": "openrouter"}, False)
+        self.shell("load_agent_config all", {**SDK, "MODEL_PROVIDER": "openrouter"})
 
     def test_settings_does_not_require_install_pins(self):
         self.shell("load_agent_config settings", {k: ACP[k] for k in

@@ -493,9 +493,10 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 
 | Variable | Use |
 |---|---|
-| `OPENAI_API_KEY` | Agent, judge and Codex model calls |
+| `OPENAI_API_KEY` | Direct OpenAI agent, judge and Codex model calls |
 | The provider's `api_key_env`, e.g. `OPENROUTER_API_KEY` | Compatible agent and judge model calls; the drop-in names the variable, never its secret value |
 | `CRUX_MODEL`, `CRUX_REASONING_EFFORT` | The model and effort for every agent and coding agent. They are the only place these are set; a drop-in cannot override them. A run without `CRUX_MODEL` stops with a configuration error. |
+| `CRUX_CODEX_BASE_URL`, `CRUX_CODEX_API_KEY_ENV` | Optional compatible Responses endpoint and credential-variable name for Codex workers and probes. EC2 provisioning derives these from the drop-in; CLI runs set them explicitly. The credential itself stays in the named environment variable. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_BASE_URL` | Tracing. When unset, tracing is off; `probe` requires it. |
 | `RUN_SLUG`, `CRUX_WORKSPACE_ID` | The trace environment (the slug, lowercased), session, tags and metadata. These match the Codex and Claude boxes. |
 | `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` | HTTPS endpoint and bearer credential for a declared `langfuse` resource provider; `RUN_SLUG` is also required. |
@@ -528,7 +529,7 @@ Set `CRUX_MODEL=google/gemini-4-argon` and `CRUX_REASONING_EFFORT=low`, `medium`
 
 The Responses path uses `store=false` and the complete local SDK session, including encrypted reasoning, across tool calls and restarts. Returned summaries reach Langfuse through the existing SDK instrumentation; cache and reasoning counts also reach the persisted usage ledger. Chat Completions uses the SDK's corresponding adapter; reasoning replay and tool compatibility depend on the selected endpoint. The runtime remains `openai-agents` in trace metadata because that is the scaffold executing the model calls. Langfuse's catalog cost estimate is separate from the provider's actual BYOK billing receipt.
 
-`examples/google-argon-smoke-test` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness with its own provider setup; changing this runtime's provider does not configure Codex or add an Antigravity adapter.
+`examples/google-argon-smoke-test` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness: for compatible Responses endpoints set `CRUX_CODEX_BASE_URL` and `CRUX_CODEX_API_KEY_ENV` too, or let EC2 provisioning derive them. Codex keeps the run's model and effort and uses command-based provider authentication without an OpenAI login. It cannot send the runtime's `extra_body`. For OpenRouter routing rules with Codex workers, use a model such as `google/gemini-4-argon@preset/vertex-only` and configure that preset with the same Vertex-only, no-fallback routing. The runtime's provider block does not add an Antigravity adapter.
 
 For live tests, load the shared Langfuse settings from AWS SSM `/crux/system/env` in `us-east-1` and verify that the keys resolve to the **CRUX** project before making a model call. Keep fetched credentials in process memory. With the model-provider key and these Langfuse variables exported, run from `src/sdk-scaffold`:
 
@@ -597,10 +598,14 @@ Set `AGENT_PLATFORM=openai-agents` and `DROP_IN_PATH=<drop-in directory>` in the
 
 1. It stages this directory, root-owned, at `/opt/crux-sdk-scaffold`, and the drop-in at `/srv/crux-run/run-harness`.
 2. It writes the environment above to `/etc/crux-run.env`.
-3. It installs system Bubblewrap and Ubuntu's AppArmor profile for it, then checks sandboxed shell execution and file write/readback before running `probe --coding-agent codex`. `workspace-write` remains the default; global user-namespace restrictions are unchanged.
+3. It installs system Bubblewrap and Ubuntu's AppArmor profile for it, then checks sandboxed shell execution and file write/readback before running `probe --drop-in /srv/crux-run/run-harness`. It adds `--coding-agent codex` only when the drop-in declares Codex workers. `workspace-write` remains the default; global user-namespace restrictions are unchanged.
 4. It installs `crux-sdk-run.service`, but does not start it.
 
-The automated EC2 flow currently supports direct OpenAI only: its preflight rejects `MODEL_PROVIDER=openrouter`, and its provisioning probe does not load the drop-in's provider settings and always probes Codex too. Use the CLI workflow above for Argon. Provisioning needs those assumptions removed before it can launch a compatible-provider run; this runtime change does not configure the separate Codex harness.
+The provisioning probe reads runtime/provider settings before operator preparation,
+ignoring steering and unresolved prompt placeholders. `check` and `run` still
+require a fully prepared drop-in.
+
+The automated EC2 flow reads the committed drop-in's provider configuration before selecting and validating its credential. Compatible HTTPS endpoints work with Responses or Chat Completions; declared Codex workers require Responses. `MODEL_PROVIDER=openrouter` is accepted when the drop-in points to OpenRouter, and leaving the legacy setting at `direct` still honors the drop-in. Unselected provider credentials are excluded from the run. Compatible providers must use `persistent` or `trim_recent` context because `openai_compaction` calls direct OpenAI. OpenRouter runs with Codex workers and `extra_body` require a `model@preset/NAME` model; the preset must duplicate those routing settings. Preflight checks the suffix, not the account-side preset or BYOK configuration. Commit drop-in and SDK edits before provisioning: both are staged from `HEAD`.
 
 ## Development
 

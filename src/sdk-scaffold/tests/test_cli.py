@@ -122,6 +122,35 @@ def test_probe_uses_the_drop_ins_runtime_options(drop_in_dir, monkeypatch, probe
     assert seen == [17]
 
 
+def test_provisioning_probe_reads_provider_before_operator_preparation(drop_in_dir, monkeypatch, probe_telemetry):
+    with (drop_in_dir / "scaffold.toml").open("a") as config:
+        config.write('''
+[runtime]
+type = "openai-agents"
+[runtime.model_provider]
+type = "openai-compatible"
+api = "responses"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+[runtime.steering]
+server = "slack"
+channel_id = "{{SLACK_CHANNEL_ID}}"
+operator_ids = ["{{SLACK_OPERATOR_ID}}"]
+after_ts = "{{SLACK_AFTER_TS}}"
+''')
+    edit(drop_in_dir, "PROMPT.md", "channel C123", "channel {{SLACK_CHANNEL_ID}}")
+    seen = []
+
+    async def answer(env, prompt, telemetry, *, options):
+        seen.append(options.model_provider.api_key_env)
+        assert options.steering is None
+        return cli.PROBE_MARKER
+
+    monkeypatch.setattr(RUNTIMES.get("openai-agents"), "probe", answer)
+    assert main(["probe", "--drop-in", str(drop_in_dir)], env={}, telemetry=probe_telemetry) == 0
+    assert seen == ["OPENROUTER_API_KEY"]
+
+
 def test_probe_rejects_the_removed_runtime_argument(drop_in_dir, capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["probe", "--drop-in", str(drop_in_dir), "--runtime", "other"], env={})

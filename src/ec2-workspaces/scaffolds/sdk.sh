@@ -47,6 +47,7 @@ scaffold_install() {
 
 scaffold_preflight() {
   [ -x "$SCAFFOLD_PYTHON" ] || die "No scaffold venv at $SCAFFOLD_DIR; install-run.sh builds it."
+  load_sdk_config < "$DROP_IN_DIR/scaffold.toml"
 }
 
 scaffold_read_secrets() {
@@ -59,9 +60,12 @@ scaffold_agent_env() {
 
 scaffold_extra_env() {
   jq -rn --arg pk "$LANGFUSE_PUBLIC_KEY" --arg sk "$LANGFUSE_SECRET_KEY" --arg url "$LANGFUSE_BASE_URL" \
-    --arg slug "$RUN_SLUG" --arg model "$MODEL" --arg effort "$EFFORT" --arg path "$SCAFFOLD_DIR" '
+    --arg slug "$RUN_SLUG" --arg model "$MODEL" --arg effort "$EFFORT" --arg path "$SCAFFOLD_DIR" \
+    --argjson config "$SDK_CONFIG_JSON" '
     {LANGFUSE_PUBLIC_KEY: $pk, LANGFUSE_SECRET_KEY: $sk, LANGFUSE_BASE_URL: $url, RUN_SLUG: $slug,
-     CRUX_MODEL: $model, CRUX_REASONING_EFFORT: $effort, PYTHONPATH: $path}
+     CRUX_MODEL: $model, CRUX_REASONING_EFFORT: $effort, PYTHONPATH: $path,
+     CRUX_CODEX_BASE_URL: ($config.codex_base_url // ""),
+     CRUX_CODEX_API_KEY_ENV: ($config.codex_api_key_env // "")}
     | to_entries[] | .key + "=" + (.value | @json)'
 }
 
@@ -88,6 +92,23 @@ scaffold_probe_sandbox() {
   ok "Sandboxed shell and file write/readback passed"
 }
 
+scaffold_probe_model() {
+  # Probe this drop-in's provider and only the coding harness it declares.
+  # The probe also requires Langfuse to accept the keys.
+  local coding_agent
+  local -a probe_args=(--drop-in "$DROP_IN_DIR")
+  coding_agent="$(printf '%s' "$SDK_CONFIG_JSON" | jq -r '.coding_agent // empty')"
+  [ -z "$coding_agent" ] || probe_args+=(--coding-agent "$coding_agent")
+  info "Probing the scaffold: one traced model call${coding_agent:+ and one $coding_agent turn}"
+  install -m 600 /dev/null "$PROBE_LOG"
+  if ! systemd-run --quiet --wait --pipe --collect --uid="$RUN_USER" \
+       --property=EnvironmentFile="$RUN_ENV_FILE" --working-directory="$WORK_DIR" \
+       "$SCAFFOLD_PYTHON" -m crux_scaffold probe "${probe_args[@]}" >"$PROBE_LOG" 2>&1; then
+    die "Scaffold probe failed. Inspect $PROBE_LOG with sudo; crux-sdk-run was not installed."
+  fi
+  ok "$(tail -1 "$PROBE_LOG")"
+}
+
 scaffold_configure() {
   install -d -m 755 -o "$RUN_USER" -g "$RUN_USER" "$WORK_DIR" "$STATE_DIR" "$STATE_DIR/codex"
   scaffold_probe_sandbox
@@ -97,17 +118,7 @@ scaffold_configure() {
     --property=EnvironmentFile="$RUN_ENV_FILE" --working-directory="$DROP_IN_DIR/workspace" \
     /usr/bin/python3 /usr/local/lib/crux/run_provision.py check --manifest /etc/crux-provision.json \
     || die "Declared run software checks failed; correct provision.json or re-run install-run.sh before launch."
-
-  # One real model call and one Codex turn, with the unit's exact environment;
-  # the probe also requires Langfuse to accept the keys.
-  info "Probing the scaffold: one traced model call and one Codex turn"
-  install -m 600 /dev/null "$PROBE_LOG"
-  if ! systemd-run --quiet --wait --pipe --collect --uid="$RUN_USER" \
-       --property=EnvironmentFile="$RUN_ENV_FILE" --working-directory="$WORK_DIR" \
-       "$SCAFFOLD_PYTHON" -m crux_scaffold probe --coding-agent codex >"$PROBE_LOG" 2>&1; then
-    die "Scaffold probe failed. Inspect $PROBE_LOG with sudo; crux-sdk-run was not installed."
-  fi
-  ok "$(tail -1 "$PROBE_LOG")"
+  scaffold_probe_model
 
   # install-run.sh excludes the run from needrestart. A box provisioned before
   # that would let an unattended upgrade restart it mid-iteration.
