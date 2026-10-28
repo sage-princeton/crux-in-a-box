@@ -43,6 +43,7 @@ from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, 
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
 from crux_scaffold.components import CountLimit, Options, count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
+from crux_scaffold.context_strategies import is_standing_context
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
@@ -332,7 +333,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 context=ctx,
                 max_turns=max_turns,
                 hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
-                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}"),
+                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=self._select_cache_input),
             )
         except MaxTurnsExceeded:
             return Verdict(
@@ -431,6 +432,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             items.extend(item for item in self._steering_items if item not in items)
         status = await self.assembly.context.budget_status()
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")
+        items = self._cache_input(items)
         # The filter's additions are not stored by Runner. Append after selection so a fresh
         # snapshot survives trimming without changing the reusable instructions/history prefix.
         # A user message keeps Gemini adapters from folding volatile status into system instructions.
@@ -441,6 +443,53 @@ class OpenAIAgentsRuntime(AgentRuntime):
         # TODO: re-visit this to see what effects this has on performance/how the model providers treat this approach
         items.append({"role": "user", "content": "\n\n".join(annotations)})
         return ModelInputData(input=items, instructions=data.model_data.instructions)
+
+    async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
+        # Judges get only cache markers, without context selection, steering or resource metadata.
+        return ModelInputData(input=self._cache_input(list(data.model_data.input)),
+                              instructions=data.model_data.instructions)
+
+    def _cache_input(self, items: list[Any]) -> list[Any]:
+        """OpenRouter translates these text boundaries to Claude's cache_control blocks.
+
+        Mark the stable snapshot and a growing retained prefix, never the replaced status tail.
+        Normalize text consistently on every request and copy it so markers cannot enter sessions.
+        """
+        provider = self.options.model_provider
+        if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
+                or not self.assembly.context.model.removeprefix("~").startswith("anthropic/")):
+            return items
+        selected = list(items)
+        candidates = []
+        anchor = None
+        explicit = False
+        for index, item in enumerate(items):
+            if not isinstance(item, dict):
+                continue
+            field = "output" if item.get("type") == "function_call_output" else "content"
+            if field == "content" and item.get("role") not in {"user", "developer", "system"}:
+                continue
+            content = item.get(field)
+            if isinstance(content, str):
+                content = [{"type": "input_text", "text": content}]
+            elif isinstance(content, list):
+                content = [dict(part) if isinstance(part, dict) else part for part in content]
+            else:
+                continue
+            explicit |= any(isinstance(part, dict) and "prompt_cache_breakpoint" in part for part in content)
+            texts = [position for position, part in enumerate(content)
+                     if isinstance(part, dict) and part.get("type") == "input_text" and part.get("text")]
+            if not texts:
+                continue
+            selected[index] = {**item, field: content}
+            candidate = (index, field, texts[-1])
+            candidates.append(candidate)
+            if is_standing_context(item):
+                anchor = candidate
+        if candidates and not explicit:
+            for index, field, position in {anchor or candidates[0], candidates[-1]}:
+                selected[index][field][position]["prompt_cache_breakpoint"] = {"mode": "explicit"}
+        return selected
 
     def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
         ctx = ctx or self.assembly.context
