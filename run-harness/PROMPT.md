@@ -12,11 +12,13 @@ The blog's test site, `https://blogs-qa.princeton.edu/blog-citp/`, is behind a s
 
 Hour-0 sequence:
 
-1. **Verify the environment** (`AGENTS.md` § Environment) and correct that section where reality differs. That means assuming the AWS role, reaching both sources (including past the blogs-qa lock), testing the WAVE and PageSpeed keys, and checking Docker and Playwright.
+1. **Verify the environment** (`AGENTS.md` § Environment) and correct that section where reality differs. That means assuming the AWS role, reaching both sources (including past the blogs-qa lock), testing the WAVE and PageSpeed keys, and checking Docker and Playwright. Verify `cruxagent2026@gmail.com` through `crux-gog`: token refresh, inbox read, and a uniquely identified self-mail send/receive test. Record actual receipt evidence in `runs/startup/mail.md`, not just a send acknowledgement.
 2. **`git init`** the workspace and make a first commit.
 3. **Write `PLAN.md`**: the budget ledger allocated across phases, and milestones with target dates. Also write `scripts/llm_costs.py` and record your starting spend on every budget.
 4. **Log the plan** in `LOG.md` and commit.
 5. **Begin the inventory, and keep going.** Hour 0 is the start of the task, not a stopping point. Don't return until the work is done or § When to stop applies.
+
+When testing the migrated blog's newsletter/post subscription, make a real subscription attempt with `cruxagent2026@gmail.com`, read the resulting email with `crux-gog`, and complete any double opt-in. Follow `AGENTS.md` criterion 4 for confirmation evidence, duplicate avoidance and logging; do not submit forms on the source sites.
 
 The task ends only in one of two ways:
 

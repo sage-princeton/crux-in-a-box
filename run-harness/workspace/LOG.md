@@ -4,6 +4,8 @@ _Append-only. Never edit or delete an entry. This is the authoritative trail of 
 
 There are two entry types.
 
+The first Decision entry references `runs/startup/mail.md` for the mailbox authentication, inbox read and self-mail send/receive checks, alongside the other dependency checks. Record actual outcomes and sanitized message IDs, never OAuth secrets or confirmation/unsubscribe tokens.
+
 **Decision**: for decisions, observations, surprises and dead ends.
 
 ```
@@ -28,7 +30,7 @@ There are two entry types.
   1. URL parity: PASS | FAIL (<n>/<total> pages; artifact)
   2. Content parity: PASS | FAIL (...)
   3. Visual parity (rubric): PASS | FAIL | PARTIAL (reviewed <n>/<total>; runs/N/rubric.md; PARTIAL requires CONTINUE)
-  4. Functional parity: PASS | FAIL (...)
+  4. Functional parity: PASS | FAIL (...; runs/N/subscription.md or prior confirmed test plus this iteration's form/provider re-check; actual subscription/confirmation outcome)
   5. Public access, restricted admin: PASS | FAIL (...)
   6. Accessibility: PASS | FAIL (representatives tested <n>/<total>; template/variant coverage; desktop/mobile results; runs/N/accessibility_coverage.csv)
   7. Performance: PASS | FAIL (representatives <n>/<total>; workload coverage; mobile/desktop medians; runs/N/performance_coverage.csv)

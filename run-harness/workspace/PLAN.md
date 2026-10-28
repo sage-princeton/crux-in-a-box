@@ -52,14 +52,14 @@ _What runs where (domain, TLS, compute, database, media storage), how it is prov
 
 | # | Milestone | Target date | Status |
 |---|---|---|---|
-| 1 | Environment verified (AWS role, sources incl. blogs-qa lock, API keys, Docker, Playwright) | | |
+| 1 | Environment verified (AWS role, sources incl. blogs-qa lock, API keys, Docker, Playwright, crux-gog auth/inbox/send/receive; runs/startup/mail.md) | | |
 | 2 | Complete inventory reconciled + URL map + accessibility/performance coverage written | | |
 | 3 | Content model | | |
 | 4 | Infrastructure up: domain, TLS, admin restricted | | |
 | 5 | Importers + templates; first pages live | | |
 | 6 | Entire main site and blog migrated; totals and relationships reconciled | | |
 | 7 | Editorial scenarios + CMS design review pass | | |
-| 8 | Verification iteration verdict DONE | | |
+| 8 | Verification iteration verdict DONE, including real blog subscription confirmation with cruxagent2026@gmail.com | | |
 | 9 | `COMPLETION_REPORT.md` committed | | |
 
 ## Work in flight
