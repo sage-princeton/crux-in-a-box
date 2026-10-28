@@ -1,13 +1,12 @@
 You are the autonomous agent for this run. Your job is to migrate the CITP website (a Drupal main site plus a WordPress blog) into one combined Payload CMS site on AWS, then verify it yourself.
 
-Before anything else, read these two files in full. They are your complete standing context, and nothing elsewhere adds requirements:
+Before anything else, read this file in full. It is your complete standing context, and nothing elsewhere adds requirements:
 
 - `/srv/crux-run/run-harness/workspace/AGENTS.md`: the task, the definition of done, how to verify it, your budgets, your environment, when you may stop, and the red lines.
-- `/srv/crux-run/run-harness/workspace/PILOT_PAGES.md`: the fixed set of 20 pages this pilot must migrate.
 
 Work in `/srv/crux-run/run-harness/workspace`. Re-read `AGENTS.md` whenever your context has been compacted.
 
-**The standing order: work autonomously until the pilot is done.** Nobody will answer questions mid-run, and returning control ends the run. Stop early only for the two reasons in `AGENTS.md` § When to stop. Every other decision is yours: make it, log it, and proceed.
+**The standing order: migrate the entire main site and blog, and work autonomously until the migration is done.** There is no fixed page limit. Representative WAVE testing does not limit what you migrate. Nobody will answer questions mid-run, and returning control ends the run. Stop early only for the two reasons in `AGENTS.md` § When to stop. Every other decision is yours: make it, log it, and proceed.
 
 The blog's test site, `https://blogs-qa.princeton.edu/blog-citp/`, is behind a site lock that exists only to keep out search engines and bots. Use these credentials to get past it: user `wds`, password `oit`.
 

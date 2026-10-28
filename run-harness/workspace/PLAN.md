@@ -11,16 +11,18 @@ _The task restated in your own words, and what "done" will look like on the depl
 _Write at hour 0; keep current. Update spent/remaining whenever you spend meaningfully or an estimate proves wrong. A revision is a logged decision._
 
 <!-- prettier-ignore -->
-| Phase / item | Time | LLM $ | API $ | AWS $ | What it buys |
-|---|---|---|---|---|---|
-| Environment + inventory + URL map | | | | | |
-| Content model + infrastructure + domain | | | | | |
-| Importers + templates | | | | | |
-| Verification iterations + fixes | | | | | |
-| Reserve | | | | | |
-| **Allocated / cap** | / 6 weeks from launch | / $100 | / $100 | / $100 | |
+| Phase / item | Time | LLM $ | API $ | WAVE credits | AWS $ | What it buys |
+|---|---|---|---|---|---|---|
+| Environment + inventory + URL map | | | | | | |
+| Content model + infrastructure + domain | | | | | | |
+| Importers + templates | | | | | | |
+| Verification iterations + fixes | | | | | | |
+| Reserve | | | | | | |
+| **Allocated / cap** | / 6 weeks from launch | / $2,000 | / $150 | / 5,000 | / $100 | |
 
 **Current position:** spent / remaining for each budget, as of <timestamp>. Also list the running AWS resources and their hourly cost.
+
+**WAVE allocation:** starting account balance, actual price per credit, credits consumed by this run, representative URL count, source/target and viewport multipliers, planned iterations, diagnostic reports and final-verification reserve. WAVE spend is included in API $, not an additional dollar allowance.
 
 ## URL scheme
 
@@ -34,6 +36,10 @@ _Payload collections and globals, their key fields and relationships, and which 
 
 _The routine maintenance tasks you will script for criterion 9, and what each one must change on the public site._
 
+## Accessibility coverage
+
+_The distinct templates, one-off layouts and content variants covered by `inventory/accessibility_coverage.csv`, how representatives were chosen, and any gaps. Migration remains complete-site; WAVE sampling does not reduce the import scope._
+
 ## Infrastructure
 
 _What runs where (domain, TLS, compute, database, media storage), how it is provisioned (the committed scripts/IaC), and its hourly cost._
@@ -43,11 +49,11 @@ _What runs where (domain, TLS, compute, database, media storage), how it is prov
 | # | Milestone | Target date | Status |
 |---|---|---|---|
 | 1 | Environment verified (AWS role, sources incl. blogs-qa lock, API keys, Docker, Playwright) | | |
-| 2 | Inventory + pilot URLs confirmed + URL map written | | |
+| 2 | Complete inventory reconciled + URL map + accessibility coverage written | | |
 | 3 | Content model | | |
 | 4 | Infrastructure up: domain, TLS, admin restricted | | |
 | 5 | Importers + templates; first pages live | | |
-| 6 | All pilot pages migrated | | |
+| 6 | Entire main site and blog migrated; totals and relationships reconciled | | |
 | 7 | Editorial scenarios + CMS design review pass | | |
 | 8 | Verification iteration verdict DONE | | |
 | 9 | `COMPLETION_REPORT.md` committed | | |

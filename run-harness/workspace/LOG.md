@@ -20,6 +20,7 @@ There are two entry types.
 - **Target:** <deployed URL> @ <git SHA>
 - **Checks run:** one line each: check name · command · runs/N/<output>
 - **Visual snapshots:** runs/N/screens/index.json; source/target image paths by page and viewport, with the review in runs/N/rubric.md and its visual-check log. Preserve every iteration's files.
+- **Coverage:** complete inventory/import totals and discrepancies; runs/N/accessibility_coverage.csv with WAVE-tested URLs, represented groups, gaps and credits consumed. Do not report a sampled page as individually tested.
 - **Results:** what came back, in numbers, per check
 - **Interpretation:** what the results mean: the causes behind the failures,
   which are systematic and which page-specific, and whether any check itself is suspect
@@ -29,7 +30,7 @@ There are two entry types.
   3. Visual parity (rubric): PASS | FAIL (runs/N/rubric.md)
   4. Functional parity: PASS | FAIL (...)
   5. Public access, restricted admin: PASS | FAIL (...)
-  6. Accessibility: PASS | FAIL (...)
+  6. Accessibility: PASS | FAIL (representatives tested <n>/<total>; template/variant coverage; desktop/mobile results; runs/N/accessibility_coverage.csv)
   7. Performance: PASS | FAIL (...)
   8. Security: PASS | FAIL (...)
   9. Maintainability: PASS | FAIL (editorial scenarios <n>/<total>: runs/N/editorial/; CMS review: runs/N/cms_review.md)
