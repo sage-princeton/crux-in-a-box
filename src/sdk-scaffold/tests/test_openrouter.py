@@ -95,7 +95,7 @@ def test_argon_tools_delegates_billing_and_session_state(router, drop_in_dir, as
     assert "Handle the request" not in str(requests[1]["input"])
     assert requests[0]["instructions"] == requests[2]["instructions"]
     assert requests[0]["input"][:-1] == requests[2]["input"][:len(requests[0]["input"]) - 1]
-    assert all(request["input"][-1]["role"] == "developer" for request in requests)
+    assert all(request["input"][-1]["role"] == "user" for request in requests)
     assert all(str(request["input"]).count("<resource_status>") == 1 for request in requests)
     assert any(item.get("encrypted_content") == "signed-state" for item in requests[2]["input"])
     assert scaffold.context.usage.total_tokens == 390
@@ -216,5 +216,5 @@ def test_a_chat_completions_provider_uses_the_sdk_adapter(router, drop_in_dir, a
     assert asyncio.run(assemble(drop_in_dir, env=ENV).run()).final_output == "done"
     assert requests[0]["messages"] and "input" not in requests[0]
     assert "include" not in requests[0] and requests[0]["reasoning_effort"] == "low"
-    assert requests[0]["messages"][-1]["role"] == "developer"
+    assert requests[0]["messages"][-1]["role"] == "user"
     assert "<resource_status>" in str(requests[0]["messages"][-1])

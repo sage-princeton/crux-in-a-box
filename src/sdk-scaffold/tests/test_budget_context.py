@@ -60,11 +60,12 @@ def test_context_trimming_cannot_remove_status_and_delegates_receive_it(drop_in_
     scaffold.strategy.select = lambda items: items[-1:]
     asyncio.run(scaffold.run())
     assert reviewer.instructions[0].startswith("You are the reviewer.")
+    assert reviewer.inputs[0][-1]["role"] == "user"
     assert "<resource_status>" in reviewer.inputs[0][-1]["content"]
     assert "total tokens: 15" in reviewer.inputs[0][-1]["content"]
 
 
-def test_changing_resources_preserves_the_entire_selected_prefix(drop_in_dir, assemble):
+def test_changing_resources_appends_user_status_after_unchanged_prefix(drop_in_dir, assemble):
     scaffold = assemble(drop_in_dir)
     scaffold.runtime.build()
     history = [{"role": "developer", "content": "standing context"},
@@ -80,7 +81,7 @@ def test_changing_resources_preserves_the_entire_selected_prefix(drop_in_dir, as
         second = await scaffold.runtime._select_input(data)
         assert first.instructions == second.instructions == "fixed instructions"
         assert first.input[:-1] == second.input[:-1] == history
-        assert first.input[-1]["role"] == second.input[-1]["role"] == "developer"
+        assert first.input[-1]["role"] == second.input[-1]["role"] == "user"
         assert "total tokens: 0" in first.input[-1]["content"]
         assert "total tokens: 150" in second.input[-1]["content"]
         assert str(history).count("<resource_status>") == 0

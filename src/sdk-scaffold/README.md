@@ -135,7 +135,7 @@ Static files must exist at launch. Dynamic paths may be created during the run; 
 
 Snapshots are developer messages saved with the conversation. They are capped at `context_max_chars` (default 32,000; minimum 200), with a notice directing the agent to read the full files when truncated. Each fresh agent delegate and each coding brief reads its own current snapshot. For coding agents it becomes developer instructions in their fresh SDK session; their coding harness manages subsequent context. A persistent conversation does not refresh files on every turn, so agents still read files they need updated between snapshots.
 
-On each SDK agent call, current resource usage and any steering transport warning are appended after the selected conversation as a temporary developer message. This keeps changes in those values out of the reusable prompt prefix; the message is not saved in the session or included in later compaction. Cache reuse still depends on the provider and on other inputs staying unchanged.
+On each SDK agent call, current resource usage and any steering transport warning are appended after the selected conversation as a temporary user message. This keeps changing status out of the reusable prompt prefix, including on Gemini adapters that fold developer messages into system instructions. The message is not saved in the session or included in later compaction. Standing context remains developer messages; cache reuse still depends on the provider and on other inputs staying unchanged.
 
 ## Rest while coding delegates work
 

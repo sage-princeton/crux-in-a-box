@@ -433,7 +433,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")
         # The filter's additions are not stored by Runner. Append after selection so a fresh
         # snapshot survives trimming without changing the reusable instructions/history prefix.
-        items.append({"role": "developer", "content": "\n\n".join(annotations)})
+        # A user message keeps Gemini adapters from folding volatile status into system instructions.
+        items.append({"role": "user", "content": "\n\n".join(annotations)})
         return ModelInputData(input=items, instructions=data.model_data.instructions)
 
     def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:

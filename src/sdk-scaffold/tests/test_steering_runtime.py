@@ -190,6 +190,7 @@ def test_transport_status_changes_only_the_trailing_context(drop_in_dir, assembl
         recovered = await scaffold.runtime._select_input(data)
         assert failed.instructions == recovered.instructions == "fixed"
         assert failed.input[:-1] == recovered.input[:-1] == history
+        assert failed.input[-1]["role"] == recovered.input[-1]["role"] == "user"
         assert "read_failed" in failed.input[-1]["content"]
         assert "Steering transport status" not in recovered.input[-1]["content"]
         assert "<resource_status>" in recovered.input[-1]["content"]
