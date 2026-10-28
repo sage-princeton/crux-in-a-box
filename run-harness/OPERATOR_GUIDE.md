@@ -21,14 +21,73 @@ Set these keys in `placeholders-base.txt` before running `make-new-workspace.sh 
 - `ELASTIC_IP_ADDRESS`: set this to the address that `citp.psb-test.princeton.edu` allowlists. The agent's main-site source is reachable only from that IP.
 - `DROP_IN_PATH`: select this branch's `run-harness` directory. Its `provision.json` installs a checksum-pinned `gog` v0.28.0 for Linux amd64 at `/opt/crux-run-tools/bin/gog`. For an ARM workspace, change the release URL and checksum to the matching ARM build before provisioning. Mailbox authorization is the separate step below.
 
-### Step 2: Secrets (`run-secrets-<slug>.json`)
+### Step 2: Runtime secrets and Gmail SMTP
 
-Put the provider key there, plus:
+Prepare a private `runtime-secrets.json` outside the checkout, containing the selected provider key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY` or `OPENROUTER_API_KEY`), plus:
 
 - `WAVE_API_KEY`: a WebAIM WAVE API key with 5,000 credits available for this run. A basic report costs 1 credit per URL and viewport; see the allocation below. Shared-account consumption must not consume the run's reserved allowance.
 - `PAGESPEED_API_KEY`: a Google PageSpeed Insights API key.
 
-Provisioning writes both into `/etc/crux-run.env`, which is the agent process's environment. That depends on the key-passthrough change landing on main; make sure it is merged or rebased into this branch before you provision.
+**Create the Gmail app password.** Sign in to Google as **cruxagent2026@gmail.com**, open [Security](https://myaccount.google.com/security), and enable **2-Step Verification** under "How you sign in to Google". Then open [App passwords](https://myaccount.google.com/apppasswords), enter `CRUX full-run Payload SMTP` as the app name, and select **Create**. Save the generated 16-character password in your password manager. Use the app password without its display spaces, not the normal Google account password or the gog keyring password. If App passwords is unavailable, check the signed-in account and Google's documented restrictions (including Advanced Protection or security-key-only two-step verification) before launch. Changing the Google account password revokes app passwords; retain this grant through the migration and maintenance handoff. [Google instructions](https://support.google.com/accounts/answer/185833)
+
+The SMTP entries in the same flat JSON object must be exactly:
+
+```json
+{
+  "SMTP_HOST": "smtp.gmail.com",
+  "SMTP_PORT": "587",
+  "SMTP_USER": "cruxagent2026@gmail.com",
+  "SMTP_PASS": "<16-character Google app password without spaces>",
+  "EMAIL_FROM": "cruxagent2026@gmail.com"
+}
+```
+
+Merge these with the existing provider, WAVE and PageSpeed entries; do not replace the whole file with just these five keys. Keep all values as strings, including `SMTP_PORT`. To update an existing file without echoing the password or putting it in shell history, run this locally in Bash. Set `RUNTIME_SECRETS` to the absolute path of your existing `runtime-secrets.json` (the path below is an example):
+
+```bash
+RUNTIME_SECRETS="$HOME/.local/share/crux/web-full-migration/runtime-secrets.json"
+python3 - "$RUNTIME_SECRETS" <<'PY'
+import getpass
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1]).expanduser()
+data = json.loads(path.read_text())
+if not isinstance(data, dict):
+    raise SystemExit('runtime-secrets.json must contain a JSON object')
+password = ''.join(getpass.getpass('Gmail app password: ').split())
+if len(password) != 16:
+    raise SystemExit('Expected the 16-character app password, without display spaces')
+data.update(SMTP_HOST='smtp.gmail.com', SMTP_PORT='587',
+            SMTP_USER='cruxagent2026@gmail.com', SMTP_PASS=password,
+            EMAIL_FROM='cruxagent2026@gmail.com')
+with path.open('w') as stream:
+    os.fchmod(stream.fileno(), 0o600)
+    json.dump(data, stream, indent=2)
+    stream.write('\n')
+print('Updated SMTP settings; file mode is 0600. Secret values were not printed.')
+PY
+```
+
+For a new file, first create its parent directory with mode 700 and save the provider/WAVE/PageSpeed JSON there using a private editor, then run the merge above. Do not nest the SMTP fields under an `smtp` or `secrets` property. The app password is a separate credential from the OAuth bundle configured in Step 2a; both are needed.
+
+After Step 1's base config is ready, create/provision a new workspace from this committed branch, explicitly passing that file. Set `RUN_SLUG` to your chosen unused full-run slug:
+
+```bash
+WORKTREE=/Users/max/Projects/crux/crux-in-a-box/.claude/worktrees/web-full-migration
+RUN_SLUG=crux-web-full1
+bash "$WORKTREE/src/ec2-workspaces/make-new-workspace.sh" "$RUN_SLUG" \
+  --base-config "$WORKTREE/src/ec2-workspaces/placeholders-base.txt" \
+  --base-secrets "$RUNTIME_SECRETS"
+```
+
+Set `DROP_IN_PATH=run-harness` in that base config. `make-new-workspace.sh` copies the custom fields into its generated, gitignored `run-secrets-<slug>.json`; provisioning writes them into root-only `/etc/crux-run.env` for the agent service. This passthrough is already implemented on this branch. Editing the laptop JSON after provisioning does not update a running workspace.
+
+The agent must securely deliver these five settings to the **CMS application's runtime** on the auxiliary host, for example through its private systemd environment file or container secret injection. Workspace provisioning does not configure the CMS host's email for it. Credentials belong outside source, images, public/client environment variables, logs and archives. Keep the private `runtime-secrets.json` for successor provisioning; the archive should record credential locations and required names only.
+
+Payload must use `@payloadcms/email-nodemailer` with port `587`, `secure: false` and `requireTLS: true` (STARTTLS with certificate validation), authenticating with `SMTP_USER`/`SMTP_PASS` and sending from `EMAIL_FROM`. Local `sendmail`, an empty adapter and Ethereal test mail do not deliver the required real messages. The standing prompt contains the configuration and verification requirements. [Payload email](https://payloadcms.com/docs/email/overview), [Nodemailer TLS settings](https://nodemailer.com/smtp)
 
 Also set a spend limit in the provider console at $2,000 for this run where supported. The agent measures its own spend but cannot enforce a provider cap.
 
@@ -112,7 +171,7 @@ sudo chmod 755 /usr/local/bin/crux-gog
 
 Confirm that the auth check names `cruxagent2026@gmail.com` and reports successful token refresh. An empty inbox is fine; a rejected request is not. Only after both checks succeed, remove the transferred `/home/ubuntu/gog-home.tar.gz`; keep the local bundle privately for recovery. The extracted state and `/home/ubuntu/.config/crux-gog.env` must remain owned by `ubuntu`, private and writable so token refresh can persist. They survive SSH disconnection, agent process restarts and reboots; a replacement box needs this setup again.
 
-Use **`crux-gog`** for all agent mailbox commands. The wrapper loads credentials on every call, so neither shell exports nor a systemd restart are needed, and Codex's secret-environment filtering does not remove the password before `gog` runs. Do not put the password into a prompt, shell command argument or `/etc/crux-run.env` (which reprovisioning overwrites), and do not commit the bundle, state or environment file. No Google credential is needed in `run-secrets-<slug>.json` for this setup.
+Use **`crux-gog`** for all agent mailbox commands. The wrapper loads credentials on every call, so neither shell exports nor a systemd restart are needed, and Codex's secret-environment filtering does not remove the password before `gog` runs. Keep the gog keyring password out of prompts, shell command arguments and `/etc/crux-run.env` (which reprovisioning overwrites), and do not commit the bundle, state or environment file. The gog OAuth bundle/keyring setup is separate from Step 2's SMTP app password: only the SMTP settings belong in `runtime-secrets.json` and its generated `run-secrets-<slug>.json`.
 
 At startup the agent must repeat the checks from its own tool shell, send one uniquely identified message to itself, and verify/read its inbox receipt within five minutes. Evidence goes in `runs/startup/mail.md` and the first `LOG.md` entry. This tests read/send/receive access; the later blog subscription tests external-provider delivery. For `invalid_grant`, fix the OAuth publishing/grant issue and bootstrap a fresh bundle before relaunch, recording any intervention. A new browser consent is an operator step, not something an unattended run should wait for.
 
@@ -130,6 +189,7 @@ The run settings are written directly into the harness files. There are no place
 | AWS cap | `workspace/AGENTS.md`, `workspace/PLAN.md` | $100 for the auxiliary account, including the domain |
 | Payload admins | `workspace/AGENTS.md` | nn7887@princeton.edu, mm9934@princeton.edu |
 | Agent email | `PROMPT.md`, `workspace/AGENTS.md`, `workspace/PLAN.md` | cruxagent2026@gmail.com; startup read/send/receive check and real blog subscription via `crux-gog` |
+| Payload email | `workspace/AGENTS.md`; private `runtime-secrets.json` | Gmail SMTP on 587 with STARTTLS; sender cruxagent2026@gmail.com; dedicated app password |
 | Performance margin | `workspace/AGENTS.md` | 10% |
 | WAVE credit price | `workspace/AGENTS.md` | $0.03 per credit at the 5,000-credit purchase tier; record actual purchase price |
 
@@ -154,6 +214,24 @@ The 200 representatives are an estimate, not a testing or migration limit. The a
 - The role can be assumed: `aws sts assume-role --role-arn "$AUX_RESOURCE_ROLE_ARN" --role-session-name preflight` succeeds.
 - As `ubuntu`, `crux-gog --no-input auth list --check --timeout 20s` confirms `cruxagent2026@gmail.com`, and `crux-gog --no-input --json gmail messages search 'in:inbox' --max 1 >/dev/null` succeeds. Follow Step 2a; installation or an OAuth client JSON alone does not establish mailbox access.
 
+Verify SMTP settings in the service environment without displaying secrets. Run this on the workspace; it checks configuration only, not authentication or delivery:
+
+```bash
+sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
+  --property=EnvironmentFile=/etc/crux-run.env \
+  /usr/bin/python3 - <<'PY'
+import os
+
+expected = {'SMTP_HOST': 'smtp.gmail.com', 'SMTP_PORT': '587',
+            'SMTP_USER': 'cruxagent2026@gmail.com',
+            'EMAIL_FROM': 'cruxagent2026@gmail.com'}
+assert all(os.environ.get(key) == value for key, value in expected.items()), 'SMTP settings mismatch'
+password = os.environ.get('SMTP_PASS', '')
+assert len(password) == 16 and not any(c.isspace() for c in password), 'SMTP_PASS missing or malformed'
+print('SMTP settings present in the service environment; secret values not printed.')
+PY
+```
+
 ### Step 5: Launch
 
 Submit the whole of `PROMPT.md`, as-is, as the workspace's single AgentRQ task. The file contains only the agent's instructions, so there is nothing to strip. This one task is the whole run, and the run ends when the agent returns.
@@ -170,6 +248,8 @@ Within the first hour you should see:
 
 The QA copies remain the content sources. Public production pages are reference material and baselines for external testing services only. Performance representatives must cover demanding workloads as well as distinct templates, with raw measurements and medians in `runs/<N>/performance_coverage.csv`. An intermediate visual result marked `PARTIAL` requires `CONTINUE`; a final `DONE` still requires fresh desktop/mobile screenshots and rubric review for every page.
 
+As soon as Payload is deployed, before completing the first verification iteration, expect `runs/<N>/payload_email.md`: a real message sent by `payload.sendEmail` from the CMS runtime and read back in the agent's Gmail inbox, with matching subject/body and message IDs. A successful gog self-mail test or SMTP connection alone does not establish Payload delivery. The agent repeats this small delivery check in each verification iteration, including the final one.
+
 ## 2. Living with the run
 
 - **Don't message mid-run.** With a single task there is no channel for mid-run input anyway. Any intervention, such as editing files on the box or restarting the task, is an intervention the analysis must account for, so record it on your side with a timestamp.
@@ -181,6 +261,7 @@ The QA copies remain the content sources. Public production pages are reference 
 - **When the task returns,** read `COMPLETION_REPORT.md`. A `DONE` return should follow a Verification iteration in `LOG.md` with verdict `DONE`. Any other return is an early stop, and the report says why and what the agent needs.
   Check that every iteration retains its desktop/mobile screenshots and `runs/<N>/screens/index.json`, and that the rubric, visual-check log and `LOG.md` reference their filepaths.
   Check `runs/<N>/subscription.md` for the real blog signup with `cruxagent2026@gmail.com`, confirmation email/message IDs, double opt-in outcome if applicable, and any delivery gap. Later iterations may reference the confirmed test alongside a fresh form/provider check; repeated signups are unnecessary unless relevant behavior changes.
+  Check `runs/<N>/payload_email.md` for that iteration's CMS-originated message and observed inbox receipt. Gmail SMTP handles Payload's own mail; keep the existing newsletter provider wherever its integration can be reused.
 
 ## 3. Post-run
 
