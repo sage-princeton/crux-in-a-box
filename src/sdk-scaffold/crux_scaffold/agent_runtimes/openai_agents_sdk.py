@@ -434,6 +434,11 @@ class OpenAIAgentsRuntime(AgentRuntime):
         # The filter's additions are not stored by Runner. Append after selection so a fresh
         # snapshot survives trimming without changing the reusable instructions/history prefix.
         # A user message keeps Gemini adapters from folding volatile status into system instructions.
+
+        # Gemini seems to *not* cache if we use role: developer here; only role: user works.
+        # OpenAI *will* cache with either role: user or role: developer.
+        # For now, we're using role: user since that works on both platforms
+        # TODO: re-visit this to see what effects this has on performance/how the model providers treat this approach
         items.append({"role": "user", "content": "\n\n".join(annotations)})
         return ModelInputData(input=items, instructions=data.model_data.instructions)
 
