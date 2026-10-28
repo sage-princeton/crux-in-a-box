@@ -6,7 +6,7 @@ Before anything else, read this file in full. It is your complete standing conte
 
 Work in `/srv/crux-run/run-harness/workspace`. Re-read `AGENTS.md` whenever your context has been compacted.
 
-**The standing order: migrate the entire main site and blog, and work autonomously until the migration is done.** There is no fixed page limit. Representative WAVE testing does not limit what you migrate. Nobody will answer questions mid-run, and returning control ends the run. Stop early only for the two reasons in `AGENTS.md` § When to stop. Every other decision is yours: make it, log it, and proceed.
+**The standing order: migrate the entire main site and blog from their QA copies, and work autonomously until the migration is done.** There is no fixed page limit. Representative WAVE/performance tests and targeted intermediate visual review do not limit what you migrate; final visual review still covers every page. Nobody will answer questions mid-run, and returning control ends the run. Stop early only for the two reasons in `AGENTS.md` § When to stop. Every other decision is yours: make it, log it, and proceed.
 
 The blog's test site, `https://blogs-qa.princeton.edu/blog-citp/`, is behind a site lock that exists only to keep out search engines and bots. Use these credentials to get past it: user `wds`, password `oit`.
 

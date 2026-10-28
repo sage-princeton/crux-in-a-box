@@ -40,6 +40,10 @@ _The routine maintenance tasks you will script for criterion 9, and what each on
 
 _The distinct templates, one-off layouts and content variants covered by `inventory/accessibility_coverage.csv`, how representatives were chosen, and any gaps. Migration remains complete-site; WAVE sampling does not reduce the import scope._
 
+## Performance and visual coverage
+
+_The template/workload groups and demanding examples in `inventory/performance_coverage.csv`, their representatives, and any gaps. For intermediate visual review, record the affected templates/pages, prior failures and remaining coverage; reserve time for fresh screenshots and review of every page in the final iteration._
+
 ## Infrastructure
 
 _What runs where (domain, TLS, compute, database, media storage), how it is provisioned (the committed scripts/IaC), and its hourly cost._
@@ -49,7 +53,7 @@ _What runs where (domain, TLS, compute, database, media storage), how it is prov
 | # | Milestone | Target date | Status |
 |---|---|---|---|
 | 1 | Environment verified (AWS role, sources incl. blogs-qa lock, API keys, Docker, Playwright) | | |
-| 2 | Complete inventory reconciled + URL map + accessibility coverage written | | |
+| 2 | Complete inventory reconciled + URL map + accessibility/performance coverage written | | |
 | 3 | Content model | | |
 | 4 | Infrastructure up: domain, TLS, admin restricted | | |
 | 5 | Importers + templates; first pages live | | |

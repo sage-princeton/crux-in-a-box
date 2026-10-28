@@ -2,7 +2,7 @@
 
 How to set up, launch and watch a run of this harness.
 
-**The design in one paragraph.** A single Claude Code or Codex task, started through AgentRQ/ACP, migrates the entire CITP main site (Drupal) and blog (WordPress) into one combined Payload CMS site, with no page limit. The agent provisions that site itself in an isolated AWS account, then verifies it. There is no outer loop: nothing pushes the agent forward and nothing re-verifies its work, so the task runs until the agent returns. That is why the done-definition carries so much weight in `workspace/AGENTS.md`, the agent's one standing-context file. It defines nine binary success criteria (eight covering what visitors see, and one covering whether staff can maintain the site through the CMS), a page rubric, and the thresholds for checks the agent must script itself. Done is valid only as a full verification iteration against the deployed site, recorded in `LOG.md` with a `DONE` verdict. WAVE uses documented representatives for distinct layouts and content variants; URL/content, visual and performance checks still cover all pages. The agent keeps a budget ledger in `PLAN.md` against four caps: time, LLM, API and AWS.
+**The design in one paragraph.** A single Claude Code or Codex task, started through AgentRQ/ACP, migrates the entire CITP main site (Drupal) and blog (WordPress) from their QA copies into one combined Payload CMS site, with no page limit. The agent provisions that site itself in an isolated AWS account, then verifies it. There is no outer loop: nothing pushes the agent forward and nothing re-verifies its work, so the task runs until the agent returns. That is why the done-definition carries so much weight in `workspace/AGENTS.md`, the agent's one standing-context file. It defines nine binary success criteria (eight covering what visitors see, and one covering whether staff can maintain the site through the CMS), a page rubric, and the thresholds for checks the agent must script itself. Done is valid only as a full verification iteration against the deployed site, recorded in `LOG.md` with a `DONE` verdict. WAVE and performance use documented representatives; intermediate visual review targets affected templates/pages and prior failures. URL/content checks remain exhaustive, and final visual review covers every page. The agent keeps a budget ledger in `PLAN.md` against four caps: time, LLM, API and AWS.
 
 ---
 
@@ -79,6 +79,8 @@ Within the first hour you should see:
 - `scripts/llm_costs.py`
 - a first `LOG.md` entry
 - inventory work under way
+
+The QA copies remain the content sources. Public production pages are reference material and baselines for external testing services only. Performance representatives must cover demanding workloads as well as distinct templates, with raw measurements and medians in `runs/<N>/performance_coverage.csv`. An intermediate visual result marked `PARTIAL` requires `CONTINUE`; a final `DONE` still requires fresh desktop/mobile screenshots and rubric review for every page.
 
 ## 2. Living with the run
 

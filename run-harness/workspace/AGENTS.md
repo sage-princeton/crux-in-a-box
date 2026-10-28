@@ -61,7 +61,7 @@ Each criterion is binary. Each one is proved by an artifact on disk under `runs/
    - Do your own content work through Payload's Local API or an API key, not through an extra admin login.
    - You may use temporary accounts while you work, for example for reviews or admin-UI scenarios. At completion, only the two admins above can log in, plus at most one API-key-only account with no password, which you name in the completion report. Delete every other account as the final step, and then re-check this criterion.
 6. **Accessibility.** On every page in the documented representative coverage set (§ Accessibility coverage), WAVE errors and contrast errors are no worse than on its source page, at both desktop and mobile widths. Cover every distinct template, one-off layout and materially different content variant; do not claim that a representative pass individually tests every page sharing its template.
-7. **Performance.** Core Web Vitals on the new site are in the "good" range: LCP ≤ 2.5 s, CLS ≤ 0.1, and INP ≤ 200 ms (TBT stands in for INP in lab runs). They are also no worse than the source by more than 10%.
+7. **Performance.** On every representative in § Performance coverage, Core Web Vitals on the new site are in the "good" range: LCP ≤ 2.5 s, CLS ≤ 0.1, and INP ≤ 200 ms (TBT stands in for INP in lab runs). They are also no worse than the matching source by more than 10%. Every template and materially different performance workload must be represented; a sampled pass does not individually test every page in its group.
 8. **Security.** An OWASP ZAP full scan of the new site raises no High-risk alert, and no alert type that is absent from both source test-site scans. The baseline is the union of the two source scans' alert types.
 9. **Maintainability.** A CITP staff member, working only in the Payload admin, can carry out routine site maintenance, and every change shows up correctly everywhere it should on the public site. "Only in the admin" means no code changes, no editing raw HTML, no files in the repository and no redeploys. The site follows § CMS design principles. This criterion has two halves, and both must pass:
    - **Editorial scenarios (scripted).**
@@ -85,13 +85,13 @@ Each criterion is binary. Each one is proved by an artifact on disk under `runs/
 
 ## Verification
 
-There is no outer harness checking your work. You are the only verifier. Verification is a loop you run repeatedly: an **iteration** runs every check, records the result, and ends in a verdict.
+There is no outer harness checking your work. You are the only verifier. Verification is a loop you run repeatedly: an **iteration** runs every check at the coverage specified below, records the result, and ends in a verdict. URL/content checks cover the complete inventory in every iteration. Intermediate visual review may be targeted; final visual review covers every page. WAVE and performance use documented representative sets throughout.
 
 **How to run an iteration.**
 
 1. Create `runs/<N>/`. Every check you run writes its raw output to `runs/<N>/<check>.log`, for example `runs/3/url_parity.log` or `runs/3/zap_target.html`.
 2. Run your checks. You write the check scripts yourself, keep them under `scripts/`, and commit them. The same scripts run in every iteration, so results stay comparable.
-   Save fresh full-page visual snapshots of the migrated site in **every** iteration, including failed and final iterations, at desktop (1440 px) and mobile (390 px) widths. Keep source/target pairs under `runs/<N>/screens/` without overwriting earlier iterations. Write `runs/<N>/screens/index.json` mapping each page URL, viewport, timestamp and deployed Git SHA to its screenshot filepath. Reference that index and the images you examined in `runs/<N>/rubric.md`, the visual-check log and the iteration's `LOG.md` entry; screenshots must remain on disk for archival and maintenance handoff.
+   Save fresh full-page visual snapshots of the migrated site in **every** iteration, including failed and final iterations, at desktop (1440 px) and mobile (390 px) widths. In intermediate iterations, capture and review the targeted set described in § Page rubric; in the final iteration, capture and review every page. Keep source/target pairs under `runs/<N>/screens/` without overwriting earlier iterations. Write `runs/<N>/screens/index.json` mapping each page URL, viewport, timestamp and deployed Git SHA to its screenshot filepath. Reference that index and the images you examined in `runs/<N>/rubric.md`, the visual-check log and the iteration's `LOG.md` entry; screenshots must remain on disk for archival and maintenance handoff.
 3. Append a **Verification iteration** entry to `LOG.md` (the format is in its header). It covers:
    - what you ran
    - what came back
@@ -111,6 +111,7 @@ A `DONE` verdict is valid only when all of these hold:
 - the iteration re-ran **every** check against the deployed public site, not a local build
 - every criterion passed
 - every page was reviewed against the rubric in that same iteration
+- the complete WAVE and performance representative sets passed in that same iteration, with no uncovered groups or known regressions
 - the editorial scenarios ran against the deployed site and the CMS design review was done fresh in that same iteration
 
 Declaring done early is the most expensive mistake available to you. So is lowering the bar in the interpretation to make a check pass.
@@ -129,7 +130,7 @@ These are the thresholds. The scripts that check them are yours to write.
 - **Performance — PageSpeed Insights API:**
   - Request format: `GET https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=<url>&key=$PAGESPEED_API_KEY&strategy=mobile|desktop`. It returns Lighthouse lab metrics, plus field data when Google has it.
   - PSI runs from Google's servers, so it cannot reach the test sites. The source side of the comparison therefore uses the matching **production** URL.
-  - **The criterion**, per page and per strategy (mobile and desktop): take the median of 3 PSI lab runs on the new page and on the production source page, and compare the two.
+  - **The criterion**, per performance representative and per strategy (mobile and desktop): take the median of 3 PSI lab runs on the new page and on the production source page, and compare the two. Apply the same sampling rules to intermediate and final iterations; do not run PSI on every repeated article solely because it has a different URL.
   - If PSI cannot load a production source page, measure both sides with local Lighthouse instead: the test-site page and the new page, with identical settings, median of 3. Log which method decided each page.
 - **Security — OWASP ZAP full scan:**
   - Run it on both source test sites and on your own deployment: `docker run -v $(pwd)/runs/<N>:/zap/wrk:rw -t ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py -t <url> -J zap_<site>.json -r zap_<site>.html`.
@@ -142,11 +143,19 @@ These are the thresholds. The scripts that check them are yours to write.
 
 Derive `inventory/accessibility_coverage.csv` from the complete URL inventory before spending WAVE credits. Map each URL to its template/layout group, chosen representative URL(s), content-variant rationale and whether it was directly tested or covered by a representative. Include both homepages, section landings, news/events lists, directories, individual content templates, blog category/tag/author/date archives, pagination and form pages. Test one-off pages individually. For repeated articles, one ordinary article may cover the shared template, but add examples for materially different structures such as legacy markup, tables, embeds, unusual media and forms. A shared URL prefix alone does not establish equivalent coverage.
 
-Keep this mapping current as the crawl discovers pages or checks expose new variants. Each final representative must pass against its matching source at both widths in the final iteration. Record the sampled URLs, covered groups, uncovered variants and raw result paths in `runs/<N>/accessibility_coverage.csv` and `LOG.md`. Uncovered groups or known accessibility regressions block criterion 6. Sampling only changes WAVE call coverage: migrate every page, retain full URL/content checks and the per-page visual/performance requirements. Local axe-core checks can help find content-specific failures outside the WAVE sample.
+Keep this mapping current as the crawl discovers pages or checks expose new variants. Each final representative must pass against its matching source at both widths in the final iteration. Record the sampled URLs, covered groups, uncovered variants and raw result paths in `runs/<N>/accessibility_coverage.csv` and `LOG.md`. Uncovered groups or known accessibility regressions block criterion 6. Sampling does not reduce the migration scope or the full URL/content checks and final per-page visual review. Local axe-core checks can help find content-specific failures outside the WAVE sample.
+
+### Performance coverage
+
+Write `inventory/performance_coverage.csv`, mapping every source/target URL to a template/workload group and its representative URL(s), with the reason for the selection. Cover both homepages, each distinct template and one-off layout, lists/search/pagination, and materially different rendering or data-fetching paths. Include demanding examples: long articles, large directories, image-heavy pages, embeds and interactive forms. A short text article cannot represent a media-heavy article merely because both use the same template. The accessibility inventory is a useful starting point, but performance needs its own workload-based rationale.
+
+Run every representative at mobile and desktop settings in each iteration. Record directly measured URLs, represented groups, raw runs, medians, baseline method and uncovered workloads in `runs/<N>/performance_coverage.csv` and `LOG.md`. Expand the set when discovery or measurements reveal a different workload; investigate known slow pages directly. Uncovered groups, failed/missing measurements and known regressions block criterion 7. Sampling is not permission to omit source content or to present unmeasured URLs as individually tested.
 
 ### Page rubric
 
-Review every page side by side with its source. Take full-page Playwright screenshots of both at desktop (1440 px) and mobile (390 px) widths, save them under `runs/<N>/screens/`, and **look at them**. A screenshot nobody examined is not a review. Score three axes, each pass or fail:
+In intermediate iterations, review a targeted set side by side with its source: representatives of every implemented template and one-off layout, changed pages, pages affected by shared template/component/importer changes, and previous visual failures. For a shared change, review representative affected pages across the distinct variants and use automated layout/image checks to identify additional outliers worth inspecting. Record the rationale, reviewed URLs and remaining coverage in `runs/<N>/rubric.md`; a passing subset does not establish whole-site visual parity.
+
+In the final iteration, review **every page** side by side with its source. For every reviewed page in every iteration, take full-page Playwright screenshots of both at desktop (1440 px) and mobile (390 px) widths, save them under `runs/<N>/screens/`, and **look at them**. A screenshot nobody examined is not a review. Score three axes, each pass or fail:
 
 | Axis | Pass | Fail |
 |---|---|---|
@@ -154,7 +163,7 @@ Review every page side by side with its source. Take full-page Playwright screen
 | **Navigation** | Header, menus, footer, breadcrumbs and in-page links match the source and land on the right mapped pages, including on mobile (hamburger or collapsed menus). Links within either source site resolve to their migrated targets; there is no exemption for pages not yet imported. | A missing menu item, a link to the old host, a 404 introduced by the migration, or a menu that doesn't open on mobile. |
 | **Dynamic content & features** | Lists, filters, pagination, search, forms, subscription signup, feeds, and embedded video or maps behave as on the source. | A control that renders but does nothing, an empty list, a form that doesn't submit, or a filter that returns wrong results. |
 
-Record per-page, per-axis results in `runs/<N>/rubric.md`, with a one-line reason for every fail.
+Record per-page, per-axis results in `runs/<N>/rubric.md`, with a one-line reason for every fail. If intermediate coverage is incomplete, record the overall visual criterion as `PARTIAL` and the iteration verdict as `CONTINUE`, even if all reviewed pages passed. `DONE` still requires fresh screenshots and rubric review for every page in the final iteration.
 
 ## CMS design principles
 
@@ -227,7 +236,7 @@ These are heuristics, not gates. You own the schedule, and `PLAN.md` holds your 
 Long-running agents on tasks like this one fail in recognizable ways. Watch for these in yourself:
 
 - **Fabrication under pressure.** An agent invents a value it should have found or asked for, such as a contact detail, a date or a bio. If the source doesn't show it, the new site doesn't either.
-- **Weak visual QA.** An agent ships a page with visible rendering defects because it checked the HTML and never looked at the pixels. Look at every screenshot.
+- **Weak visual QA.** An agent ships a page with visible rendering defects because it checked the HTML and never looked at the pixels. Examine the screenshots for every page you report as reviewed; targeted intermediate review never substitutes for final per-page review.
 - **Controls that look finished but do nothing.** A subscribe button, filter or search box that renders and does nothing is worse than a missing one, because it passes a glance.
 - **Declaring done early.** An agent calls the work complete on a partial or local check, or on a sample it treats as the whole. Done is a full `DONE` iteration against the deployed site.
 - **Softening the bar instead of doing the work.** An agent answers a failing check by reinterpreting it, and "close enough" creeps into the log. Fix the site.
@@ -271,7 +280,7 @@ Verify everything here at hour 0 and correct this section where reality differs.
 - **Source — CITP blog (WordPress):**
   - Test copy: `https://blogs-qa.princeton.edu/blog-citp/`. This is the migration source.
   - It sits behind a Pantheon site lock (HTTP basic auth). The lock exists only to keep search engines and bots out, so use these credentials freely: user `wds`, password `oit`.
-  - Get past the lock for the crawl, the REST API (`/wp-json/wp/v2/*`), the sitemap and the ZAP scan. If you truly cannot, fall back to production `https://blog.citp.princeton.edu/` (public; sitemap index at `/sitemap_index.xml`, REST API public) for content, and log the fallback.
+  - Get past the lock for the crawl, the REST API (`/wp-json/wp/v2/*`), the sitemap and the ZAP scan. This QA copy is authoritative for migrated content. Production `https://blog.citp.princeton.edu/` is for reference and external-service baselines only, never a substitute content source; unresolved QA access is a blocker under § When to stop.
   - Blog posts link to main-site pages on `citp.princeton.edu`. Rewrite those links to their mapped targets.
 - **AWS — the auxiliary account:**
   - Everything you provision lives in a separate, single-tenant AWS account.
