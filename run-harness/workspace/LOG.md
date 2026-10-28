@@ -4,6 +4,8 @@ _Append-only. Never edit or delete an entry. This is the authoritative trail of 
 
 There are two entry types.
 
+The first Decision entry references `runs/startup/mail.md` for the mailbox authentication, inbox read and self-mail send/receive checks, alongside the other dependency checks and SMTP-setting presence. As soon as the CMS is deployed, log its Payload SMTP configuration and actual inbox delivery evidence in `runs/<N>/payload_email.md` before completing the first verification iteration. Record actual outcomes and sanitized message IDs, never app passwords, OAuth secrets or confirmation/unsubscribe tokens.
+
 **Decision**: for decisions, observations, surprises and dead ends.
 
 ```
@@ -20,17 +22,18 @@ There are two entry types.
 - **Target:** <deployed URL> @ <git SHA>
 - **Checks run:** one line each: check name · command · runs/N/<output>
 - **Visual snapshots:** runs/N/screens/index.json; source/target image paths by page and viewport, with the review in runs/N/rubric.md and its visual-check log. Preserve every iteration's files.
+- **Coverage:** complete inventory/import totals and discrepancies; runs/N/accessibility_coverage.csv with WAVE-tested URLs, represented groups, gaps and credits consumed; runs/N/performance_coverage.csv with measured URLs, workload groups, medians and baseline methods. State whether visual review is targeted or complete, with reviewed/total counts and selection rationale in runs/N/rubric.md. Do not report a sampled page as individually tested.
 - **Results:** what came back, in numbers, per check
 - **Interpretation:** what the results mean: the causes behind the failures,
   which are systematic and which page-specific, and whether any check itself is suspect
 - **Criteria:**
   1. URL parity: PASS | FAIL (<n>/<total> pages; artifact)
   2. Content parity: PASS | FAIL (...)
-  3. Visual parity (rubric): PASS | FAIL (runs/N/rubric.md)
-  4. Functional parity: PASS | FAIL (...)
+  3. Visual parity (rubric): PASS | FAIL | PARTIAL (reviewed <n>/<total>; runs/N/rubric.md; PARTIAL requires CONTINUE)
+  4. Functional parity: PASS | FAIL (...; runs/N/payload_email.md with this iteration's deployed-CMS send and matching inbox receipt; runs/N/subscription.md or prior confirmed test plus this iteration's form/provider re-check; actual subscription/confirmation outcome)
   5. Public access, restricted admin: PASS | FAIL (...)
-  6. Accessibility: PASS | FAIL (...)
-  7. Performance: PASS | FAIL (...)
+  6. Accessibility: PASS | FAIL (representatives tested <n>/<total>; template/variant coverage; desktop/mobile results; runs/N/accessibility_coverage.csv)
+  7. Performance: PASS | FAIL (representatives <n>/<total>; workload coverage; mobile/desktop medians; runs/N/performance_coverage.csv)
   8. Security: PASS | FAIL (...)
   9. Maintainability: PASS | FAIL (editorial scenarios <n>/<total>: runs/N/editorial/; CMS review: runs/N/cms_review.md)
 - **Verdict:** DONE | CONTINUE
