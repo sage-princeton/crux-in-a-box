@@ -724,3 +724,22 @@ Inspect actual behavior, `REQUESTS.jsonl`, `LOG.md`, raw checks and
 teardown, preserving the new drop-in/state, editable source and evidence. Privately
 preserve its credentials again. Select `--keep-aux` again if another successor
 needs the CMS.
+
+## Startup access phase after launch
+
+Before handling maintenance requests, the manager runs `startup_access` using
+[prompts/startup.md](prompts/startup.md). It checks current source/build access,
+CMS hosts/admin/preview, main and auxiliary AWS identities/resources, database/media
+and backups, and supporting services. It may delegate probes to the Codex engineer;
+the manager evaluates sufficiency and limitations against the five-category rubric.
+This supplements the operator preflight in steps 3 and 7.
+
+The gate validates a structured review and existing evidence paths, not the truth
+of the manager's judgment. Reviews are preserved under `runs/startup-access/` and
+appended to `REQUESTS.jsonl` and `LOG.md`. Essential unknown/denied access keeps the
+phase blocked; the manager escalates required operator action and waits. No live
+permission changes or deployment are authorized by this check. Normal maintenance
+starts only after acceptance. Persist `/srv/crux-run/state`: a successful phase
+is skipped on restart, while incomplete startup resumes. Do not reuse another
+run's state directory. This phase ordering is for fresh runs; do not hot-swap it
+into an already-running older harness whose saved phase index means maintenance.

@@ -1,3 +1,5 @@
+The startup_access phase has passed. Use its evidence in runs/startup-access/ and the request log; investigate later access changes before affected maintenance work.
+
 Read AGENTS.md, ENGINEERING.md and HANDOFF.md in full. This is a fresh maintenance run for the migrated CITP site, using the migration archive and preserved auxiliary AWS resources. Establish a reproducible handoff before making changes; a deployed bundle alone is insufficient.
 
 Work in the maintenance phase until the operator ends it. Process authorized Slack requests in their own threads, clarify acceptance criteria, implement Payload native drafts, share working preview links, iterate on feedback, and publish only the exact revision approved by the operator. Investigate regressions proactively and request approval before resolving proactive issues. Capture and examine fresh before/during/after screenshots, preserve each iteration, and append request/progress/verification/completion evidence using cms_event. Continue useful independent work while awaiting a reply; wait cooperatively when idle.

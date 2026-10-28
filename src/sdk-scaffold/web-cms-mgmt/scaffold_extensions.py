@@ -242,6 +242,56 @@ def checkpoint(root, state_dir):
     path.write_text(json.dumps(current))
 
 
+class AccessAssessment(Options):
+    status: Literal["ready", "blocked", "not_applicable"]
+    reason: str = Field(min_length=1)
+    evidence: list[str] = Field(min_length=1)
+
+
+class AccessReview(Options):
+    codebase: AccessAssessment
+    cms: AccessAssessment
+    aws: AccessAssessment
+    data: AccessAssessment
+    operations: AccessAssessment
+
+
+@GATES.register
+class StartupAccess(Gate):
+    """Persist the orchestrator's rubric judgment, not an independent access audit."""
+    type_name = "cms_startup_access"
+
+    async def evaluate(self, ctx):
+        """Require a complete review and local evidence before advancing phases."""
+        try:
+            review = AccessReview.model_validate_json(ctx.last_output)
+            assessments = review.model_dump()
+            for item in assessments.values():
+                for path in item["evidence"]:
+                    if not ctx.run.workspace.resolve(path).is_file():
+                        raise ToolError("Startup evidence must reference existing workspace files.")
+            checkpoint(ctx.run.workspace.root, ctx.run.state_dir)
+            passed = all(item["status"] != "blocked" for item in assessments.values())
+            passed = passed and all(assessments[name]["status"] == "ready"
+                                    for name in ("codebase", "cms", "aws"))
+            relative = f"runs/startup-access/{uuid.uuid4().hex}.json"
+            path = ctx.run.workspace.resolve(relative)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(review.model_dump_json(indent=2) + "\n")
+            append_record(ctx.run.workspace.root, {
+                "request_id": "startup-access", "kind": "verification" if passed else "blocked",
+                "summary": "Orchestrator startup access judgment: " + ("ready" if passed else "blocked"),
+                "evidence": [relative],
+            })
+            return GateResult(gate=self.name, passed=passed, feedback=(
+                "Startup access accepted by the orchestrator." if passed else
+                "Remain in startup; resolve or escalate missing access and reassess the rubric."))
+        except (ValueError, ToolError, OSError):
+            return GateResult(gate=self.name, passed=False, feedback=(
+                "Return only the complete JSON review specified in prompts/startup.md, "
+                "referencing existing evidence files inside the workspace. Never include credentials."))
+
+
 @GATES.register
 class MaintenanceCycle(Gate):
     type_name = "cms_maintenance_cycle"
@@ -302,7 +352,7 @@ class MaintenanceLoop(PhasedLoop):
             while True:
                 await ctx.refresh_resources()
                 if ctx.budget_exhausted():
-                    return LoopOutcome(status="budget_exhausted", phase="maintenance",
+                    return LoopOutcome(status="budget_exhausted", phase=self.options.phases[min(state.phase_index, len(self.options.phases) - 1)].name,
                                        final_output="Maintenance paused at its reported resource budget; work may be incomplete.")
                 if task is None:
                     task = asyncio.create_task(super().run(runtime, drop_in, ctx, state, store))

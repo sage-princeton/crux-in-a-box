@@ -300,3 +300,89 @@ def test_cost_budget_cancels_unlimited_turn(tmp_path):
     with patch.object(module.PhasedLoop,'run',never),patch.object(module.asyncio,'wait',quick_wait):
         outcome=asyncio.run(loop.run(None,None,ctx,RunState(),StateFile(tmp_path)))
     assert outcome.status=='budget_exhausted' and cancelled
+
+
+def access_review(status="ready"):
+    return {name: {"status": status, "reason": "Observed current access", "evidence": ["probe.txt"]}
+            for name in ("codebase", "cms", "aws", "data", "operations")}
+
+
+@pytest.mark.parametrize("failure", ["blocked", "missing_category", "missing_evidence", "escape", "malformed"])
+def test_startup_access_rejects_incomplete_or_blocked_review(tmp_path, failure):
+    module = extension()
+    (tmp_path / "probe.txt").write_text("Read-only probe results")
+    state = tmp_path / "state"
+    state.mkdir()
+    review = access_review()
+    if failure == "blocked":
+        review["cms"]["status"] = "blocked"
+    elif failure == "missing_category":
+        del review["aws"]
+    elif failure == "missing_evidence":
+        review["aws"]["evidence"] = ["absent.txt"]
+    elif failure == "escape":
+        review["aws"]["evidence"] = ["../outside.txt"]
+    ctx = SimpleNamespace(run=SimpleNamespace(workspace=Workspace(tmp_path), state_dir=state),
+                          last_output="done" if failure == "malformed" else json.dumps(review))
+    gate = module.StartupAccess("access", module.StartupAccess.Options())
+    assert not asyncio.run(gate.evaluate(ctx)).passed
+
+
+def test_startup_access_records_orchestrator_judgment(tmp_path):
+    module = extension()
+    (tmp_path / "probe.txt").write_text("Read-only probe results")
+    state = tmp_path / "state"
+    state.mkdir()
+    ctx = SimpleNamespace(run=SimpleNamespace(workspace=Workspace(tmp_path), state_dir=state),
+                          last_output=json.dumps(access_review()))
+    gate = module.StartupAccess("access", module.StartupAccess.Options())
+    assert asyncio.run(gate.evaluate(ctx)).passed
+    record = json.loads((tmp_path / "REQUESTS.jsonl").read_text())
+    assert record["request_id"] == "startup-access"
+    assert record["kind"] == "verification"
+    assert json.loads((tmp_path / record["evidence"][0]).read_text())["cms"]["status"] == "ready"
+
+
+def test_startup_blocks_maintenance_and_is_skipped_after_restart(drop_in_dir, tmp_path):
+    import tomllib
+
+    from crux_scaffold.drop_in import DropInDirectory
+    from crux_scaffold.gates import GATES
+    from crux_scaffold.loop import RunState, StateFile
+    from crux_scaffold.telemetry import NullTelemetry
+    from crux_scaffold.usage import Budget
+    from crux_scaffold.workspace import RunContext
+
+    from fakes import FakeRuntime, done
+
+    module = extension()
+    config = tomllib.loads((ROOT / "scaffold.toml").read_text().replace("{{WAVE_CREDIT_LIMIT}}", "10"))
+    phases = config["loop"]["phases"]
+    assert [p["name"] for p in phases] == ["startup_access", "maintenance"]
+    for phase in phases:
+        phase.update(max_iterations=1, interval_seconds=0)
+        for key in ("prompt", "continue_prompt"):
+            target = drop_in_dir / phase[key]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text((ROOT / phase[key]).read_text())
+    drop = DropInDirectory.load(drop_in_dir)
+    (drop.workspace / "probe.txt").write_text("Current access probes")
+    store = StateFile(tmp_path / "state")
+    state = RunState()
+    store.save(state)
+    ctx = RunContext(Workspace(drop.workspace), tmp_path / "state", {}, state.usage, Budget(), NullTelemetry())
+    loop = module.MaintenanceLoop("loop", module.MaintenanceLoop.Options(phases=phases), gates={
+        "startup_access": module.StartupAccess("startup_access", module.StartupAccess.Options()),
+        "maintenance_cycle": GATES.create("maintenance_cycle", {"type": "scripted", "results": [{"passed": False}]}),
+    })
+    blocked = FakeRuntime([done(json.dumps(access_review("blocked")))])
+    assert asyncio.run(loop.run(blocked, drop, ctx, state, store)).phase == "startup_access"
+    assert store.load().phase_index == 0
+    accepted = FakeRuntime([done(json.dumps(access_review())), done("waiting for requests")])
+    assert asyncio.run(loop.run(accepted, drop, ctx, store.load(), store)).phase == "maintenance"
+    assert store.load().phase_index == 1
+    before = (drop.workspace / "REQUESTS.jsonl").read_bytes()
+    resumed = FakeRuntime([done("still maintaining")])
+    asyncio.run(loop.run(resumed, drop, ctx, store.load(), store))
+    assert len(resumed.prompts) == 1
+    assert (drop.workspace / "REQUESTS.jsonl").read_bytes() == before

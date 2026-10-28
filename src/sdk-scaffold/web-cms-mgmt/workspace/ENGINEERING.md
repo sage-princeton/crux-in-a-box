@@ -1,3 +1,5 @@
+For startup access briefs, probe only the scoped source, hosts, AWS resources and services using read-only operations and safe local checks. Return sanitized evidence paths, observed identities, limitations and blockers. Do not grant access or deploy to make a check pass; the manager decides readiness.
+
 # Engineering contract
 
 Work in the editable project identified in HANDOFF.md, preserving its Git history,

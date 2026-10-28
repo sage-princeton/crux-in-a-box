@@ -32,12 +32,23 @@ limits = { credits = {{WAVE_CREDIT_LIMIT}} }
 type = "cms_maintenance"
 
 [[loop.phases]]
+name = "startup_access"
+prompt = "prompts/startup.md"
+continue_prompt = "prompts/startup_continue.md"
+gates = ["startup_access"]
+max_iterations = "unlimited"
+interval_seconds = 300
+
+[[loop.phases]]
 name = "maintenance"
 prompt = "PROMPT.md"
 continue_prompt = "prompts/continue.md"
 gates = ["maintenance_cycle"]
 max_iterations = "unlimited"
 interval_seconds = 300
+
+[gates.startup_access]
+type = "cms_startup_access"
 
 [gates.maintenance_cycle]
 type = "cms_maintenance_cycle"

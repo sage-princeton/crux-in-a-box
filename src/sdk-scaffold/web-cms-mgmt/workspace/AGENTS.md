@@ -1,3 +1,5 @@
+Startup access verification precedes maintenance. Follow the startup rubric and queue requests until it passes; the manager may delegate probes but owns the readiness judgment. Preserve evidence and escalate missing access. The saved phase state makes this one-time per run, not per service restart.
+
 # CITP maintenance standing context
 
 Maintain the migrated Drupal main site and WordPress blog now served by Payload

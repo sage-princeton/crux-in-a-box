@@ -96,7 +96,7 @@ flowchart LR
 ## A drop-in directory
 
 [`web-cms-mgmt`](web-cms-mgmt/OPERATOR_GUIDE.md) is the CITP maintenance drop-in:
-restore the migration archive, handle Slack request threads and approved proactive
+restore the migration archive, complete a one-time orchestrator-assessed startup access phase, handle Slack request threads and approved proactive
 issues, iterate on previews, and preserve append-only progress and visual evidence.
 
 ```
