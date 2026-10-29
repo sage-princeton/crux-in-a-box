@@ -309,7 +309,7 @@ class OpenAIAgentsRuntime:
             raise
         return self
 
-    async def __aexit__(self, *exc_info: object) -> None:
+    async def __aexit__(self, *_exc_info: object) -> None:
         try:
             if self.delegates:
                 await self.delegates.close()
@@ -534,7 +534,7 @@ class OpenAIAgentsRuntime:
         model = name or self.context.model
         return self.provider.get_model(model) if self.provider else model
 
-    def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
+    def _instructions(self, _context: RunContextWrapper, agent: Agent) -> str:
         return self.instructions(agent.name)
 
     async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
@@ -996,7 +996,8 @@ MODEL_RETRIES = 8
 
 def _model_settings(options: ModelProvider, env: Mapping[str, str]) -> ModelSettings:
     settings = ModelSettings(
-        reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"),
+        reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None,
+                            summary="auto" if options.api == "responses" else None),
         retry=ModelRetrySettings(
             max_retries=MODEL_RETRIES, policy=TRANSIENT_FAILURES,
             backoff=ModelRetryBackoffSettings(initial_delay=2, max_delay=60, multiplier=2, jitter=True),
@@ -1009,8 +1010,6 @@ def _model_settings(options: ModelProvider, env: Mapping[str, str]) -> ModelSett
         if options.api == "responses":
             settings.store = False
             settings.response_include = ["reasoning.encrypted_content"]
-        else:
-            settings.reasoning = Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None)
     return settings
 
 
