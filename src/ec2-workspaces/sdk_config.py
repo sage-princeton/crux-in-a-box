@@ -44,8 +44,6 @@ def requirements(config: dict, model_provider: str, model: str) -> dict:
             if url.scheme != "https" or not url.hostname or url.username or url.password or url.query or url.fragment:
                 raise ConfigurationError("Provider base_url must be HTTPS without credentials, query or fragment")
     openrouter = base_url is not None and urlsplit(base_url).hostname == "openrouter.ai"
-    if base_url and config.get("context", {}).get("type") == "openai_compaction":
-        raise ConfigurationError("Compatible providers require persistent or trim_recent context; openai_compaction calls direct OpenAI")
     if model_provider == "openrouter" and not openrouter:
         raise ConfigurationError("MODEL_PROVIDER=openrouter requires an OpenRouter runtime.model_provider in the committed drop-in")
     coding = config.get("coding_agents", {})

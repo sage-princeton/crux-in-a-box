@@ -23,7 +23,6 @@ after_ts = "{{SLACK_AFTER_TS}}"
 poll_interval_seconds = 30
 
 [context]
-type = "trim_recent"
 max_items = 200
 
 [budget]

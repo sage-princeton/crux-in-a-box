@@ -15,10 +15,10 @@ from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 
 from crux_scaffold.components import CountLimit, count_limit
-from crux_scaffold.context_strategies import ContextStrategy, is_standing_context
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
 from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.conversation_context import ConversationContext, is_standing_context
 from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
 from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
@@ -37,12 +37,12 @@ class OpenAIAgentsRuntime:
     def __init__(
         self,
         builder: AgentBuilder,
-        context_strategy: ContextStrategy,
+        conversation_context: ConversationContext,
         coding_tasks: CodingTasks,
         max_turns: CountLimit = 50,
     ) -> None:
         self._builder = builder
-        self.context_strategy = context_strategy
+        self.conversation_context = conversation_context
         self._coding_tasks = coding_tasks
         self.max_turns = max_turns
         self._initialize()
@@ -97,7 +97,7 @@ class OpenAIAgentsRuntime:
         _trace_agents_sdk(self.context.telemetry)
         self._build()
         await self._connect()
-        self.session = self.context_strategy.session(self.drop_in.config.orchestrator, self.context)
+        self.session = self.conversation_context.session(self.drop_in.config.orchestrator, self.context)
         return self
 
     async def _connect(self) -> None:
@@ -189,7 +189,7 @@ class OpenAIAgentsRuntime:
     def _turn_input(self, name: str, prompt: str, history: list[Any]) -> list[Any]:
         drop_in, ctx = self.drop_in, self.context
         load = partial(drop_in.standing_context, drop_in.config.agents[name], agent=name, telemetry=ctx.telemetry)
-        prefix = self.context_strategy.inject_standing_context(history, load)
+        prefix = self.conversation_context.inject_standing_context(history, load)
         return [*prefix, {"role": "user", "content": prompt}]
 
     def describe(self) -> list[str]:
@@ -222,10 +222,10 @@ class OpenAIAgentsRuntime:
                         raise InvalidDropInError(status) from None
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
-        items = list(self.context_strategy.select(list(data.model_data.input)))
+        items = list(self.conversation_context.select(list(data.model_data.input)))
         if steering and data.agent.name == self.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
-            # until its next run reloads the durable session, even when a strategy trims older conversation.
+            # until its next run reloads the durable session, even when older conversation is trimmed.
             items.extend(item for item in self._steering_items if item not in items)
         status = await self.context.budget_status()
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")

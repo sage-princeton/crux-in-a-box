@@ -4,9 +4,6 @@ extensions = ["scaffold_extensions.py"]
 [runtime]
 max_turns = 60
 
-[context]
-type = "persistent"
-
 [budget]
 max_total_tokens = 3_000_000
 

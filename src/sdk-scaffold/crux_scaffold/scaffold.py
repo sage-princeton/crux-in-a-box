@@ -10,7 +10,7 @@ from typing import Any
 
 import crux_scaffold.external_resources  # noqa: F401  registers compute resource providers
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
-from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, OpenAICompaction, Persistent, TrimRecent
+from crux_scaffold.config import AgentConfig
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, CommandGate, LlmJudgeGate
@@ -18,6 +18,7 @@ from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, StateFile
 from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
 from crux_scaffold.openai_agents_sdk.agent_tools import AgentTools
 from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.conversation_context import ConversationContext
 from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
 from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
 from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
@@ -56,7 +57,7 @@ class Scaffold:
         if config.budget.max_cost_usd is not None and config.budget.model_resource not in providers:
             raise InvalidDropInError("budget.model_resource must name a declared resource when max_cost_usd is set")
         self.context.resources = ResourceMonitor(providers) if providers else None
-        self.strategy = CONTEXT_STRATEGIES.create("context", config.context)
+        self.conversation_context = ConversationContext(max_items=config.context.max_items)
         self.loop = LOOPS.create(
             "loop", config.loop, gates={name: GATES.create(name, table) for name, table in config.gates.items()}
         )
@@ -80,7 +81,7 @@ class Scaffold:
         coding_tasks = CodingTasks(self.context, delegation, tarts_in_background=config.background_coding)
         tools = AgentTools(self.tools, self.coding_agents, coding_tasks, delegation)
         builder = self._agent_builder(config, tools, overrides)
-        return OpenAIAgentsRuntime(builder, self.strategy, coding_tasks, config.max_turns)
+        return OpenAIAgentsRuntime(builder, self.conversation_context, coding_tasks, config.max_turns)
 
     def _agent_builder(
         self, config: RuntimeConfig, tools: AgentTools, overrides: Mapping[str, Any] | None
@@ -326,33 +327,22 @@ class Scaffold:
         return lines
 
     def _context_instructions(self) -> list[str]:
-        strategy = self.strategy
         spec = self.drop_in.config.agents[self.drop_in.config.orchestrator]
-        lines = [
-            f"Context strategy: `{strategy.type_name}`. Persona is supplied as instructions on every model call.",
-            (
-                f"Standing context is injected as developer messages, capped at {spec.context_max_chars:,} characters. "
-                f"Static drop-in files: {', '.join(spec.context) or 'none'}. "
-                f"Dynamic workspace files: {', '.join(spec.workspace_context) or 'none'}. "
-                "Missing dynamic files and truncation are marked. Read files directly when you need newer/full content."
-            ),
+        return [self.conversation_context.describe(), *self._standing_context_instructions(spec)]
+
+    def _standing_context_instructions(self, spec: AgentConfig) -> list[str]:
+        return [
+            "Persona is supplied as instructions on every model call. SQLite conversation history survives restart.",
+            f"Standing context is injected as developer messages, capped at {spec.context_max_chars:,} characters.",
+            self._context_files_instructions(spec),
         ]
-        if isinstance(strategy, Persistent):
-            lines.append(
-                "The persistent strategy injects standing context once and sends the whole stored "
-                "conversation, including that snapshot, on every call. SQLite history survives restart."
-            )
-        elif isinstance(strategy, TrimRecent):
-            lines.append(
-                f"The strategy retains recent history (max_items {strategy.options.max_items}), preserving "
-                "tool-call boundaries. Standing context refreshes when its snapshot leaves the selected history."
-            )
-        elif isinstance(strategy, OpenAICompaction):
-            lines.append(
-                f"Older history compacts at trigger_items {strategy.options.trigger_items}; standing context "
-                "refreshes after compaction. Compaction uses model calls and counts toward the shared budget."
-            )
-        return lines
+
+    def _context_files_instructions(self, spec: AgentConfig) -> str:
+        return (
+            f"Static drop-in files: {', '.join(spec.context) or 'none'}. "
+            f"Dynamic workspace files: {', '.join(spec.workspace_context) or 'none'}. "
+            "Missing dynamic files and truncation are marked. Read files directly for newer/full content."
+        )
 
     def _loop_instructions(self) -> list[str]:
         loop = self.loop
@@ -433,7 +423,8 @@ class Scaffold:
         config = self.drop_in.config
         return [
             f"drop-in {self.drop_in.root}; runtime openai-agents; orchestrator {config.orchestrator}",
-            f"context {self.strategy.type_name}; budget {config.budget.model_dump(exclude_none=True)}",
+            f"context: {self.conversation_context.describe()}",
+            f"budget {config.budget.model_dump(exclude_none=True)}",
             *(f"resource {name}: {table.get('type', name)}" for name, table in config.resources.items()),
             *(
                 [
