@@ -1,0 +1,13 @@
+# Copy to src/ec2-workspaces/placeholders-contrastive-rl-base.txt.
+# Set the intended AWS_PROFILE before provisioning, or supply ambient credentials.
+AWS_PROFILE=
+AWS_REGION=us-east-1
+INSTANCE_TYPE=m7i.2xlarge
+ROOT_DISK_GB=100
+USE_ELASTIC_IP=false
+KEY_NAME=crux-acp
+AGENT_PLATFORM=openai-agents
+MODEL_PROVIDER=openrouter
+OPENAI_AGENTS_MODEL=anthropic/claude-sonnet-5.5
+OPENAI_AGENTS_REASONING_EFFORT=high
+DROP_IN_PATH=contrastive-reinforcement-learning/pilot
