@@ -16,7 +16,7 @@
   RunPod. Last-hour/10% reserves; AWS infrastructure separate.
 - Changes from the SDK example: task/context, model/routing, spend allowances,
   CRTR source staging, domain-specific reviewer questions, plain article skeleton,
-  unattended operation, readiness and scrubbed SDK export helpers. Agent/delegate topology, loop,
+  unattended operation, scripted launch, readiness and scrubbed SDK export helpers. Agent/delegate topology, loop,
   review gate implementation and cleanup implementation are reused.
 - No incoming paper or additional repository URL is required.
 

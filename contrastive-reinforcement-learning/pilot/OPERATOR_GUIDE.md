@@ -75,39 +75,30 @@ src/ec2-workspaces/make-new-workspace.sh contrastive-rl-pilot-1 \
   --base-secrets src/ec2-workspaces/run-secrets-contrastive-rl.json --dry-run
 ```
 
-Run the same command without `--dry-run` when ready to create the box. Provisioning
-probes real inference, so count its spending toward $100. It leaves crux-sdk-run
-stopped. Verify traced/priced SDK and Codex calls and RunPod create/connect/delete
-with the owned-run marker before starting research.
-
-Copy CRTR-main.zip to the new box as `/tmp/CRTR-main.zip`. On that box, as ubuntu,
-with crux-sdk-run stopped, make a fresh prepared bundle:
+Launch from the repo root through the pilot script:
 
 ```bash
-cd /srv/crux-run
-mv run-harness run-harness-template
-python3 run-harness-template/prepare.py --archive /tmp/CRTR-main.zip \
-  --output /srv/crux-run/run-harness
+python3 contrastive-reinforcement-learning/pilot/launch.py contrastive-rl-pilot-1 \
+  --archive contrastive-reinforcement-learning/CRTR-main.zip
 ```
 
-The script checks the pinned archive SHA-256, rejects unsafe members and records
-SOURCE.json. The TOML is complete without channel settings. It refuses an existing output;
-the template stays unchanged. On failure, no partial prepared bundle is installed.
-
-As operator, with the service environment loaded through systemd, assemble/check
-the actual prepared configuration before start:
+The script validates and prepares the source locally before creating resources,
+then calls `make-new-workspace.sh` with the private pilot config/secrets. It packs
+the prepared bundle and scanner into one scripted staging stream, builds the
+paper, checks the real service configuration and starts crux-sdk-run. There are
+no manual archive/scanner copy steps. For a box already successfully provisioned
+by the fleet scripts, add `--provisioned`:
 
 ```bash
-sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
-  -p EnvironmentFile=/etc/crux-run.env \
-  /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold check \
-  --drop-in /srv/crux-run/run-harness --state-dir /srv/crux-run/state
+python3 contrastive-reinforcement-learning/pilot/launch.py contrastive-rl-20261029 \
+  --archive contrastive-reinforcement-learning/CRTR-main.zip --provisioned
 ```
 
-Compile `workspace/paper/paper.tex`, inspect source/runtime readiness and current
-spending, then start with `sudo systemctl start crux-sdk-run`. The six-hour clock
-starts at research launch; preparation/probe spending still counts toward the
-provider key's total cap. Follow `journalctl -u crux-sdk-run -f` on the box.
+The launcher refuses to replace an active or previously started run. It records
+the supplied key's already-used inference in PRELAUNCH.json and PLAN.md, and
+deducts it from the runtime's nominal $100 allowance. It leaves provider limits
+unchanged. The six-hour clock starts at research launch. Follow the service
+journal and the run's Langfuse environment for progress.
 
 ## Records and shutdown
 
@@ -124,8 +115,7 @@ literal and shape checks. Only a successful scan installs the export directory.
 An empty Langfuse result fails export; allow ingestion to finish and retry with a
 fresh output directory. The temporary blacklist stays on the box and is deleted.
 
-Copy `utils/scan-secrets.py` from this checkout to the box at
-`/tmp/crux-scan-secrets.py`. After stopping research, run the exporter with the
+The launcher stages `scan-secrets.py` in the run bundle. After stopping research, run the exporter with the
 actual service environment (including Langfuse credentials):
 
 ```bash
@@ -133,7 +123,7 @@ sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
   -p EnvironmentFile=/etc/crux-run.env \
   /opt/crux-sdk-scaffold/.venv/bin/python \
   /srv/crux-run/run-harness/export_trace.py \
-  --scanner /tmp/crux-scan-secrets.py --output /srv/crux-run/export-1
+  --scanner /srv/crux-run/run-harness/scan-secrets.py --output /srv/crux-run/export-1
 ```
 
 Transfer only `export-1/` into ignored `runs-export/<run-slug>/`, scan it again

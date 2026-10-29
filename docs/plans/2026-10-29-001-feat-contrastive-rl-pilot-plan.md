@@ -32,6 +32,8 @@ and $30 RunPod. `prepare.py` validates/extracts the pinned archive into a fresh
 bundle. `preflight.py` reports missing inputs
 and can perform read-only service checks. `export_trace.py` extracts and scrubs
 SDK sessions plus run-filtered Langfuse observations on the box before transfer.
+`launch.py` calls the fleet provisioner, stages a verified source/scanner bundle,
+deducts prelaunch inference spending, checks the service and starts the pilot.
 Concrete deployment and launch commands are in its `OPERATOR_GUIDE.md`.
 
 The supplied archive has been staged in a temporary validation bundle and passed

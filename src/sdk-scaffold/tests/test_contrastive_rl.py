@@ -5,6 +5,7 @@ import json
 import shutil
 import sqlite3
 import sys
+import tarfile
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -207,3 +208,44 @@ def test_export_rejects_cross_run_observations(tmp_path, monkeypatch):
         "data": [{"environment": "other-run"}], "meta": {"totalPages": 1}})
     with pytest.raises(ValueError, match="environment"):
         list(module.observations({"RUN_SLUG": "contrastive-test"}, "2026-10-29T12:00:00+00:00"))
+
+
+def test_launch_script_stages_prepared_sources_and_scanner_through_one_scripted_transport(
+        tmp_path, monkeypatch, preparation, source_archive):
+    monkeypatch.syspath_prepend(str(PILOT))
+    monkeypatch.setitem(sys.modules, "prepare", preparation)
+    spec = importlib.util.spec_from_file_location("contrastive_launch", PILOT / "launch.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    transported = []
+    monkeypatch.setattr(module, "preflight_spend", lambda scripts: 1.25)
+
+    def run(command, **kwargs):
+        assert command[0] == "ssh"
+        assert command[1] == "contrastive-test"
+        with tarfile.open(fileobj=kwargs["stdin"], mode="r:") as archive:
+            transported.extend(archive.getnames())
+            record = json.load(archive.extractfile("run-harness/workspace/SOURCE.json"))
+            assert record["archive_sha256"] == preparation.ARCHIVE_SHA256
+            budget = json.load(archive.extractfile("run-harness/workspace/PRELAUNCH.json"))
+            assert budget["remaining_inference_usd"] == 98.75
+            assert "max_cost_usd = 98.75000000" in archive.extractfile("run-harness/scaffold.toml").read().decode()
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(module.subprocess, "run", run)
+    module.launch(PILOT, source_archive, "contrastive-test", False)
+    assert "run-harness/workspace/crtr/runner.py" in transported
+    assert "run-harness/scan-secrets.py" in transported
+    assert not any("secrets.json" in name or name.endswith(".env") for name in transported)
+
+
+def test_launch_rejects_bad_source_before_provisioning(tmp_path, monkeypatch, preparation, source_archive):
+    monkeypatch.syspath_prepend(str(PILOT))
+    monkeypatch.setitem(sys.modules, "prepare", preparation)
+    spec = importlib.util.spec_from_file_location("contrastive_launch", PILOT / "launch.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    source_archive.write_bytes(b"wrong source")
+    monkeypatch.setattr(module.subprocess, "run", lambda *args, **kwargs: pytest.fail("Must not provision or transfer"))
+    with pytest.raises(ValueError, match="checksum"):
+        module.launch(PILOT, source_archive, "contrastive-test", True)
