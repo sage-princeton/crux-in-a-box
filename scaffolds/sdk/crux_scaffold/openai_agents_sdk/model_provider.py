@@ -23,7 +23,7 @@ class ModelProvider(BaseModel):
     max_request_bytes: int | None = Field(None, gt=0, strict=True)
 
     @model_validator(mode="after")
-    def validate_provider(self) -> Self:
+    def _validate_provider(self) -> Self:
         if self.type == "openai-compatible" and self.base_url is None:
             raise ValueError("openai-compatible model_provider requires base_url")
         if self.type == "openai" and (
