@@ -237,7 +237,7 @@ extensions = ["scaffold_extensions.py"]
 tools = ["read_file", "site_preview"]
 ```
 
-Gates, context strategies, coding agents, loops and runtimes extend the same way. [docs/extending.md](docs/extending.md) describes each extension point's contract, and when to extend one rather than add a new abstraction.
+Gates, context strategies, coding agents and loops extend the same way. [docs/extending.md](docs/extending.md) describes each extension point's contract and the direct SDK integration.
 
 ## Adapting the demo
 
@@ -379,7 +379,7 @@ python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (
 python -m crux_scaffold probe --drop-in DIR           # probe the drop-in's configured model provider
 ```
 
-`probe --drop-in DIR` selects the runtime and its options from `scaffold.toml`. Without `--drop-in`, the probe uses the built-in OpenAI Agents runtime and direct OpenAI provider.
+`probe --drop-in DIR` reads the OpenAI Agents SDK options and model provider from `scaffold.toml`. Without `--drop-in`, the probe uses the direct OpenAI provider.
 
 `probe --coding-agent codex` retries temporary-directory cleanup for up to 3.1 seconds when Codex's background plugin checkout is still writing files after its session closes. Other cleanup errors, or a directory that remains busy, still fail the probe.
 

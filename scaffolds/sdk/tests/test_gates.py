@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from crux_scaffold.agent_runtimes.base import Verdict
+from crux_scaffold.agent_runtimes.openai_agents_sdk import Verdict
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, GateContext

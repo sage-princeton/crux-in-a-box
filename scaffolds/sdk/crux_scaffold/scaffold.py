@@ -10,9 +10,8 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-import crux_scaffold.agent_runtimes.openai_agents_sdk
 import crux_scaffold.external_resources  # noqa: F401  registers compute resource providers
-from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
+from crux_scaffold.agent_runtimes.openai_agents_sdk import Assembly, OpenAIAgentsOptions, OpenAIAgentsRuntime
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.drop_in import DropInDirectory
@@ -58,8 +57,9 @@ class Scaffold:
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
         self.assembly = Assembly(drop_in, self.context, tools, self.coding_agents, self.strategy, self._instructions,
                                  self._research_context)
-        self.runtime = RUNTIMES.create("runtime", config.runtime, assembly=self.assembly, **(runtime_overrides or {}))
-        steering = getattr(self.runtime.options, "steering", None)
+        self.runtime = OpenAIAgentsRuntime(OpenAIAgentsOptions.from_config(config.runtime), assembly=self.assembly,
+                                          **(runtime_overrides or {}))
+        steering = self.runtime.options.steering
         if steering:
             if steering.server not in config.mcp_servers:
                 raise InvalidDropInError(f"steering uses undefined MCP server '{steering.server}'")
@@ -117,7 +117,7 @@ class Scaffold:
                  "", "## Loop and gates", "", *self._loop_instructions(),
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
-        if turns := getattr(self.runtime.options, "max_turns", None):
+        if turns := self.runtime.options.max_turns:
             lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
                          else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
         lines += [f"- `{name}`: {self.assembly.tools[name].description}" for name in spec.tools]

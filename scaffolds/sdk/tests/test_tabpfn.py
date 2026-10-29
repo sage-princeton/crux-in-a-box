@@ -14,7 +14,7 @@ from agents import Agent
 from agents.run_config import CallModelData, ModelInputData
 from test_blind_review import submission_pdf
 
-from crux_scaffold.agent_runtimes.base import TurnOutcome, Verdict
+from crux_scaffold.agent_runtimes.openai_agents_sdk import TurnOutcome, Verdict
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.gates import GateContext, GateResult
 from crux_scaffold.scaffold import Scaffold

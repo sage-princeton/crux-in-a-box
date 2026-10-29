@@ -22,9 +22,9 @@ Prefer the first option that works:
 | How phases and iterations are sequenced | [`Loop`](#loops-loop) | `[[loop.phases]]` |
 | What part of a conversation reaches the model | [`ContextStrategy`](#context-strategies-contextstrategy) | `[context]`; each agent's `context`, `workspace_context`, `context_max_chars` |
 | Which coding-agent SDK implements a brief | [`CodingAgent`](#coding-agents-codingagent) | `[coding_agents]` |
-| Which agent SDK runs the agents | [`AgentRuntime`](#agent-runtimes-agentruntime) | `[runtime]` |
+| Agent orchestration and model provider | [OpenAI Agents SDK integration](#openai-agents-sdk-integration) | `[runtime]` |
 | Where traces go | [`Telemetry`](#telemetry-telemetry) | Langfuse environment variables |
-| Hard resource limits | [`Budget`](#budget-and-usage), [`AgentRuntime`](#agent-runtimes-agentruntime) | `[budget]`, `[delegation]` |
+| Hard resource limits | [`Budget`](#budget-and-usage), [OpenAI Agents SDK integration](#openai-agents-sdk-integration) | `[budget]`, `[delegation]` |
 | External consumption and credits | [`ResourceProvider`](#resource-providers-resourceprovider) | `[resources.<name>]` |
 
 ## The component pattern
@@ -39,7 +39,7 @@ Built-in components register themselves when their module is imported. `scaffold
 
 **`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. A new dependency between components is passed in there, as a constructor keyword or through `Assembly`; components do not build one another.
 
-**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
+**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`. Loops and gates reference `OpenAIAgentsRuntime` only through type-checking imports.
 
 **Error behavior:**
 
@@ -273,11 +273,11 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 - **Delegation limits apply at the runtime boundary.** One coding-worker brief occupies one slot and adds one depth edge. Native subagents inside its coding harness do not consume additional scaffold slots or depth. A coding-agent implementation does not acquire a second slot in `execute` or `run`.
 
-## Agent runtimes (`AgentRuntime`)
+## OpenAI Agents SDK integration
 
-`agent_runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `agent_runtimes/openai_agents_sdk.py`.
+`OpenAIAgentsRuntime` in `agent_runtimes/openai_agents_sdk.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry. The same module owns `Assembly`, `TurnOutcome`, `Verdict` and delegation capacity management.
 
-A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, and the context strategy. `runtime_overrides` add further keyword arguments, such as the test models that `openai-agents` takes. A new runtime module must be imported by `scaffold.py` so it registers. Its SDK stays inside that module.
+`scaffold.py` constructs `OpenAIAgentsRuntime(options, assembly=...)` with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, the context strategy and an instructions callback. `runtime_overrides` add further keyword arguments, such as scripted test models. `OpenAIAgentsOptions.from_config` validates `[runtime]` and reports `InvalidDropInError` for invalid options. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Options include `max_turns`, `model_provider`, `background_coding` and `steering`. The CLI's probe calls this integration directly with the same validated options, omitting steering during provisioning.
 
 `Assembly.instructions(agent_name) -> str` returns stable setup + persona + static files, cached at assembly. `Assembly.research_context(agent_name) -> str` returns current workflow/remaining rest, for the orchestrator the runtime's `coding_status()` line, and bounded declared research files. Runtime implementations call the latter at their model boundary; generated setup is scoped to each agent's actual capabilities. The built-in phased loop's current iteration, recent gate outcomes, process start and restart count come from persisted RunState, with references to full feedback; custom loops retain `describe()` for their stable summary.
 
@@ -308,7 +308,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 - **Delegates.**
   - A delegated agent or coding agent is a tool whose call starts from a fresh context holding only the caller's brief.
   - A coding agent is called through `CodingAgent.run`.
-  - Wrap the entire delegated invocation in `async with self.delegation_slot()`, including SDK execution, coding-worker execution and error handling. The base runtime owns the run's shared capacity and propagates nested call identity through task-local context. Blocking callers must await their children inside the scope. Independently scheduled background workers acquire `delegation_slot(background=True)` inside their task, covering the complete worker execution without suspending their continuing caller. Wrap result waits in `delegation_wait()` so a one-slot parent can await its worker. Own, drain and cancel background tasks through the runtime lifecycle; do not suppress cancellation.
+  - Wrap the entire delegated invocation in `async with self.delegation_slot()`, including SDK execution, coding-worker execution and error handling. `OpenAIAgentsRuntime` owns the run's shared capacity and propagates nested call identity through task-local context. Blocking callers must await their children inside the scope. Independently scheduled background workers acquire `delegation_slot(background=True)` inside their task, covering the complete worker execution without suspending their continuing caller. Wrap result waits in `delegation_wait()` so a one-slot parent can await its worker. Own, drain and cancel background tasks through the runtime lifecycle; do not suppress cancellation.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
 - **Context.** The existing `_select_input` filter removes known legacy standing snapshots, cuts the orchestrator's history at its latest successful `restart_context` call (`context_strategies.since_restart`: the last exchange boundary at or before the call, keeping that response's tool pairs and every earlier operator steering envelope; a refused call cuts nothing), applies `context_strategy.select`, then assembles a fresh user tail from `Assembly.research_context`, `ctx.budget_status()` and any transport warning. The first call moves the trailing user task into that tail once; tool continuations retain the raw task and complete exchanges, refreshing only the state. SDK sessions persist the original raw input and output, not filter additions. The SDK input sequence identifies the current task: a new run ends with a user message, while tool continuations end with tool results. Retried operator steering envelopes remain historical instructions, not a new task. A separate `pending-turn-<agent-hash>.json` input-admission record stores the phase, task hash and original history offset before the SDK writes a new task. On retry, an exact task at that offset is reused by passing empty new input; any stored tool progress remains available. The record survives exceptions/cancellation and clears on a normal runtime return, including a turn-limit outcome. This prevents duplicate input across interrupted runtime calls; it does not provide exactly-once tool execution or cover failures after the runtime returns to gates. Never infer duplicates merely from repeated text. Never reorder or drop tool pairs or real historical user messages to deduplicate text. Judges use a separate cache-only filter without shared run state.
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
@@ -502,9 +502,8 @@ Filters do not themselves persist input in the SDK, so the runtime also carries
 new envelopes through the current Runner call after context selection. Subsequent
 Runner calls reload them from the conversation. Older instructions remain ordinary
 history and can be trimmed by a context strategy. Delegates receive only their
-brief, never the operator inbox automatically; new runtimes must implement this
-contract if they add a steering option. Custom strategies must provide a durable
-session for restart guarantees.
+brief, never the operator inbox automatically. Custom strategies must provide a
+durable session for restart guarantees.
 
 `rest` charges only the sleep completed before early wake. Phase intervals also
 use `RunContext.wait`; both check pending state before starting another transport
