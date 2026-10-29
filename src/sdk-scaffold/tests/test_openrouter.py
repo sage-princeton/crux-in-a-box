@@ -9,9 +9,9 @@ import pytest
 from openai import APIStatusError, AsyncOpenAI
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsOptions, OpenAIAgentsRuntime
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
+from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsOptions, OpenAIAgentsRuntime
 from crux_scaffold.telemetry import NullTelemetry, RunIdentity, telemetry_from_env
 
 ENV = {"CRUX_MODEL": "google/gemini-4-argon", "CRUX_REASONING_EFFORT": "low",
@@ -68,7 +68,7 @@ def router(monkeypatch, drop_in_dir):
         configs.append(kwargs)
         return AsyncOpenAI(**kwargs, max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)))
 
-    monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.AsyncOpenAI", client)
+    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.openai_agents_sdk.AsyncOpenAI", client)
     return requests, pending, configs
 
 

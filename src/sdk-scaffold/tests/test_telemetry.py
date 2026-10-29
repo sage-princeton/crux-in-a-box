@@ -10,8 +10,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from test_blind_review import configure_blind
 
 from crux_scaffold import cli
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
+from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.telemetry import (
     LangfuseTelemetry,
     NullTelemetry,

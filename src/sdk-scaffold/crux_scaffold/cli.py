@@ -11,13 +11,13 @@ from collections.abc import Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from crux_scaffold.agent_runtimes.model_provider_options import ModelProviderOptions
-from crux_scaffold.agent_runtimes.openai_agents_options import OpenAIAgentsOptions
-from crux_scaffold.agent_runtimes.openai_agents_sdk import probe_model
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.config import load_config
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
+from crux_scaffold.openai_agents_sdk.model_provider_options import ModelProviderOptions
+from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
+from crux_scaffold.openai_agents_sdk.openai_agents_sdk import probe_model
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity, Telemetry, telemetry_from_env
 from crux_scaffold.usage import Budget, UsageLedger

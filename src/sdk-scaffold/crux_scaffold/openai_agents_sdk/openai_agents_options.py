@@ -5,9 +5,9 @@ from typing import Any, Literal, Self
 
 from pydantic import ValidationError
 
-from crux_scaffold.agent_runtimes.model_provider_options import ModelProviderOptions
 from crux_scaffold.components import CountLimit, Options, describe
 from crux_scaffold.errors import InvalidDropInError
+from crux_scaffold.openai_agents_sdk.model_provider_options import ModelProviderOptions
 from crux_scaffold.steering import SteeringOptions
 
 

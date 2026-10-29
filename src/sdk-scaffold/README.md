@@ -43,7 +43,7 @@ Agents run directly on the OpenAI Agents SDK. Pluggable components register them
 | Observability | `Telemetry` | Langfuse, or off |
 | Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `OpenAIAgentsRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`; delegation concurrency and depth limits |
 
-`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/` and `context_strategies.py`, and Codex to `coding_agents.py`. Each class supporting the OpenAI runtime has its own module in `agent_runtimes/`.
+`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `openai_agents_sdk/` and `context_strategies.py`, and Codex to `coding_agents.py`. Each class supporting the OpenAI runtime has its own module in `openai_agents_sdk/`.
 
 `[runtime]` configures the OpenAI Agents SDK directly. Its optional `type = "openai-agents"` key remains accepted for existing drop-ins; other runtime types are rejected. Runtime implementations are not an extension point.
 

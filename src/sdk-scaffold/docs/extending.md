@@ -39,7 +39,7 @@ Built-in components register themselves when their module is imported. `scaffold
 
 **`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. Dependencies between components are passed as constructor keywords; components do not build one another.
 
-**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/` and `context_strategies.py`, and Codex to `coding_agents.py`. Loops and gates reference `OpenAIAgentsRuntime` only through type-checking imports.
+**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `openai_agents_sdk/` and `context_strategies.py`, and Codex to `coding_agents.py`. Loops and gates reference `OpenAIAgentsRuntime` only through type-checking imports.
 
 **Errors have two kinds:**
 
@@ -238,7 +238,7 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 ## OpenAI Agents SDK integration
 
-`OpenAIAgentsRuntime` in `agent_runtimes/openai_agents_sdk.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `agent_runtimes/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider_options.py`, `openai_agents_options.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
+`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_sdk.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `openai_agents_sdk/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider_options.py`, `openai_agents_options.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
 
 `scaffold.py` constructs `OpenAIAgentsRuntime(options, *, drop_in, context, tools, coding_agents, context_strategy, instructions, models=None)` with its dependencies passed directly. `models` substitutes scripted models by agent name; the scaffold's `runtime_overrides` supplies this test seam. `OpenAIAgentsOptions.from_config` validates `[runtime]` and reports `InvalidDropInError` for invalid options. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Options include `max_turns`, `model_provider`, `background_coding` and `steering`. The CLI validates runtime settings without steering during provisioning and passes only the model-provider settings to the module-level `probe_model` function.
 

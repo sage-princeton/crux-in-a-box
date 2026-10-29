@@ -20,7 +20,7 @@ from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import RunContext
 
 if TYPE_CHECKING:
-    from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
+    from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsRuntime
 
 
 class IterationRecord(BaseModel):
