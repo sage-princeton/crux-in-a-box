@@ -47,9 +47,11 @@ class CodingAgent(Component):
     Options = CodingAgentOptions
 
     def __init__(self, name: str, options: CodingAgentOptions, *,
-                 developer_instructions: str | Callable[[], str] = "") -> None:
+                 developer_instructions: str | Callable[[], str] = "",
+                 research_context: Callable[[], str] = lambda: "") -> None:
         super().__init__(name, options)
         self._developer_instructions = developer_instructions
+        self._research_context = research_context
 
     @property
     def developer_instructions(self) -> str:
@@ -61,7 +63,11 @@ class CodingAgent(Component):
         return self.options.description
 
     async def run(self, brief: str, ctx: RunContext) -> CodingResult:
-        with ctx.telemetry.generation(self.name, ctx.model, brief) as outcome:
+        context = self._research_context()
+        if context:
+            brief = f"<research_context>\n{context}\n</research_context>\n\n# Current task\n\n{brief}"
+        request = {"instructions": self.developer_instructions, "messages": [{"role": "user", "content": brief}]}
+        with ctx.telemetry.generation(self.name, ctx.model, request) as outcome:
             result = await self.execute(brief, ctx)
             outcome.output, outcome.usage = result.final_response, result.usage
         ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens)
@@ -115,8 +121,9 @@ class CodexCodingAgent(CodingAgent):
     Options = CodexOptions
 
     def __init__(self, name: str, options: CodexOptions, *, developer_instructions: str | Callable[[], str] = "",
+                 research_context: Callable[[], str] = lambda: "",
                  client_factory: ClientFactory = codex_client) -> None:
-        super().__init__(name, options, developer_instructions=developer_instructions)
+        super().__init__(name, options, developer_instructions=developer_instructions, research_context=research_context)
         self.client_factory = client_factory
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:

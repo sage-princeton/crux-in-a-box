@@ -60,10 +60,10 @@ def test_trim_recent_limits_what_the_model_sees_but_not_the_stored_history(drop_
     pm = ScriptedModel(say("first"), say("second"))
     scaffold = assemble(drop_in_dir, {"pm": pm})
     asyncio.run(turns(scaffold, "hello", "again"))
-    assert len(pm.inputs[1]) == 3
+    assert len(pm.inputs[1]) == 1
     assert "<resource_status>" in pm.inputs[1][-1]["content"]
     stored = asyncio.run(scaffold.strategy.session("pm", scaffold.context).get_items())
-    assert len(stored) == 6
+    assert len(stored) == 4
 
 
 class RecordingTelemetry(NullTelemetry):
@@ -132,14 +132,15 @@ def test_openai_compaction_calls_count_toward_the_budget_and_reach_telemetry(tmp
     assert (traced.cached_input_tokens, traced.reasoning_output_tokens, traced.total_tokens) == (600, 50, 1200)
 
 
-def test_strategies_must_implement_standing_context_injection():
+def test_strategies_only_select_conversation_history():
     from crux_scaffold.context_strategies import ContextStrategy
 
-    with pytest.raises(TypeError, match="inject_standing_context"):
-        ContextStrategy("unimplemented", ContextStrategy.Options())
+    strategy = ContextStrategy("default", ContextStrategy.Options())
+    assert strategy.select([user("task")]) == [user("task")]
+    assert not hasattr(strategy, "inject_standing_context")
 
 
-def test_persistent_snapshot_survives_restart_without_reloading_files(drop_in_dir, assemble):
+def test_restart_reassembles_instructions_without_historical_snapshots(drop_in_dir, assemble):
     pm = ScriptedModel(say("first"))
     scaffold = assemble(drop_in_dir, {"pm": pm})
     asyncio.run(turns(scaffold, "hello"))
@@ -148,10 +149,11 @@ def test_persistent_snapshot_survives_restart_without_reloading_files(drop_in_di
     resumed = assemble(drop_in_dir, {"pm": pm})
     asyncio.run(turns(resumed, "again"))
     assert "PM standing context." not in str(pm.instructions)
-    assert str(pm.inputs[0]).count("PM standing context.") == 1
+    assert "PM standing context." not in str(pm.inputs[0])
+    assert "Changed standing context." in pm.instructions[0]
     assert "Changed standing context." not in str(pm.inputs[0])
     stored = asyncio.run(resumed.runtime.session.get_items())
-    assert str(stored).count("PM standing context.") == 1
+    assert "standing context." not in str(stored)
 
 
 @pytest.mark.parametrize("retain_snapshot", [False, True])
@@ -169,7 +171,8 @@ def test_compaction_refreshes_context_on_the_next_turn(drop_in_dir, assemble, re
         async with scaffold.runtime as runtime:
             await runtime.run("hello", workflow="main")
             if retain_snapshot:
-                scaffold.strategy.client.output.insert(0, pm.inputs[0][0])
+                scaffold.strategy.client.output.insert(0, {"role": "developer", "content": [
+                    {"type": "input_text", "text": "# CRUX standing context\nSTALE"}]})
             (drop_in_dir / "workspace/REQUEST.md").write_text("Current request.")
             await runtime.session.run_compaction({"force": True})
             assert "<resource_status>" not in str(scaffold.strategy.client.calls[0]["input"])
@@ -198,5 +201,6 @@ def test_trim_recent_keeps_standing_context_during_tool_calls(drop_in_dir, assem
             await runtime.run("again", workflow="main")
 
     asyncio.run(run())
-    assert all("Standing context: workspace/AGENTS.md" in str(items) for items in pm.inputs)
-    assert "Updated context." in str(pm.inputs[-1])
+    assert all("Standing context: workspace/AGENTS.md" in text for text in pm.instructions)
+    assert pm.instructions[0] == pm.instructions[-1]
+    assert "Updated context." not in str(pm.inputs[-1])

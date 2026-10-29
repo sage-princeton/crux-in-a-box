@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 from collections.abc import Mapping
-from contextlib import AsyncExitStack
+from contextlib import AsyncExitStack, contextmanager
+from contextvars import ContextVar
 from dataclasses import replace
-from functools import partial
 from typing import Any, Literal, Self
 
 from agents import (
@@ -23,6 +24,7 @@ from agents import (
     RunContextWrapper,
     RunHooks,
     Runner,
+    add_trace_processor,
     set_tracing_disabled,
 )
 from agents.exceptions import MaxTurnsExceeded
@@ -33,10 +35,12 @@ from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool import ToolOutputImage, ToolOutputText
 from agents.tool_context import ToolContext
+from agents.tracing import TracingProcessor
 from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
+from opentelemetry.trace import get_current_span
 from pydantic import Field, HttpUrl, ValidationError, model_validator
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
@@ -52,6 +56,46 @@ from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
+
+_TURN: ContextVar[dict | None] = ContextVar("scaffold_turn", default=None)
+_REQUEST: ContextVar[dict | None] = ContextVar("scaffold_request", default=None)
+
+
+@contextmanager
+def request_scope():
+    turn_token = _TURN.set({"prompt": None, "calls": 0})
+    request_token = _REQUEST.set(None)
+    try:
+        yield
+    finally:
+        _REQUEST.reset(request_token)
+        _TURN.reset(turn_token)
+
+
+class RequestTraceProcessor(TracingProcessor):
+    """Enrich the existing SDK generation, after OpenInference opens its OTel span."""
+
+    def on_span_start(self, span) -> None:
+        request = _REQUEST.get()
+        if request is not None and span.span_data.type in {"response", "generation"}:
+            current = get_current_span()
+            current.set_attribute("langfuse.observation.input", json.dumps(request["input"]))
+            current.set_attribute("langfuse.observation.metadata.request_layout", json.dumps(request["layout"]))
+
+    def on_trace_start(self, trace) -> None:
+        pass
+
+    def on_trace_end(self, trace) -> None:
+        pass
+
+    def on_span_end(self, span) -> None:
+        pass
+
+    def shutdown(self) -> None:
+        pass
+
+    def force_flush(self) -> None:
+        pass
 
 
 class ModelProviderOptions(Options):
@@ -225,10 +269,13 @@ class OpenAIAgentsRuntime(AgentRuntime):
             await self._stack.aclose()
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
+        with request_scope():
+            return await self._run(prompt, workflow=workflow)
+
+    async def _run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self._steering_items = []
         orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
-        history = await self.session.get_items()
-        input = self._turn_input(orchestrator.name, prompt, history)
+        input = self._turn_input(prompt)
         try:
             try:
                 result = await Runner.run(
@@ -327,14 +374,15 @@ class OpenAIAgentsRuntime(AgentRuntime):
             tools=[self._function_tool(self.assembly.tools[tool], ctx) for tool in tools],
         )
         try:
-            result = await Runner.run(
-                agent,
-                evidence,
-                context=ctx,
-                max_turns=max_turns,
-                hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
-                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=self._select_cache_input),
-            )
+            with request_scope():
+                result = await Runner.run(
+                    agent,
+                    evidence,
+                    context=ctx,
+                    max_turns=max_turns,
+                    hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
+                    run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=self._select_cache_input),
+                )
         except MaxTurnsExceeded:
             return Verdict(
                 passed=False,
@@ -343,11 +391,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
             )
         return result.final_output
 
-    def _turn_input(self, name: str, prompt: str, history: list[Any]) -> list[Any]:
-        drop_in, ctx = self.assembly.drop_in, self.assembly.context
-        load = partial(drop_in.standing_context, drop_in.config.agents[name], agent=name, telemetry=ctx.telemetry)
-        prefix = self.assembly.context_strategy.inject_standing_context(history, load)
-        return [*prefix, {"role": "user", "content": prompt}]
+    def _turn_input(self, prompt: str) -> list[Any]:
+        if turn := _TURN.get():
+            turn["prompt"] = prompt
+        return [{"role": "user", "content": prompt}]
 
     def describe(self) -> list[str]:
         self.build()
@@ -425,34 +472,65 @@ class OpenAIAgentsRuntime(AgentRuntime):
                         raise InvalidDropInError(status) from None
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
-        items = list(self.assembly.context_strategy.select(list(data.model_data.input)))
+        history = [item for item in data.model_data.input if not is_standing_context(item)]
+        items = list(self.assembly.context_strategy.select(history))
+        turn = _TURN.get()
+        prompt = turn["prompt"] if turn else None
+        prompt_index = next((index for index in range(len(items) - 1, -1, -1)
+                             if items[index].get("role") == "user" and items[index].get("content") == prompt), None)
+        new_task = turn is not None and turn["calls"] == 0 and prompt is not None
+        if new_task and prompt_index is not None:
+            items.pop(prompt_index)
+
+        history_end = len(items) if new_task else prompt_index
+        exchanges_end = len(items)
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
             # until its next run reloads the durable session, even when a strategy trims older conversation.
             items.extend(item for item in self._steering_items if item not in items)
+        research = self.assembly.research_context(data.agent.name)
+        annotations.insert(0, f"<research_context>\n{research}\n</research_context>")
         status = await self.assembly.context.budget_status()
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")
         items = self._cache_input(items)
-        # The filter's additions are not stored by Runner. Append after selection so a fresh
-        # snapshot survives trimming without changing the reusable instructions/history prefix.
-        # A user message keeps Gemini adapters from folding volatile status into system instructions.
-
-        # Gemini seems to *not* cache if we use role: developer here; only role: user works.
-        # OpenAI *will* cache with either role: user or role: developer.
-        # For now, we're using role: user since that works on both platforms
-        # TODO: re-visit this to see what effects this has on performance/how the model providers treat this approach
+        if new_task:
+            annotations.append(f"# Current task\n\n{prompt}")
+        context_index = len(items)
         items.append({"role": "user", "content": "\n\n".join(annotations)})
-        return ModelInputData(input=items, instructions=data.model_data.instructions)
+        if turn is not None:
+            turn["calls"] += 1
+        layout = {
+            "stage": "sdk_model_input", "agent": data.agent.name,
+            "model_call_in_turn": turn["calls"] if turn else None,
+            "new_task": new_task, "context_index": context_index,
+            "task_index": context_index if new_task else prompt_index,
+            "history_end": history_end,
+            "in_turn_end": exchanges_end,
+            "steering_indices": list(range(exchanges_end, context_index)),
+            "in_turn_start": None if new_task or prompt_index is None else prompt_index + 1,
+            "legacy_snapshots_removed": len(data.model_data.input) - len(history),
+            "context_sources": self.assembly.drop_in.config.agents[data.agent.name].workspace_context,
+            "indices": "Zero-based messages indices; end boundaries are exclusive. Context is not persisted.",
+        }
+        result = ModelInputData(input=items, instructions=data.model_data.instructions)
+        self._trace_request(result, layout)
+        return result
+
+    @staticmethod
+    def _trace_request(data: ModelInputData, layout: dict) -> None:
+        _REQUEST.set({"input": {"instructions": data.instructions, "messages": data.input}, "layout": layout})
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
-        # Judges get only cache markers, without context selection, steering or resource metadata.
-        return ModelInputData(input=self._cache_input(list(data.model_data.input)),
-                              instructions=data.model_data.instructions)
+        result = ModelInputData(input=self._cache_input(list(data.model_data.input)),
+                                instructions=data.model_data.instructions)
+        self._trace_request(result, {"stage": "sdk_model_input", "agent": data.agent.name,
+                                    "visibility": "isolated_review", "context_index": None})
+        return result
 
     def _cache_input(self, items: list[Any]) -> list[Any]:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
 
-        Mark the stable snapshot and a growing retained prefix, never the replaced status tail.
+        Mark a growing retained conversation prefix, never the replaced status tail.
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
         provider = self.options.model_provider
@@ -526,13 +604,14 @@ class OpenAIAgentsRuntime(AgentRuntime):
             max_turns=count_limit(spec.max_turns),
             hooks=self.hooks,
             run_config=self.run_config,
-            input_builder=lambda data: self._turn_input(name, data["params"]["input"], []),
+            input_builder=lambda data: self._turn_input(data["params"]["input"]),
         )
         invoke_tool = tool.on_invoke_tool
 
         async def invoke(context: ToolContext[Any], raw: str) -> str:
-            async with self.delegation_slot():
-                return await invoke_tool(context, raw)
+            with request_scope():
+                async with self.delegation_slot():
+                    return await invoke_tool(context, raw)
 
         tool.on_invoke_tool = invoke
         return tool
@@ -615,3 +694,4 @@ def instrument_agents_sdk() -> None:
     instrumentor = OpenAIAgentsInstrumentor()
     if not instrumentor.is_instrumented_by_opentelemetry:
         instrumentor.instrument(config=TraceConfig(hide_input_messages=True, hide_output_messages=True))
+        add_trace_processor(RequestTraceProcessor())

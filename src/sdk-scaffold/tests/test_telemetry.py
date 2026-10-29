@@ -64,12 +64,12 @@ def test_each_iteration_is_one_trace_holding_sdk_spans_gates_and_coding_agent_wo
     assert set(root.attributes["langfuse.trace.tags"]) == set(RunIdentity.from_env(ENV).tags())
     assert {"pm", "engineer"} <= {span.name for span in spans}
     workflows = [span for span in spans if span.parent and span.parent.span_id == root.context.span_id]
-    assert workflows and {span.name for span in workflows} == {"main", "standing_context:pm"}
-    snapshots = [span for span in spans if span.name.startswith("standing_context:")]
-    assert {span.name for span in snapshots} == {"standing_context:pm", "standing_context:engineer"}
-    for span in snapshots:
-        output = json.loads(span.attributes["langfuse.observation.output"])
-        assert output["characters"] > 0 and output["truncated"] is False
+    assert workflows and {span.name for span in workflows} == {"main"}
+    assert not any(span.name.startswith("standing_context:") for span in spans)
+    generation = next(span for span in spans if span.name == "response")
+    request = json.loads(generation.attributes["langfuse.observation.input"])
+    assert "PM standing context." in request["instructions"]
+    assert "<research_context>" in request["messages"][-1]["content"]
     assert "Agent workflow" not in {span.name for span in spans}
     assert {span.context.trace_id for span in spans} == {root.context.trace_id}
 
@@ -215,3 +215,44 @@ def test_generation_usage_is_split_into_the_exclusive_buckets_langfuse_prices():
     assert usage_details(usage) == {"input": 12, "input_cached_tokens": 43858, "input_cache_creation": 18277,
                                     "output": 1954, "output_reasoning_tokens": 110}
     assert usage_details(TokenUsage(requests=1, input_tokens=10, output_tokens=5)) == {"input": 10, "output": 5}
+
+
+def test_generation_input_and_layout_match_model_boundary(langfuse, drop_in_dir, assemble):
+    from drop_ins import edit
+
+    telemetry, exporter = langfuse
+    exporter.clear()
+    edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',
+         'context = ["workspace/AGENTS.md"]\nworkspace_context = ["STATE.md"]')
+    (drop_in_dir / "workspace/STATE.md").write_text("Experiment result; see result.csv.")
+    pm = ScriptedModel(call("reviewer", {"input": "Check the result"}, "r"), say("done"), say("continued"))
+    reviewer = ScriptedModel(say("checked"))
+    scaffold = assemble(drop_in_dir, {"pm": pm, "reviewer": reviewer}, env=ENV, telemetry=telemetry)
+
+    async def run():
+        async with scaffold.runtime as runtime:
+            with telemetry.trace("context-test"):
+                await runtime.run("First task", workflow="main")
+                await runtime.run("Second task", workflow="main")
+        telemetry.flush()
+
+    asyncio.run(run())
+    generations = [span for span in exporter.get_finished_spans() if span.name == "response"]
+    requests = {}
+    for span in generations:
+        layout = json.loads(span.attributes["langfuse.observation.metadata.request_layout"])
+        request = json.loads(span.attributes["langfuse.observation.input"])
+        requests.setdefault(layout["agent"], []).append((request, layout))
+        assert len(span.attributes) < 128
+        assert request["messages"] == json.loads(span.attributes["input.value"])
+        assert layout["context_index"] == len(request["messages"]) - 1
+    for model, name in [(pm, "pm"), (reviewer, "reviewer")]:
+        for index, (request, layout) in enumerate(requests[name]):
+            assert request == {"instructions": model.instructions[index], "messages": model.inputs[index]}
+    first, tools, second = requests["pm"]
+    assert first[1]["new_task"] is True and first[1]["history_end"] == 0
+    assert tools[1]["new_task"] is False and tools[1]["task_index"] == 0
+    assert tools[0]["messages"][tools[1]["in_turn_start"]]["type"] == "function_call"
+    assert second[1]["new_task"] is True and second[1]["history_end"] > 0
+    assert "Experiment result" not in str(requests["reviewer"])
+    assert "First task" not in str(requests["reviewer"])

@@ -13,6 +13,12 @@ negative claim needs evidence commensurate with its scope. Read the closest
 prior work in full and state the contribution over it in one sentence. Prefer
 new evidence to defensive prose when a reviewer identifies a real flaw.
 
+Keep PLAN.md as a concise current summary (aim below 6,000 characters), replacing
+stale state rather than appending history. Include results and artifact paths,
+prior directions and why they changed, work in flight, and review feedback
+addressed, deferred or rejected with reasons. Cite REVIEW_STATUS.json and the
+archived review for full feedback; do not copy either wholesale into PLAN.md.
+
 Keep an append-only LOG.md of consequential decisions, results and dead ends with
 artifact paths. Initialize a local git repository and commit useful increments;
 no remote is provisioned. Pin experimental package versions, dataset identifiers,

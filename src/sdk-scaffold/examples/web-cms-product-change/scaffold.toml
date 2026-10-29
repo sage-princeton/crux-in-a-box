@@ -43,7 +43,7 @@ command = "grep -q '— Verification' LOG.md"
 [agents.product_manager]
 persona = "personas/product_manager.md"
 context = ["workspace/AGENTS.md"]
-workspace_context = ["REQUEST.md", "LOG.md"]
+workspace_context = ["REQUEST.md"]
 context_max_chars = 32_000
 tools = ["read_file", "write_file", "list_files", "rest", "site_tests", "site_preview", "budget_status"]
 mcp_servers = ["slack"]
@@ -53,7 +53,7 @@ delegates = ["engineer"]
 type = "codex"
 description = "A Codex coding agent that implements one written change in site/. It sees only your brief, so include the task, the acceptance criteria verbatim and the files in scope. It returns what it changed."
 context = ["workspace/ENGINEERING.md"]
-workspace_context = ["REQUEST.md", "LOG.md"]
+workspace_context = ["REQUEST.md"]
 context_max_chars = 32_000
 sandbox = "workspace-write"
 

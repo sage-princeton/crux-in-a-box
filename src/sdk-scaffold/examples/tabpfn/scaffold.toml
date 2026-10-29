@@ -80,7 +80,7 @@ final = true
 [agents.pi]
 persona = "personas/pi.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
-workspace_context = ["PLAN.md", "REVIEW_STATUS.json"]
+workspace_context = ["PLAN.md"]
 tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest", "escalate"]
 mcp_servers = ["slack"]
 delegates = ["research_assistant", "worker_a", "worker_b", "worker_c"]

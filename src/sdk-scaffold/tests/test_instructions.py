@@ -20,7 +20,8 @@ def test_the_model_gets_setup_before_its_persona_and_standing_context(drop_in_di
     instructions = pm.instructions[0]
     assert instructions.startswith("# Scaffold setup\n")
     assert instructions.index("# Scaffold setup") < instructions.index("You are the product manager.")
-    assert any("PM standing context." in str(item) for item in pm.inputs[0])
+    assert "PM standing context." in instructions
+    assert "PM standing context." not in str(pm.inputs[0])
     assert "`engineer` (coding agent, `scripted`): Implements a change spec." in instructions
     assert "`reviewer` (agent): Reviews a change and reports problems." in instructions
     assert "`read_file`: Read a UTF-8 text file in the workspace." in instructions
@@ -40,7 +41,8 @@ def test_a_drop_in_can_append_guidance_and_disable_generation(drop_in_dir, assem
     assert instructions.startswith("# Scaffold setup") is enabled
     assert (instructions.index("Ask the operator before publishing.")
             < instructions.index("You are the product manager."))
-    assert scaffold.assembly.instructions("reviewer") == "You are the reviewer."
+    assert scaffold.assembly.instructions("reviewer").startswith("You are the reviewer.")
+    assert ("# Scaffold setup" in scaffold.assembly.instructions("reviewer")) is enabled
 
 
 def test_disabling_the_preamble_preserves_the_original_instructions(drop_in_dir, assemble):
@@ -94,8 +96,8 @@ max_total_tokens = 30''')
     pm = ScriptedModel(say("clarified"), say("still building"))
     scaffold = assemble(drop_in_dir, {"pm": pm})
     assert asyncio.run(scaffold.run()).status == "budget_exhausted"
-    assert "Current phase: `clarify`; iteration 1 of at most 1." in pm.instructions[0]
-    assert "Current phase: `build`; iteration 1 of at most 3." in pm.instructions[1]
+    assert "Current phase: `clarify`; iteration 1." in str(pm.inputs[0][-1])
+    assert "Current phase: `build`; iteration 1." in str(pm.inputs[1][-1])
     assert "`done` (command): exit code 0 from `test -s DONE.md`." in pm.instructions[1]
     assert "retry interval 7s" in pm.instructions[1]
 
@@ -104,7 +106,8 @@ max_total_tokens = 30''')
     resumed_pm = ScriptedModel(say("done"))
     resumed = assemble(drop_in_dir, {"pm": resumed_pm})
     assert asyncio.run(resumed.run()).status == "completed"
-    assert "Current phase: `build`; iteration 2 of at most 3." in resumed_pm.instructions[0]
+    assert "Current phase: `build`; iteration 2." in str(resumed_pm.inputs[0][-1])
+    assert pm.instructions[0] == pm.instructions[1]
     assert "Token limit: 100." in resumed_pm.instructions[0]
     assert "Current phase: `clarify`" not in resumed_pm.instructions[0]
 
@@ -185,7 +188,7 @@ type = "runpod"
                         "COST_TRACKER_TOKEN": "private-credential", "RUN_SLUG": "test-run",
                         "RUNPOD_API_KEY": "private-runpod-credential"})
     text = scaffold.assembly.instructions("pm")
-    assert "iteration 1 of at most 1" in text
+    assert "max iterations 1" in text
     if configured:
         for expected in ("Token limit: 0.", "Model spend limit: 4.5 USD", "Wall-clock limit: 123s",
                          "concurrency limit: 2", "depth limit: 3", "`engineer_result(wait=false)`",
@@ -203,10 +206,11 @@ type = "runpod"
         assert hidden not in text
     rest = scaffold.assembly.tools["rest"]
     rest.used_seconds = 89
-    assert "1s remaining" in scaffold.assembly.instructions("pm")
+    assert "1s remaining" in scaffold.assembly.research_context("pm")
+    assert scaffold.assembly.instructions("pm") == text
 
 
-@pytest.mark.parametrize("strategy,expected", [("persistent", "once"), ("trim_recent", "max_items 17"),
+@pytest.mark.parametrize("strategy,expected", [("persistent", "all history"), ("trim_recent", "max_items 17"),
                                                ("openai_compaction", "trigger_items 19")])
 def test_context_guidance_follows_strategy_and_declared_sources(drop_in_dir, assemble, strategy, expected):
     options = {"persistent": "", "trim_recent": "max_items = 17", "openai_compaction": "trigger_items = 19"}
@@ -215,7 +219,7 @@ def test_context_guidance_follows_strategy_and_declared_sources(drop_in_dir, ass
     edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',
          'context = ["workspace/AGENTS.md"]\nworkspace_context = ["REQUEST.md"]\ncontext_max_chars = 200')
     text = assemble(drop_in_dir).assembly.instructions("pm")
-    for fragment in (expected, "workspace/AGENTS.md", "REQUEST.md", "200 characters", "developer messages"):
+    for fragment in (expected, "workspace/AGENTS.md", "REQUEST.md", "200 characters", "stable instructions"):
         assert fragment in text
     assert "outside conversation selection" not in text
 
@@ -266,8 +270,9 @@ def test_live_tool_allowance_updates_on_every_model_call(drop_in_dir, assemble):
         stream.write("\n[tools.run_shell]\ntimeout_seconds = 17\n")
     pm = ScriptedModel(call("rest", {"seconds": 40, "reason": "Wait for input"}, "pause"), say("done"))
     asyncio.run(assemble(drop_in_dir, {"pm": pm}).run())
-    assert "90s remaining" in pm.instructions[0]
-    assert "50s remaining" in pm.instructions[1]
+    assert "90s remaining" in str(pm.inputs[0][-1])
+    assert "50s remaining" in str(pm.inputs[1][-1])
+    assert pm.instructions[0] == pm.instructions[1]
     assert "timeout 17s" in pm.instructions[0]
     assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
 

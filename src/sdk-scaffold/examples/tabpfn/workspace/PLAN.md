@@ -7,6 +7,13 @@ Write the actual schedule and allocations here; the resource block is authoritat
 ## Research direction and alternatives
 Record candidates, evidence, decision and what would reverse it.
 
+## Key results and prior directions
+Summarize evidence, uncertainty and why earlier directions changed; cite artifacts and LOG.md.
+
+## Review disposition
+No review yet. After review, record addressed, deferred or rejected points and reasons.
+Cite REVIEW_STATUS.json and the archived review for full feedback.
+
 ## Resource allocation
 Allocate six hours, $200 model spend and $100 RunPod across exploration,
 experiments, writing and review; reserve the last hour and final 10% of spending.

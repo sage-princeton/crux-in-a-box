@@ -6,11 +6,11 @@ from __future__ import annotations
 import importlib.util
 import re
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from crux_scaffold.config import ScaffoldConfig, StandingContextOptions, load_config
 from crux_scaffold.errors import InvalidDropInError
-from crux_scaffold.telemetry import Telemetry
 
 _PLACEHOLDER = re.compile(r"\{\{[A-Z0-9_]+(?:\|[^}]*)?\}\}")
 _UNSCANNED = {"OPERATOR_GUIDE.md", "README.md"}
@@ -57,39 +57,48 @@ class DropInDirectory:
             raise InvalidDropInError(f"standing context path {rel} is outside {root}")
         return path
 
-    def standing_context(self, spec: StandingContextOptions, *, telemetry: Telemetry | None = None,
-                         agent: str = "") -> str:
-        """Load a bounded snapshot at the context strategy's chosen boundary, including new workspace files."""
-        sources = [(self.root, rel, rel, False) for rel in spec.context]
-        sources += [(self.workspace, rel, f"{self.config.workspace}/{rel}", True) for rel in spec.workspace_context]
-        parts, remaining = [], spec.context_max_chars
-        for root, rel, label, optional in sources:
+    def standing_context(self, spec: StandingContextOptions) -> str:
+        """Required operating instructions, read once at scaffold assembly."""
+        return self._context_files(spec.context, self.root, spec.context_max_chars, dynamic=False)
+
+    def research_context(self, spec: StandingContextOptions) -> str:
+        """Read the agent's declared current-state summaries on each applicable call."""
+        return self._context_files(spec.workspace_context, self.workspace,
+                                   spec.workspace_context_max_chars, dynamic=True)
+
+    def _context_files(self, files: list[str], root: Path, limit: int, *, dynamic: bool) -> str:
+        parts, remaining = [], limit
+        for index, rel in enumerate(files):
             path = self.context_path(root, rel)
+            label = f"{self.config.workspace}/{rel}" if dynamic else rel
+            heading = f"# {'Research' if dynamic else 'Standing'} context: {label}"
+            allowance = max(0, remaining // (len(files) - index) - len(heading) - 120)
             try:
                 with path.open() as stream:
-                    body = stream.read(max(remaining, 0) + 1).strip()
+                    body = stream.read(allowance + 1).strip()
+                if dynamic:
+                    modified = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds")
+                    heading += f" (file modified {modified}; freshness of claims unverified)"
             except FileNotFoundError:
-                if not optional:
+                if not dynamic:
                     raise InvalidDropInError(f"{rel} not found under {root}") from None
-                body = "[Not created yet.]"
+                body = "[Not created yet; current state unknown.]"
             except (OSError, UnicodeError) as exc:
-                raise InvalidDropInError(f"cannot read standing context {label}: {type(exc).__name__}") from None
-            part = f"# Standing context: {label}\n\n{body}"
+                raise InvalidDropInError(f"cannot read context {label}: {type(exc).__name__}") from None
+            if len(body) > allowance:
+                body = body[:allowance] + "\n[Context truncated; read the source file for full details.]"
+            part = f"{heading}\n\n{body}"
             parts.append(part)
             remaining -= len(part) + 7
         text = "\n\n---\n\n".join(parts)
-        truncated = len(text) > spec.context_max_chars
-        if truncated:
-            notice = "\n[Standing context truncated; read the declared files for the full text.]"
-            text = text[:spec.context_max_chars - len(notice)] + notice
-        if telemetry is not None and sources:
-            telemetry.record(f"standing_context:{agent}", "span", {"files": [source[2] for source in sources]},
-                             {"characters": len(text), "truncated": truncated})
+        if len(text) > limit:
+            notice = "\n[Context truncated; consult declared source files.]"
+            text = text[:limit - len(notice)] + notice
         return text
 
     def instructions(self, agent: str) -> str:
         spec = self.config.agents[agent]
-        return self.read(spec.persona).strip()
+        return "\n\n".join(filter(None, [self.read(spec.persona).strip(), self.standing_context(spec)]))
 
     def scanned_files(self) -> list[str]:
         """Operator-configured files outside the workspace, plus every standing-context file."""

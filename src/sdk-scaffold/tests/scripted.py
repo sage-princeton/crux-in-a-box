@@ -26,6 +26,10 @@ from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
 
+def current_task(brief: str) -> str:
+    return brief.rsplit("\n\n# Current task\n\n", 1)[-1]
+
+
 def call(name: str, arguments: dict, call_id: str) -> ResponseFunctionToolCall:
     return ResponseFunctionToolCall(arguments=json.dumps(arguments), call_id=call_id, name=name,
                                     type="function_call", id=f"fc_{call_id}", status="completed")
@@ -88,8 +92,9 @@ class ScriptedCodingAgent(CodingAgent):
     Options = ScriptedCodingOptions
 
     def __init__(self, name: str, options: ScriptedCodingOptions, *,
-                 developer_instructions: str | Callable[[], str] = "") -> None:
-        super().__init__(name, options, developer_instructions=developer_instructions)
+                 developer_instructions: str | Callable[[], str] = "",
+                 research_context: Callable[[], str] = lambda: "") -> None:
+        super().__init__(name, options, developer_instructions=developer_instructions, research_context=research_context)
         self.briefs: list[str] = []
         self.instructions: list[str] = []
 

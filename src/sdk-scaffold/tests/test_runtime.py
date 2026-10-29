@@ -7,7 +7,7 @@ from crux_scaffold.agent_runtimes.base import Verdict
 from crux_scaffold.errors import InvalidDropInError
 
 from drop_ins import add_fake_slack, edit
-from scripted import ScriptedModel, call, say, tool_outputs
+from scripted import ScriptedModel, call, current_task, say, tool_outputs
 
 
 def test_coding_agent_delegate_gets_only_the_brief_and_its_standing_context(drop_in_dir, assemble):
@@ -16,7 +16,7 @@ def test_coding_agent_delegate_gets_only_the_brief_and_its_standing_context(drop
     outcome = asyncio.run(scaffold.run())
     engineer = scaffold.coding_agents["engineer"]
     assert (outcome.status, outcome.final_output) == ("completed", "Engineer finished.")
-    assert engineer.briefs == ["TASK: write NOTE.md"]
+    assert list(map(current_task, engineer.briefs)) == ["TASK: write NOTE.md"]
     assert engineer.developer_instructions == (
         "# Standing context: workspace/ENGINEERING.md\n\nEngineering standing context.")
     assert (scaffold.drop_in.workspace / "site/NOTE.md").read_text() == "done"
@@ -28,7 +28,7 @@ def test_agent_delegate_sees_its_persona_and_brief_but_not_the_callers_context(d
     pm = ScriptedModel(call("reviewer", {"input": "Review NOTE.md"}, "p1"), say("Reviewed."))
     asyncio.run(assemble(drop_in_dir, {"pm": pm, "reviewer": reviewer}).run())
     assert len(reviewer.instructions) == 1
-    assert reviewer.instructions[0] == "You are the reviewer."
+    assert reviewer.instructions[0].startswith("You are the reviewer.")
     assert "Review NOTE.md" in str(reviewer.inputs[0])
     assert "Handle the request" not in str(reviewer.inputs[0])
 
@@ -49,7 +49,7 @@ def test_each_delegate_invocation_reads_current_workspace_context(drop_in_dir, a
     assert "New acceptance criteria." in str(reviewer.inputs[1])
     assert "first review" not in str(reviewer.inputs[1])
     assert "PM standing context." not in str(reviewer.inputs)
-    assert "New acceptance criteria." in scaffold.coding_agents["engineer"].instructions[0]
+    assert "New acceptance criteria." in scaffold.coding_agents["engineer"].briefs[0]
 
 
 def test_subagent_out_of_turns_reports_an_error_to_its_caller(drop_in_dir, assemble):

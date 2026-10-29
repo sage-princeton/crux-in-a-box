@@ -51,7 +51,7 @@ def test_demo_declares_static_and_dynamic_standing_context(tmp_path):
     pm, engineer = config.agents["product_manager"], config.coding_agents["engineer"]
     assert pm.context == ["workspace/AGENTS.md"]
     assert engineer["context"] == ["workspace/ENGINEERING.md"]
-    assert pm.workspace_context == engineer["workspace_context"] == ["REQUEST.md", "LOG.md"]
+    assert pm.workspace_context == engineer["workspace_context"] == ["REQUEST.md"]
 
 
 def use_fakes(root: Path) -> None:

@@ -130,7 +130,9 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
     assert ctx.usage.by_source["engineer"].total_tokens == 1500
     assert (result.usage.cached_input_tokens, result.usage.cache_write_input_tokens,
             result.usage.reasoning_output_tokens) == (900, 200, 40)
-    assert telemetry.generations == [("engineer", "gpt-codex-test", "TASK: add location",
+    assert telemetry.generations == [("engineer", "gpt-codex-test",
+                                      {"instructions": "# Standing context", "messages": [
+                                          {"role": "user", "content": "TASK: add location"}]},
                                       "Added location; 6 tests pass.", 1500)]
 
 

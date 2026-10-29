@@ -34,6 +34,7 @@ class Assembly:
     coding_agents: Mapping[str, CodingAgent]
     context_strategy: ContextStrategy
     instructions: Callable[[str], str]
+    research_context: Callable[[str], str] = lambda name: ""
 
 
 class TurnOutcome(BaseModel):
