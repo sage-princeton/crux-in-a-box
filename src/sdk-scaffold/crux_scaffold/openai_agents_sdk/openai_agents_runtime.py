@@ -237,7 +237,8 @@ class OpenAIAgentsRuntime:
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
         # Judges get only cache markers, without context selection, steering or resource metadata.
-        return ModelInputData(input=self._cache_input(data.model_data.input), instructions=data.model_data.instructions)
+        return ModelInputData(input=self._cache_input(data.model_data.input),
+                              instructions=data.model_data.instructions)
 
     def _cache_input(self, items: list[Any]) -> list[Any]:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
@@ -246,11 +247,8 @@ class OpenAIAgentsRuntime:
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
         provider = self.model_provider
-        if (
-            provider.type != "openai-compatible"
-            or provider.base_url.host != "openrouter.ai"
-            or self.model_family != "anthropic"
-        ):
+        if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
+                or self.model_family != "anthropic"):
             return items
         selected = list(items)
         candidates = []
@@ -270,11 +268,8 @@ class OpenAIAgentsRuntime:
             else:
                 continue
             explicit |= any(isinstance(part, dict) and "prompt_cache_breakpoint" in part for part in content)
-            texts = [
-                position
-                for position, part in enumerate(content)
-                if isinstance(part, dict) and part.get("type") == "input_text" and part.get("text")
-            ]
+            texts = [position for position, part in enumerate(content)
+                     if isinstance(part, dict) and part.get("type") == "input_text" and part.get("text")]
             if not texts:
                 continue
             selected[index] = {**item, field: content}
