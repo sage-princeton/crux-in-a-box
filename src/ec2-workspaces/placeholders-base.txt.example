@@ -67,6 +67,8 @@ CLAUDE_ACP_VERSION=0.77.0
 # path. Default: run-harness. openai-agents needs one with a scaffold.toml,
 # e.g. src/sdk-scaffold/examples/web-cms-product-change.
 # DROP_IN_PATH=run-harness
+# Optional local working directory to copy over the committed workspace.
+# WORKSPACE_DIR=path/to/workspace
 # Optional: commit provision.json alongside the drop-in's scaffold.toml to
 # declare run-specific OS packages, pinned CLI downloads and command checks.
 # See provisioning.md. No declaration means no additional software.

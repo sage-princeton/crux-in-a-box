@@ -301,6 +301,8 @@ fi
 
 load_drop_in_path "$SCRIPT_DIR/../.."
 
+load_workspace_dir "$SCRIPT_DIR/../.."
+
 if [ "$DRY_RUN" = 1 ]; then
   if [ "$USE_ELASTIC_IP" != true ]; then
     EIP_PLAN_LINE="  elastic ip        disabled (USE_ELASTIC_IP=false) — uses the instance's ephemeral public IP"
@@ -324,6 +326,7 @@ if [ "$DRY_RUN" = 1 ]; then
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
   harness           $DROP_IN_PATH/ -> /srv/crux-run/run-harness (staged for run setup)
+  workspace input   ${WORKSPACE_DIR:-committed workspace only} -> run-harness/workspace/
 $EIP_PLAN_LINE
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
                                              deleted there after configure
@@ -569,6 +572,13 @@ ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
   CODEX_VERSION='$CODEX_VERSION' \
   CODEX_ACP_VERSION='$CODEX_ACP_VERSION' ACP_GATEWAY_VERSION='$ACP_GATEWAY_VERSION' \
   /tmp/install-run.sh"
+
+if [ -n "$WORKSPACE_DIR" ]; then
+  info "Staging the configured working directory"
+  tar -C "$WORKSPACE_DIR" --exclude='.git' --exclude='__pycache__' --exclude='.venv' -czf - . \
+    | ssh "$SLUG" 'tar -xzf - -C /srv/crux-run/run-harness/workspace'
+  ok "Working directory staged"
+fi
 
 # ====== PRIVATE PATH FOR THE PUBLIC HOSTNAME ======
 # Resolve the public controller hostname to its private IP. This preserves
