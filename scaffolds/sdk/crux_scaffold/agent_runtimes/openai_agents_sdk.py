@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal, Self
+from typing import TYPE_CHECKING, Annotated, AsyncGenerator, Any, Literal, Self
 
 from agents import (
     Agent,
@@ -124,7 +124,7 @@ class OpenAIAgentsRuntime:
                                            self._run_delegate, assembly.context.telemetry)
 
     @asynccontextmanager
-    async def delegation_slot(self, *, background: bool = False) -> AsyncIterator[None]:
+    async def delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None]:
         """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
         limit = self._delegate_limit
         if limit is None:
@@ -150,13 +150,13 @@ class OpenAIAgentsRuntime:
                     changed.notify_all()
 
     @asynccontextmanager
-    async def delegation_wait(self) -> AsyncIterator[None]:
+    async def delegation_wait(self) -> AsyncGenerator[None]:
         """Suspend a delegated caller while it awaits an independently scheduled worker."""
         async with self._suspend_delegate(self._delegate_call.get()):
             yield
 
     @asynccontextmanager
-    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncIterator[None]:
+    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncGenerator[None]:
         limit = self._delegate_limit
         if limit is None or parent is None:
             yield
