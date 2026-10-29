@@ -126,7 +126,7 @@ class OpenAIAgentsRuntime:
         return None
 
     @asynccontextmanager
-    async def delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
+    async def _delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
         """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
         limit = self._delegate_limit
         if limit is None:
@@ -177,7 +177,7 @@ class OpenAIAgentsRuntime:
                     self._active_delegates += 1
                     changed.notify_all()
 
-    def build(self) -> None:
+    def _build(self) -> None:
         if self.agents:
             return
         config, ctx = self.drop_in.config, self.context
@@ -221,8 +221,8 @@ class OpenAIAgentsRuntime:
             )
 
     async def __aenter__(self) -> Self:
-        trace_agents_sdk(self.context.telemetry)
-        self.build()
+        _trace_agents_sdk(self.context.telemetry)
+        self._build()
         steering = self.context.steering
         try:
             if self.client:
@@ -389,7 +389,7 @@ class OpenAIAgentsRuntime:
         return [*prefix, {"role": "user", "content": prompt}]
 
     def describe(self) -> list[str]:
-        self.build()
+        self._build()
         config = self.drop_in.config
         provider = self.model_provider
         return [
@@ -537,7 +537,7 @@ class OpenAIAgentsRuntime:
         invoke_tool = tool.on_invoke_tool
 
         async def invoke(context: ToolContext[Any], raw: str) -> str:
-            async with self.delegation_slot():
+            async with self._delegation_slot():
                 return await invoke_tool(context, raw)
 
         tool.on_invoke_tool = invoke
@@ -550,7 +550,7 @@ class OpenAIAgentsRuntime:
             brief = BriefArguments.model_validate_json(raw).brief
 
             async def execute() -> CodingResult:
-                async with self.delegation_slot(background=self.background_coding):
+                async with self._delegation_slot(background=self.background_coding):
                     return await agent.run(brief, ctx)
 
             if self.background_coding:
@@ -579,7 +579,7 @@ async def probe_model(
     env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, model_provider: ModelProvider
 ) -> str:
     """Run one traced provisioning call with the configured model provider."""
-    trace_agents_sdk(telemetry)
+    _trace_agents_sdk(telemetry)
     model = env.get("CRUX_MODEL")
     if not model:
         raise InvalidDropInError("CRUX_MODEL is not set")
@@ -618,7 +618,7 @@ def _model_settings(model_provider: ModelProvider, env: Mapping[str, str]) -> Mo
     return settings
 
 
-def trace_agents_sdk(telemetry: Telemetry) -> None:
+def _trace_agents_sdk(telemetry: Telemetry) -> None:
     """Export Agents SDK spans through OpenTelemetry (and so into Langfuse) instead of to the OpenAI platform.
 
     Langfuse reads a generation's input and output from `input.value` and `output.value`. The per-message copies
