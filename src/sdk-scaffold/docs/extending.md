@@ -39,7 +39,7 @@ Built-in components register themselves when their module is imported. `scaffold
 
 **`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. A new dependency between components is passed in there, as a constructor keyword or through `Assembly`; components do not build one another.
 
-**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`. Loops and gates reference `OpenAIAgentsRuntime` only through type-checking imports.
+**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/` and `context_strategies.py`, and Codex to `coding_agents.py`. Loops and gates reference `OpenAIAgentsRuntime` only through type-checking imports.
 
 **Errors have two kinds:**
 
@@ -238,7 +238,7 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 ## OpenAI Agents SDK integration
 
-`OpenAIAgentsRuntime` in `agent_runtimes/openai_agents_sdk.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry. The same module owns `Assembly`, `TurnOutcome`, `Verdict` and delegation capacity management.
+`OpenAIAgentsRuntime` in `agent_runtimes/openai_agents_sdk.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `agent_runtimes/`: `assembly.py`, `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider_options.py`, `openai_agents_options.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
 
 `scaffold.py` constructs `OpenAIAgentsRuntime(options, assembly=...)` with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, the context strategy and an instructions callback. `runtime_overrides` add further keyword arguments, such as scripted test models. `OpenAIAgentsOptions.from_config` validates `[runtime]` and reports `InvalidDropInError` for invalid options. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Options include `max_turns`, `model_provider`, `background_coding` and `steering`. The CLI's probe calls this integration directly with the same validated options, omitting steering during provisioning.
 

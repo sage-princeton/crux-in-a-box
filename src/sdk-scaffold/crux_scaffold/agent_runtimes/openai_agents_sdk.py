@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import Any, Self
 
 from agents import (
     Agent,
@@ -22,12 +22,10 @@ from agents import (
     OpenAIProvider,
     RunConfig,
     RunContextWrapper,
-    RunHooks,
     Runner,
     set_tracing_disabled,
 )
 from agents.exceptions import MaxTurnsExceeded
-from agents.items import ModelResponse
 from agents.mcp import MCPServerStdio
 from agents.models.interface import Model
 from agents.run_config import CallModelData, ModelInputData
@@ -38,134 +36,27 @@ from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
-from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
+from pydantic import ValidationError
 
+from crux_scaffold.agent_runtimes._delegate_call import _DelegateCall
+from crux_scaffold.agent_runtimes.assembly import Assembly
+from crux_scaffold.agent_runtimes.brief_arguments import BriefArguments
+from crux_scaffold.agent_runtimes.coding_result_arguments import CodingResultArguments
+from crux_scaffold.agent_runtimes.model_provider_options import ModelProviderOptions
+from crux_scaffold.agent_runtimes.openai_agents_options import OpenAIAgentsOptions
+from crux_scaffold.agent_runtimes.turn_outcome import TurnOutcome
+from crux_scaffold.agent_runtimes.usage_hooks import UsageHooks
+from crux_scaffold.agent_runtimes.verdict import Verdict
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
-from crux_scaffold.components import CountLimit, Options, count_limit, describe
+from crux_scaffold.components import count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.context_strategies import ContextStrategy, is_standing_context
+from crux_scaffold.context_strategies import is_standing_context
 from crux_scaffold.errors import InvalidDropInError, ToolError
-from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
-from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
-from crux_scaffold.usage import UsageLedger
+from crux_scaffold.tools import Tool, ToolImage, validate_review_tools
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
-if TYPE_CHECKING:
-    from crux_scaffold.drop_in import DropInDirectory
-
 JUDGE = "judge"
-
-
-@dataclass
-class Assembly:
-    """The components and instructions the scaffold wires into the OpenAI Agents SDK."""
-
-    drop_in: DropInDirectory
-    context: RunContext
-    tools: Mapping[str, Tool]
-    coding_agents: Mapping[str, CodingAgent]
-    context_strategy: ContextStrategy
-    instructions: Callable[[str], str]
-
-
-class TurnOutcome(BaseModel):
-    """The orchestrator's answer to one prompt; `completed` is false when it ran out of turns."""
-
-    final_output: str
-    completed: bool
-
-
-class Verdict(BaseModel):
-    """A judge's structured answer."""
-
-    passed: bool
-    feedback: str
-    next_prompt: str | None
-
-
-@dataclass
-class _DelegateCall:
-    task: asyncio.Task
-    active: bool = False
-    children: int = 0
-    closed: bool = False
-
-
-class ModelProviderOptions(Options):
-    """Configure the SDK's provider; model and effort still come only from the run environment."""
-
-    type: Literal["openai", "openai-compatible"]
-    api: Literal["responses", "chat-completions"]
-    base_url: HttpUrl | None = None
-    api_key_env: str = Field("OPENAI_API_KEY", pattern=r"^[A-Z_][A-Z0-9_]*$")
-    extra_body: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_provider(self) -> Self:
-        if self.type == "openai-compatible" and self.base_url is None:
-            raise ValueError("openai-compatible model_provider requires base_url")
-        if self.type == "openai" and (
-            self.base_url or self.extra_body or self.api != "responses" or self.api_key_env != "OPENAI_API_KEY"
-        ):
-            raise ValueError("custom provider settings require type=openai-compatible")
-        if {
-            "model",
-            "models",
-            "input",
-            "messages",
-            "instructions",
-            "tools",
-            "store",
-            "stream",
-            "previous_response_id",
-            "conversation",
-            "reasoning",
-            "reasoning_effort",
-            "include",
-        } & self.extra_body.keys():
-            raise ValueError("extra_body cannot override the run model, context, tools, reasoning or session settings")
-        return self
-
-
-class OpenAIAgentsOptions(Options):
-    type: Literal["openai-agents"] = "openai-agents"
-    max_turns: CountLimit = 50
-    model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
-    background_coding: bool = False
-    steering: SteeringOptions | None = None
-
-    @classmethod
-    def from_config(cls, table: Mapping[str, Any]) -> Self:
-        """Validate `[runtime]`, accepting the existing fixed SDK type and reporting configuration errors."""
-        try:
-            return cls.model_validate(table)
-        except ValidationError as exc:
-            raise InvalidDropInError(f"runtime: {describe(exc)}") from None
-
-
-class BriefArguments(Arguments):
-    brief: str = Field(description="Everything the coding agent needs: the task, acceptance criteria and scope.")
-
-
-class CodingResultArguments(Arguments):
-    wait: bool = Field(description="Whether to await completion; false returns immediately if still running.")
-
-
-class UsageHooks(RunHooks):
-    def __init__(self, ledger: UsageLedger, source: str | None = None) -> None:
-        self.ledger = ledger
-        self.source = source
-
-    async def on_llm_end(self, context: RunContextWrapper, agent: Agent, response: ModelResponse) -> None:
-        usage = response.usage
-        self.ledger.add(
-            self.source or agent.name,
-            usage.input_tokens,
-            usage.output_tokens,
-            cached_input_tokens=usage.input_tokens_details.cached_tokens,
-            reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens,
-        )
 
 
 class OpenAIAgentsRuntime:
