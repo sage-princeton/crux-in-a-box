@@ -8,6 +8,7 @@ This repo provisions and steers **CRUX runs**: autonomous research agents (OpenC
 - one class per file
 - classes get concise docstrings
 - comments reflect current state, never historical state
+- always use the "YAGNI" principle - write code for the current change/feature, not for a hypothetical future addition
 
 ## Pull request scope
 
