@@ -47,7 +47,6 @@ from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import ValidationError
 
 from crux_scaffold.agent_runtimes._delegate_call import _DelegateCall
-from crux_scaffold.agent_runtimes.assembly import Assembly
 from crux_scaffold.agent_runtimes.brief_arguments import BriefArguments
 from crux_scaffold.agent_runtimes.coding_result_arguments import CodingResultArguments
 from crux_scaffold.agent_runtimes.model_provider_options import ModelProviderOptions
@@ -66,6 +65,9 @@ from crux_scaffold.steering import MESSAGE_TOOLS, WITHHELD, SteeringOptions, is_
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Tool, ToolImage, validate_review_tools
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
+
+if TYPE_CHECKING:
+    from crux_scaffold.drop_in import DropInDirectory
 
 JUDGE = "judge"
 
@@ -95,16 +97,32 @@ class OpenAIAgentsRuntime:
     type_name = "openai-agents"
 
     def __init__(
-        self, options: OpenAIAgentsOptions, *, assembly: Assembly, models: Mapping[str, Model] | None = None
+        self,
+        options: OpenAIAgentsOptions,
+        *,
+        drop_in: DropInDirectory,
+        context: RunContext,
+        tools: Mapping[str, Tool],
+        coding_agents: Mapping[str, CodingAgent],
+        context_strategy: ContextStrategy,
+        instructions: Callable[[str], str],
+        research_context: Callable[[str], str] = lambda name: "",
+        models: Mapping[str, Model] | None = None,
     ) -> None:
         self.options = options
-        self.assembly = assembly
-        self._delegate_limit = assembly.drop_in.config.delegation.max_concurrent
+        self.drop_in = drop_in
+        self.context = context
+        self.tools = tools
+        self.coding_agents = coding_agents
+        self.context_strategy = context_strategy
+        self.instructions = instructions
+        self.research_context = research_context
+        self._delegate_limit = drop_in.config.delegation.max_concurrent
         self._active_delegates = 0
         self._delegate_changed = asyncio.Condition()
         self._delegate_call: ContextVar[_DelegateCall | None] = ContextVar("delegate_call", default=None)
         self.models = dict(models or {})
-        self.hooks = UsageHooks(assembly.context.usage)
+        self.hooks = UsageHooks(context.usage)
         self.run_config = RunConfig(call_model_input_filter=self._select_input)
         self.agents: dict[str, Agent] = {}
         self.servers: dict[str, MCPServerStdio] = {}
@@ -124,7 +142,7 @@ class OpenAIAgentsRuntime:
                                            self._run_delegate, assembly.context.telemetry)
 
     @asynccontextmanager
-    async def delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None]:
+    async def delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
         """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
         limit = self._delegate_limit
         if limit is None:
@@ -150,13 +168,13 @@ class OpenAIAgentsRuntime:
                     changed.notify_all()
 
     @asynccontextmanager
-    async def delegation_wait(self) -> AsyncGenerator[None]:
+    async def delegation_wait(self) -> AsyncGenerator[None, None]:
         """Suspend a delegated caller while it awaits an independently scheduled worker."""
         async with self._suspend_delegate(self._delegate_call.get()):
             yield
 
     @asynccontextmanager
-    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncGenerator[None]:
+    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncGenerator[None, None]:
         limit = self._delegate_limit
         if limit is None or parent is None:
             yield
@@ -184,7 +202,7 @@ class OpenAIAgentsRuntime:
     def build(self) -> None:
         if self.agents:
             return
-        config, ctx = self.assembly.drop_in.config, self.assembly.context
+        config, ctx = self.drop_in.config, self.context
         if (self.options.model_provider.type == "openai-compatible"
                 or self.options.model_provider.max_request_bytes is not None):
             self.client = _validate_and_get_client(self.options.model_provider, ctx.env)
@@ -194,10 +212,10 @@ class OpenAIAgentsRuntime:
         if self.delegates and any(spec.delegates for name, spec in config.agents.items() if name != config.orchestrator):
             raise InvalidDropInError('interactive_delegates supports direct PI delegates only')
         if self.options.background_coding or self.delegates:
-            declared = set(self.assembly.tools) | set(config.agents) | set(config.coding_agents)
+            declared = set(self.tools) | set(config.agents) | set(config.coding_agents)
             self._check_result_names(declared)
         self._restart_tools = {name for name in config.agents[config.orchestrator].tools
-                               if self.assembly.tools[name].type_name == "restart_context"}
+                               if self.tools[name].type_name == "restart_context"}
         used = {server for agent in config.agents.values() for server in agent.mcp_servers}
         if self.options.steering:
             used.add(self.options.steering.server)
@@ -208,13 +226,13 @@ class OpenAIAgentsRuntime:
                         for name in used}
         for name in delegation_order(config.agents):
             spec = config.agents[name]
-            tools = [self._function_tool(self.assembly.tools[tool]) for tool in spec.tools]
+            tools = [self._function_tool(self.tools[tool]) for tool in spec.tools]
             tools += [self._delegate(delegate) for delegate in spec.delegates]
             if self.options.background_coding and not self.delegates:
                 tools += [
                     self._coding_result_tool(delegate)
                     for delegate in spec.delegates
-                    if delegate in self.assembly.coding_agents
+                    if delegate in self.coding_agents
                 ]
             if self.delegates:
                 tools += self._communication_tools(name)
@@ -224,13 +242,13 @@ class OpenAIAgentsRuntime:
                 tools=tools,
                 mcp_servers=[self.servers[server] for server in spec.mcp_servers],
                 model=self._model(name),
-                model_settings=self._settings(),
+                model_settings=_model_settings(self.options.model_provider, self.context.env),
             )
 
     async def __aenter__(self) -> Self:
-        trace_agents_sdk(self.assembly.context.telemetry)
+        trace_agents_sdk(self.context.telemetry)
         self.build()
-        steering = self.assembly.context.steering
+        steering = self.context.steering
         if self.delegates:
             self.delegates.mailboxes.recover()
         try:
@@ -245,12 +263,12 @@ class OpenAIAgentsRuntime:
                 steering.transport = _UnfilteredCalls(server)
                 available = {tool.name for tool in await server.list_tools()}
                 required = {"conversations_replies" if steering.options.thread_ts else "conversations_history"}
-                if any(tool.type_name == "escalate" for tool in self.assembly.tools.values()):
+                if any(tool.type_name == "escalate" for tool in self.tools.values()):
                     required.add("conversations_add_message")
                 if missing := required - available:
                     raise InvalidDropInError(f"steering MCP server is missing tools: {', '.join(sorted(missing))}")
-            self.session = self.assembly.context_strategy.session(
-                self.assembly.drop_in.config.orchestrator, self.assembly.context
+            self.session = self.context_strategy.session(
+                self.drop_in.config.orchestrator, self.context
             )
         except BaseException as exc:
             await self._stack.aclose()
@@ -277,13 +295,13 @@ class OpenAIAgentsRuntime:
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self._steering_items = []
-        orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
+        orchestrator = self.agents[self.drop_in.config.orchestrator]
         try:
             try:
                 result = await Runner.run(
                     orchestrator,
                     await self._turn_input(prompt, workflow),
-                    context=self.assembly.context,
+                    context=self.context,
                     max_turns=count_limit(self.options.max_turns),
                     hooks=self.hooks,
                     session=self.session,
@@ -319,8 +337,8 @@ class OpenAIAgentsRuntime:
 
     def _pending_turn_path(self) -> Path:
         """Locate the orchestrator's durable input-admission marker outside its workspace."""
-        name = self.assembly.drop_in.config.orchestrator
-        return self.assembly.context.state_dir / f"pending-turn-{hashlib.sha256(name.encode()).hexdigest()}.json"
+        name = self.drop_in.config.orchestrator
+        return self.context.state_dir / f"pending-turn-{hashlib.sha256(name.encode()).hexdigest()}.json"
 
     async def _turn_input(self, prompt: str, workflow: str) -> str | list:
         """Resume an interrupted turn without saving its task twice.
@@ -346,7 +364,7 @@ class OpenAIAgentsRuntime:
         return prompt
 
     def _check_result_names(self, names: set[str]) -> None:
-        config = self.assembly.drop_in.config
+        config = self.drop_in.config
         if self.delegates:
             generated = {'send_message', 'interrupt_delegate', 'request_progress', 'delegate_inbox',
                          'ask_pi', 'report_progress'}
@@ -355,14 +373,14 @@ class OpenAIAgentsRuntime:
                 f"{delegate}_result"
                 for agent in config.agents.values()
                 for delegate in agent.delegates
-                if delegate in self.assembly.coding_agents
+                if delegate in self.coding_agents
             }
         if collisions := sorted(generated & names):
             raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
 
     async def _cancel_coding(self) -> None:
         """Cancel running briefs and remember them for their result tools; finished results stay collectable."""
-        tasks, now = list(self._coding_tasks.values()), self.assembly.context.now()
+        tasks, now = list(self._coding_tasks.values()), self.context.now()
         for name, task in list(self._coding_tasks.items()):
             if not task.done():
                 task.cancel()
@@ -371,7 +389,7 @@ class OpenAIAgentsRuntime:
         await asyncio.gather(*tasks, return_exceptions=True)
 
     def coding_status(self) -> str:
-        now, entries = self.assembly.context.now(), []
+        now, entries = self.context.now(), []
         for name, task in self._coding_tasks.items():
             entries.append(f"`{name}` finished, result not collected" if task.done()
                            else f"`{name}` {self._running(name, now)}")
@@ -382,7 +400,7 @@ class OpenAIAgentsRuntime:
     # TODO(AE-318): rename this formatter to _format_running_coding_task.
     def _running(self, name: str, now: datetime) -> str:
         started = self._coding_started[name]
-        last = max(started, self.assembly.coding_agents[name].last_activity or started)
+        last = max(started, self.coding_agents[name].last_activity or started)
         return (f"running since {_stamp(started)} ({(now - started).total_seconds():.0f}s; "
                 f"last activity {(now - last).total_seconds():.0f}s ago)")
 
@@ -401,7 +419,7 @@ class OpenAIAgentsRuntime:
                     f"at {_stamp(stopped)} and stopped the worker. Partial changes from it may be in the workspace.")
         if not task.done():
             waited = f" Waited {timeout:g}s; the brief continues." if wait and timeout is not None else ""
-            return (f"[coding agent running] {name}: {self._running(name, self.assembly.context.now())}.{waited} "
+            return (f"[coding agent running] {name}: {self._running(name, self.context.now())}.{waited} "
                     f"Use rest before checking again, or call {name}_result(wait=true).")
         if self._coding_tasks.get(name) is task:
             del self._coding_tasks[name]
@@ -438,9 +456,9 @@ class OpenAIAgentsRuntime:
         review_workspace: ReviewWorkspace | None = None,
         model: str | None = None,
     ) -> Verdict:
-        ctx = self.assembly.context
+        ctx = self.context
         if review_workspace is not None:
-            validate_review_tools([self.assembly.tools[tool] for tool in tools])
+            validate_review_tools([self.tools[tool] for tool in tools])
             ctx = replace(ctx, workspace=review_workspace)
         agent = Agent(
             name=JUDGE if review_workspace is not None else f"{JUDGE}:{name}",
@@ -448,7 +466,7 @@ class OpenAIAgentsRuntime:
             output_type=Verdict,
             model=self._model(JUDGE, model),
             model_settings=self._settings(),
-            tools=[self._function_tool(self.assembly.tools[tool], ctx) for tool in tools],
+            tools=[self._function_tool(self.tools[tool], ctx) for tool in tools],
         )
         try:
             result = await Runner.run(
@@ -472,7 +490,7 @@ class OpenAIAgentsRuntime:
 
     def describe(self) -> list[str]:
         self.build()
-        config = self.assembly.drop_in.config
+        config = self.drop_in.config
         provider = self.options.model_provider
         return [
             f"model provider {provider.type} ({provider.api})",
@@ -483,47 +501,21 @@ class OpenAIAgentsRuntime:
             ),
         ]
 
-    @classmethod
-    async def probe(
-        cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, options: OpenAIAgentsOptions | None = None
-    ) -> str:
-        trace_agents_sdk(telemetry)
-        model = env.get("CRUX_MODEL")
-        if not model:
-            raise InvalidDropInError("CRUX_MODEL is not set")
-        provider_options = (options or OpenAIAgentsOptions()).model_provider
-        async with AsyncExitStack() as stack:
-            if provider_options.type == "openai-compatible" or provider_options.max_request_bytes is not None:
-                client = await stack.enter_async_context(_validate_and_get_client(provider_options, env))
-                model = OpenAIProvider(
-                    openai_client=client, use_responses=provider_options.api == "responses"
-                ).get_model(model)
-            agent = Agent(
-                name="probe",
-                instructions="Reply with exactly the text you are asked for.",
-                model=model,
-                model_settings=_model_settings(provider_options, env),
-            )
-            return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
-
     def _model(self, agent: str, name: str | None = None) -> str | Model:
         """The run's model, or a judge's named model; tests substitute scripted models per agent or per model name
         through `models`."""
         key = name or agent
         if key in self.models:
             return self.models[key]
-        model = name or self.assembly.context.model
+        model = name or self.context.model
         return self.provider.get_model(model) if self.provider else model
 
-    def _settings(self) -> ModelSettings:
-        return _model_settings(self.options.model_provider, self.assembly.context.env)
-
     def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
-        return self.assembly.instructions(agent.name)
+        return self.instructions(agent.name)
 
     async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
-        is_orchestrator = data.agent.name == self.assembly.drop_in.config.orchestrator
-        steering = self.assembly.context.steering
+        is_orchestrator = data.agent.name == self.drop_in.config.orchestrator
+        steering = self.context.steering
         annotations = []
         delegate_context = self._delegate_context.get()
         session_id = data.agent.name if is_orchestrator else None
@@ -543,7 +535,7 @@ class OpenAIAgentsRuntime:
                 messages = boxes.pending('delegate', session_id)
                 if messages:
                     envelope = {'role': 'user', 'content': '<pi_messages>\n' + json.dumps(messages) + '\n</pi_messages>'}
-                    session = self.assembly.context_strategy.session(session_id, self.assembly.context)
+                    session = self.context_strategy.session(session_id, self.context)
                     await session.add_items([envelope])
                     pinned_mail.append(envelope)
                     boxes.delivered([m['id'] for m in messages])
@@ -558,7 +550,6 @@ class OpenAIAgentsRuntime:
                         history = await self.session.get_items()
                         if envelope not in history:
                             await self.session.add_items([envelope])
-                            history.append(envelope)
                         if envelope not in data.model_data.input:
                             self._steering_items.append(envelope)
                         steering.delivered(message["ts"])
@@ -577,7 +568,7 @@ class OpenAIAgentsRuntime:
         if prompt_item is not None and is_envelope(prompt_item):
             prompt_item = None
         if pinned_mail:
-            session = self.assembly.context_strategy.session(session_id, self.assembly.context)
+            session = self.context_strategy.session(session_id, self.context)
             for index, item in enumerate(await session.get_items()):
                 if item in pinned_mail and item not in history:
                     history.insert(index, item)
@@ -589,9 +580,9 @@ class OpenAIAgentsRuntime:
         if is_orchestrator:
             # After a deliberate restart the orchestrator continues from its handoff; the session keeps everything.
             history = since_restart(history, self._restart_tools)
-        strategy = self.assembly.context_strategy
-        ctx = self.assembly.context
-        research = self.assembly.research_context(data.agent.name)
+        strategy = self.context_strategy
+        ctx = self.context
+        research = self.research_context(data.agent.name)
         status = await ctx.budget_status()
         request_context = {
             "instructions": data.model_data.instructions, "research": research, "resources": status,
@@ -609,12 +600,12 @@ class OpenAIAgentsRuntime:
             list(history), ctx=ctx,
             session_id=session_id,
             request_context=request_context, agent=data.agent, model_provider=self.run_config.model_provider,
-            prepare_input=self._cache_input, research_context=lambda: self.assembly.research_context(data.agent.name),
+            prepare_input=self._cache_input, research_context=lambda: self.research_context(data.agent.name),
             prepare_request=prepare_request,
         ))
         positions = {id(item): index for index, item in enumerate(history)}
         retained = [positions.get(id(item)) for item in items]
-        self.assembly.context.telemetry.record(
+        self.context.telemetry.record(
             "context:select", "span",
             {"agent": data.agent.name, "strategy": strategy.type_name,
              "max_items": getattr(strategy.options, "max_items", None), "items_before": len(history)},
@@ -662,7 +653,7 @@ class OpenAIAgentsRuntime:
         """
         provider = self.options.model_provider
         if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
-                or not (model or self.assembly.context.model).removeprefix("~").startswith("anthropic/")):
+                or not (model or self.context.model).removeprefix("~").startswith("anthropic/")):
             return data
         selected = list(data.input)
         if data.instructions:
@@ -696,7 +687,7 @@ class OpenAIAgentsRuntime:
         return ModelInputData(input=selected, instructions=None)
 
     def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
-        ctx = ctx or self.assembly.context
+        ctx = ctx or self.context
 
         async def invoke(_: ToolContext[Any], raw: str):
             try:
@@ -720,11 +711,11 @@ class OpenAIAgentsRuntime:
         )
 
     def _delegate(self, name: str) -> FunctionTool:
-        config = self.assembly.drop_in.config
+        config = self.drop_in.config
         if self.delegates:
             return self._interactive_tool(name)
         if name not in config.agents:
-            return self._coding_tool(self.assembly.coding_agents[name])
+            return self._coding_tool(self.coding_agents[name])
         spec = config.agents[name]
         max_turns = sys.maxsize if spec.max_turns == "unlimited" else spec.max_turns
         tool = self.agents[name].as_tool(
@@ -756,14 +747,14 @@ class OpenAIAgentsRuntime:
     def _interactive_tool(self, name: str) -> FunctionTool:
         async def start(args):
             return self.delegates.start(name, args.brief)
-        config = self.assembly.drop_in.config
-        description = (config.agents[name].description if name in config.agents else self.assembly.coding_agents[name].description)
+        config = self.drop_in.config
+        description = (config.agents[name].description if name in config.agents else self.coding_agents[name].description)
         return self._json_tool(name, description +
                                ' Starts in the background; collect results with delegate_inbox.', BriefArguments, start)
 
     # TODO(AE-329): Move communication tool construction into a dedicated class.
     def _communication_tools(self, name: str) -> list[FunctionTool]:
-        config = self.assembly.drop_in.config
+        config = self.drop_in.config
         if name != config.orchestrator:
             async def report(args, *, question):
                 active = self._delegate_context.get()
@@ -806,18 +797,18 @@ class OpenAIAgentsRuntime:
         return tools
 
     async def _run_delegate(self, task: dict, prompt: str) -> str:
-        ctx = self.assembly.context
+        ctx = self.context
         name = task['name']
-        if name in self.assembly.coding_agents:
+        if name in self.coding_agents:
             if prompt != task['brief'] and not self.delegates.mailboxes.get(task['id'])['conversation_id']:
                 prompt = task['brief'] + '\n\n' + prompt
             async with self.delegation_slot(background=True):
-                result = await self.assembly.coding_agents[name].run(
+                result = await self.coding_agents[name].run(
                     prompt, ctx, mailbox=self.delegates.mailboxes.delegate(task['id']))
                 if not result.completed:
                     raise RuntimeError(result.as_tool_output())
                 return result.as_tool_output()
-        session = self.assembly.context_strategy.session(task['id'], ctx)
+        session = self.context_strategy.session(task['id'], ctx)
         if prompt != task['brief'] and not await session.get_items():
             prompt = task['brief'] + '\n\n' + prompt
         # Persist the incoming turn before inference so injected mail retains its true chronological position.
@@ -826,14 +817,14 @@ class OpenAIAgentsRuntime:
         try:
             async with self.delegation_slot(background=True):
                 result = await Runner.run(self.agents[name], [], context=ctx, session=session, hooks=self.hooks,
-                                          max_turns=count_limit(self.assembly.drop_in.config.agents[name].max_turns),
+                                          max_turns=count_limit(self.drop_in.config.agents[name].max_turns),
                                           run_config=replace(self.run_config, workflow_name=f"delegate:{name}:{task['id']}"))
                 return str(result.final_output)
         finally:
             self._delegate_context.reset(token)
 
     def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
-        ctx = self.assembly.context
+        ctx = self.context
 
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             brief = BriefArguments.model_validate_json(raw).brief
@@ -917,6 +908,29 @@ class _UnfilteredCalls:
         return await MCPServerStdio.call_tool(self.server, tool_name, arguments)
 
 
+async def probe_model(
+    env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, model_provider: ModelProviderOptions
+) -> str:
+    """Run one traced provisioning call with the configured model provider."""
+    trace_agents_sdk(telemetry)
+    model = env.get("CRUX_MODEL")
+    if not model:
+        raise InvalidDropInError("CRUX_MODEL is not set")
+    async with AsyncExitStack() as stack:
+        if model_provider.type == "openai-compatible" or model_provider.max_request_bytes is not None:
+            client = await stack.enter_async_context(_validate_and_get_client(model_provider, env))
+            model = OpenAIProvider(
+                openai_client=client, use_responses=model_provider.api == "responses"
+            ).get_model(model)
+        agent = Agent(
+            name="probe",
+            instructions="Reply with exactly the text you are asked for.",
+            model=model,
+            model_settings=_model_settings(model_provider, env),
+        )
+        return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
+
+
 def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:
     api_key = env.get(options.api_key_env)
     if not api_key:
@@ -977,17 +991,14 @@ def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> Mo
 
 
 def trace_agents_sdk(telemetry: Telemetry) -> None:
-    set_tracing_disabled(not telemetry.sdk_tracing)
-    if telemetry.sdk_tracing:
-        instrument_agents_sdk()
-
-
-def instrument_agents_sdk() -> None:
     """Export Agents SDK spans through OpenTelemetry (and so into Langfuse) instead of to the OpenAI platform.
 
     Langfuse reads a generation's input and output from `input.value` and `output.value`. The per-message copies
     (`llm.input_messages.*`) grow with the conversation, and past OpenTelemetry's 128-attribute limit they evict a
     span's oldest attributes: Langfuse's session, tags, model and usage."""
+    set_tracing_disabled(not telemetry.sdk_tracing)
+    if not telemetry.sdk_tracing:
+        return
     instrumentor = OpenAIAgentsInstrumentor()
     if not instrumentor.is_instrumented_by_opentelemetry:
         instrumentor.instrument(config=TraceConfig(hide_input_messages=True, hide_output_messages=True))

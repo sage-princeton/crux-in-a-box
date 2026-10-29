@@ -11,8 +11,9 @@ from collections.abc import Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from crux_scaffold.agent_runtimes.model_provider_options import ModelProviderOptions
 from crux_scaffold.agent_runtimes.openai_agents_options import OpenAIAgentsOptions
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
+from crux_scaffold.agent_runtimes.openai_agents_sdk import probe_model
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.config import load_config
 from crux_scaffold.drop_in import DropInDirectory
@@ -54,7 +55,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     telemetry = telemetry or telemetry_from_env(env, RunIdentity.from_env(env))
     try:
         if args.command == "probe":
-            options, judges = None, []
+            options, judges = OpenAIAgentsOptions(), []
             if args.drop_in:
                 # Provisioning precedes operator preparation. A model-only probe
                 # needs provider settings, not resolved prompts or Slack steering.
@@ -64,7 +65,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
                 options = OpenAIAgentsOptions.from_config(spec)
                 # Judge panel models run through the same provider: probe each so a wrong name fails before launch.
                 judges = sorted({model for gate in drop_in.config.gates.values() for model in gate.get("models", [])})
-            return asyncio.run(run_probe(args.coding_agent, env, telemetry, options=options, judges=judges))
+            return asyncio.run(run_probe(args.coding_agent, env, telemetry, model_provider=options.model_provider, judges=judges))
         drop_in = DropInDirectory.load(args.drop_in)
         scaffold = Scaffold(drop_in, env, state_dir=args.state_dir, telemetry=telemetry,
                             sleep=sleep, runtime_overrides=runtime_overrides)
@@ -116,7 +117,7 @@ async def until_stopped[T](coro: Coroutine[Any, Any, T]) -> T:
 
 
 async def run_probe(coding_agent: str | None, env: Mapping[str, str], telemetry: Telemetry, *,
-                    options: OpenAIAgentsOptions | None = None, judges: Sequence[str] = ()) -> int:
+                    model_provider: ModelProviderOptions, judges: Sequence[str] = ()) -> int:
     """The first two of the team's testing protocols: the agent can do anything at all, and tracing works."""
     if not isinstance(telemetry, LangfuseTelemetry):
         print("probe failed: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set", file=sys.stderr)
@@ -132,11 +133,10 @@ async def run_probe(coding_agent: str | None, env: Mapping[str, str], telemetry:
     request = f"Say exactly: {PROBE_MARKER}"
     try:
         with telemetry.trace("crux-probe"):
-            kwargs = {"options": options} if options is not None else {}
-            replies = {OpenAIAgentsRuntime.type_name: await OpenAIAgentsRuntime.probe(env, request, telemetry, **kwargs)}
+            replies = {"openai-agents": await probe_model(env, request, telemetry, model_provider=model_provider)}
             for model in judges:
                 try:
-                    reply = await OpenAIAgentsRuntime.probe({**env, "CRUX_MODEL": model}, request, telemetry, **kwargs)
+                    reply = await probe_model({**env, "CRUX_MODEL": model}, request, telemetry, model_provider=model_provider)
                 except Exception as exc:  # noqa: BLE001 - A judge model's failure is a failed probe, without details.
                     reply = f"error: {type(exc).__name__}"
                 replies[f"judge {model}"] = reply

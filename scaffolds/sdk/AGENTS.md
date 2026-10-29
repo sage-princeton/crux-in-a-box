@@ -48,7 +48,7 @@ Agent orchestration is implemented directly in `agent_runtimes/openai_agents_sdk
 `docs/extending.md` is the developer documentation for the scaffold's abstractions. Update it in the same change whenever you add, remove or change any of these:
 
 - an interface, or one of its methods;
-- a context object such as `RunContext`, `GateContext` or `Assembly`;
+- a context object such as `RunContext` or `GateContext`;
 - a built-in type;
 - an option;
 - a `scaffold.toml` key;
