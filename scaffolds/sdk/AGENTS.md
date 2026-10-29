@@ -37,7 +37,7 @@ Agent orchestration is implemented directly in `openai_agents_sdk/openai_agents_
   - The OpenAI Agents SDK stays in `openai_agents_sdk/` and `context_strategies.py`.
   - Codex stays in `coding_agents.py`.
 - **Configuration is declarative and strict.**
-  - Options models forbid unknown keys.
+  - Configuration models forbid unknown keys.
   - A drop-in that cannot run fails with `InvalidDropInError` before any model call.
   - Read configuration from `RunContext.env`, never from `os.environ`.
 - **Every model call is accounted for.** Add its tokens to `ctx.usage` so the budget holds, and make sure it reaches telemetry.

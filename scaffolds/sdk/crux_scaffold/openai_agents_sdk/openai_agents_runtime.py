@@ -49,8 +49,8 @@ from pydantic import ValidationError
 from crux_scaffold.openai_agents_sdk._delegate_call import _DelegateCall
 from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
 from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
-from crux_scaffold.openai_agents_sdk.model_provider_options import ModelProviderOptions
-from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
+from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
 from crux_scaffold.openai_agents_sdk.usage_hooks import UsageHooks
 from crux_scaffold.openai_agents_sdk.verdict import Verdict
@@ -98,8 +98,8 @@ class OpenAIAgentsRuntime:
 
     def __init__(
         self,
-        options: OpenAIAgentsOptions,
         *,
+        model_provider: ModelProvider,
         drop_in: DropInDirectory,
         context: RunContext,
         tools: Mapping[str, Tool],
@@ -107,9 +107,17 @@ class OpenAIAgentsRuntime:
         context_strategy: ContextStrategy,
         instructions: Callable[[str], str],
         research_context: Callable[[str], str] = lambda name: "",
+        max_turns: CountLimit = 50,
+        background_coding: bool = False,
+        interactive_delegates: bool = False,
+        coding_result_wait_seconds: float | Literal["unlimited"] = 1800,
         models: Mapping[str, Model] | None = None,
     ) -> None:
-        self.options = options
+        self.model_provider = model_provider
+        self.max_turns = max_turns
+        self.background_coding = background_coding
+        self.interactive_delegates = interactive_delegates
+        self.coding_result_wait_seconds = coding_result_wait_seconds
         self.drop_in = drop_in
         self.context = context
         self.tools = tools
@@ -137,9 +145,25 @@ class OpenAIAgentsRuntime:
         self._restart_tools: set[str] = set()
         self.delegates: DelegateTasks | None = None
         self._delegate_context: ContextVar[tuple[str, list[dict]] | None] = ContextVar('delegate_context', default=None)
-        if options.interactive_delegates:
-            self.delegates = DelegateTasks(DelegateMailboxes(assembly.context.state_dir / 'delegates.sqlite'),
-                                           self._run_delegate, assembly.context.telemetry)
+        if interactive_delegates:
+            self.delegates = DelegateTasks(DelegateMailboxes(context.state_dir / 'delegates.sqlite'),
+                                           self._run_delegate, context.telemetry)
+
+    @property
+    def model_family(self) -> Literal["anthropic", "google", "openai"] | None:
+        """Derive the model vendor from its prefix, ignoring a leading OpenRouter alias marker.
+
+        Unprefixed names on the direct OpenAI provider belong to OpenAI. Other unrecognized names stay
+        unclassified so family-specific request changes are never applied by guesswork.
+        """
+        model = self.context.model.removeprefix("~")
+        if model.startswith("anthropic/"):
+            return "anthropic"
+        if model.startswith("google/"):
+            return "google"
+        if model.startswith("openai/") or ("/" not in model and self.model_provider.type == "openai"):
+            return "openai"
+        return None
 
     @asynccontextmanager
     async def delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
@@ -203,24 +227,24 @@ class OpenAIAgentsRuntime:
         if self.agents:
             return
         config, ctx = self.drop_in.config, self.context
-        if (self.options.model_provider.type == "openai-compatible"
-                or self.options.model_provider.max_request_bytes is not None):
-            self.client = _validate_and_get_client(self.options.model_provider, ctx.env)
+        if (self.model_provider.type == "openai-compatible"
+                or self.model_provider.max_request_bytes is not None):
+            self.client = _validate_and_get_client(self.model_provider, ctx.env)
             self.provider = OpenAIProvider(
-                openai_client=self.client, use_responses=self.options.model_provider.api == "responses"
+                openai_client=self.client, use_responses=self.model_provider.api == "responses"
             )
         if self.delegates and any(spec.delegates for name, spec in config.agents.items() if name != config.orchestrator):
             raise InvalidDropInError('interactive_delegates supports direct PI delegates only')
-        if self.options.background_coding or self.delegates:
+        if self.background_coding or self.delegates:
             declared = set(self.tools) | set(config.agents) | set(config.coding_agents)
             self._check_result_names(declared)
         self._restart_tools = {name for name in config.agents[config.orchestrator].tools
                                if self.tools[name].type_name == "restart_context"}
         used = {server for agent in config.agents.values() for server in agent.mcp_servers}
-        if self.options.steering:
-            used.add(self.options.steering.server)
+        if (self.context.steering.options if self.context.steering else None):
+            used.add((self.context.steering.options if self.context.steering else None).server)
         used = sorted(used)
-        steering = self.options.steering
+        steering = (self.context.steering.options if self.context.steering else None)
         self.servers = {name: _mcp_server(name, config.mcp_servers[name], ctx.env,
                                           after_ts=steering.after_ts if steering and name == steering.server else None)
                         for name in used}
@@ -228,7 +252,7 @@ class OpenAIAgentsRuntime:
             spec = config.agents[name]
             tools = [self._function_tool(self.tools[tool]) for tool in spec.tools]
             tools += [self._delegate(delegate) for delegate in spec.delegates]
-            if self.options.background_coding and not self.delegates:
+            if self.background_coding and not self.delegates:
                 tools += [
                     self._coding_result_tool(delegate)
                     for delegate in spec.delegates
@@ -242,7 +266,7 @@ class OpenAIAgentsRuntime:
                 tools=tools,
                 mcp_servers=[self.servers[server] for server in spec.mcp_servers],
                 model=self._model(name),
-                model_settings=_model_settings(self.options.model_provider, self.context.env),
+                model_settings=_model_settings(self.model_provider, self.context.env),
             )
 
     async def __aenter__(self) -> Self:
@@ -256,7 +280,7 @@ class OpenAIAgentsRuntime:
                 await self._stack.enter_async_context(self.client)
             for server in self.servers.values():
                 await self._stack.enter_async_context(server)
-                if self.options.background_coding or self.delegates:
+                if self.background_coding or self.delegates:
                     self._check_result_names({tool.name for tool in await server.list_tools()})
             if steering:
                 server = self.servers[steering.options.server]
@@ -302,7 +326,7 @@ class OpenAIAgentsRuntime:
                     orchestrator,
                     await self._turn_input(prompt, workflow),
                     context=self.context,
-                    max_turns=count_limit(self.options.max_turns),
+                    max_turns=count_limit(self.max_turns),
                     hooks=self.hooks,
                     session=self.session,
                     run_config=replace(self.run_config, workflow_name=workflow),
@@ -429,7 +453,7 @@ class OpenAIAgentsRuntime:
             return f"error: Coding agent '{name}' failed: {exc}"
 
     def _coding_result_tool(self, name: str) -> FunctionTool:
-        limit = self.options.coding_result_wait_seconds
+        limit = self.coding_result_wait_seconds
 
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             try:
@@ -491,7 +515,7 @@ class OpenAIAgentsRuntime:
     def describe(self) -> list[str]:
         self.build()
         config = self.drop_in.config
-        provider = self.options.model_provider
+        provider = self.model_provider
         return [
             f"model provider {provider.type} ({provider.api})",
             *(
@@ -651,7 +675,7 @@ class OpenAIAgentsRuntime:
         Mark stable instructions and retained conversation, never the replaced status tail.
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
-        provider = self.options.model_provider
+        provider = self.model_provider
         if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
                 or not (model or self.context.model).removeprefix("~").startswith("anthropic/")):
             return data
@@ -779,7 +803,7 @@ class OpenAIAgentsRuntime:
             return self.delegates.request_progress(args.task_id)
 
         async def inbox(args):
-            limit = self.options.coding_result_wait_seconds
+            limit = self.coding_result_wait_seconds
             seconds = args.wait_seconds if limit == 'unlimited' else min(args.wait_seconds, limit)
             return await self.delegates.inbox(seconds)
 
@@ -830,10 +854,10 @@ class OpenAIAgentsRuntime:
             brief = BriefArguments.model_validate_json(raw).brief
 
             async def execute() -> CodingResult:
-                async with self.delegation_slot(background=self.options.background_coding):
+                async with self.delegation_slot(background=self.background_coding):
                     return await agent.run(brief, ctx)
 
-            if self.options.background_coding:
+            if self.background_coding:
                 if task := self._coding_tasks.get(agent.name):
                     if task.done():
                         return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
@@ -853,7 +877,7 @@ class OpenAIAgentsRuntime:
             return (await execute()).as_tool_output()
 
         description = agent.description
-        if self.options.background_coding:
+        if self.background_coding:
             description += f" Starts in the background; collect its result using {agent.name}_result."
         return FunctionTool(
             name=agent.name,
@@ -909,7 +933,7 @@ class _UnfilteredCalls:
 
 
 async def probe_model(
-    env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, model_provider: ModelProviderOptions
+    env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, model_provider: ModelProvider
 ) -> str:
     """Run one traced provisioning call with the configured model provider."""
     trace_agents_sdk(telemetry)
@@ -931,7 +955,7 @@ async def probe_model(
         return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
 
 
-def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:
+def _validate_and_get_client(options: ModelProvider, env: Mapping[str, str]) -> AsyncOpenAI:
     api_key = env.get(options.api_key_env)
     if not api_key:
         raise InvalidDropInError(f"{options.api_key_env} is not set")
@@ -970,7 +994,7 @@ TRANSIENT_FAILURES = retry_policies.any(
 MODEL_RETRIES = 8
 
 
-def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
+def _model_settings(options: ModelProvider, env: Mapping[str, str]) -> ModelSettings:
     settings = ModelSettings(
         reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"),
         retry=ModelRetrySettings(

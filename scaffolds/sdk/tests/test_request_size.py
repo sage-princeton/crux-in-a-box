@@ -76,7 +76,7 @@ api = "responses"
 @pytest.mark.parametrize('value', [0, -1, True, 1.5, '1000'])
 def test_limit_requires_a_positive_integer(value):
     with pytest.raises(ValidationError):
-        sdk.ModelProviderOptions(type='openai', api='responses', max_request_bytes=value)
+        sdk.ModelProvider(type='openai', api='responses', max_request_bytes=value)
 
 
 @pytest.mark.parametrize('api', ['responses', 'chat-completions'])
@@ -98,7 +98,7 @@ def test_checks_serialized_bytes_before_transport(wire, api, headroom):
     options = {'type': 'openai-compatible', 'api': api, 'base_url': 'https://provider.test/v1'}
 
     async def invoke(limit):
-        settings = sdk.ModelProviderOptions(**options, max_request_bytes=limit)
+        settings = sdk.ModelProvider(**options, max_request_bytes=limit)
         async with sdk._validate_and_get_client(settings, {'OPENAI_API_KEY': 'test-key'}) as client:
             if api == 'responses':
                 return await client.responses.create(model='test', input=payload, tools=tools, extra_body=extra)

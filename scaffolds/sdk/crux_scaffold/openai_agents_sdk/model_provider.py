@@ -2,17 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Literal, Self
 
-from pydantic import Field, HttpUrl, model_validator
-
-from crux_scaffold.components import Options
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 
-class ModelProviderOptions(Options):
+class ModelProvider(BaseModel):
     """Declare the SDK endpoint, API adapter, credential variable and request extras.
 
     The runtime and provisioning probe share these settings. Model and reasoning effort come from the run
     environment; validation prevents request extras from overriding scaffold-owned model or session settings.
     """
+
+    # FIXME: clean this up more?
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     type: Literal["openai", "openai-compatible"]
     api: Literal["responses", "chat-completions"]

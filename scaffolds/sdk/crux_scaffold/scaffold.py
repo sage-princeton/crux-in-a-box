@@ -17,8 +17,8 @@ from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, CommandGate, LlmJudgeGate
 from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, StateFile
-from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
 from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
 from crux_scaffold.steering import Steering
 from crux_scaffold.telemetry import Telemetry
@@ -56,11 +56,14 @@ class Scaffold:
             raise InvalidDropInError("restart_context is for the orchestrator only: it clears the orchestrator's "
                                      "own conversation")
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
+        runtime_config = RuntimeConfig.from_config(config.runtime)
         self.runtime = OpenAIAgentsRuntime(
-            OpenAIAgentsOptions.from_config(config.runtime), drop_in=drop_in, context=self.context,
+            model_provider=runtime_config.model_provider, drop_in=drop_in, context=self.context,
             tools=self.tools, coding_agents=self.coding_agents, context_strategy=self.strategy,
-            instructions=self._instructions, research_context=self._research_context, **(runtime_overrides or {}))
-        steering = self.runtime.options.steering
+            instructions=self._instructions, research_context=self._research_context, max_turns=runtime_config.max_turns,
+            background_coding=runtime_config.background_coding,
+            interactive_delegates=runtime_config.interactive_delegates, coding_result_wait_seconds=runtime_config.coding_result_wait_seconds, **(runtime_overrides or {}))
+        steering = runtime_config.steering
         if steering:
             if steering.server not in config.mcp_servers:
                 raise InvalidDropInError(f"steering uses undefined MCP server '{steering.server}'")
@@ -118,7 +121,7 @@ class Scaffold:
                  "", "## Loop and gates", "", *self._loop_instructions(),
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
-        turns = self.runtime.options.max_turns
+        turns = self.runtime.max_turns
         lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
                      else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
         lines += [f"- `{name}`: {self.tools[name].description}" for name in spec.tools]
@@ -170,13 +173,13 @@ class Scaffold:
                    "The root orchestrator uses no slot. Native subagents inside coding harnesses consume no "
                    "additional scaffold slots or depth.")]
         coding = [name for name in names if name in self.coding_agents]
-        if getattr(self.runtime.options, 'interactive_delegates', False):
+        if self.runtime.interactive_delegates:
             lines += [
                 ("All delegates start in the background and keep a durable conversation per task ID. "
                 "Use `delegate_inbox(wait_seconds=0)` to inspect all tasks, messages and collect every ready result. "
                 "When waiting, make one `delegate_inbox(wait_seconds=...)` call: any new delegate message, "
                 "completion, failure or interruption releases it. Other delegates keep running. "
-                f"Each requested wait is capped by coding_result_wait_seconds={self.runtime.options.coding_result_wait_seconds}. "
+                f"Each requested wait is capped by coding_result_wait_seconds={self.runtime.coding_result_wait_seconds}. "
                 "Collected results are not returned again unless that task is resumed and finishes again."),
                 ("Use `send_message(task_id, message, reply_to, interrupt)` to steer or answer a question. "
                 "It resumes the same conversation if the delegate has stopped. Set interrupt=true to stop active "
@@ -190,7 +193,7 @@ class Scaffold:
                 "Tasks survive restarts as interrupted conversations; use send_message to resume deliberately. "
                 "New briefs start fresh conversations. Task IDs prevent steering a superseded brief."),
             ]
-        if coding and getattr(self.runtime.options, "background_coding", False) and not getattr(
+        if coding and self.runtime.background_coding and not getattr(
                 self.runtime.options, 'interactive_delegates', False):
             lines += ["Coding delegates start in the background with one outstanding task per name across callers."]
             for name in coding:
