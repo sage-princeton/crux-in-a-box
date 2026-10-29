@@ -19,7 +19,7 @@ from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 if TYPE_CHECKING:
     from crux_scaffold.drop_in import DropInDirectory
-    from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsRuntime
+    from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
 
 MAX_FEEDBACK_CHARS = 4_000
 

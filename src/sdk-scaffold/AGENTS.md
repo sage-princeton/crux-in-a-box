@@ -27,7 +27,7 @@ A new capability almost always fits one of these. Try the options in this order,
 
 Don't add special cases for one drop-in to the package. Don't add an extension point that has only a hypothetical second user.
 
-Agent orchestration is implemented directly in `openai_agents_sdk/openai_agents_sdk.py`, with each supporting class in its own module under `openai_agents_sdk/`; `[runtime]` configures this integration without a runtime registry. Telemetry and the budget also have no registry.
+Agent orchestration is implemented directly in `openai_agents_sdk/openai_agents_runtime.py`, with each supporting class in its own module under `openai_agents_sdk/`; `[runtime]` configures this integration without a runtime registry. Telemetry and the budget also have no registry.
 
 ## Keep the boundaries
 

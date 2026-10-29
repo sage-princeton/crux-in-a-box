@@ -62,8 +62,12 @@ JUDGE = "judge"
 
 
 class OpenAIAgentsRuntime:
-    """Agents are SDK Agents; delegates are tools, so each delegated call starts from a fresh context holding only
-    its brief. The orchestrator's conversation lives in the context strategy's session."""
+    """Run the scaffold's orchestrator, delegates and isolated judges through the OpenAI Agents SDK.
+
+    Adapt scaffold tools, coding agents and MCP servers into SDK agents and tools. The context strategy stores
+    the orchestrator's conversation; delegated calls start fresh with their brief and declared standing context.
+    Own delegation capacity, background coding tasks, usage hooks and client/server cleanup for the run.
+    """
 
     type_name = "openai-agents"
 

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from crux_scaffold.components import Options
 from crux_scaffold.gates import GATES, Gate, GateContext, GateResult
-from crux_scaffold.openai_agents_sdk.openai_agents_sdk import TurnOutcome, Verdict
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import TurnOutcome, Verdict
 
 
 class FakeRuntime:

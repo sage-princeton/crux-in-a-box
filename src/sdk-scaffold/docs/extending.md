@@ -238,7 +238,52 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 ## OpenAI Agents SDK integration
 
-`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_sdk.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `openai_agents_sdk/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider_options.py`, `openai_agents_options.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
+`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_runtime.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `openai_agents_sdk/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider_options.py`, `openai_agents_options.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
+
+The package's nine classes connect as follows. Nodes outside the package show its callers and execution dependencies; arrows describe construction, use or returned values.
+
+![OpenAI Agents SDK class relationships](openai-agents-sdk.png)
+
+<details>
+<summary>Mermaid source</summary>
+
+```mermaid
+flowchart TD
+    scaffold["Scaffold"] -->|constructs| runtime["OpenAIAgentsRuntime"]
+    callers["Loop / judge gates"] -->|"run() / judge()"| runtime
+
+    subgraph config["Configuration"]
+        options["OpenAIAgentsOptions"] -->|contains| provider["ModelProviderOptions"]
+    end
+    options -->|configures| runtime
+
+    subgraph support["Runtime support"]
+        brief["BriefArguments"]
+        result["CodingResultArguments"]
+        call["_DelegateCall"]
+        hooks["UsageHooks"]
+    end
+    runtime -->|validates coding briefs| brief
+    runtime -->|validates result requests| result
+    runtime -->|tracks delegation slots| call
+    runtime -->|installs| hooks
+
+    runtime -->|"run() returns"| outcome["TurnOutcome"]
+    runtime -->|"judge() returns"| verdict["Verdict"]
+    runtime -->|executes through| sdk["SDK Agent / Runner"]
+    sdk -->|model completion callback| hooks
+    hooks -->|records tokens| ledger["UsageLedger in RunContext"]
+    runtime -->|wraps| tools["Scaffold tools / CodingAgent / MCP servers"]
+    runtime -->|history and sessions| context["ContextStrategy"]
+
+    cli["CLI probe"] --> probe["probe_model()"]
+    provider -->|configures| probe
+    probe -->|one model turn| sdk
+```
+
+</details>
+
+`BriefArguments` and `CodingResultArguments` describe coding-tool inputs; `_DelegateCall` is internal scheduling state. `TurnOutcome` and `Verdict` carry results back to the loop and gates. `UsageHooks` implements the SDK's `RunHooks` callbacks and records tokens in `UsageLedger`.
 
 `scaffold.py` constructs `OpenAIAgentsRuntime(options, *, drop_in, context, tools, coding_agents, context_strategy, instructions, models=None)` with its dependencies passed directly. `models` substitutes scripted models by agent name; the scaffold's `runtime_overrides` supplies this test seam. `OpenAIAgentsOptions.from_config` validates `[runtime]` and reports `InvalidDropInError` for invalid options. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Options include `max_turns`, `model_provider`, `background_coding` and `steering`. The CLI validates runtime settings without steering during provisioning and passes only the model-provider settings to the module-level `probe_model` function.
 

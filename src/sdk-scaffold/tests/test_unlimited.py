@@ -4,7 +4,7 @@ import pytest
 
 from crux_scaffold.config import AgentConfig, PhaseConfig
 from crux_scaffold.gates import JudgeOptions
-from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsOptions, Verdict
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsOptions, Verdict
 
 from drop_ins import edit
 from scripted import ScriptedModel, call, say

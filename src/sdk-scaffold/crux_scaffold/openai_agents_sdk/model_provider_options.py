@@ -8,7 +8,11 @@ from crux_scaffold.components import Options
 
 
 class ModelProviderOptions(Options):
-    """Configure the SDK's provider; model and effort still come only from the run environment."""
+    """Declare the SDK endpoint, API adapter, credential variable and request extras.
+
+    The runtime and provisioning probe share these settings. Model and reasoning effort come from the run
+    environment; validation prevents request extras from overriding scaffold-owned model or session settings.
+    """
 
     type: Literal["openai", "openai-compatible"]
     api: Literal["responses", "chat-completions"]
