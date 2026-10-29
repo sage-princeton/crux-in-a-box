@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import Mapping
-from contextlib import AsyncExitStack
-from dataclasses import replace
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from functools import partial
-from typing import Any, Literal, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from agents import (
     Agent,
@@ -37,13 +38,12 @@ from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
-from pydantic import Field, HttpUrl, ValidationError, model_validator
+from pydantic import BaseModel, Field, HttpUrl, ValidationError, model_validator
 
-from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
-from crux_scaffold.components import CountLimit, Options, count_limit
+from crux_scaffold.components import CountLimit, Options, count_limit, describe
 from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.context_strategies import is_standing_context
+from crux_scaffold.context_strategies import ContextStrategy, is_standing_context
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
@@ -51,7 +51,45 @@ from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tool
 from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
+if TYPE_CHECKING:
+    from crux_scaffold.drop_in import DropInDirectory
+
 JUDGE = "judge"
+
+
+@dataclass
+class Assembly:
+    """The components and instructions the scaffold wires into the OpenAI Agents SDK."""
+
+    drop_in: DropInDirectory
+    context: RunContext
+    tools: Mapping[str, Tool]
+    coding_agents: Mapping[str, CodingAgent]
+    context_strategy: ContextStrategy
+    instructions: Callable[[str], str]
+
+
+class TurnOutcome(BaseModel):
+    """The orchestrator's answer to one prompt; `completed` is false when it ran out of turns."""
+
+    final_output: str
+    completed: bool
+
+
+class Verdict(BaseModel):
+    """A judge's structured answer."""
+
+    passed: bool
+    feedback: str
+    next_prompt: str | None
+
+
+@dataclass
+class _DelegateCall:
+    task: asyncio.Task
+    active: bool = False
+    children: int = 0
+    closed: bool = False
 
 
 class ModelProviderOptions(Options):
@@ -91,10 +129,19 @@ class ModelProviderOptions(Options):
 
 
 class OpenAIAgentsOptions(Options):
+    type: Literal["openai-agents"] = "openai-agents"
     max_turns: CountLimit = 50
     model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
     background_coding: bool = False
     steering: SteeringOptions | None = None
+
+    @classmethod
+    def from_config(cls, table: Mapping[str, Any]) -> Self:
+        """Validate `[runtime]`, accepting the existing fixed SDK type and reporting configuration errors."""
+        try:
+            return cls.model_validate(table)
+        except ValidationError as exc:
+            raise InvalidDropInError(f"runtime: {describe(exc)}") from None
 
 
 class BriefArguments(Arguments):
@@ -121,18 +168,21 @@ class UsageHooks(RunHooks):
         )
 
 
-@RUNTIMES.register
-class OpenAIAgentsRuntime(AgentRuntime):
+class OpenAIAgentsRuntime:
     """Agents are SDK Agents; delegates are tools, so each delegated call starts from a fresh context holding only
     its brief. The orchestrator's conversation lives in the context strategy's session."""
 
     type_name = "openai-agents"
-    Options = OpenAIAgentsOptions
 
     def __init__(
-        self, name: str, options: OpenAIAgentsOptions, *, assembly: Assembly, models: Mapping[str, Model] | None = None
+        self, options: OpenAIAgentsOptions, *, assembly: Assembly, models: Mapping[str, Model] | None = None
     ) -> None:
-        super().__init__(name, options, assembly=assembly)
+        self.options = options
+        self.assembly = assembly
+        self._delegate_limit = assembly.drop_in.config.delegation.max_concurrent
+        self._active_delegates = 0
+        self._delegate_changed = asyncio.Condition()
+        self._delegate_call: ContextVar[_DelegateCall | None] = ContextVar("delegate_call", default=None)
         self.models = dict(models or {})
         self.hooks = UsageHooks(assembly.context.usage)
         self.run_config = RunConfig(call_model_input_filter=self._select_input)
@@ -143,6 +193,64 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self._coding_tasks: dict[str, asyncio.Task[CodingResult]] = {}
         self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
+
+    @asynccontextmanager
+    async def delegation_slot(self, *, background: bool = False) -> AsyncIterator[None]:
+        """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
+        limit = self._delegate_limit
+        if limit is None:
+            yield
+            return
+        parent = None if background else self._delegate_call.get()
+        changed = self._delegate_changed
+        async with self._suspend_delegate(parent):
+            async with changed:
+                await changed.wait_for(lambda: self._active_delegates < limit)
+                self._active_delegates += 1
+                call = _DelegateCall(asyncio.current_task(), active=True)
+            token = self._delegate_call.set(call)
+            try:
+                yield
+            finally:
+                self._delegate_call.reset(token)
+                async with changed:
+                    call.closed = True
+                    if call.active:
+                        call.active = False
+                        self._active_delegates -= 1
+                    changed.notify_all()
+
+    @asynccontextmanager
+    async def delegation_wait(self) -> AsyncIterator[None]:
+        """Suspend a delegated caller while it awaits an independently scheduled worker."""
+        async with self._suspend_delegate(self._delegate_call.get()):
+            yield
+
+    @asynccontextmanager
+    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncIterator[None]:
+        limit = self._delegate_limit
+        if limit is None or parent is None:
+            yield
+            return
+        changed = self._delegate_changed
+        async with changed:
+            parent.children += 1
+            if parent.active:
+                parent.active = False
+                self._active_delegates -= 1
+            changed.notify_all()
+        try:
+            yield
+        finally:
+            async with changed:
+                parent.children -= 1
+                changed.notify_all()
+                await changed.wait_for(lambda: parent.closed or parent.task.cancelling() or parent.children
+                                       or parent.active or self._active_delegates < limit)
+                if not (parent.closed or parent.task.cancelling() or parent.children or parent.active):
+                    parent.active = True
+                    self._active_delegates += 1
+                    changed.notify_all()
 
     def build(self) -> None:
         if self.agents:
@@ -181,7 +289,6 @@ class OpenAIAgentsRuntime(AgentRuntime):
             )
 
     async def __aenter__(self) -> Self:
-        # TODO(AE-247): let the AgentRuntime base class own telemetry setup for every runtime.
         trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
         steering = self.assembly.context.steering

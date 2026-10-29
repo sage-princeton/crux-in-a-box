@@ -83,7 +83,7 @@ class ScaffoldConfig(Options):
     orchestrator: str
     workspace: str = "workspace"
     extensions: list[str] = Field(default_factory=list)
-    runtime: ComponentTable = Field(default_factory=lambda: {"type": "openai-agents"})
+    runtime: dict[str, Any] = Field(default_factory=lambda: {"type": "openai-agents"})
     context: ComponentTable = Field(default_factory=lambda: {"type": "persistent"})
     loop: ComponentTable
     budget: Budget = Budget()

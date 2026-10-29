@@ -11,9 +11,8 @@ from collections.abc import Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from crux_scaffold.agent_runtimes.base import RUNTIMES
+from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsOptions, OpenAIAgentsRuntime
 from crux_scaffold.coding_agents import CODING_AGENTS
-from crux_scaffold.components import Options
 from crux_scaffold.config import load_config
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
@@ -37,7 +36,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
          telemetry: Telemetry | None = None, sleep: Sleep = asyncio.sleep,
          runtime_overrides: Mapping[str, Any] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m crux_scaffold",
-                                     description="Run a CRUX drop-in directory on an agent SDK.")
+                                     description="Run a CRUX drop-in directory on the OpenAI Agents SDK.")
     commands = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (("check", "validate a drop-in directory and print its assembly; no model calls"),
                             ("run", "run the drop-in's loop, resuming from its state directory")):
@@ -53,16 +52,15 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     telemetry = telemetry or telemetry_from_env(env, RunIdentity.from_env(env))
     try:
         if args.command == "probe":
-            runtime, options = "openai-agents", None
+            options = None
             if args.drop_in:
                 # Provisioning precedes operator preparation. A model-only probe
                 # needs provider settings, not resolved prompts or Slack steering.
                 drop_in = DropInDirectory(args.drop_in.resolve(), load_config(args.drop_in))
                 drop_in.import_extensions()
                 spec = {key: value for key, value in drop_in.config.runtime.items() if key != "steering"}
-                cls, options = RUNTIMES.resolve("runtime", spec)
-                runtime = cls.type_name
-            return asyncio.run(run_probe(runtime, args.coding_agent, env, telemetry, options=options))
+                options = OpenAIAgentsOptions.from_config(spec)
+            return asyncio.run(run_probe(args.coding_agent, env, telemetry, options=options))
         drop_in = DropInDirectory.load(args.drop_in)
         scaffold = Scaffold(drop_in, env, state_dir=args.state_dir, telemetry=telemetry,
                             sleep=sleep, runtime_overrides=runtime_overrides)
@@ -105,8 +103,8 @@ async def until_stopped[T](coro: Coroutine[Any, Any, T]) -> T:
             loop.remove_signal_handler(signum)
 
 
-async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, str], telemetry: Telemetry, *,
-                    options: Options | None = None) -> int:
+async def run_probe(coding_agent: str | None, env: Mapping[str, str], telemetry: Telemetry, *,
+                    options: OpenAIAgentsOptions | None = None) -> int:
     """The first two of the team's testing protocols: the agent can do anything at all, and tracing works."""
     if not isinstance(telemetry, LangfuseTelemetry):
         print("probe failed: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set", file=sys.stderr)
@@ -123,7 +121,7 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
     try:
         with telemetry.trace("crux-probe"):
             kwargs = {"options": options} if options is not None else {}
-            replies = {runtime: await RUNTIMES.get(runtime).probe(env, request, telemetry, **kwargs)}
+            replies = {OpenAIAgentsRuntime.type_name: await OpenAIAgentsRuntime.probe(env, request, telemetry, **kwargs)}
             if coding_agent:
                 replies[coding_agent] = await probe_coding_agent(coding_agent, env, telemetry, request)
     finally:

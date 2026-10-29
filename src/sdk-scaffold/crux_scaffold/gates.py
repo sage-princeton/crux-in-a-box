@@ -18,7 +18,7 @@ from crux_scaffold.tools import Tool, validate_review_tools
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 if TYPE_CHECKING:
-    from crux_scaffold.agent_runtimes.base import AgentRuntime
+    from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
     from crux_scaffold.drop_in import DropInDirectory
 
 MAX_FEEDBACK_CHARS = 4_000
@@ -40,7 +40,7 @@ class GateContext:
 
     run: RunContext
     drop_in: DropInDirectory
-    runtime: AgentRuntime
+    runtime: OpenAIAgentsRuntime
     phase: str
     iteration: int
     last_output: str

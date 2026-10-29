@@ -1,31 +1,20 @@
-"""Fakes for testing the loop and gates without an agent SDK: a runtime that replays turns and a gate that replays
+"""Fakes for testing the loop and gates without model calls: a runtime that replays turns and a gate that replays
 declared results."""
-
-from typing import Self
 
 from pydantic import BaseModel
 
-from crux_scaffold.agent_runtimes.base import AgentRuntime, TurnOutcome, Verdict
-from crux_scaffold.components import Component, Options
+from crux_scaffold.agent_runtimes.openai_agents_sdk import TurnOutcome, Verdict
+from crux_scaffold.components import Options
 from crux_scaffold.gates import GATES, Gate, GateContext, GateResult
 
 
-class FakeRuntime(AgentRuntime):
+class FakeRuntime:
     """Replays scripted turn outcomes and verdicts; records the prompts and judge requests."""
 
-    type_name = "fake"
-
     def __init__(self, outputs: list[TurnOutcome], verdicts: list[Verdict] | None = None) -> None:
-        Component.__init__(self, "runtime", Options())
         self.outputs, self.verdicts = list(outputs), list(verdicts or [])
         self.prompts: list[str] = []
         self.judged: list[tuple[str, str, list[str], int]] = []
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *exc_info: object) -> None:
-        return None
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self.prompts.append(prompt)
@@ -35,13 +24,6 @@ class FakeRuntime(AgentRuntime):
                     review_workspace=None) -> Verdict:
         self.judged.append((rubric, evidence, tools, max_turns))
         return self.verdicts.pop(0)
-
-    def describe(self) -> list[str]:
-        return []
-
-    @classmethod
-    async def probe(cls, env, prompt: str, telemetry, *, options: Options | None = None) -> str:
-        return prompt
 
 
 def done(text: str = "done") -> TurnOutcome:

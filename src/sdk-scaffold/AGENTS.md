@@ -7,14 +7,13 @@ These rules apply to every change under `src/sdk-scaffold/`. The secret-hygiene 
 
 ## Extend the existing abstractions first
 
-The scaffold is generic by design. Each of its parts is an interface with a registry, and a CRUX selects implementations in its `scaffold.toml`. The parts are:
+The scaffold runs agents on the OpenAI Agents SDK. Its pluggable parts use interfaces and registries, and a CRUX selects implementations in its `scaffold.toml`. The parts are:
 
 - tools;
 - MCP servers for steering and external systems;
 - loops and their gates;
 - context strategies;
 - coding agents;
-- agent runtimes;
 - telemetry;
 - the budget.
 
@@ -27,6 +26,8 @@ A new capability almost always fits one of these. Try the options in this order,
 5. **Add a new abstraction** only when none of the above fits. Say in the PR description why no existing interface fits. Follow the component pattern (`Component`, `Options`, `Registry`), wire it in `scaffold.py` and document it in `docs/extending.md`.
 
 Don't add special cases for one drop-in to the package. Don't add an extension point that has only a hypothetical second user.
+
+Agent orchestration is implemented directly in `agent_runtimes/openai_agents_sdk.py`; `[runtime]` configures this integration without a runtime registry. Telemetry and the budget also have no registry.
 
 ## Keep the boundaries
 

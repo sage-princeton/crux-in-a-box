@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from crux_scaffold.agent_runtimes.base import Verdict
+from crux_scaffold.agent_runtimes.openai_agents_sdk import Verdict
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.gates import GATES, GateContext
 from crux_scaffold.telemetry import NullTelemetry
