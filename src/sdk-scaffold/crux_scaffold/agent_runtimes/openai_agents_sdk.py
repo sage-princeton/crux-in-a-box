@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import replace
@@ -86,7 +86,7 @@ class OpenAIAgentsRuntime:
         self._steering_items: list[dict] = []
 
     @asynccontextmanager
-    async def delegation_slot(self, *, background: bool = False) -> AsyncIterator[None]:
+    async def delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
         """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
         limit = self._delegate_limit
         if limit is None:
@@ -112,13 +112,13 @@ class OpenAIAgentsRuntime:
                     changed.notify_all()
 
     @asynccontextmanager
-    async def delegation_wait(self) -> AsyncIterator[None]:
+    async def delegation_wait(self) -> AsyncGenerator[None, None]:
         """Suspend a delegated caller while it awaits an independently scheduled worker."""
         async with self._suspend_delegate(self._delegate_call.get()):
             yield
 
     @asynccontextmanager
-    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncIterator[None]:
+    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncGenerator[None, None]:
         limit = self._delegate_limit
         if limit is None or parent is None:
             yield
