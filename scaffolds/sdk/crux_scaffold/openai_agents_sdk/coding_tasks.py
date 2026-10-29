@@ -10,15 +10,15 @@ from crux_scaffold.workspace import RunContext
 class CodingTasks:
     """Run coding delegates and own their uncollected background tasks."""
 
-    def __init__(self, context: RunContext, delegation: DelegationLimiter, *, background: bool) -> None:
-        self.background = background
+    def __init__(self, context: RunContext, delegation: DelegationLimiter, *, tarts_in_background: bool) -> None:
+        self.start_in_background = tarts_in_background
         self._context = context
         self._delegation = delegation
         self._tasks: dict[str, asyncio.Task[CodingResult]] = {}
 
     async def run(self, agent: CodingAgent, brief: str) -> str:
         """Run a brief or start it in the background with one uncollected task per agent."""
-        if not self.background:
+        if not self.start_in_background:
             return (await self._execute(agent, brief)).as_tool_output()
         if agent.name in self._tasks:
             return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
@@ -30,7 +30,7 @@ class CodingTasks:
         )
 
     async def _execute(self, agent: CodingAgent, brief: str) -> CodingResult:
-        async with self._delegation.slot(background=self.background):
+        async with self._delegation.slot(background=self.start_in_background):
             return await agent.run(brief, self._context)
 
     async def collect(self, name: str, *, wait: bool) -> str:
