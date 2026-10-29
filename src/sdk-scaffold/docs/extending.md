@@ -22,9 +22,9 @@ Prefer the first option that works:
 | How phases and iterations are sequenced | [`Loop`](#loops-loop) | `[[loop.phases]]` |
 | What part of a conversation reaches the model and when standing context is injected | [`ContextStrategy`](#context-strategies-contextstrategy) | `[context]`; each agent's `context`, `workspace_context`, `context_max_chars` |
 | Which coding-agent SDK implements a brief | [`CodingAgent`](#coding-agents-codingagent) | `[coding_agents]` |
-| Which agent SDK runs the agents | [`AgentRuntime`](#agent-runtimes-agentruntime) | `[runtime]` |
+| Agent orchestration and model provider | [OpenAI Agents SDK integration](#openai-agents-sdk-integration) | `[runtime]` |
 | Where traces go | [`Telemetry`](#telemetry-telemetry) | Langfuse environment variables |
-| Hard resource limits | [`Budget`](#budget-and-usage), [`AgentRuntime`](#agent-runtimes-agentruntime) | `[budget]`, `[delegation]` |
+| Hard resource limits | [`Budget`](#budget-and-usage), [OpenAI Agents SDK integration](#openai-agents-sdk-integration) | `[budget]`, `[delegation]` |
 | External consumption and credits | [`ResourceProvider`](#resource-providers-resourceprovider) | `[resources.<name>]` |
 
 ## The component pattern
@@ -37,9 +37,9 @@ Prefer the first option that works:
 
 Built-in components register themselves when their module is imported. `scaffold.py` imports every built-in module. A drop-in lists its own modules under `extensions`. `DropInDirectory.import_extensions` imports each one as `crux_drop_in.<stem>`, and its classes register themselves with the same registries.
 
-**`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. A new dependency between components is passed in there, as a constructor keyword or through `Assembly`; components do not build one another.
+**`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. Dependencies between components are passed as constructor keywords; components do not build one another.
 
-**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
+**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `openai_agents_sdk/` and `context_strategies.py`, and Codex to `coding_agents.py`. Loops and gates reference `OpenAIAgentsRuntime` only through type-checking imports.
 
 **Errors have two kinds:**
 
@@ -187,7 +187,7 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 
 `PhaseConfig.max_iterations` accepts a positive integer (default 1) or the string
 `"unlimited"`. The latter skips iteration exhaustion while retaining budget checks.
-`AgentConfig.max_turns` (default 30), `OpenAIAgentsOptions.max_turns` (default 50),
+`AgentConfig.max_turns` (default 30), `RuntimeConfig.max_turns` (default 50),
 and `JudgeOptions.max_turns` (default 20) accept the same `CountLimit` type.
 `count_limit` maps `"unlimited"` to `None` for the SDK's native unbounded runner.
 Existing numeric defaults are preserved. These settings do not disable budget
@@ -216,7 +216,7 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 - **`trim_recent`** has `max_items` (default 200, positive). It trims at user-message boundaries, preserving complete tool-call sequences even when they exceed the limit. It refreshes context when the previous snapshot falls outside the recent history and keeps the latest snapshot in every model input throughout a turn.
 - **`openai_compaction`** has `trigger_items` (default 200, positive). It wraps the durable store in `OpenAIResponsesCompactionSession` and uses the run's model. Its metered client records usage as `compaction:<session_id>` in the ledger and telemetry. It injects first, and on the next outer turn when history has a compaction item newer than its latest snapshot (or no snapshot). Unsupported models fail before a model call.
 - **Standing-context sources** are declared per agent or coding agent using `StandingContextOptions`: `context` is a list of required drop-in-relative files; `workspace_context` is a list of workspace-relative files that may not exist yet; `context_max_chars` caps the whole snapshot at 32,000 characters by default (minimum 200). Paths are confined to their root at validation and at injection. Existing sources are checked for unresolved placeholders at launch. `DropInDirectory.standing_context(spec, *, telemetry, agent)` loads a bounded snapshot, marks absent dynamic files, and records a `standing_context:<agent>` span with paths, character count and truncation status. `instructions(agent)` supplies the persona separately, on every call.
-- **Strategies use the runtime's types.** Items and `Session` are OpenAI Agents SDK types today, so a strategy targets the `openai-agents` runtime. A second runtime decides whether to adapt them or to take strategies of its own.
+- **Strategies use SDK types.** Items and `Session` are OpenAI Agents SDK types.
 
 ## Coding agents (`CodingAgent`)
 
@@ -236,13 +236,65 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 - **Delegation limits apply at the runtime boundary.** One coding-worker brief occupies one slot and adds one depth edge. Native subagents inside its coding harness do not consume additional scaffold slots or depth. A coding-agent implementation does not acquire a second slot in `execute` or `run`.
 
-## Agent runtimes (`AgentRuntime`)
+## OpenAI Agents SDK integration
 
-`agent_runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `agent_runtimes/openai_agents_sdk.py`.
+`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_runtime.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `openai_agents_sdk/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider.py`, `runtime_config.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
 
-A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, and the context strategy. `runtime_overrides` add further keyword arguments, such as the test models that `openai-agents` takes. A new runtime module must be imported by `scaffold.py` so it registers. Its SDK stays inside that module.
+The package's nine classes connect as follows. Nodes outside the package show its callers and execution dependencies; arrows describe construction, use or returned values.
 
-`Assembly.instructions(agent_name) -> str` supplies the complete instructions for an agent. The composition root joins the generated setup, optional drop-in guidance and persona for the orchestrator; other agents receive only their own persona. Personas are read at assembly time. Standing context is validated at launch and injected separately as strategy-controlled developer messages. Runtimes must call `instructions` on every model call, including delegated calls, rather than cache its result: the setup reads live loop state and must reflect phase changes and resumed iterations. The OpenAI Agents runtime adapts it to an SDK instructions callback.
+![OpenAI Agents SDK class relationships](openai-agents-sdk.png)
+
+<details>
+<summary>Mermaid source</summary>
+
+```mermaid
+flowchart TD
+    scaffold["Scaffold"] -->|constructs| runtime["OpenAIAgentsRuntime"]
+    callers["Loop / judge gates"] -->|"run() / judge()"| runtime
+
+    subgraph config["Configuration"]
+        options["OpenAIAgentsOptions"] -->|contains| provider["ModelProviderOptions"]
+    end
+    options -->|configures| runtime
+
+    subgraph support["Runtime support"]
+        brief["BriefArguments"]
+        result["CodingResultArguments"]
+        call["_DelegateCall"]
+        hooks["UsageHooks"]
+    end
+    runtime -->|validates coding briefs| brief
+    runtime -->|validates result requests| result
+    runtime -->|tracks delegation slots| call
+    runtime -->|installs| hooks
+
+    runtime -->|"run() returns"| outcome["TurnOutcome"]
+    runtime -->|"judge() returns"| verdict["Verdict"]
+    runtime -->|executes through| sdk["SDK Agent / Runner"]
+    sdk -->|model completion callback| hooks
+    hooks -->|records tokens| ledger["UsageLedger in RunContext"]
+    runtime -->|wraps| tools["Scaffold tools / CodingAgent / MCP servers"]
+    runtime -->|history and sessions| context["ContextStrategy"]
+
+    cli["CLI probe"] --> probe["probe_model()"]
+    provider -->|configures| probe
+    probe -->|one model turn| sdk
+```
+
+</details>
+
+`BriefArguments` and `CodingResultArguments` describe coding-tool inputs; `_DelegateCall` is internal scheduling state. `TurnOutcome` and `Verdict` carry results back to the loop and gates. `UsageHooks` implements the SDK's `RunHooks` callbacks and records tokens in `UsageLedger`.
+
+`scaffold.py` constructs `OpenAIAgentsRuntime(*, model_provider, drop_in, context, tools, coding_agents, context_strategy, instructions, max_turns=50, background_coding=False, models=None)` with its dependencies and runtime properties passed directly. `models` substitutes scripted models by agent name; the scaffold's `runtime_overrides` supplies this test seam. `RuntimeConfig.from_config` validates `[runtime]` at the composition boundary and reports `InvalidDropInError` for invalid settings. The runtime does not retain this configuration object. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Steering is assembled separately into `RunContext.steering`. The CLI validates runtime settings without steering during provisioning and passes only the model provider to the module-level `probe_model` function.
+
+| Runtime property | Meaning |
+|---|---|
+| `model_provider` | A `ModelProvider` declaring the endpoint, API adapter, credential variable and request extras. |
+| `model_family` | A derived `anthropic`, `google`, `openai` or `None`, based on `RunContext.model` after stripping a leading `~`. The prefixes `anthropic/`, `google/` and `openai/` identify their families, including model names with preset suffixes. An unprefixed name on the direct OpenAI provider resolves to `openai`; other names remain unclassified. This value is not a separate TOML setting. |
+| `max_turns` | The orchestrator's per-iteration turn limit, default 50; `"unlimited"` disables it. |
+| `background_coding` | Whether coding delegates start as background tasks, default `False`. |
+
+The `instructions(agent_name) -> str` constructor callback supplies the complete instructions for an agent. The composition root joins the generated setup, optional drop-in guidance and persona for the orchestrator; other agents receive only their own persona. Personas are read at assembly time. Standing context is validated at launch and injected separately as strategy-controlled developer messages. The runtime calls `instructions` on every model call, including delegated calls, through an SDK instructions callback: the setup reads live loop state and must reflect phase changes and resumed iterations.
 
 The generated setup uses assembled tool and coding-agent descriptions and only capabilities listed on the orchestrator. For the built-in `phased` loop it includes the current phase and iteration, phase limits and intervals, and referenced gates (including `command` criteria). Other loops supply their summary through `Loop.describe()` without assuming phased control flow. Rest bounds come from each available `rest` tool, and the token limit comes from `RunContext.budget`. MCP servers are identified by declared name; their commands, arguments and environment are never included.
 
@@ -255,15 +307,15 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
 | `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). `max_turns` is a positive integer or `None` for no turn limit. When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent. |
-| `describe()` | Assembly details, including provider and one line per agent, printed by `check`. |
-| `delegation_slot(*, background=False)` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
-| `delegation_wait()` (base implementation) | Suspend a delegated caller while awaiting independently scheduled background work; reacquire its capacity before resuming. Does not acquire a new slot. |
-| `probe(env, prompt, telemetry, *, options=None)` (classmethod) | One traced model call without running a loop. Optional validated runtime options let `probe --drop-in` use the run's model provider. The CLI ignores steering and unresolved prompt/operator placeholders during a probe; `check` and `run` require a fully prepared drop-in. |
+| `describe()` | Runtime details, including provider and one line per agent, printed by `check`. |
+| `delegation_slot(*, background=False)` | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
+
+The module-level `probe_model(env, prompt, telemetry, *, model_provider)` makes one traced model call without constructing a runtime or running a loop. It receives only validated `ModelProvider`. The CLI ignores steering and unresolved prompt/operator placeholders during a probe; `check` and `run` require a fully prepared drop-in.
 
 **The behavior the rest of the scaffold relies on:**
 
 - **Agents.**
-  - Build one agent per `[agents.<name>]`, with instructions supplied by `Assembly.instructions(name)` on each model call.
+  - Build one agent per `[agents.<name>]`, with instructions supplied by the constructor's `instructions(name)` callback on each model call.
   - Every agent uses `ctx.model` and `ctx.reasoning_effort`. A drop-in cannot set a model, so runs differ in model only by `CRUX_MODEL`.
 - **Tools.**
   - Expose each `Tool` with its `Arguments` schema.
@@ -272,7 +324,7 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 - **Delegates.**
   - A delegated agent or coding agent is a tool whose call starts from a fresh context holding only the caller's brief.
   - A coding agent is called through `CodingAgent.run`.
-  - Wrap the entire delegated invocation in `async with self.delegation_slot()`, including SDK execution, coding-worker execution and error handling. The base runtime owns the run's shared capacity and propagates nested call identity through task-local context. Blocking callers must await their children inside the scope. Independently scheduled background workers acquire `delegation_slot(background=True)` inside their task, covering the complete worker execution without suspending their continuing caller. Wrap result waits in `delegation_wait()` so a one-slot parent can await its worker. Own, drain and cancel background tasks through the runtime lifecycle; do not suppress cancellation.
+  - Wrap the entire delegated invocation in `async with self.delegation_slot()`, including SDK execution, coding-worker execution and error handling. `OpenAIAgentsRuntime` owns the run's shared capacity and propagates nested call identity through task-local context. Blocking callers must await their children inside the scope. Independently scheduled background workers acquire `delegation_slot(background=True)` inside their task, covering the complete worker execution without suspending their continuing caller. Result waits use the same internal suspension context so a one-slot parent can await its worker. Own, drain and cancel background tasks through the runtime lifecycle; do not suppress cancellation.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
 - **Context.** Apply `context_strategy.select` to orchestrator and delegate model calls, then append `await ctx.budget_status()` as an ephemeral user message after selected history and static content. Place volatile steering transport status there too, keeping instructions and the earlier input prefix stable when these values change. Use the user role so Gemini adapters do not fold changing status into system instructions; standing context remains developer messages. The status must survive trimming and must not accumulate in stored history; delegated SDK agents receive it too. Isolated judges skip this filter so run metadata and resource status cannot enter their evidence.
 - **Standing context.** Before each orchestrator turn, pass its stored history and context loader to `inject_standing_context`, then prepend the returned messages to its prompt as SDK input. Agent delegates do the same with an empty history for each call. Preserve the persona in instructions separately.
@@ -282,7 +334,7 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 
 ### Model providers in `openai-agents`
 
-The existing runtime's `model_provider` options configure the SDK's `OpenAIProvider`; this is not another component registry. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy. Omitting `[runtime.model_provider]` uses direct OpenAI with the Responses API; declaring the table requires explicit `type` and `api` values.
+The runtime's `model_provider` property configures the SDK's `OpenAIProvider`; this is not another component registry. `ModelProvider` is a strict, frozen Pydantic model, independent of the generic component `Options` class. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy. Omitting `[runtime.model_provider]` uses direct OpenAI with the Responses API; declaring the table requires explicit `type` and `api` values.
 
 | `[runtime.model_provider]` key | Contract |
 |---|---|
@@ -428,7 +480,7 @@ malformed responses, duplicate/restart recovery and uncertain posts without a ne
 
 ### Runtime delivery contract
 
-`OpenAIAgentsOptions.steering` is an optional strict `SteeringOptions` table under
+`RuntimeConfig.steering` is an optional strict `SteeringOptions` table under
 `[runtime.steering]` (see the README for all keys). `scaffold.py` validates its
 server reference and constructs `RunContext.steering`. `openai-agents` starts that
 MCP server even when no agent exposes its tools, verifies the required read/post
@@ -446,9 +498,8 @@ Filters do not themselves persist input in the SDK, so the runtime also carries
 new envelopes through the current Runner call after context selection. Subsequent
 Runner calls reload them from the conversation. Older instructions remain ordinary
 history and can be trimmed by a context strategy. Delegates receive only their
-brief, never the operator inbox automatically; new runtimes must implement this
-contract if they add a steering option. Custom strategies must provide a durable
-session for restart guarantees.
+brief, never the operator inbox automatically. Custom strategies must provide a
+durable session for restart guarantees.
 
 `rest` charges only the sleep completed before early wake. Phase intervals also
 use `RunContext.wait`; both check pending state before starting another transport

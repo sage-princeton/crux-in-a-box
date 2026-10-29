@@ -8,15 +8,22 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-import crux_scaffold.agent_runtimes.openai_agents_sdk
 import crux_scaffold.external_resources  # noqa: F401  registers compute resource providers
-from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
-from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, OpenAICompaction, Persistent, TrimRecent
+from crux_scaffold.config import AgentConfig
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, CommandGate, LlmJudgeGate
 from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, StateFile
+from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
+from crux_scaffold.openai_agents_sdk.agent_tools import AgentTools
+from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.conversation_context import ConversationContext
+from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
+from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
+from crux_scaffold.openai_agents_sdk.sdk_resources import SdkResources
 from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
 from crux_scaffold.steering import Steering
 from crux_scaffold.telemetry import Telemetry
@@ -41,23 +48,37 @@ class Scaffold:
         if config.budget.max_cost_usd is not None and config.budget.model_resource not in providers:
             raise InvalidDropInError("budget.model_resource must name a declared resource when max_cost_usd is set")
         self.context.resources = ResourceMonitor(providers) if providers else None
-        self.strategy = CONTEXT_STRATEGIES.create("context", config.context)
+        self.conversation_context = ConversationContext(max_items=config.context.max_items)
         self.loop = LOOPS.create("loop", config.loop, gates={name: GATES.create(name, table)
                                                              for name, table in config.gates.items()})
         self.coding_agents = self._coding_agents()
-        tools = self._tools()
+        self.tools = self._tools()
         for gate in self.loop.gates.values():
-            gate.validate_tools(tools)
+            gate.validate_tools(self.tools)
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
-        self.assembly = Assembly(drop_in, self.context, tools, self.coding_agents, self.strategy, self._instructions)
-        self.runtime = RUNTIMES.create("runtime", config.runtime, assembly=self.assembly, **(runtime_overrides or {}))
-        steering = getattr(self.runtime.options, "steering", None)
+        runtime_config = RuntimeConfig.from_config(config.runtime)
+        self.runtime = self._runtime(runtime_config, runtime_overrides)
+        steering = runtime_config.steering
         if steering:
             if steering.server not in config.mcp_servers:
                 raise InvalidDropInError(f"steering uses undefined MCP server '{steering.server}'")
             self.context.steering = Steering(steering, state_dir, None, telemetry, recipient=config.orchestrator)
-        elif any(tool.type_name == "escalate" for tool in self.assembly.tools.values()):
+        elif any(tool.type_name == "escalate" for tool in self.tools.values()):
             raise InvalidDropInError("escalate requires runtime.steering")
+
+    def _runtime(self, config: RuntimeConfig, overrides: Mapping[str, Any] | None) -> OpenAIAgentsRuntime:
+        delegation = DelegationLimiter(self.drop_in.config.delegation.max_concurrent)
+        coding_tasks = CodingTasks(self.context, delegation, tarts_in_background=config.background_coding)
+        tools = AgentTools(self.tools, self.coding_agents, coding_tasks, delegation)
+        builder = self._agent_builder(config, tools, overrides)
+        return OpenAIAgentsRuntime(builder, self.conversation_context, coding_tasks, config.max_turns)
+
+    def _agent_builder(
+        self, config: RuntimeConfig, tools: AgentTools, overrides: Mapping[str, Any] | None
+    ) -> AgentBuilder:
+        connection = ModelConnection(config.model_provider, self.context.env, **(overrides or {}))
+        resources = SdkResources(self.drop_in, self.context, connection)
+        return AgentBuilder(resources, tools, self._instructions)
 
     def _tools(self) -> dict[str, Tool]:
         config = self.drop_in.config
@@ -84,18 +105,18 @@ class Scaffold:
         config = self.drop_in.config
         spec = config.agents[config.orchestrator]
         lines = ["# Scaffold setup", "",
-                 f"You are `{config.orchestrator}`, the orchestrator in the `{self.runtime.type_name}` agent runtime.",
+                 f"You are `{config.orchestrator}`, the orchestrator using the OpenAI Agents SDK.",
                  ("The scaffold sends you one prompt per loop iteration. "
                   "Your persona follows this generated setup."),
                  "", "## Loop and gates", "", *self._loop_instructions(),
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
-        if turns := getattr(self.runtime.options, "max_turns", None):
-            lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
-                         else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
-        lines += [f"- `{name}`: {self.assembly.tools[name].description}" for name in spec.tools]
+        turns = self.runtime.max_turns
+        lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
+                     else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
+        lines += [f"- `{name}`: {self.tools[name].description}" for name in spec.tools]
         for name in spec.tools:
-            tool = self.assembly.tools[name]
+            tool = self.tools[name]
             if isinstance(tool, RunShell):
                 lines.append(f"`{name}` command timeout {tool.options.timeout_seconds:g}s; each call starts in "
                              "the workspace root and returns its exit code and combined output.")
@@ -142,7 +163,7 @@ class Scaffold:
                    "The root orchestrator uses no slot. Native subagents inside coding harnesses consume no "
                    "additional scaffold slots or depth.")]
         coding = [name for name in names if name in self.coding_agents]
-        if coding and getattr(self.runtime.options, "background_coding", False):
+        if coding and self.runtime.background_coding:
             lines += ["Coding delegates start in the background with one outstanding task per name across callers."]
             for name in coding:
                 lines.append(f"Use `{name}_result(wait=false)` to check status or collect a completed result; "
@@ -170,7 +191,7 @@ class Scaffold:
                   "supersede older instructions. Rest wakes for steering; arbitrary model/tool calls and native "
                   "coding-result waits are never interrupted. Replies in the configured source arrive by the same "
                   "route. Delivery state and identified messages survive restart.")]
-        if any(self.assembly.tools[name].type_name == "escalate"
+        if any(self.tools[name].type_name == "escalate"
                for name in self.drop_in.config.agents[self.drop_in.config.orchestrator].tools):
             lines.append("Use escalate for broken resources or operator action, reuse the same request_id on retries, "
                          "and continue independent work while awaiting the operator's reply.")
@@ -205,7 +226,7 @@ class Scaffold:
                          "overlapping costs are not added. Reports can lag; stale or missing measurements are "
                          "unknown, not zero. An outage alone does not stop the run. These are pacing controls.")
         for name in self.drop_in.config.agents[self.drop_in.config.orchestrator].tools:
-            tool = self.assembly.tools[name]
+            tool = self.tools[name]
             if isinstance(tool, Rest):
                 policy = tool.options
                 remaining = max(0, policy.total_seconds - tool.used_seconds)
@@ -218,23 +239,22 @@ class Scaffold:
         return lines
 
     def _context_instructions(self) -> list[str]:
-        strategy = self.strategy
         spec = self.drop_in.config.agents[self.drop_in.config.orchestrator]
-        lines = [f"Context strategy: `{strategy.type_name}`. Persona is supplied as instructions on every model call.",
-                 (f"Standing context is injected as developer messages, capped at {spec.context_max_chars:,} characters. "
-                  f"Static drop-in files: {', '.join(spec.context) or 'none'}. "
-                  f"Dynamic workspace files: {', '.join(spec.workspace_context) or 'none'}. "
-                  "Missing dynamic files and truncation are marked. Read files directly when you need newer/full content.")]
-        if isinstance(strategy, Persistent):
-            lines.append("The persistent strategy injects standing context once and sends the whole stored "
-                         "conversation, including that snapshot, on every call. SQLite history survives restart.")
-        elif isinstance(strategy, TrimRecent):
-            lines.append(f"The strategy retains recent history (max_items {strategy.options.max_items}), preserving "
-                         "tool-call boundaries. Standing context refreshes when its snapshot leaves the selected history.")
-        elif isinstance(strategy, OpenAICompaction):
-            lines.append(f"Older history compacts at trigger_items {strategy.options.trigger_items}; standing context "
-                         "refreshes after compaction. Compaction uses model calls and counts toward the shared budget.")
-        return lines
+        return [self.conversation_context.describe(), *self._standing_context_instructions(spec)]
+
+    def _standing_context_instructions(self, spec: AgentConfig) -> list[str]:
+        return [
+            "Persona is supplied as instructions on every model call. SQLite conversation history survives restart.",
+            f"Standing context is injected as developer messages, capped at {spec.context_max_chars:,} characters.",
+            self._context_files_instructions(spec),
+        ]
+
+    def _context_files_instructions(self, spec: AgentConfig) -> str:
+        return (
+            f"Static drop-in files: {', '.join(spec.context) or 'none'}. "
+            f"Dynamic workspace files: {', '.join(spec.workspace_context) or 'none'}. "
+            "Missing dynamic files and truncation are marked. Read files directly for newer/full content."
+        )
 
     def _loop_instructions(self) -> list[str]:
         loop = self.loop
@@ -290,8 +310,9 @@ class Scaffold:
 
     def describe(self) -> list[str]:
         config = self.drop_in.config
-        return [f"drop-in {self.drop_in.root}; runtime {self.runtime.type_name}; orchestrator {config.orchestrator}",
-                f"context {self.strategy.type_name}; budget {config.budget.model_dump(exclude_none=True)}",
+        return [f"drop-in {self.drop_in.root}; runtime openai-agents; orchestrator {config.orchestrator}",
+                f"context: {self.conversation_context.describe()}",
+                f"budget {config.budget.model_dump(exclude_none=True)}",
                 *(f"resource {name}: {table.get('type', name)}" for name, table in config.resources.items()),
                 *([(f"steering: {config.orchestrator} via MCP {self.context.steering.options.server}; "
                     f"status {self.context.steering.state['status']}")] if self.context.steering else []),

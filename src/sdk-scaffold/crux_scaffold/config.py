@@ -12,6 +12,7 @@ from typing import Any
 from pydantic import Field, ValidationError, model_validator
 
 from crux_scaffold.components import CountLimit, Options, describe
+from crux_scaffold.conversation_config import ConversationConfig
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import Budget
 
@@ -83,8 +84,8 @@ class ScaffoldConfig(Options):
     orchestrator: str
     workspace: str = "workspace"
     extensions: list[str] = Field(default_factory=list)
-    runtime: ComponentTable = Field(default_factory=lambda: {"type": "openai-agents"})
-    context: ComponentTable = Field(default_factory=lambda: {"type": "persistent"})
+    runtime: dict[str, Any] = Field(default_factory=dict)
+    context: ConversationConfig = Field(default_factory=ConversationConfig)
     loop: ComponentTable
     budget: Budget = Budget()
     resources: dict[str, ComponentTable] = Field(default_factory=dict)

@@ -12,7 +12,7 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 | **Scaffold** | The infrastructure around the LLMs: tools, prompts, loops. Claude Code, Codex, OpenClaw and this package are all scaffolds. The team docs also say *harness*; this package avoids that word. |
 | **Drop-in directory** | A CRUX's input to a scaffold: `scaffold.toml`, prompts, personas, standing context, extensions and the workspace. On a run box it is staged at `/srv/crux-run/run-harness`. |
 | **Workspace** | The directory the agents work in, inside the drop-in directory. |
-| **Agent runtime** | The agent SDK that runs the declared agents: OpenAI Agents SDK now, Claude Agent SDK later. |
+| **Agent runtime** | The OpenAI Agents SDK integration that runs the declared agents. |
 | **Model provider** | The endpoint and API adapter the runtime uses to query models. Declared in `scaffold.toml`; the model and effort still come from the run environment. |
 | **Agent**, **orchestrator** | An LLM agent declared with a persona, standing context and tools. The orchestrator is the agent that receives the loop's prompts. |
 | **Coding agent** | A non-interactive coding-agent SDK session (Codex now, Claude Code later) that agents delegate implementation to. It runs the full coding harness as a subprocess, with its own tools, sandbox and context management, so it is far more capable at changing code than an agent. Declare an agent for planning, coordination and talking to people, and a coding agent for code changes. |
@@ -30,20 +30,24 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 
 ## Design
 
-Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`. A drop-in can also declare an isolated judge gate.
+Agents run directly on the OpenAI Agents SDK. Pluggable components register themselves under a type name; a drop-in adds its own through `extensions`. A drop-in can also declare an isolated judge gate.
 
 | Responsibility | Interface (registry) | Built-in types |
 |---|---|---|
-| Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents`; OpenAI and compatible Responses/Chat Completions providers |
+| Agent orchestration, model configuration, optional background coding | `OpenAIAgentsRuntime` (direct integration) | OpenAI and compatible Responses/Chat Completions providers |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
 | Context management and standing-context injection | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; `escalate` outbox |
 | Observability | `Telemetry` | Langfuse, or off |
-| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `AgentRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`; delegation concurrency and depth limits |
+| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `OpenAIAgentsRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`; delegation concurrency and depth limits |
 
-`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
+`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `openai_agents_sdk/` and `context_strategies.py`, and Codex to `coding_agents.py`. Each class supporting the OpenAI runtime has its own module in `openai_agents_sdk/`.
+
+`[runtime]` configures the OpenAI Agents SDK directly. Its optional `type = "openai-agents"` key remains accepted for existing drop-ins; other runtime types are rejected. Runtime implementations are not an extension point.
+
+The runtime exposes `model_provider`, `max_turns` and `background_coding` directly. Its derived `model_family` identifies `anthropic`, `google` or `openai` from the model's vendor prefix after stripping a leading `~`. Unprefixed direct OpenAI names resolve to `openai`; other unrecognized names remain unclassified. Model family is independent of the endpoint: an Anthropic model routed through OpenRouter still has family `anthropic`. The OpenRouter cache check uses this property.
 
 The orchestrator receives a generated setup preamble before its persona. It describes the current phase and gates, delegate execution and limits, tools and MCP access, configured operator steering and escalation, budget/resource policies, remaining rest allowance, standing-context strategy and restart behavior. Optional limits are explicitly unlimited when omitted; phase iteration limits retain their configured value (default 1). It is rendered from the assembled scaffold on each model call, so phase changes and resumed progress stay current. MCP launch arguments and environment values are excluded. Delegate instructions stay scoped to each delegate.
 
@@ -221,7 +225,7 @@ extensions = ["scaffold_extensions.py"]
 tools = ["read_file", "site_preview"]
 ```
 
-Gates, context strategies, coding agents, loops and runtimes extend the same way. [docs/extending.md](docs/extending.md) describes each extension point's contract, and when to extend one rather than add a new abstraction.
+Gates, context strategies, coding agents and loops extend the same way. [docs/extending.md](docs/extending.md) describes each extension point's contract and the direct SDK integration.
 
 ## Adapting the demo
 
@@ -342,7 +346,7 @@ python -m crux_scaffold probe [--coding-agent codex]   # one traced model call (
 python -m crux_scaffold probe --drop-in DIR           # probe the drop-in's configured model provider
 ```
 
-`probe --drop-in DIR` selects the runtime and its options from `scaffold.toml`. Without `--drop-in`, the probe uses the built-in OpenAI Agents runtime and direct OpenAI provider.
+`probe --drop-in DIR` reads the OpenAI Agents SDK options and model provider from `scaffold.toml`. Without `--drop-in`, the probe uses the direct OpenAI provider.
 
 `probe --coding-agent codex` retries temporary-directory cleanup for up to 3.1 seconds when Codex's background plugin checkout is still writing files after its session closes. Other cleanup errors, or a directory that remains busy, still fail the probe.
 

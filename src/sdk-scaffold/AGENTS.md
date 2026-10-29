@@ -7,14 +7,13 @@ These rules apply to every change under `src/sdk-scaffold/`. The secret-hygiene 
 
 ## Extend the existing abstractions first
 
-The scaffold is generic by design. Each of its parts is an interface with a registry, and a CRUX selects implementations in its `scaffold.toml`. The parts are:
+The scaffold runs agents on the OpenAI Agents SDK. Its pluggable parts use interfaces and registries, and a CRUX selects implementations in its `scaffold.toml`. The parts are:
 
 - tools;
 - MCP servers for steering and external systems;
 - loops and their gates;
 - context strategies;
 - coding agents;
-- agent runtimes;
 - telemetry;
 - the budget.
 
@@ -28,15 +27,17 @@ A new capability almost always fits one of these. Try the options in this order,
 
 Don't add special cases for one drop-in to the package. Don't add an extension point that has only a hypothetical second user.
 
+Agent orchestration is implemented directly in `openai_agents_sdk/openai_agents_runtime.py`, with each supporting class in its own module under `openai_agents_sdk/`; `[runtime]` configures this integration without a runtime registry. Telemetry and the budget also have no registry.
+
 ## Keep the boundaries
 
 - **`scaffold.py` is the only composition root.** Components receive their dependencies and never build one another.
 - **Agent SDKs stay in their modules.**
   - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK.
-  - The OpenAI Agents SDK stays in `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`.
+  - The OpenAI Agents SDK stays in `openai_agents_sdk/` and `context_strategies.py`.
   - Codex stays in `coding_agents.py`.
 - **Configuration is declarative and strict.**
-  - Options models forbid unknown keys.
+  - Configuration models forbid unknown keys.
   - A drop-in that cannot run fails with `InvalidDropInError` before any model call.
   - Read configuration from `RunContext.env`, never from `os.environ`.
 - **Every model call is accounted for.** Add its tokens to `ctx.usage` so the budget holds, and make sure it reaches telemetry.
@@ -47,7 +48,7 @@ Don't add special cases for one drop-in to the package. Don't add an extension p
 `docs/extending.md` is the developer documentation for the scaffold's abstractions. Update it in the same change whenever you add, remove or change any of these:
 
 - an interface, or one of its methods;
-- a context object such as `RunContext`, `GateContext` or `Assembly`;
+- a context object such as `RunContext` or `GateContext`;
 - a built-in type;
 - an option;
 - a `scaffold.toml` key;

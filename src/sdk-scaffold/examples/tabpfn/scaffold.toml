@@ -2,7 +2,6 @@ orchestrator = "pi"
 extensions = ["tabpfn_extensions.py"]
 
 [runtime]
-type = "openai-agents"
 max_turns = "unlimited"
 background_coding = true
 
@@ -24,7 +23,6 @@ after_ts = "{{SLACK_AFTER_TS}}"
 poll_interval_seconds = 30
 
 [context]
-type = "trim_recent"
 max_items = 200
 
 [budget]
