@@ -1,109 +1,63 @@
-"""
-NB: this SDK works with any model that is "openai-compatible", e.g., it's not
-specific to OpenAI models. This supports, for example, Google Vertex models
-out of the box.
-"""
+"""Run scaffold agents through the OpenAI Agents SDK and compatible model endpoints."""
 
 from __future__ import annotations
 
-import base64
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Literal, Self
+from typing import Any, Literal, Self
 
-from agents import (
-    Agent,
-    FunctionTool,
-    ModelSettings,
-    OpenAIProvider,
-    RunConfig,
-    RunContextWrapper,
-    Runner,
-    set_tracing_disabled,
-)
+from agents import Agent, RunConfig, Runner, set_tracing_disabled
 from agents.exceptions import MaxTurnsExceeded
-from agents.mcp import MCPServerStdio
-from agents.models.interface import Model
 from agents.run_config import CallModelData, ModelInputData
-from agents.strict_schema import ensure_strict_json_schema
-from agents.tool import ToolOutputImage, ToolOutputText
-from agents.tool_context import ToolContext
-from openai import AsyncOpenAI
-from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
-from pydantic import ValidationError
 
-from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import CountLimit, count_limit
-from crux_scaffold.config import delegation_order
 from crux_scaffold.context_strategies import ContextStrategy, is_standing_context
-from crux_scaffold.errors import InvalidDropInError, ToolError
-from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
-from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
+from crux_scaffold.errors import InvalidDropInError
+from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
 from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
-from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
+from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
 from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
 from crux_scaffold.openai_agents_sdk.usage_hooks import UsageHooks
 from crux_scaffold.openai_agents_sdk.verdict import Verdict
 from crux_scaffold.telemetry import Telemetry
-from crux_scaffold.tools import Tool, ToolImage, validate_review_tools
-from crux_scaffold.workspace import ReviewWorkspace, RunContext
-
-if TYPE_CHECKING:
-    from crux_scaffold.drop_in import DropInDirectory
+from crux_scaffold.tools import validate_review_tools
+from crux_scaffold.workspace import ReviewWorkspace
 
 JUDGE = "judge"
 
 
 class OpenAIAgentsRuntime:
-    """Run the scaffold's orchestrator, delegates and isolated judges through the OpenAI Agents SDK.
-
-    Adapt scaffold tools, coding agents and MCP servers into SDK agents and tools. The context strategy stores
-    the orchestrator's conversation; delegated calls start fresh with their brief and declared standing context.
-    Expose provider settings directly as `model_provider` and derive `model_family` from the run's model name.
-    Use shared delegation capacity and coding tasks; own usage hooks and client/server cleanup for the run.
-    """
+    """Run orchestrator turns and isolated judges using assembled SDK agents and managed resources."""
 
     type_name = "openai-agents"
 
-    def __init__(
-        self,
-        *,
-        model_provider: ModelProvider,
-        drop_in: DropInDirectory,
-        context: RunContext,
-        tools: Mapping[str, Tool],
-        coding_agents: Mapping[str, CodingAgent],
-        delegation: DelegationLimiter,
-        coding_tasks: CodingTasks,
-        context_strategy: ContextStrategy,
-        instructions: Callable[[str], str],
-        max_turns: CountLimit = 50,
-        models: Mapping[str, Model] | None = None,
-    ) -> None:
-        self.model_provider = model_provider
-        self.max_turns = max_turns
-        self.drop_in = drop_in
-        self.context = context
-        self.tools = tools
-        self.coding_agents = coding_agents
+    def __init__(self, builder: AgentBuilder, context_strategy: ContextStrategy,
+                 coding_tasks: CodingTasks, max_turns: CountLimit = 50) -> None:
+        self._builder = builder
         self.context_strategy = context_strategy
-        self.instructions = instructions
-        self._delegation = delegation
         self._coding_tasks = coding_tasks
-        self.models = dict(models or {})
-        self.hooks = UsageHooks(context.usage)
+        self.max_turns = max_turns
+        self._initialize()
+
+    def _initialize(self) -> None:
+        self.context = self._builder.resources.context
+        self.drop_in = self._builder.resources.drop_in
+        self.tools = self._builder.tools
         self.run_config = RunConfig(call_model_input_filter=self._select_input)
-        self.agents: dict[str, Agent] = {}
-        self.servers: dict[str, MCPServerStdio] = {}
-        self.client: AsyncOpenAI | None = None
-        self.provider: OpenAIProvider | None = None
-        self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
+
+    @property
+    def model_provider(self) -> ModelProvider:
+        return self._builder.resources.model_provider
+
+    @property
+    def hooks(self) -> UsageHooks:
+        return self._builder.hooks
 
     @property
     def model_family(self) -> Literal["anthropic", "google", "openai"] | None:
@@ -127,94 +81,40 @@ class OpenAIAgentsRuntime:
         return self._coding_tasks.background
 
     def _build(self) -> None:
-        if self.agents:
-            return
-        config, ctx = self.drop_in.config, self.context
-        if self.model_provider.type == "openai-compatible":
-            self.client = _validate_and_get_client(self.model_provider, ctx.env)
-            self.provider = OpenAIProvider(
-                openai_client=self.client, use_responses=self.model_provider.api == "responses"
-            )
-        if self.background_coding:
-            declared = set(self.tools) | set(config.agents) | set(config.coding_agents)
-            self._check_result_names(declared)
-        used = {server for agent in config.agents.values() for server in agent.mcp_servers}
-        if ctx.steering:
-            used.add(ctx.steering.options.server)
-        for name in sorted(used):
-            server = config.mcp_servers[name]
-            self.servers[name] = MCPServerStdio(
-                params={"command": server.command, "args": server.args, "env": server.resolved_env(name, ctx.env)},
-                name=name,
-                cache_tools_list=True,
-                client_session_timeout_seconds=server.timeout_seconds,
-                max_retry_attempts=0,
-            )
-        for name in delegation_order(config.agents):
-            spec = config.agents[name]
-            tools = [self._function_tool(self.tools[tool]) for tool in spec.tools]
-            tools += [self._delegate(delegate) for delegate in spec.delegates]
-            if self.background_coding:
-                tools += [
-                    self._coding_result_tool(delegate)
-                    for delegate in spec.delegates
-                    if delegate in self.coding_agents
-                ]
-            self.agents[name] = Agent(
-                name=name,
-                instructions=self._instructions,
-                tools=tools,
-                mcp_servers=[self.servers[server] for server in spec.mcp_servers],
-                model=self._model(name),
-                model_settings=_model_settings(self.model_provider, self.context.env),
-            )
+        self._builder.build(self.run_config, self._turn_input)
 
     async def __aenter__(self) -> Self:
+        try:
+            return await self._start()
+        except BaseException as exc:
+            await self._startup_failed(exc)
+            raise
+
+    async def _start(self) -> Self:
         _trace_agents_sdk(self.context.telemetry)
         self._build()
-        steering = self.context.steering
-        try:
-            if self.client:
-                await self._stack.enter_async_context(self.client)
-            for server in self.servers.values():
-                await self._stack.enter_async_context(server)
-                if self.background_coding:
-                    self._check_result_names({tool.name for tool in await server.list_tools()})
-            if steering:
-                steering.transport = self.servers[steering.options.server]
-                available = {tool.name for tool in await steering.transport.list_tools()}
-                required = {"conversations_replies" if steering.options.thread_ts else "conversations_history"}
-                if any(tool.type_name == "escalate" for tool in self.tools.values()):
-                    required.add("conversations_add_message")
-                if missing := required - available:
-                    raise InvalidDropInError(f"steering MCP server is missing tools: {', '.join(sorted(missing))}")
-            self.session = self.context_strategy.session(
-                self.drop_in.config.orchestrator, self.context
-            )
-        except BaseException as exc:
-            await self._stack.aclose()
-            if steering and isinstance(exc, Exception):
-                status = (
-                    "startup_failed: check the steering MCP server, credentials, scopes and required tools; "
-                    "restart with the same state directory"
-                )
-                steering.state["status"] = status
-                steering.save()
-                steering.event("startup_failed", status=status)
-                if not isinstance(exc, InvalidDropInError):
-                    raise InvalidDropInError(status) from None
-            raise
+        await self._connect()
+        self.session = self.context_strategy.session(self.drop_in.config.orchestrator, self.context)
         return self
+
+    async def _connect(self) -> None:
+        check_names = self._builder.check_result_names if self.background_coding else None
+        escalate = any(tool.type_name == "escalate" for tool in self.tools.values())
+        await self._builder.resources.open(check_names, escalate=escalate)
+
+    async def _startup_failed(self, exc: BaseException) -> None:
+        await self._builder.resources.close()
+        self._builder.resources.startup_failed(exc)
 
     async def __aexit__(self, *_exc_info: object) -> None:
         try:
             await self._coding_tasks.cancel()
         finally:
-            await self._stack.aclose()
+            await self._builder.resources.close()
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self._steering_items = []
-        orchestrator = self.agents[self.drop_in.config.orchestrator]
+        orchestrator = self._builder.agents[self.drop_in.config.orchestrator]
         history = await self.session.get_items()
         input = self._turn_input(orchestrator.name, prompt, history)
         try:
@@ -244,32 +144,6 @@ class OpenAIAgentsRuntime:
             await self._coding_tasks.cancel()
             raise
 
-    def _check_result_names(self, names: set[str]) -> None:
-        config = self.drop_in.config
-        generated = {
-            f"{delegate}_result"
-            for agent in config.agents.values()
-            for delegate in agent.delegates
-            if delegate in self.coding_agents
-        }
-        if collisions := sorted(generated & names):
-            raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
-
-    def _coding_result_tool(self, name: str) -> FunctionTool:
-        async def invoke(_: ToolContext[Any], raw: str) -> str:
-            try:
-                args = CodingResultArguments.model_validate_json(raw)
-            except ValidationError as exc:
-                return f"error: {exc}"
-            return await self._coding_tasks.collect(name, wait=args.wait)
-
-        return FunctionTool(
-            name=f"{name}_result",
-            description=f"Check or collect the coding result from {name}.",
-            on_invoke_tool=invoke,
-            params_json_schema=ensure_strict_json_schema(CodingResultArguments.model_json_schema()),
-        )
-
     async def judge(
         self,
         name: str,
@@ -288,9 +162,9 @@ class OpenAIAgentsRuntime:
             name=JUDGE if review_workspace is not None else f"{JUDGE}:{name}",
             instructions=rubric,
             output_type=Verdict,
-            model=self._model(JUDGE),
-            model_settings=_model_settings(self.model_provider, self.context.env),
-            tools=[self._function_tool(self.tools[tool], ctx) for tool in tools],
+            model=self._builder.resources.connection.model(JUDGE),
+            model_settings=self._builder.resources.connection.settings(),
+            tools=[self._builder.function_tool(tool, ctx) for tool in tools],
         )
         try:
             result = await Runner.run(
@@ -317,26 +191,7 @@ class OpenAIAgentsRuntime:
 
     def describe(self) -> list[str]:
         self._build()
-        config = self.drop_in.config
-        provider = self.model_provider
-        return [
-            f"model provider {provider.type} ({provider.api})",
-            *(
-                f"{name}: tools [{', '.join(tool.name for tool in agent.tools)}] "
-                f"mcp [{', '.join(config.agents[name].mcp_servers)}]"
-                for name, agent in self.agents.items()
-            ),
-        ]
-
-    def _model(self, agent: str) -> str | Model:
-        """The run's model; tests substitute scripted models per agent through `models`."""
-        if agent in self.models:
-            return self.models[agent]
-        model = self.context.model
-        return self.provider.get_model(model) if self.provider else model
-
-    def _instructions(self, _context: RunContextWrapper, agent: Agent) -> str:
-        return self.instructions(agent.name)
+        return self._builder.describe()
 
     async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
         steering = self.context.steering
@@ -424,109 +279,24 @@ class OpenAIAgentsRuntime:
                 selected[index][field][position]["prompt_cache_breakpoint"] = {"mode": "explicit"}
         return selected
 
-    def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
-        ctx = ctx or self.context
-
-        async def invoke(_: ToolContext[Any], raw: str):
-            try:
-                output = await tool.invoke(ctx, tool.Arguments.model_validate_json(raw or "{}"))
-                if isinstance(output, list):
-                    return [
-                        ToolOutputImage(image_url="data:image/png;base64," + base64.b64encode(item.png).decode())
-                        if isinstance(item, ToolImage)
-                        else ToolOutputText(text=item)
-                        for item in output
-                    ]
-                return output
-            except (ToolError, ValidationError) as exc:
-                return f"error: {exc}"
-
-        return FunctionTool(
-            name=tool.name,
-            description=tool.description,
-            on_invoke_tool=invoke,
-            params_json_schema=ensure_strict_json_schema(tool.Arguments.model_json_schema()),
-        )
-
-    def _delegate(self, name: str) -> FunctionTool:
-        config = self.drop_in.config
-        if name not in config.agents:
-            return self._coding_tool(self.coding_agents[name])
-        spec = config.agents[name]
-        tool = self.agents[name].as_tool(
-            tool_name=name,
-            tool_description=spec.description,
-            max_turns=count_limit(spec.max_turns),
-            hooks=self.hooks,
-            run_config=self.run_config,
-            input_builder=lambda data: self._turn_input(name, data["params"]["input"], []),
-        )
-        invoke_tool = tool.on_invoke_tool
-
-        async def invoke(context: ToolContext[Any], raw: str) -> str:
-            async with self._delegation.slot():
-                return await invoke_tool(context, raw)
-
-        tool.on_invoke_tool = invoke
-        return tool
-
-    def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
-        async def invoke(_: ToolContext[Any], raw: str) -> str:
-            brief = BriefArguments.model_validate_json(raw).brief
-            return await self._coding_tasks.run(agent, brief)
-
-        description = agent.description
-        if self.background_coding:
-            description += f" Starts in the background; collect its result using {agent.name}_result."
-        return FunctionTool(
-            name=agent.name,
-            description=description,
-            on_invoke_tool=invoke,
-            params_json_schema=ensure_strict_json_schema(BriefArguments.model_json_schema()),
-        )
-
 
 async def probe_model(
     env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, model_provider: ModelProvider
 ) -> str:
     """Run one traced provisioning call with the configured model provider."""
     _trace_agents_sdk(telemetry)
-    model = env.get("CRUX_MODEL")
-    if not model:
+    if not env.get("CRUX_MODEL"):
         raise InvalidDropInError("CRUX_MODEL is not set")
+    connection = ModelConnection(model_provider, env)
     async with AsyncExitStack() as stack:
-        if model_provider.type == "openai-compatible":
-            client = await stack.enter_async_context(_validate_and_get_client(model_provider, env))
-            model = OpenAIProvider(
-                openai_client=client, use_responses=model_provider.api == "responses"
-            ).get_model(model)
+        connection.prepare(stack)
         agent = Agent(
             name="probe",
             instructions="Reply with exactly the text you are asked for.",
-            model=model,
-            model_settings=_model_settings(model_provider, env),
+            model=connection.model("probe"),
+            model_settings=connection.settings(),
         )
         return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
-
-
-def _validate_and_get_client(model_provider: ModelProvider, env: Mapping[str, str]) -> AsyncOpenAI:
-    api_key = env.get(model_provider.api_key_env)
-    if not api_key:
-        raise InvalidDropInError(f"{model_provider.api_key_env} is not set")
-    return AsyncOpenAI(api_key=api_key, base_url=str(model_provider.base_url))
-
-
-def _model_settings(model_provider: ModelProvider, env: Mapping[str, str]) -> ModelSettings:
-    summary = "auto" if model_provider.api == "responses" else None
-    settings = ModelSettings(reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary=summary))
-    if model_provider.type == "openai-compatible":
-        # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
-        settings.preserve_raw_usage = True
-        settings.extra_body = model_provider.extra_body or None
-        if model_provider.api == "responses":
-            settings.store = False
-            settings.response_include = ["reasoning.encrypted_content"]
-    return settings
 
 
 def _trace_agents_sdk(telemetry: Telemetry) -> None:

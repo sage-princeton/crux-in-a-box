@@ -15,10 +15,14 @@ from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, CommandGate, LlmJudgeGate
 from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, StateFile
+from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
+from crux_scaffold.openai_agents_sdk.agent_tools import AgentTools
 from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
 from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
+from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
 from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
 from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
+from crux_scaffold.openai_agents_sdk.sdk_resources import SdkResources
 from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
 from crux_scaffold.steering import Steering
 from crux_scaffold.telemetry import Telemetry
@@ -52,14 +56,7 @@ class Scaffold:
             gate.validate_tools(self.tools)
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
         runtime_config = RuntimeConfig.from_config(config.runtime)
-        delegation = DelegationLimiter(config.delegation.max_concurrent)
-        coding_tasks = CodingTasks(self.context, delegation, background=runtime_config.background_coding)
-        self.runtime = OpenAIAgentsRuntime(
-            model_provider=runtime_config.model_provider, drop_in=drop_in, context=self.context,
-            tools=self.tools, coding_agents=self.coding_agents, delegation=delegation, coding_tasks=coding_tasks,
-            context_strategy=self.strategy,
-            instructions=self._instructions, max_turns=runtime_config.max_turns,
-            **(runtime_overrides or {}))
+        self.runtime = self._runtime(runtime_config, runtime_overrides)
         steering = runtime_config.steering
         if steering:
             if steering.server not in config.mcp_servers:
@@ -67,6 +64,19 @@ class Scaffold:
             self.context.steering = Steering(steering, state_dir, None, telemetry, recipient=config.orchestrator)
         elif any(tool.type_name == "escalate" for tool in self.tools.values()):
             raise InvalidDropInError("escalate requires runtime.steering")
+
+    def _runtime(self, config: RuntimeConfig, overrides: Mapping[str, Any] | None) -> OpenAIAgentsRuntime:
+        delegation = DelegationLimiter(self.drop_in.config.delegation.max_concurrent)
+        coding_tasks = CodingTasks(self.context, delegation, background=config.background_coding)
+        tools = AgentTools(self.tools, self.coding_agents, coding_tasks, delegation)
+        builder = self._agent_builder(config, tools, overrides)
+        return OpenAIAgentsRuntime(builder, self.strategy, coding_tasks, config.max_turns)
+
+    def _agent_builder(self, config: RuntimeConfig, tools: AgentTools,
+                       overrides: Mapping[str, Any] | None) -> AgentBuilder:
+        connection = ModelConnection(config.model_provider, self.context.env, **(overrides or {}))
+        resources = SdkResources(self.drop_in, self.context, connection)
+        return AgentBuilder(resources, tools, self._instructions)
 
     def _tools(self) -> dict[str, Tool]:
         config = self.drop_in.config
