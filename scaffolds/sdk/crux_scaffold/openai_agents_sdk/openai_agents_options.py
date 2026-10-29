@@ -12,6 +12,11 @@ from crux_scaffold.steering import SteeringOptions
 
 
 class OpenAIAgentsOptions(Options):
+    """Validate `[runtime]` settings for turn limits, provider selection, background coding and steering.
+
+    The fixed `type` value accepts existing drop-ins without introducing a selectable runtime implementation.
+    """
+
     type: Literal["openai-agents"] = "openai-agents"
     max_turns: CountLimit = 50
     model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
