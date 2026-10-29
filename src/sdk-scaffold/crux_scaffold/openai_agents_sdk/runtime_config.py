@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Literal, Self
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -12,14 +12,10 @@ from crux_scaffold.steering import SteeringOptions
 
 
 class RuntimeConfig(BaseModel):
-    """Validate `[runtime]` at the composition boundary before passing direct runtime properties.
-
-    The fixed `type` value accepts existing drop-ins; steering is assembled separately into `RunContext`.
-    """
+    """Validate runtime settings before composing the SDK integration and steering."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    type: Literal["openai-agents"] = "openai-agents"
     max_turns: CountLimit = 50
     model_provider: ModelProvider = ModelProvider(type="openai", api="responses")
     background_coding: bool = False
@@ -27,7 +23,7 @@ class RuntimeConfig(BaseModel):
 
     @classmethod
     def from_config(cls, table: Mapping[str, Any]) -> Self:
-        """Validate `[runtime]`, accepting the existing fixed SDK type and reporting configuration errors."""
+        """Validate `[runtime]` and report configuration errors."""
         try:
             return cls.model_validate(table)
         except ValidationError as exc:

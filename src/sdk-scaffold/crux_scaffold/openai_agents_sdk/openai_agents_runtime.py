@@ -34,10 +34,13 @@ JUDGE = "judge"
 class OpenAIAgentsRuntime:
     """Run orchestrator turns and isolated judges using assembled SDK agents and managed resources."""
 
-    type_name = "openai-agents"
-
-    def __init__(self, builder: AgentBuilder, context_strategy: ContextStrategy,
-                 coding_tasks: CodingTasks, max_turns: CountLimit = 50) -> None:
+    def __init__(
+        self,
+        builder: AgentBuilder,
+        context_strategy: ContextStrategy,
+        coding_tasks: CodingTasks,
+        max_turns: CountLimit = 50,
+    ) -> None:
         self._builder = builder
         self.context_strategy = context_strategy
         self._coding_tasks = coding_tasks
@@ -78,7 +81,7 @@ class OpenAIAgentsRuntime:
     @property
     def background_coding(self) -> bool:
         """Whether coding delegates return before their work completes."""
-        return self._coding_tasks.background
+        return self._coding_tasks.start_in_background
 
     def _build(self) -> None:
         self._builder.build(self.run_config, self._turn_input)
@@ -129,17 +132,17 @@ class OpenAIAgentsRuntime:
                     run_config=replace(self.run_config, workflow_name=workflow),
                 )
             except MaxTurnsExceeded:
-                outcome = TurnOutcome(final_output="", completed=False)
+                turn_outcome = TurnOutcome(final_output="", completed=False)
             else:
-                outcome = TurnOutcome(final_output=str(result.final_output), completed=True)
+                turn_outcome = TurnOutcome(final_output=str(result.final_output), completed=True)
             remaining = await self._coding_tasks.drain()
             if remaining:
                 report = "Scaffold coding completion report (uncollected delegate outputs):\n\n" + "\n\n".join(
                     remaining
                 )
                 await self.session.add_items([{"role": "user", "content": report}])
-            outcome.final_output = "\n\n".join(part for part in [outcome.final_output, *remaining] if part)
-            return outcome
+            turn_outcome.final_output = "\n\n".join(part for part in [turn_outcome.final_output, *remaining] if part)
+            return turn_outcome
         except BaseException:
             await self._coding_tasks.cancel()
             raise
@@ -234,8 +237,7 @@ class OpenAIAgentsRuntime:
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
         # Judges get only cache markers, without context selection, steering or resource metadata.
-        return ModelInputData(input=self._cache_input(data.model_data.input),
-                              instructions=data.model_data.instructions)
+        return ModelInputData(input=self._cache_input(data.model_data.input), instructions=data.model_data.instructions)
 
     def _cache_input(self, items: list[Any]) -> list[Any]:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
@@ -244,8 +246,11 @@ class OpenAIAgentsRuntime:
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
         provider = self.model_provider
-        if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
-                or self.model_family != "anthropic"):
+        if (
+            provider.type != "openai-compatible"
+            or provider.base_url.host != "openrouter.ai"
+            or self.model_family != "anthropic"
+        ):
             return items
         selected = list(items)
         candidates = []
@@ -265,8 +270,11 @@ class OpenAIAgentsRuntime:
             else:
                 continue
             explicit |= any(isinstance(part, dict) and "prompt_cache_breakpoint" in part for part in content)
-            texts = [position for position, part in enumerate(content)
-                     if isinstance(part, dict) and part.get("type") == "input_text" and part.get("text")]
+            texts = [
+                position
+                for position, part in enumerate(content)
+                if isinstance(part, dict) and part.get("type") == "input_text" and part.get("text")
+            ]
             if not texts:
                 continue
             selected[index] = {**item, field: content}

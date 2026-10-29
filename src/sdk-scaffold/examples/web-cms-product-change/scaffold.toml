@@ -2,7 +2,6 @@ orchestrator = "product_manager"
 extensions = ["scaffold_extensions.py"]
 
 [runtime]
-type = "openai-agents"
 max_turns = 60
 
 [context]

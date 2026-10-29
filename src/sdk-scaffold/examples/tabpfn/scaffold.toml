@@ -2,7 +2,6 @@ orchestrator = "pi"
 extensions = ["tabpfn_extensions.py"]
 
 [runtime]
-type = "openai-agents"
 max_turns = "unlimited"
 background_coding = true
 

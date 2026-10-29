@@ -1,7 +1,6 @@
 orchestrator = "researcher"
 
 [runtime]
-type = "openai-agents"
 max_turns = 8
 
 [runtime.model_provider]

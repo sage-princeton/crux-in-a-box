@@ -9,6 +9,21 @@ This repo provisions and steers **CRUX runs**: autonomous research agents (OpenC
 - classes get concise docstrings
 - comments reflect current state, never historical state
 - always use the "YAGNI" principle - write code for the current change/feature, not for a hypothetical future addition
+- sandy metz approach: no more than 100 lines per class, 5 lines per method, 4 params per method
+
+### Variables are named according to what they are
+
+BAD: calling a list of TurnOutcome objects to "outputs"
+
+```
+def __init__(self, outputs: list[TurnOutcome], verdicts: list[Verdict] | None = None) -> None:
+```
+
+GOOD: calling a list of TurnOutcome objects "turn_outcomes"
+
+```
+def __init__(self, turn_outcomes: list[TurnOutcome], verdicts: list[Verdict] | None = None) -> None:
+```
 
 ## Pull request scope
 
