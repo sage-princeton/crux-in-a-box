@@ -295,6 +295,7 @@ def test_claude_cache_boundaries_follow_retained_history_without_entering_the_se
             assert native[0]["content"] == assembled["instructions"]
         assert layout["context_index"] == len(assembled["messages"]) - 1
         assert request["tools"]
+        assert json.loads(span.attributes["langfuse.observation.output"]) == json.loads(span.attributes["output.value"])
         assert len(span.attributes) < 128
 
 

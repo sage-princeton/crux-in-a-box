@@ -24,7 +24,7 @@ from agents import (
     RunContextWrapper,
     RunHooks,
     Runner,
-    add_trace_processor,
+    set_trace_processors,
     set_tracing_disabled,
 )
 from agents.exceptions import MaxTurnsExceeded
@@ -73,22 +73,26 @@ def request_scope():
 
 
 class RequestTraceProcessor(TracingProcessor):
-    """Enrich the existing SDK generation, after OpenInference opens its OTel span."""
+    """Enrich the existing generation before OpenInference closes its OTel span."""
 
-    def on_span_start(self, span) -> None:
-        request = _REQUEST.get()
-        if request is not None and span.span_data.type in {"response", "generation"}:
+    def on_span_end(self, span) -> None:
+        request, data = _REQUEST.get(), span.span_data
+        if request is not None and data.type in {"response", "generation"}:
             current = get_current_span()
             current.set_attribute("langfuse.observation.input", json.dumps(request["input"]))
             current.set_attribute("langfuse.observation.metadata.request_layout", json.dumps(request["layout"]))
+            output = data.response if data.type == "response" else data.output
+            if output is not None:
+                encoded = output.model_dump_json() if data.type == "response" else json.dumps(output)
+                current.set_attribute("langfuse.observation.output", encoded)
+
+    def on_span_start(self, span) -> None:
+        pass
 
     def on_trace_start(self, trace) -> None:
         pass
 
     def on_trace_end(self, trace) -> None:
-        pass
-
-    def on_span_end(self, span) -> None:
         pass
 
     def shutdown(self) -> None:
@@ -693,5 +697,6 @@ def instrument_agents_sdk() -> None:
     span's oldest attributes: Langfuse's session, tags, model and usage."""
     instrumentor = OpenAIAgentsInstrumentor()
     if not instrumentor.is_instrumented_by_opentelemetry:
-        instrumentor.instrument(config=TraceConfig(hide_input_messages=True, hide_output_messages=True))
-        add_trace_processor(RequestTraceProcessor())
+        set_trace_processors([RequestTraceProcessor()])
+        instrumentor.instrument(exclusive_processor=False,
+                                config=TraceConfig(hide_input_messages=True, hide_output_messages=True))

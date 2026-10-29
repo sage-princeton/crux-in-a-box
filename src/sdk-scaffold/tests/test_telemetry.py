@@ -245,6 +245,7 @@ def test_generation_input_and_layout_match_model_boundary(langfuse, drop_in_dir,
         requests.setdefault(layout["agent"], []).append((request, layout))
         assert len(span.attributes) < 128
         assert request["messages"] == json.loads(span.attributes["input.value"])
+        assert json.loads(span.attributes["langfuse.observation.output"]) == json.loads(span.attributes["output.value"])
         assert layout["context_index"] == len(request["messages"]) - 1
     for model, name in [(pm, "pm"), (reviewer, "reviewer")]:
         for index, (request, layout) in enumerate(requests[name]):
