@@ -257,7 +257,7 @@ class OpenAIAgentsRuntime:
             raise
         return self
 
-    async def __aexit__(self, *exc_info: object) -> None:
+    async def __aexit__(self, *_exc_info: object) -> None:
         try:
             await self._cancel_coding()
         finally:
@@ -408,7 +408,7 @@ class OpenAIAgentsRuntime:
         model = self.context.model
         return self.provider.get_model(model) if self.provider else model
 
-    def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
+    def _instructions(self, _context: RunContextWrapper, agent: Agent) -> str:
         return self.instructions(agent.name)
 
     async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
@@ -606,7 +606,8 @@ def _validate_and_get_client(model_provider: ModelProvider, env: Mapping[str, st
 
 
 def _model_settings(model_provider: ModelProvider, env: Mapping[str, str]) -> ModelSettings:
-    settings = ModelSettings(reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"))
+    summary = "auto" if model_provider.api == "responses" else None
+    settings = ModelSettings(reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary=summary))
     if model_provider.type == "openai-compatible":
         # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
         settings.preserve_raw_usage = True
@@ -614,8 +615,6 @@ def _model_settings(model_provider: ModelProvider, env: Mapping[str, str]) -> Mo
         if model_provider.api == "responses":
             settings.store = False
             settings.response_include = ["reasoning.encrypted_content"]
-        else:
-            settings.reasoning = Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None)
     return settings
 
 
