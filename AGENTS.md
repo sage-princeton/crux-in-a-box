@@ -2,6 +2,13 @@
 
 This repo provisions and steers **CRUX runs**: autonomous research agents (OpenClaw on EC2) that take a research question and produce a paper. `linux/` provisions boxes, `run-harness/` is the scaffold the agent lives in, `harness-overview.html` explains it to humans.
 
+## Code style
+
+- object-oriented whenever possible
+- one class per file
+- classes get concise docstrings
+- comments reflect current state, never historical state
+
 ## Pull request scope
 
 Every PR should have a precise scope and add a testable unit of functionality. Keep PRs small when possible (for example, under 800 changed lines) so humans can review them. When a feature, story, or issue needs a larger implementation, prefer splitting it across multiple stacked PRs using GitHub's stacked PR feature.
@@ -25,7 +32,7 @@ The main activity here is **post-run scaffold revision**: a run finishes, someth
    - `run-harness/PROMPT.md` (the launch message), `FINAL_PASS.md` (the auto-injected final-stage message), and `OPERATOR_GUIDE.md` (incl. the pre-launch checklist, the box-side cron table, the export section, and the design-rationale table)
    - `harness-overview.html` (the human-facing overview — lifecycle steps, workspace cards, gates boxes, failure table, operator section)
    - `linux/placeholders.txt.example` and, for provisioning-level changes, `linux/src/install.sh` (software bake — no secrets) and `linux/src/configure.sh` (per-run config, watchdog/final-pass install, gateway start) plus the box-side scripts they install from `linux/src/` (`crux-thinking-watchdog.sh`, `crux-auth-watchdog.sh`, `crux-session-snapshot.sh`, `final-pass-injector.sh`, `monitor.sh`), `linux/status.sh` (its checks echo the same recovery instructions), and `utils/` for anything the export pipeline touches
-   A rename (e.g. "Readability" → "Presentation Overhaul") isn't done until a grep for the old name returns nothing meaningful; the same goes for a recovery instruction or a path — every copy must say the same thing.
+     A rename (e.g. "Readability" → "Presentation Overhaul") isn't done until a grep for the old name returns nothing meaningful; the same goes for a recovery instruction or a path — every copy must say the same thing.
 
 5. **Test gates with fixtures before trusting them.** For any new `gate_artifact.sh` check: a passing case, one fixture per failure mode, and a flag-off case proving it stays dormant at earlier milestones. Run them in the scratchpad, not the repo.
 
