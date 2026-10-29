@@ -19,7 +19,8 @@ from crux_scaffold.telemetry import NullTelemetry
 from scripted import ScriptedModel, call, say
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples/tabpfn"
-ENV = {"CRUX_MODEL": "gpt-test", "RUN_SLUG": "tabpfn-test", "SLACK_BOT_TOKEN": "test",
+ENV = {"CRUX_MODEL": "google/gemini-4-argon@preset/vertex-only", "OPENROUTER_API_KEY": "test",
+       "RUN_SLUG": "tabpfn-test", "SLACK_BOT_TOKEN": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test", "RUNPOD_API_KEY": "test"}
 
 
@@ -59,6 +60,15 @@ def test_only_requested_resource_caps(scaffold):
     assert all(g.options.max_turns == "unlimited" for g in scaffold.loop.gates.values())
     assert config.resources["gpu"]["limits"] == {"cost_usd": 100}
     assert "run_shell" in config.agents["pi"].tools
+
+
+def test_argon_provider_and_context_build_without_openai_credentials(scaffold):
+    assert "OPENAI_API_KEY" not in scaffold.context.env
+    description = scaffold.runtime.describe()
+    assert description[0] == "model provider openai-compatible (responses)"
+    assert scaffold.strategy.type_name == "trim_recent"
+    assert scaffold.runtime.provider is not None
+    assert set(scaffold.coding_agents) == {"worker_a", "worker_b", "worker_c"}
 
 
 def test_unrequested_or_invalid_paper_never_calls_reviewer(scaffold):

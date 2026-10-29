@@ -90,8 +90,13 @@ def test_argon_tools_delegates_billing_and_session_state(router, drop_in_dir, as
     assert all(request["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False} for request in requests)
     assert all(request["reasoning"] == {"effort": "low", "summary": "auto"} for request in requests)
     assert all("reasoning.encrypted_content" in request["include"] for request in requests)
-    assert requests[1]["instructions"].startswith("You are the reviewer.\n\n<resource_status>")
+    assert requests[1]["instructions"] == "You are the reviewer."
+    assert "<resource_status>" in str(requests[1]["input"][-1])
     assert "Handle the request" not in str(requests[1]["input"])
+    assert requests[0]["instructions"] == requests[2]["instructions"]
+    assert requests[0]["input"][:-1] == requests[2]["input"][:len(requests[0]["input"]) - 1]
+    assert all(request["input"][-1]["role"] == "user" for request in requests)
+    assert all(str(request["input"]).count("<resource_status>") == 1 for request in requests)
     assert any(item.get("encrypted_content") == "signed-state" for item in requests[2]["input"])
     assert scaffold.context.usage.total_tokens == 390
     assert scaffold.context.usage.by_source["reviewer"].requests == 1
@@ -112,6 +117,7 @@ def test_the_orchestrator_history_survives_a_restart(router, drop_in_dir, assemb
     asyncio.run(turn(assemble(drop_in_dir, env=ENV), "recall"))
     assert "remember 42" in str(requests[1]["input"])
     assert "remembered-signature" in str(requests[1]["input"])
+    assert str(requests[1]["input"]).count("<resource_status>") == 1
     assert not requests[1].get("previous_response_id")
 
 
@@ -124,10 +130,11 @@ def test_the_same_provider_settings_apply_to_the_probe(router, drop_in_dir):
     assert requests[0]["provider"]["only"] == ["google-vertex"] and requests[0]["store"] is False
 
 
-def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop_in_dir, assemble):
+@pytest.mark.parametrize("model", [ENV["CRUX_MODEL"], "anthropic/claude-fable-5.1"])
+def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop_in_dir, assemble, model):
     requests, pending, configs = router
     pending.append(response(say(json.dumps({"passed": True, "feedback": "Checked.", "next_prompt": None}))))
-    scaffold = assemble(drop_in_dir, env=ENV)
+    scaffold = assemble(drop_in_dir, env={**ENV, "CRUX_MODEL": model})
 
     async def judge():
         async with scaffold.runtime as runtime:
@@ -135,7 +142,9 @@ def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop
 
     assert asyncio.run(judge()).passed
     assert len(configs) == 1
-    assert requests[0]["model"] == ENV["CRUX_MODEL"]
+    assert requests[0]["model"] == model
+    assert "<resource_status>" not in str(requests[0])
+    assert ("prompt_cache_breakpoint" in str(requests[0])) == model.startswith("anthropic/")
     assert requests[0]["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False}
     usage = scaffold.context.usage.by_source["judge:quality"]
     assert usage.requests == 1 and usage.total_tokens == 130
@@ -210,3 +219,83 @@ def test_a_chat_completions_provider_uses_the_sdk_adapter(router, drop_in_dir, a
     assert asyncio.run(assemble(drop_in_dir, env=ENV).run()).final_output == "done"
     assert requests[0]["messages"] and "input" not in requests[0]
     assert "include" not in requests[0] and requests[0]["reasoning_effort"] == "low"
+    assert requests[0]["messages"][-1]["role"] == "user"
+    assert "<resource_status>" in str(requests[0]["messages"][-1])
+
+
+@pytest.mark.parametrize("api", ["responses", "chat-completions"])
+@pytest.mark.parametrize("strategy", ["persistent", "trim_recent"])
+def test_claude_cache_boundaries_follow_retained_history_without_entering_the_session(
+    router, drop_in_dir, assemble, api, strategy,
+):
+    path = drop_in_dir / "scaffold.toml"
+    path.write_text(path.read_text().replace('api = "responses"', f'api = "{api}"')
+                    + f'\n[context]\ntype = "{strategy}"\n'
+                    + ('max_items = 3\n' if strategy == "trim_recent" else ''))
+    requests, pending, _ = router
+    env = {**ENV, "CRUX_MODEL": "anthropic/claude-fable-5.1@preset/vertex-only"}
+    outputs = [call("write_file", {"path": "NOTE.md", "content": "one"}),
+               call("write_file", {"path": "NOTE.md", "content": "two"}, "call-two"), say("done"), say("recalled")]
+    for output in outputs:
+        if api == "responses":
+            pending.append(response(output))
+        else:
+            message = ({"role": "assistant", "content": None, "tool_calls": [
+                {"id": output["call_id"], "type": "function", "function": {
+                    "name": output["name"], "arguments": output["arguments"]}}]}
+                if output["type"] == "function_call" else {"role": "assistant", "content": output["content"][0]["text"]})
+            pending.append({"id": "chat-test", "object": "chat.completion", "created": 1,
+                            "model": env["CRUX_MODEL"], "choices": [{"index": 0,
+                                "finish_reason": "tool_calls" if "tool_calls" in message else "stop",
+                                "message": message}], "usage": {"prompt_tokens": 100, "completion_tokens": 30,
+                                                                    "total_tokens": 130}})
+
+    async def turn(prompt):
+        scaffold = assemble(drop_in_dir, env=env)
+        async with scaffold.runtime as runtime:
+            await runtime.run(prompt, workflow="test")
+            return await runtime.session.get_items()
+
+    stored = asyncio.run(turn("Make the changes."))
+    stored = asyncio.run(turn("Recall the changes."))
+    assert "prompt_cache_breakpoint" not in str(stored)
+    assert "<resource_status>" not in str(stored)
+    snapshots = [item for item in stored if item.get("role") == "developer"]
+    assert all(isinstance(item["content"], str) for item in snapshots)
+    if strategy == "persistent":
+        assert len(snapshots) == 1
+    wire = [request["input" if api == "responses" else "messages"] for request in requests]
+    for items in wire:
+        marked = [item for item in items if "prompt_cache_breakpoint" in str(item)]
+        assert len(marked) == 2
+        assert "# CRUX standing context" in str(marked[0])
+        assert "<resource_status>" not in str(marked)
+        assert str(items).count("<resource_status>") == 1
+    for items in wire[1:3]:
+        last = next(item for item in reversed(items) if "prompt_cache_breakpoint" in str(item))
+        assert last.get("type") == "function_call_output" if api == "responses" else last["role"] == "tool"
+
+
+@pytest.mark.parametrize("model,host", [
+    ("google/gemini-4-argon", "https://openrouter.ai/api/v1"),
+    ("openai/gpt-5.4-mini", "https://openrouter.ai/api/v1"),
+    ("anthropic/claude-fable-5.1", "https://another-provider.example/api/v1"),
+])
+def test_claude_cache_markers_do_not_reach_other_models_or_gateways(router, drop_in_dir, assemble, model, host):
+    path = drop_in_dir / "scaffold.toml"
+    path.write_text(path.read_text().replace("https://openrouter.ai/api/v1", host))
+    requests, pending, _ = router
+    pending.append(response(say("done")))
+    asyncio.run(assemble(drop_in_dir, env={**ENV, "CRUX_MODEL": model}).run())
+    assert "prompt_cache_breakpoint" not in str(requests)
+
+
+def test_explicit_extension_breakpoints_take_precedence(router, drop_in_dir, assemble):
+    requests, pending, _ = router
+    pending.append(response(say("done")))
+    scaffold = assemble(drop_in_dir, env={**ENV, "CRUX_MODEL": "anthropic/claude-fable-5.1"})
+    scaffold.strategy.inject_standing_context = lambda history, load: [{"role": "developer", "content": [
+        {"type": "input_text", "text": str(index), "prompt_cache_breakpoint": {"mode": "explicit"}}
+        for index in range(4)]}]
+    asyncio.run(scaffold.run())
+    assert str(requests[0]).count("prompt_cache_breakpoint") == 4

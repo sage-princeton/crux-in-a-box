@@ -65,8 +65,8 @@ existing fleet/key-pair settings. Set at least:
 AWS_PROFILE=crux-2-acct-admin-access
 AWS_REGION=us-east-1
 AGENT_PLATFORM=openai-agents
-MODEL_PROVIDER=direct
-OPENAI_AGENTS_MODEL=<your supported model ID>
+MODEL_PROVIDER=openrouter
+OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/<your-vertex-only-preset>
 OPENAI_AGENTS_REASONING_EFFORT=high
 DROP_IN_PATH=src/sdk-scaffold/examples/tabpfn
 INSTANCE_TYPE=m7i.2xlarge
@@ -75,10 +75,23 @@ ROOT_DISK_GB=100
 
 Use an existing `KEY_NAME`; remove an inherited `ELASTIC_IP_ADDRESS` unless that
 specific address belongs to this run. SDK runs need no AgentRQ/control box setup.
-Create a private mode-600 `run-secrets-base.json` with **only** `OPENAI_API_KEY`,
+Create an OpenRouter preset with `provider.only=["google-vertex"]` and
+`provider.allow_fallbacks=false`, matching this drop-in's routing rules. Configure
+the intended Vertex BYOK integration with shared-capacity fallback disabled.
+The model's preset suffix routes Codex workers too: Codex cannot send the SDK's
+`extra_body`. Provisioning validates the suffix, not the account-side preset
+contents; verify them and the returned usage/provider before treating a run as
+GCP-billed. The example uses `trim_recent` context because OpenAI compaction does
+not support Argon. Commit the drop-in and SDK changes before provisioning;
+uncommitted changes are not staged on the box.
+
+Create a private mode-600 `run-secrets-base.json` with **only** `OPENROUTER_API_KEY`,
 `SLACK_BOT_TOKEN`, `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` and `RUNPOD_API_KEY`.
 Other non-provider base secrets are inherited by provisioning, so do not reuse a
 bundle containing the omitted services. Langfuse keys come from fleet SSM.
+
+For direct OpenAI instead, remove `[runtime.model_provider]` and its `extra_body`
+table, set `MODEL_PROVIDER=direct` and an OpenAI model, and supply `OPENAI_API_KEY`.
 
 ```bash
 ./make-new-workspace.sh tabpfn-sdk-<unique-suffix> --dry-run

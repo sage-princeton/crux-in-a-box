@@ -36,9 +36,6 @@ load_agent_config() {
     openrouter) API_KEY_NAME=OPENROUTER_API_KEY ;;
     *) die "MODEL_PROVIDER must be direct|openrouter (got '$MODEL_PROVIDER')." ;;
   esac
-  if [ "$AGENT_PLATFORM" = openai-agents ] && [ "$MODEL_PROVIDER" != direct ]; then
-    die "MODEL_PROVIDER=$MODEL_PROVIDER is not supported for openai-agents; it calls OpenAI directly."
-  fi
   MODEL="$(cfg "$MODEL_KEY")"
   EFFORT="$(cfg "$EFFORT_KEY")"
   local key value keys="$MODEL_KEY $EFFORT_KEY"
@@ -105,11 +102,12 @@ validate_agent_key() {
 # credential is a per-run API key for the agent's own tools: it travels with
 # the workspace's secrets and lands in the agent process's environment.
 # Provider keys and AgentRQ credentials have their own paths, so an unselected
-# provider key or the AgentRQ token never reaches the agent.
+# provider key or the AgentRQ token never reaches the agent. SDK drop-ins may
+# name a custom provider credential; exclude that selected key here as well.
 PROVIDER_KEY_NAMES="OPENAI_API_KEY ANTHROPIC_API_KEY OPENROUTER_API_KEY"
 
 run_api_keys_json() {
-  jq -c --arg reserved "$PROVIDER_KEY_NAMES" '
+  jq -c --arg reserved "$PROVIDER_KEY_NAMES ${API_KEY_NAME:-}" '
     with_entries(select(.key as $k |
       ($reserved | split(" ") | index($k) | not) and ($k | startswith("AGENTRQ_") | not)))
   ' "$1"
@@ -145,6 +143,15 @@ scaffold_needs() {
   [[ " $SCAFFOLD_NEEDS " == *" $1 "* ]]
 }
 
+# For SDK runs the drop-in owns provider selection. Read exactly the config
+# that will be staged, before validating or copying its selected credential.
+load_sdk_config() {
+  local config_script="${BASH_SOURCE[0]%/*}/sdk_config.py"
+  SDK_CONFIG_JSON="$(python3 "$config_script" --model-provider "$MODEL_PROVIDER" --model "$MODEL")" \
+    || die "Fix the SDK provider configuration before provisioning."
+  API_KEY_NAME="$(printf '%s' "$SDK_CONFIG_JSON" | jq -r '.api_key_env')"
+}
+
 # The drop-in directory staged at /srv/crux-run/run-harness. Provisioning
 # archives the committed HEAD, so validate against HEAD, not the working tree.
 load_drop_in_path() {
@@ -157,6 +164,7 @@ load_drop_in_path() {
   if [ "$SCAFFOLD_MODULE" = sdk ]; then
     git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/scaffold.toml" 2>/dev/null \
       || die "$DROP_IN_PATH/scaffold.toml is not in the committed HEAD; openai-agents boxes run a scaffold drop-in."
+    load_sdk_config < <(git -C "$1" show "HEAD:$DROP_IN_PATH/scaffold.toml")
   fi
   if git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
     git -C "$1" show "HEAD:$DROP_IN_PATH/provision.json" \

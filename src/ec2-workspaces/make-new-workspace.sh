@@ -83,9 +83,9 @@ ok "Base config and secrets present; control box '$CONTROL_SLUG'"
 
 # Validate the selected platform before AWS calls or minting a workspace.
 load_agent_config all
+load_drop_in_path "$SCRIPT_DIR/../.."
 validate_agent_key "$BASE_SECRETS"
 validate_run_api_keys "$BASE_SECRETS"
-load_drop_in_path "$SCRIPT_DIR/../.."
 AGENT_API_KEY="$(jq -r --arg key "$API_KEY_NAME" '.[$key]' "$BASE_SECRETS")"
 if [ "$AGENT_PLATFORM" = claude ]; then
   [ -f "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" ] \

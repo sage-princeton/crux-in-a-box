@@ -614,7 +614,7 @@ ok "Copied (mode 600; configure-run.sh deletes it)"
 
 # ====== CONFIGURE (secrets, per-run) ======
 info "configure-run.sh — config and gateway"
-scp -q "$SCRIPT_DIR/configure-run.sh" "$SCRIPT_DIR/agent-config.sh" "$SLUG:/tmp/"
+scp -q "$SCRIPT_DIR/configure-run.sh" "$SCRIPT_DIR/agent-config.sh" "$SCRIPT_DIR/sdk_config.py" "$SLUG:/tmp/"
 scp -q "$SCRIPT_DIR/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
 if [ "$AGENT_PLATFORM" = claude ]; then
   scp -q "$SCRIPT_DIR/../../agentrq/claude/.claude/hooks/langfuse_hook.py" "$SLUG:/tmp/langfuse_hook.py"

@@ -14,6 +14,7 @@ from typing import Any
 from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.components import Options
+from crux_scaffold.config import load_config
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.scaffold import Scaffold
@@ -54,7 +55,12 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         if args.command == "probe":
             runtime, options = "openai-agents", None
             if args.drop_in:
-                cls, options = RUNTIMES.resolve("runtime", DropInDirectory.load(args.drop_in).config.runtime)
+                # Provisioning precedes operator preparation. A model-only probe
+                # needs provider settings, not resolved prompts or Slack steering.
+                drop_in = DropInDirectory(args.drop_in.resolve(), load_config(args.drop_in))
+                drop_in.import_extensions()
+                spec = {key: value for key, value in drop_in.config.runtime.items() if key != "steering"}
+                cls, options = RUNTIMES.resolve("runtime", spec)
                 runtime = cls.type_name
             return asyncio.run(run_probe(runtime, args.coding_agent, env, telemetry, options=options))
         drop_in = DropInDirectory.load(args.drop_in)

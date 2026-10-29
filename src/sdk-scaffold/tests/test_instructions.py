@@ -269,7 +269,7 @@ def test_live_tool_allowance_updates_on_every_model_call(drop_in_dir, assemble):
     assert "90s remaining" in pm.instructions[0]
     assert "50s remaining" in pm.instructions[1]
     assert "timeout 17s" in pm.instructions[0]
-    assert all(text.count("<resource_status>") == 1 for text in pm.instructions)
+    assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
 
 
 def test_orchestrator_turn_limit_comes_from_runtime_not_delegate_defaults(drop_in_dir, assemble):

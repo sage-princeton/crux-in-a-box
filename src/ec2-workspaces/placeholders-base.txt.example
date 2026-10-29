@@ -56,8 +56,12 @@ CLAUDE_ACP_VERSION=0.77.0
 # OPENAI_AGENTS_MODEL=<explicit-model-id>
 # OPENAI_AGENTS_REASONING_EFFORT=medium
 # Effort: none | low | medium | high | xhigh | max, checked per model like Codex.
-# MODEL_PROVIDER must stay direct. It
-# needs no AgentRQ workspace, control box settings or CLI/ACP pins.
+# The committed drop-in's [runtime.model_provider] selects its endpoint and
+# credential name. MODEL_PROVIDER=openrouter is also accepted when that table
+# points to OpenRouter. It needs no AgentRQ workspace, control box settings or
+# CLI/ACP pins. For OpenRouter + Codex workers with routing overrides, use
+# google/gemini-4-argon@preset/<your-preset> and set matching Vertex-only routing
+# in the preset. Compatible providers use persistent or trim_recent context.
 
 # The drop-in directory staged at /srv/crux-run/run-harness, as a repo-relative
 # path. Default: run-harness. openai-agents needs one with a scaffold.toml,

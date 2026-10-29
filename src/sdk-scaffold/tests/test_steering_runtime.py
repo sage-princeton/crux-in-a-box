@@ -4,6 +4,7 @@ import io
 import json
 
 import pytest
+from agents.run_config import CallModelData, ModelInputData
 from test_steering import Recorder
 
 from crux_scaffold.context_strategies import is_standing_context
@@ -67,9 +68,9 @@ def test_no_model_polling_is_needed_and_delivery_survives_restart(drop_in_dir, a
         assert [m["text"] for m in messages(items)] == ["Use the restored dataset"]
     assert "precedence" in pm.instructions[0]
     assert all(sum(is_standing_context(item) for item in items) == 1 for items in pm.inputs)
-    assert all(instructions.count("<resource_status>") == 1 for instructions in pm.instructions)
-    assert "total tokens: 0" in pm.instructions[0]
-    assert "total tokens: 15" in pm.instructions[1]
+    assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
+    assert "total tokens: 0" in pm.inputs[0][-1]["content"]
+    assert "total tokens: 15" in pm.inputs[1][-1]["content"]
     assert "U_OP" == messages(pm.inputs[0])[0]["source"]
     assert scaffold.context.steering.pending() == []
 
@@ -80,6 +81,7 @@ def test_no_model_polling_is_needed_and_delivery_survives_restart(drop_in_dir, a
             await second.runtime.run("Continue", workflow="resume")
             history = await second.runtime.session.get_items()
         assert len(messages(history)) == 1
+        assert "<resource_status>" not in str(history)
         assert len(messages(pm2.inputs[0])) == 1
         assert sum(is_standing_context(item) for item in pm2.inputs[0]) == 1
     asyncio.run(resumed())
@@ -163,8 +165,37 @@ def test_transport_failure_is_visible_to_the_model(drop_in_dir, assemble, tmp_pa
     (tmp_path / "inbox.csv").write_text("malformed response")
     pm = ScriptedModel(say("working offline"))
     asyncio.run(assemble(drop_in_dir, {"pm": pm}, env=env).run())
-    assert "read_failed" in pm.instructions[0]
-    assert "check MCP credentials" in pm.instructions[0]
+    assert "read_failed" in pm.inputs[0][-1]["content"]
+    assert "check MCP credentials" in pm.inputs[0][-1]["content"]
+    assert "Steering transport status" not in pm.instructions[0]
+
+
+def test_transport_status_changes_only_the_trailing_context(drop_in_dir, assemble, tmp_path):
+    env = configured(drop_in_dir, tmp_path)
+    scaffold = assemble(drop_in_dir, env=env)
+    scaffold.runtime.build()
+    steering = scaffold.context.steering
+    statuses = iter(["read_failed: check MCP credentials", "ok"])
+
+    async def poll():
+        steering.state["status"] = next(statuses)
+
+    steering.poll = poll
+    history = [{"role": "user", "content": "question"}]
+    data = CallModelData(ModelInputData(input=history, instructions="fixed"),
+                         scaffold.runtime.agents["pm"], scaffold.context)
+
+    async def check():
+        failed = await scaffold.runtime._select_input(data)
+        recovered = await scaffold.runtime._select_input(data)
+        assert failed.instructions == recovered.instructions == "fixed"
+        assert failed.input[:-1] == recovered.input[:-1] == history
+        assert failed.input[-1]["role"] == recovered.input[-1]["role"] == "user"
+        assert "read_failed" in failed.input[-1]["content"]
+        assert "Steering transport status" not in recovered.input[-1]["content"]
+        assert "<resource_status>" in recovered.input[-1]["content"]
+
+    asyncio.run(check())
 
 
 @pytest.mark.parametrize("change", ["undefined_server", "missing_policy", "bad_policy"])

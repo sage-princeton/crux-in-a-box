@@ -2,6 +2,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from agents.run_config import CallModelData, ModelInputData
 from pydantic import ValidationError
 
 from crux_scaffold.errors import InvalidDropInError
@@ -44,12 +45,12 @@ def test_every_call_gets_current_budget_and_coding_usage_without_history_accumul
     scaffold.context.now = lambda: START
     asyncio.run(scaffold.run())
     assert len(pm.instructions) == 2
-    assert all(instructions.count("<resource_status>") == 1 for instructions in pm.instructions)
-    assert "total tokens: 0" in pm.instructions[0]
-    assert "total tokens: 165" in pm.instructions[1]
-    assert "model spend: 1.650000 USD" in pm.instructions[1]
-    assert "elapsed time: 0s" in pm.instructions[0]
-    assert all("<resource_status>" not in str(items) for items in pm.inputs)
+    assert all("<resource_status>" not in instructions for instructions in pm.instructions)
+    assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
+    assert "total tokens: 0" in pm.inputs[0][-1]["content"]
+    assert "total tokens: 165" in pm.inputs[1][-1]["content"]
+    assert "model spend: 1.650000 USD" in pm.inputs[1][-1]["content"]
+    assert "elapsed time: 0s" in pm.inputs[0][-1]["content"]
 
 
 def test_context_trimming_cannot_remove_status_and_delegates_receive_it(drop_in_dir, assemble):
@@ -59,8 +60,65 @@ def test_context_trimming_cannot_remove_status_and_delegates_receive_it(drop_in_
     scaffold.strategy.select = lambda items: items[-1:]
     asyncio.run(scaffold.run())
     assert reviewer.instructions[0].startswith("You are the reviewer.")
-    assert "<resource_status>" in reviewer.instructions[0]
-    assert "total tokens: 15" in reviewer.instructions[0]
+    assert reviewer.inputs[0][-1]["role"] == "user"
+    assert "<resource_status>" in reviewer.inputs[0][-1]["content"]
+    assert "total tokens: 15" in reviewer.inputs[0][-1]["content"]
+
+
+def test_changing_resources_appends_user_status_after_unchanged_prefix(drop_in_dir, assemble):
+    scaffold = assemble(drop_in_dir)
+    scaffold.runtime.build()
+    history = [{"role": "developer", "content": "standing context"},
+               {"role": "user", "content": "question"},
+               {"type": "function_call", "name": "read_file", "arguments": "{}", "call_id": "c1"},
+               {"type": "function_call_output", "call_id": "c1", "output": "evidence"}]
+    data = CallModelData(ModelInputData(input=history, instructions="fixed instructions"),
+                         scaffold.runtime.agents["pm"], scaffold.context)
+
+    async def check():
+        first = await scaffold.runtime._select_input(data)
+        scaffold.context.usage.add("pm", 100, 50)
+        second = await scaffold.runtime._select_input(data)
+        assert first.instructions == second.instructions == "fixed instructions"
+        assert first.input[:-1] == second.input[:-1] == history
+        assert first.input[-1]["role"] == second.input[-1]["role"] == "user"
+        assert "total tokens: 0" in first.input[-1]["content"]
+        assert "total tokens: 150" in second.input[-1]["content"]
+        assert str(history).count("<resource_status>") == 0
+
+    asyncio.run(check())
+
+
+def test_unavailable_and_stale_measurements_reach_the_model(drop_in_dir, assemble):
+    configure(drop_in_dir, '[resources.models]\ntype = "scripted-resource"\nlimits = { cost_usd = 2 }')
+    scaffold = assemble(drop_in_dir)
+    scaffold.context.now = lambda: START
+    provider = scaffold.context.resources.providers["models"]
+    read = provider.read
+    attempts = iter([False, True, False])
+
+    async def intermittent(ctx):
+        if not next(attempts):
+            raise RuntimeError("measurement unavailable")
+        return await read(ctx)
+
+    provider.read = intermittent
+    scaffold.runtime.build()
+    data = CallModelData(ModelInputData(input=[{"role": "user", "content": "question"}], instructions="fixed"),
+                         scaffold.runtime.agents["pm"], scaffold.context)
+
+    async def check():
+        unavailable = await scaffold.runtime._select_input(data)
+        fresh = await scaffold.runtime._select_input(data)
+        stale = await scaffold.runtime._select_input(data)
+        assert "measurements unavailable; usage is unknown" in unavailable.input[-1]["content"]
+        assert "remaining unknown" in unavailable.input[-1]["content"]
+        assert "models: fresh" in fresh.input[-1]["content"]
+        assert "models: stale" in stale.input[-1]["content"]
+        assert "retaining last successful measurements" in stale.input[-1]["content"]
+        assert unavailable.input[:-1] == fresh.input[:-1] == stale.input[:-1]
+
+    asyncio.run(check())
 
 
 def test_on_demand_tool_refreshes_the_same_resource_report(drop_in_dir, assemble):

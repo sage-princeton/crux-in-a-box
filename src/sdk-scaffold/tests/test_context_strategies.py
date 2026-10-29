@@ -60,7 +60,8 @@ def test_trim_recent_limits_what_the_model_sees_but_not_the_stored_history(drop_
     pm = ScriptedModel(say("first"), say("second"))
     scaffold = assemble(drop_in_dir, {"pm": pm})
     asyncio.run(turns(scaffold, "hello", "again"))
-    assert len(pm.inputs[1]) == 2
+    assert len(pm.inputs[1]) == 3
+    assert "<resource_status>" in pm.inputs[1][-1]["content"]
     stored = asyncio.run(scaffold.strategy.session("pm", scaffold.context).get_items())
     assert len(stored) == 6
 
@@ -171,13 +172,17 @@ def test_compaction_refreshes_context_on_the_next_turn(drop_in_dir, assemble, re
                 scaffold.strategy.client.output.insert(0, pm.inputs[0][0])
             (drop_in_dir / "workspace/REQUEST.md").write_text("Current request.")
             await runtime.session.run_compaction({"force": True})
+            assert "<resource_status>" not in str(scaffold.strategy.client.calls[0]["input"])
             await runtime.run("after compaction", workflow="main")
             await runtime.run("continue", workflow="main")
+            assert "<resource_status>" not in str(await runtime.session.get_items())
 
     asyncio.run(run())
     assert "Not created yet" in str(pm.inputs[0])
     assert str(pm.inputs[1]).count("Current request.") == 1
     assert str(pm.inputs[2]).count("Current request.") == 1
+    assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
+    assert all("<resource_status>" in items[-1]["content"] for items in pm.inputs)
 
 
 def test_trim_recent_keeps_standing_context_during_tool_calls(drop_in_dir, assemble):

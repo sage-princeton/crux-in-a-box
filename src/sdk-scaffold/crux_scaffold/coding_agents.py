@@ -3,6 +3,7 @@ implementation to. The coding agent brings its own proprietary scaffold; the dro
 
 from __future__ import annotations
 
+import json
 from abc import abstractmethod
 from collections.abc import Callable
 from contextlib import aclosing
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 
 from crux_scaffold.components import Component, Registry
 from crux_scaffold.config import StandingContextOptions
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
@@ -83,7 +85,26 @@ CONTEXT_WINDOW_TOKENS = 1_000_000
 
 
 def codex_client(ctx: RunContext) -> AsyncCodex:
-    return AsyncCodex(CodexConfig(cwd=str(ctx.workspace.root), env={"CODEX_HOME": str(ctx.state_dir / "codex")}))
+    overrides: tuple[str, ...] = ()
+    base_url = ctx.env.get("CRUX_CODEX_BASE_URL")
+    if base_url:
+        key = ctx.env.get("CRUX_CODEX_API_KEY_ENV", "OPENAI_API_KEY")
+        if not ctx.env.get(key):
+            raise InvalidDropInError(f"Codex provider requires {key} in the run environment")
+        settings = {
+            "model_provider": "crux-compatible",
+            "model_providers.crux-compatible.name": "CRUX compatible provider",
+            "model_providers.crux-compatible.base_url": base_url,
+            "model_providers.crux-compatible.wire_api": "responses",
+            "model_providers.crux-compatible.supports_websockets": False,
+            "model_providers.crux-compatible.auth.command": "printenv",
+            "model_providers.crux-compatible.auth.args": [key],
+        }
+        overrides = tuple(f"{name}={json.dumps(value)}" for name, value in settings.items())
+    return AsyncCodex(CodexConfig(
+        cwd=str(ctx.workspace.root), config_overrides=overrides,
+        env={**ctx.env, "CODEX_HOME": str(ctx.state_dir / "codex")},
+    ))
 
 
 @CODING_AGENTS.register
@@ -102,7 +123,7 @@ class CodexCodingAgent(CodingAgent):
         instructions = self.developer_instructions
         (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
         async with self.client_factory(ctx) as codex:
-            if ctx.env.get("OPENAI_API_KEY"):
+            if ctx.env.get("OPENAI_API_KEY") and not ctx.env.get("CRUX_CODEX_BASE_URL"):
                 await codex.login_api_key(ctx.env["OPENAI_API_KEY"])
             thread = await codex.thread_start(
                 cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),

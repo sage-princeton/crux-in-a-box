@@ -294,17 +294,39 @@ For an SDK box:
   `OPENAI_AGENTS_REASONING_EFFORT`, and `DROP_IN_PATH` (e.g.
   `src/sdk-scaffold/examples/web-cms-product-change`). The drop-in must be committed,
   because provisioning stages `HEAD`.
-- **Base secrets:** `OPENAI_API_KEY`, plus any keys the drop-in's MCP servers
+- **Provider:** the committed drop-in's `[runtime.model_provider]` selects the
+  endpoint, Responses or Chat Completions API, and `api_key_env`. Omitting it
+  keeps direct OpenAI. `MODEL_PROVIDER=openrouter` is accepted when the table
+  points to OpenRouter; leaving the legacy setting at `direct` also honors the
+  drop-in. A mismatched OpenRouter setting fails preflight before EC2 creation.
+  Compatible endpoints require HTTPS and `persistent` or `trim_recent` context;
+  `openai_compaction` calls direct OpenAI and is rejected for these runs.
+- **Base secrets:** the selected provider credential (`OPENAI_API_KEY` by
+  default, or the drop-in's `api_key_env`, such as `OPENROUTER_API_KEY`), plus any keys the drop-in's MCP servers
   read, such as `SLACK_BOT_TOKEN`. Like every non-provider key in the base
-  secrets, it reaches the run's environment.
+  secrets, it reaches the run's environment. Unused provider credentials are
+  excluded. Custom provider credentials are validated and copied only once.
+- **Codex workers:** only declared coding harnesses are probed. Codex uses the
+  run's model and effort, and inherits compatible Responses endpoints and their
+  selected credential. Chat Completions works for SDK-only drop-ins. Codex cannot
+  send the SDK's `extra_body`; when an OpenRouter drop-in declares routing rules
+  and Codex workers, use `OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/<name>`
+  and create a preset with the same rules (e.g. Vertex only, fallback disabled).
+  Provisioning checks the preset suffix, not the account-side preset contents;
+  verify those and the Vertex BYOK settings before launch. Other endpoints with
+  Codex workers must omit `extra_body` and enforce routing at their endpoint.
 - **Sandbox prerequisites:** the SDK installer adds system `bubblewrap` and
   loads Ubuntu's `bwrap-userns-restrict` AppArmor profile when required. Existing
   profiles are preserved; the global namespace restriction stays enabled.
 - **Provisioning** writes `/etc/crux-run.env`, then checks a sandboxed shell
   can create and read back a temporary workspace file. Failure stops provisioning
   before any model call; inspect `/var/log/crux-agent-probe-sandbox.log`. Next it
-  runs `crux_scaffold probe --coding-agent codex`: one traced model call and one
-  Codex turn. It then installs `crux-sdk-run.service`, but does not start it.
+  runs `crux_scaffold probe --drop-in /srv/crux-run/run-harness`, adding
+  `--coding-agent codex` when the drop-in declares Codex workers: one traced
+  model call and, when declared, one Codex turn. Failures are logged in
+  `/var/log/crux-agent-probe.log`. It then installs `crux-sdk-run.service`, but does not start it.
+  This provider-only probe accepts unresolved operator/Slack placeholders;
+  `check` and `run` still require a fully prepared drop-in.
 - **Run software:** optionally commit `provision.json` alongside `scaffold.toml`
   to install OS packages and pinned CLIs. Declared commands are checked as the
   run user during provisioning and at every SDK start. See
