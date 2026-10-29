@@ -11,7 +11,8 @@ from collections.abc import Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsOptions, OpenAIAgentsRuntime
+from crux_scaffold.agent_runtimes.openai_agents_options import OpenAIAgentsOptions
+from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.config import load_config
 from crux_scaffold.drop_in import DropInDirectory

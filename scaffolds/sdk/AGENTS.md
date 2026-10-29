@@ -27,14 +27,14 @@ A new capability almost always fits one of these. Try the options in this order,
 
 Don't add special cases for one drop-in to the package. Don't add an extension point that has only a hypothetical second user.
 
-Agent orchestration is implemented directly in `agent_runtimes/openai_agents_sdk.py`; `[runtime]` configures this integration without a runtime registry. Telemetry and the budget also have no registry.
+Agent orchestration is implemented directly in `agent_runtimes/openai_agents_sdk.py`, with each supporting class in its own module under `agent_runtimes/`; `[runtime]` configures this integration without a runtime registry. Telemetry and the budget also have no registry.
 
 ## Keep the boundaries
 
 - **`scaffold.py` is the only composition root.** Components receive their dependencies and never build one another.
 - **Agent SDKs stay in their modules.**
   - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK.
-  - The OpenAI Agents SDK stays in `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`.
+  - The OpenAI Agents SDK stays in `agent_runtimes/` and `context_strategies.py`.
   - Codex stays in `coding_agents.py`.
 - **Configuration is declarative and strict.**
   - Options models forbid unknown keys.
