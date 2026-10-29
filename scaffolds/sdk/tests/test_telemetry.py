@@ -13,7 +13,7 @@ from test_blind_review import configure_blind
 from test_coding_agents import ANSWER, FakeCodex, completed, item, usage
 
 from crux_scaffold import cli
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES

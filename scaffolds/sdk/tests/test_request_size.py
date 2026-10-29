@@ -12,7 +12,7 @@ from test_openrouter import ENV, PROVIDER_CONFIG, response
 from test_openrouter import call as response_call
 from test_openrouter import say as response_text
 
-from crux_scaffold.agent_runtimes import openai_agents_sdk as sdk
+from crux_scaffold.openai_agents_sdk import openai_agents_sdk as sdk
 from crux_scaffold.context_strategies import Compaction
 from crux_scaffold.errors import ContextLimitExceededError, RequestSizeExceededError
 from crux_scaffold.telemetry import NullTelemetry

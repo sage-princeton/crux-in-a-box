@@ -46,14 +46,14 @@ from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import ValidationError
 
-from crux_scaffold.agent_runtimes._delegate_call import _DelegateCall
-from crux_scaffold.agent_runtimes.brief_arguments import BriefArguments
-from crux_scaffold.agent_runtimes.coding_result_arguments import CodingResultArguments
-from crux_scaffold.agent_runtimes.model_provider_options import ModelProviderOptions
-from crux_scaffold.agent_runtimes.openai_agents_options import OpenAIAgentsOptions
-from crux_scaffold.agent_runtimes.turn_outcome import TurnOutcome
-from crux_scaffold.agent_runtimes.usage_hooks import UsageHooks
-from crux_scaffold.agent_runtimes.verdict import Verdict
+from crux_scaffold.openai_agents_sdk._delegate_call import _DelegateCall
+from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
+from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
+from crux_scaffold.openai_agents_sdk.model_provider_options import ModelProviderOptions
+from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
+from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
+from crux_scaffold.openai_agents_sdk.usage_hooks import UsageHooks
+from crux_scaffold.openai_agents_sdk.verdict import Verdict
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
 from crux_scaffold.components import count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order

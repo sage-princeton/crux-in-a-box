@@ -5,8 +5,8 @@ import signal
 import pytest
 
 from crux_scaffold import cli
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
+from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity
 
 from drop_ins import edit

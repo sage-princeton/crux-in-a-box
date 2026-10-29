@@ -13,11 +13,11 @@ from agents import SQLiteSession
 from openai import APIStatusError, AsyncOpenAI
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsOptions, OpenAIAgentsRuntime
 from crux_scaffold.cli import main
 from crux_scaffold.context_strategies import estimate_tokens
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
+from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsOptions, OpenAIAgentsRuntime
 from crux_scaffold.telemetry import NullTelemetry, RunIdentity, telemetry_from_env
 
 ENV = {"CRUX_MODEL": "google/gemini-4-argon", "CRUX_REASONING_EFFORT": "low",
@@ -75,7 +75,7 @@ def router(monkeypatch, drop_in_dir):
         configs.append(kwargs)
         return AsyncOpenAI(**kwargs, max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)))
 
-    monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.AsyncOpenAI", client)
+    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.openai_agents_sdk.AsyncOpenAI", client)
     return requests, pending, configs
 
 
@@ -266,7 +266,7 @@ def test_invalid_provider_settings_are_rejected(router, drop_in_dir, assemble, o
 def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble, monkeypatch):
     requests, pending, _ = router
     # An API error is retried on the same Vertex-only route, never through a direct or alternate provider.
-    monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.MODEL_RETRIES", 1)
+    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.openai_agents_sdk.MODEL_RETRIES", 1)
     monkeypatch.setattr("agents.run_internal.model_retry._sleep_for_retry", lambda delay: asyncio.sleep(0))
     pending.extend([{"error": {"message": "No eligible Vertex endpoint", "code": "provider_unavailable"}}] * 2)
     with pytest.raises(APIStatusError, match="No eligible Vertex endpoint"):
