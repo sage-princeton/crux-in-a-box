@@ -1,156 +1,64 @@
-"""
-NB: this SDK works with any model that is "openai-compatible", e.g., it's not
-specific to OpenAI models. This supports, for example, Google Vertex models
-out of the box.
-"""
+"""Run scaffold agents through the OpenAI Agents SDK and compatible model endpoints."""
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import json
-import sys
-from collections.abc import AsyncIterator, Callable, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager
-from contextvars import ContextVar
-from dataclasses import dataclass, replace
-from datetime import datetime
+from collections.abc import Mapping
+from contextlib import AsyncExitStack
+from dataclasses import replace
 from functools import partial
-from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, AsyncGenerator, Any, Literal, Self
+from typing import Any, Literal, Self
 
-from agents import (
-    Agent,
-    FunctionTool,
-    ModelSettings,
-    OpenAIProvider,
-    RunConfig,
-    RunContextWrapper,
-    Runner,
-    set_tracing_disabled,
-)
-from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
-from agents.items import ModelResponse
-from agents.mcp import MCPServerStdio
-from agents.models.interface import Model
-from agents.retry import ModelRetryBackoffSettings, ModelRetrySettings, RetryPolicyContext, retry_policies
+from agents import Agent, RunConfig, Runner, set_tracing_disabled
+from agents.exceptions import MaxTurnsExceeded
 from agents.run_config import CallModelData, ModelInputData
-from agents.strict_schema import ensure_strict_json_schema
-from agents.tool import ToolOutputImage, ToolOutputText
-from agents.tool_context import ToolContext
-from mcp.types import CallToolResult, TextContent
-from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
-from openai.types.shared import Reasoning
+from openai import BadRequestError
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
-from pydantic import ValidationError
 
-from crux_scaffold.openai_agents_sdk._delegate_call import _DelegateCall
-from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
-from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
+from crux_scaffold.components import CountLimit, count_limit
+from crux_scaffold.context_strategies import ContextStrategy, is_standing_context
+from crux_scaffold.errors import InvalidDropInError, ModelRequestError
+from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
 from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
-from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
+from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
 from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
-from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
 from crux_scaffold.openai_agents_sdk.usage_hooks import UsageHooks
 from crux_scaffold.openai_agents_sdk.verdict import Verdict
-from crux_scaffold.coding_agents import CodingAgent, CodingResult
-from crux_scaffold.components import count_limit
-from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.context_strategies import ContextStrategy, is_standing_context, since_restart
-from crux_scaffold.delegate_mailboxes import DelegateMailboxes
-from crux_scaffold.delegate_tasks import DelegateTasks
-from crux_scaffold.errors import InvalidDropInError, ModelRequestError, RequestSizeExceededError, ToolError
-from crux_scaffold.steering import MESSAGE_TOOLS, WITHHELD, SteeringOptions, is_envelope, within_run
 from crux_scaffold.telemetry import Telemetry
-from crux_scaffold.tools import Tool, ToolImage, validate_review_tools
-from crux_scaffold.workspace import ReviewWorkspace, RunContext
-
-if TYPE_CHECKING:
-    from crux_scaffold.drop_in import DropInDirectory
+from crux_scaffold.tools import validate_review_tools
+from crux_scaffold.workspace import ReviewWorkspace
 
 JUDGE = "judge"
 
 
-class TaskArguments(Arguments):
-    task_id: str
-
-
-class SendArguments(TaskArguments):
-    message: str
-    reply_to: str | None = None
-    interrupt: bool = False
-
-
-class MessageArguments(Arguments):
-    message: str
-
-
-class InboxArguments(Arguments):
-    wait_seconds: float = Field(0, ge=0, allow_inf_nan=False)
-
-
 class OpenAIAgentsRuntime:
-    """Agents are SDK Agents; delegates are tools, so each delegated call starts from a fresh context holding only
-    its brief. The orchestrator's conversation lives in the context strategy's session."""
+    """Run orchestrator turns and isolated judges using assembled SDK agents and managed resources."""
 
     type_name = "openai-agents"
 
-    def __init__(
-        self,
-        *,
-        model_provider: ModelProvider,
-        drop_in: DropInDirectory,
-        context: RunContext,
-        tools: Mapping[str, Tool],
-        coding_agents: Mapping[str, CodingAgent],
-        delegation: DelegationLimiter,
-        coding_tasks: CodingTasks,
-        context_strategy: ContextStrategy,
-        instructions: Callable[[str], str],
-        research_context: Callable[[str], str] = lambda name: "",
-        max_turns: CountLimit = 50,
-        background_coding: bool = False,
-        interactive_delegates: bool = False,
-        coding_result_wait_seconds: float | Literal["unlimited"] = 1800,
-        models: Mapping[str, Model] | None = None,
-    ) -> None:
-        self.model_provider = model_provider
-        self.max_turns = max_turns
-        self.background_coding = background_coding
-        self.interactive_delegates = interactive_delegates
-        self.coding_result_wait_seconds = coding_result_wait_seconds
-        self.drop_in = drop_in
-        self.context = context
-        self.tools = tools
-        self.coding_agents = coding_agents
+    def __init__(self, builder: AgentBuilder, context_strategy: ContextStrategy,
+                 coding_tasks: CodingTasks, max_turns: CountLimit = 50) -> None:
+        self._builder = builder
         self.context_strategy = context_strategy
-        self.instructions = instructions
-        self.research_context = research_context
-        self._delegate_limit = drop_in.config.delegation.max_concurrent
-        self._active_delegates = 0
-        self._delegate_changed = asyncio.Condition()
-        self._delegate_call: ContextVar[_DelegateCall | None] = ContextVar("delegate_call", default=None)
-        self.models = dict(models or {})
-        self.hooks = UsageHooks(context.usage)
+        self._coding_tasks = coding_tasks
+        self.max_turns = max_turns
+        self._initialize()
+
+    def _initialize(self) -> None:
+        self.context = self._builder.resources.context
+        self.drop_in = self._builder.resources.drop_in
+        self.tools = self._builder.tools
         self.run_config = RunConfig(call_model_input_filter=self._select_input)
-        self.agents: dict[str, Agent] = {}
-        self.servers: dict[str, MCPServerStdio] = {}
-        self.client: AsyncOpenAI | None = None
-        self.provider: OpenAIProvider | None = None
-        # TODO(AE-318): consolidate task handles, timestamps and cancellation state into coding-task objects.
-        self._coding_tasks: dict[str, asyncio.Task[CodingResult]] = {}
-        self._coding_started: dict[str, datetime] = {}
-        self._coding_cancelled: dict[str, tuple[datetime, datetime]] = {}  # started, cancelled; not yet reported
-        self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
-        self._restart_tools: set[str] = set()
-        self.delegates: DelegateTasks | None = None
-        self._delegate_context: ContextVar[tuple[str, list[dict]] | None] = ContextVar('delegate_context', default=None)
-        if interactive_delegates:
-            self.delegates = DelegateTasks(DelegateMailboxes(context.state_dir / 'delegates.sqlite'),
-                                           self._run_delegate, context.telemetry)
+
+    @property
+    def model_provider(self) -> ModelProvider:
+        return self._builder.resources.model_provider
+
+    @property
+    def hooks(self) -> UsageHooks:
+        return self._builder.hooks
 
     @property
     def model_family(self) -> Literal["anthropic", "google", "openai"] | None:
@@ -168,166 +76,53 @@ class OpenAIAgentsRuntime:
             return "openai"
         return None
 
-    @asynccontextmanager
-    async def _delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
-        """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
-        limit = self._delegate_limit
-        if limit is None:
-            yield
-            return
-        parent = None if background else self._delegate_call.get()
-        changed = self._delegate_changed
-        async with self._suspend_delegate(parent):
-            async with changed:
-                await changed.wait_for(lambda: self._active_delegates < limit)
-                self._active_delegates += 1
-                call = _DelegateCall(asyncio.current_task(), active=True)
-            token = self._delegate_call.set(call)
-            try:
-                yield
-            finally:
-                self._delegate_call.reset(token)
-                async with changed:
-                    call.closed = True
-                    if call.active:
-                        call.active = False
-                        self._active_delegates -= 1
-                    changed.notify_all()
-
-    @asynccontextmanager
-    async def delegation_wait(self) -> AsyncGenerator[None, None]:
-        """Suspend a delegated caller while it awaits an independently scheduled worker."""
-        async with self._suspend_delegate(self._delegate_call.get()):
-            yield
-
-    @asynccontextmanager
-    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncGenerator[None, None]:
-        limit = self._delegate_limit
-        if limit is None or parent is None:
-            yield
-            return
-        changed = self._delegate_changed
-        async with changed:
-            parent.children += 1
-            if parent.active:
-                parent.active = False
-                self._active_delegates -= 1
-            changed.notify_all()
-        try:
-            yield
-        finally:
-            async with changed:
-                parent.children -= 1
-                changed.notify_all()
-                await changed.wait_for(lambda: parent.closed or parent.task.cancelling() or parent.children
-                                       or parent.active or self._active_delegates < limit)
-                if not (parent.closed or parent.task.cancelling() or parent.children or parent.active):
-                    parent.active = True
-                    self._active_delegates += 1
-                    changed.notify_all()
+    @property
+    def background_coding(self) -> bool:
+        """Whether coding delegates return before their work completes."""
+        return self._coding_tasks.background
 
     def _build(self) -> None:
-        if self.agents:
-            return
-        config, ctx = self.drop_in.config, self.context
-        if (self.model_provider.type == "openai-compatible"
-                or self.model_provider.max_request_bytes is not None):
-            self.client = _validate_and_get_client(self.model_provider, ctx.env)
-            self.provider = OpenAIProvider(
-                openai_client=self.client, use_responses=self.model_provider.api == "responses"
-            )
-        if self.delegates and any(spec.delegates for name, spec in config.agents.items() if name != config.orchestrator):
-            raise InvalidDropInError('interactive_delegates supports direct PI delegates only')
-        if self.background_coding or self.delegates:
-            declared = set(self.tools) | set(config.agents) | set(config.coding_agents)
-            self._check_result_names(declared)
-        self._restart_tools = {name for name in config.agents[config.orchestrator].tools
-                               if self.tools[name].type_name == "restart_context"}
-        used = {server for agent in config.agents.values() for server in agent.mcp_servers}
-        if (self.context.steering.options if self.context.steering else None):
-            used.add((self.context.steering.options if self.context.steering else None).server)
-        used = sorted(used)
-        steering = (self.context.steering.options if self.context.steering else None)
-        self.servers = {name: _mcp_server(name, config.mcp_servers[name], ctx.env,
-                                          after_ts=steering.after_ts if steering and name == steering.server else None)
-                        for name in used}
-        for name in delegation_order(config.agents):
-            spec = config.agents[name]
-            tools = [self._function_tool(self.tools[tool]) for tool in spec.tools]
-            tools += [self._delegate(delegate) for delegate in spec.delegates]
-            if self.background_coding and not self.delegates:
-                tools += [
-                    self._coding_result_tool(delegate)
-                    for delegate in spec.delegates
-                    if delegate in self.coding_agents
-                ]
-            if self.delegates:
-                tools += self._communication_tools(name)
-            self.agents[name] = Agent(
-                name=name,
-                instructions=self._instructions,
-                tools=tools,
-                mcp_servers=[self.servers[server] for server in spec.mcp_servers],
-                model=self._model(name),
-                model_settings=_model_settings(self.model_provider, self.context.env),
-            )
+        self._builder.build(self.run_config, self._turn_input)
 
     async def __aenter__(self) -> Self:
+        try:
+            return await self._start()
+        except BaseException as exc:
+            await self._startup_failed(exc)
+            raise
+
+    async def _start(self) -> Self:
         _trace_agents_sdk(self.context.telemetry)
         self._build()
-        steering = self.context.steering
-        if self.delegates:
-            self.delegates.mailboxes.recover()
-        try:
-            if self.client:
-                await self._stack.enter_async_context(self.client)
-            for server in self.servers.values():
-                await self._stack.enter_async_context(server)
-                if self.background_coding or self.delegates:
-                    self._check_result_names({tool.name for tool in await server.list_tools()})
-            if steering:
-                server = self.servers[steering.options.server]
-                steering.transport = _UnfilteredCalls(server)
-                available = {tool.name for tool in await server.list_tools()}
-                required = {"conversations_replies" if steering.options.thread_ts else "conversations_history"}
-                if any(tool.type_name == "escalate" for tool in self.tools.values()):
-                    required.add("conversations_add_message")
-                if missing := required - available:
-                    raise InvalidDropInError(f"steering MCP server is missing tools: {', '.join(sorted(missing))}")
-            self.session = self.context_strategy.session(
-                self.drop_in.config.orchestrator, self.context
-            )
-        except BaseException as exc:
-            await self._stack.aclose()
-            if steering and isinstance(exc, Exception):
-                status = (
-                    "startup_failed: check the steering MCP server, credentials, scopes and required tools; "
-                    "restart with the same state directory"
-                )
-                steering.state["status"] = status
-                steering.save()
-                steering.event("startup_failed", status=status)
-                if not isinstance(exc, InvalidDropInError):
-                    raise InvalidDropInError(status) from None
-            raise
+        await self._connect()
+        self.session = self.context_strategy.session(self.drop_in.config.orchestrator, self.context)
         return self
+
+    async def _connect(self) -> None:
+        check_names = self._builder.check_result_names if self.background_coding else None
+        escalate = any(tool.type_name == "escalate" for tool in self.tools.values())
+        await self._builder.resources.open(check_names, escalate=escalate)
+
+    async def _startup_failed(self, exc: BaseException) -> None:
+        await self._builder.resources.close()
+        self._builder.resources.startup_failed(exc)
 
     async def __aexit__(self, *_exc_info: object) -> None:
         try:
-            if self.delegates:
-                await self.delegates.close()
-            await self._cancel_coding()
+            await self._coding_tasks.cancel()
         finally:
-            await self._stack.aclose()
+            await self._builder.resources.close()
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self._steering_items = []
-        orchestrator = self.agents[self.drop_in.config.orchestrator]
+        orchestrator = self._builder.agents[self.drop_in.config.orchestrator]
+        history = await self.session.get_items()
+        input = self._turn_input(orchestrator.name, prompt, history)
         try:
             try:
                 result = await Runner.run(
                     orchestrator,
-                    await self._turn_input(prompt, workflow),
+                    input,
                     context=self.context,
                     max_turns=count_limit(self.max_turns),
                     hooks=self.hooks,
@@ -345,132 +140,13 @@ class OpenAIAgentsRuntime:
                 )
                 await self.session.add_items([{"role": "user", "content": report}])
             outcome.final_output = "\n\n".join(part for part in [outcome.final_output, *remaining] if part)
-            if self.delegates:
-                outstanding = [task for task in self.delegates.status() if not task['collected']]
-                if outstanding:
-                    outcome = TurnOutcome(completed=False, final_output=(
-                        'Delegate work is outstanding. Read delegate_inbox, answer questions, and collect results '
-                        'before finishing. Interrupt work explicitly if it should stop.\n' + json.dumps(outstanding)))
-            self._pending_turn_path().unlink(missing_ok=True)
             return outcome
         except BaseException as exc:
-            if self.delegates:
-                await self.delegates.close()
-            await self._cancel_coding()
+            await self._coding_tasks.cancel()
             # Compaction has already had its chance to shrink an oversized request.
             if isinstance(exc, BadRequestError):
                 raise ModelRequestError from None
             raise
-
-    def _pending_turn_path(self) -> Path:
-        """Locate the orchestrator's durable input-admission marker outside its workspace."""
-        name = self.drop_in.config.orchestrator
-        return self.context.state_dir / f"pending-turn-{hashlib.sha256(name.encode()).hexdigest()}.json"
-
-    async def _turn_input(self, prompt: str, workflow: str) -> str | list:
-        """Resume an interrupted turn without saving its task twice.
-
-        :param prompt: Loop-supplied task, retained unchanged in the SDK session.
-        :param workflow: Phase identity distinguishing pending tasks with identical text.
-        :returns: The new task, or no additional input when that pending task is already durable.
-        """
-        path = self._pending_turn_path()
-        identity = {"workflow": workflow, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()}
-        history = await self.session.get_items()
-        if path.exists():
-            pending = json.loads(path.read_text())
-            index = pending["history_items"]
-            if all(pending.get(key) == value for key, value in identity.items()) and 0 <= index < len(history):
-                item = history[index]
-                if item.get("role") == "user" and item.get("content") == prompt:
-                    return []
-        path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".tmp")
-        temporary.write_text(json.dumps({**identity, "history_items": len(history)}))
-        temporary.replace(path)
-        return prompt
-
-    def _check_result_names(self, names: set[str]) -> None:
-        config = self.drop_in.config
-        if self.delegates:
-            generated = {'send_message', 'interrupt_delegate', 'request_progress', 'delegate_inbox',
-                         'ask_pi', 'report_progress'}
-        else:
-            generated = {
-                f"{delegate}_result"
-                for agent in config.agents.values()
-                for delegate in agent.delegates
-                if delegate in self.coding_agents
-            }
-        if collisions := sorted(generated & names):
-            raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
-
-    async def _cancel_coding(self) -> None:
-        """Cancel running briefs and remember them for their result tools; finished results stay collectable."""
-        tasks, now = list(self._coding_tasks.values()), self.context.now()
-        for name, task in list(self._coding_tasks.items()):
-            if not task.done():
-                task.cancel()
-                del self._coding_tasks[name]
-                self._coding_cancelled[name] = (self._coding_started[name], now)
-        await asyncio.gather(*tasks, return_exceptions=True)
-
-    def coding_status(self) -> str:
-        now, entries = self.context.now(), []
-        for name, task in self._coding_tasks.items():
-            entries.append(f"`{name}` finished, result not collected" if task.done()
-                           else f"`{name}` {self._running(name, now)}")
-        entries += [f"`{name}` cancelled at {_stamp(stopped)} (started {_stamp(started)}), not yet reported"
-                    for name, (started, stopped) in self._coding_cancelled.items()]
-        return f"Coding briefs: {'; '.join(entries)}." if entries else ""
-
-    # TODO(AE-318): rename this formatter to _format_running_coding_task.
-    def _running(self, name: str, now: datetime) -> str:
-        started = self._coding_started[name]
-        last = max(started, self.coding_agents[name].last_activity or started)
-        return (f"running since {_stamp(started)} ({(now - started).total_seconds():.0f}s; "
-                f"last activity {(now - last).total_seconds():.0f}s ago)")
-
-    async def _coding_result(self, name: str, *, wait: bool, timeout: float | None = None) -> str:
-        # TODO(AE-318): move lifecycle decisions and status formatting into the coding-task abstraction.
-        task = self._coding_tasks.get(name)
-        if task is not None and wait and not task.done():
-            async with self.delegation_wait():
-                # Never `await task`: cancelling this call would then cancel the brief too.
-                await asyncio.wait([task], timeout=timeout)
-        if task is None or task.cancelled():
-            if name not in self._coding_cancelled:
-                return f"error: No uncollected coding task for '{name}'."
-            started, stopped = self._coding_cancelled.pop(name)
-            return (f"[coding agent cancelled] {name}: the scaffold cancelled the brief started {_stamp(started)} "
-                    f"at {_stamp(stopped)} and stopped the worker. Partial changes from it may be in the workspace.")
-        if not task.done():
-            waited = f" Waited {timeout:g}s; the brief continues." if wait and timeout is not None else ""
-            return (f"[coding agent running] {name}: {self._running(name, self.context.now())}.{waited} "
-                    f"Use rest before checking again, or call {name}_result(wait=true).")
-        if self._coding_tasks.get(name) is task:
-            del self._coding_tasks[name]
-        try:
-            return task.result().as_tool_output()
-        except Exception as exc:  # noqa: BLE001 - Worker failures return to the PI.
-            return f"error: Coding agent '{name}' failed: {exc}"
-
-    def _coding_result_tool(self, name: str) -> FunctionTool:
-        limit = self.coding_result_wait_seconds
-
-        async def invoke(_: ToolContext[Any], raw: str) -> str:
-            try:
-                args = CodingResultArguments.model_validate_json(raw)
-            except ValidationError as exc:
-                return f"error: {exc}"
-            return await self._coding_result(name, wait=args.wait, timeout=None if limit == "unlimited" else limit)
-
-        return FunctionTool(
-            name=f"{name}_result",
-            description=f"Check or collect the coding result from {name}.",
-            on_invoke_tool=invoke,
-            params_json_schema=ensure_strict_json_schema(CodingResultArguments.model_json_schema()),
-        )
 
     async def judge(
         self,
@@ -481,7 +157,6 @@ class OpenAIAgentsRuntime:
         tools: list[str],
         max_turns: int | None,
         review_workspace: ReviewWorkspace | None = None,
-        model: str | None = None,
     ) -> Verdict:
         ctx = self.context
         if review_workspace is not None:
@@ -491,9 +166,9 @@ class OpenAIAgentsRuntime:
             name=JUDGE if review_workspace is not None else f"{JUDGE}:{name}",
             instructions=rubric,
             output_type=Verdict,
-            model=self._model(JUDGE, model),
-            model_settings=self._settings(),
-            tools=[self._function_tool(self.tools[tool], ctx) for tool in tools],
+            model=self._builder.resources.connection.model(JUDGE),
+            model_settings=self._builder.resources.connection.settings(),
+            tools=[self._builder.function_tool(tool, ctx) for tool in tools],
         )
         try:
             result = await Runner.run(
@@ -502,8 +177,7 @@ class OpenAIAgentsRuntime:
                 context=ctx,
                 max_turns=max_turns,
                 hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
-                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=partial(
-                    self._select_cache_input, model=model or ctx.model)),
+                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=self._select_cache_input),
             )
         except BadRequestError:
             raise ModelRequestError from None
@@ -515,59 +189,20 @@ class OpenAIAgentsRuntime:
             )
         return result.final_output
 
+    def _turn_input(self, name: str, prompt: str, history: list[Any]) -> list[Any]:
+        drop_in, ctx = self.drop_in, self.context
+        load = partial(drop_in.standing_context, drop_in.config.agents[name], agent=name, telemetry=ctx.telemetry)
+        prefix = self.context_strategy.inject_standing_context(history, load)
+        return [*prefix, {"role": "user", "content": prompt}]
+
     def describe(self) -> list[str]:
         self._build()
-        config = self.drop_in.config
-        provider = self.model_provider
-        return [
-            f"model provider {provider.type} ({provider.api})",
-            *(
-                f"{name}: tools [{', '.join(tool.name for tool in agent.tools)}] "
-                f"mcp [{', '.join(config.agents[name].mcp_servers)}]"
-                for name, agent in self.agents.items()
-            ),
-        ]
-
-    def _model(self, agent: str, name: str | None = None) -> str | Model:
-        """The run's model, or a judge's named model; tests substitute scripted models per agent or per model name
-        through `models`."""
-        key = name or agent
-        if key in self.models:
-            return self.models[key]
-        model = name or self.context.model
-        return self.provider.get_model(model) if self.provider else model
-
-    def _instructions(self, _context: RunContextWrapper, agent: Agent) -> str:
-        return self.instructions(agent.name)
+        return self._builder.describe()
 
     async def _select_input(self, data: CallModelData[Any]) -> ModelInputData:
-        is_orchestrator = data.agent.name == self.drop_in.config.orchestrator
         steering = self.context.steering
         annotations = []
-        delegate_context = self._delegate_context.get()
-        session_id = data.agent.name if is_orchestrator else None
-        pinned_mail = []
-        # TODO(AE-328): Extract mailbox consumption into a separate class method.
-        if self.delegates:
-            boxes = self.delegates.mailboxes
-            if is_orchestrator:
-                messages = boxes.pending('pi')
-                annotations.append('<delegate_status>\n' + json.dumps(self.delegates.status()) + '\n</delegate_status>')
-                if messages:
-                    annotations.append('<delegate_messages>\n' + json.dumps(messages) + '\n</delegate_messages>')
-                    await self.session.add_items([{'role': 'user', 'content': annotations[-1]}])
-                    boxes.delivered([m['id'] for m in messages])
-            elif delegate_context and boxes.get(delegate_context[0])['name'] == data.agent.name:
-                session_id, pinned_mail = delegate_context
-                messages = boxes.pending('delegate', session_id)
-                if messages:
-                    envelope = {'role': 'user', 'content': '<pi_messages>\n' + json.dumps(messages) + '\n</pi_messages>'}
-                    session = self.context_strategy.session(session_id, self.context)
-                    await session.add_items([envelope])
-                    pinned_mail.append(envelope)
-                    boxes.delivered([m['id'] for m in messages])
-            self.delegates.flush_events()
-        if steering and is_orchestrator:
+        if steering and data.agent.name == self.drop_in.config.orchestrator:
             await steering.poll()
             pending = steering.pending()
             if pending:
@@ -590,104 +225,39 @@ class OpenAIAgentsRuntime:
                         raise InvalidDropInError(status) from None
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
-        history = [item for item in data.model_data.input if not is_standing_context(item)]
-        prompt_item = history[-1] if history and history[-1].get("role") == "user" else None
-        if prompt_item is not None and is_envelope(prompt_item):
-            prompt_item = None
-        if pinned_mail:
-            session = self.context_strategy.session(session_id, self.context)
-            for index, item in enumerate(await session.get_items()):
-                if item in pinned_mail and item not in history:
-                    history.insert(index, item)
-        if is_orchestrator and self._steering_items:
-            stored = [item for item in await self.session.get_items() if not is_standing_context(item)]
-            for index, item in enumerate(stored):
-                if item in self._steering_items and item not in history:
-                    history.insert(index, item)
-        if is_orchestrator:
-            # After a deliberate restart the orchestrator continues from its handoff; the session keeps everything.
-            history = since_restart(history, self._restart_tools)
-        strategy = self.context_strategy
-        ctx = self.context
-        research = self.research_context(data.agent.name)
-        status = await ctx.budget_status()
-        request_context = {
-            "instructions": data.model_data.instructions, "research": research, "resources": status,
-            "tools": [{"type": "function", "name": tool.name, "description": tool.description,
-                       "parameters": tool.params_json_schema, "strict": tool.strict_json_schema}
-                      for tool in await data.agent.get_all_tools(RunContextWrapper(data.context))
-                      if isinstance(tool, FunctionTool)],
-        }
+        items = list(self.context_strategy.select(list(data.model_data.input)))
+        if steering and data.agent.name == self.drop_in.config.orchestrator:
+            # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
+            # until its next run reloads the durable session, even when a strategy trims older conversation.
+            items.extend(item for item in self._steering_items if item not in items)
+        status = await self.context.budget_status()
+        annotations.append(f"<resource_status>\n{status}\n</resource_status>")
+        items = self._cache_input(items)
+        # Runner does not save filter additions. Keep volatile status after retained history,
+        # using a user message so Gemini adapters do not fold it into cached system instructions.
+        items.append({"role": "user", "content": "\n\n".join(annotations)})
+        return ModelInputData(input=items, instructions=data.model_data.instructions)
 
-        prepare_request = partial(
-            self._prepare_request, request_context=request_context, prompt_item=prompt_item,
-            annotations=annotations, pinned_steering=(self._steering_items if steering and is_orchestrator else []) + pinned_mail,
-        )
-        items = list(await strategy.select_for_call(
-            list(history), ctx=ctx,
-            session_id=session_id,
-            request_context=request_context, agent=data.agent, model_provider=self.run_config.model_provider,
-            prepare_input=self._cache_input, research_context=lambda: self.research_context(data.agent.name),
-            prepare_request=prepare_request,
-        ))
-        positions = {id(item): index for index, item in enumerate(history)}
-        retained = [positions.get(id(item)) for item in items]
-        self.context.telemetry.record(
-            "context:select", "span",
-            {"agent": data.agent.name, "strategy": strategy.type_name,
-             "max_items": getattr(strategy.options, "max_items", None), "items_before": len(history)},
-            {"items_selected": len(items), "items_dropped": len(history) - len(set(retained) - {None}),
-             "retained_positions": retained},
-        )
-        return prepare_request(items)
+    async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
+        # Judges get only cache markers, without context selection, steering or resource metadata.
+        return ModelInputData(input=self._cache_input(data.model_data.input),
+                              instructions=data.model_data.instructions)
 
-    def _prepare_request(
-        self, selected: list[Any], *, request_context: dict[str, Any], prompt_item: dict | None,
-        annotations: list[str], pinned_steering: list[dict],
-    ) -> ModelInputData:
-        """Render the same request for token checks and ordinary inference.
-
-        :param selected: History selected by the context strategy.
-        :param request_context: Fixed instructions and the latest research and resource context.
-        :param prompt_item: Current user task to move to the trailing message.
-        :param annotations: Steering transport notices for this call.
-        :param pinned_steering: Delivered messages to replay until Runner reloads the session.
-        :returns: Cache-formatted history followed by the current context and task.
-        """
-        items = list(selected)
-        if prompt_item is not None:
-            for index in range(len(items) - 1, -1, -1):
-                if items[index] == prompt_item:
-                    items.pop(index)
-                    break
-        items.extend(item for item in pinned_steering if item not in items)
-        tail = [f"<research_context>\n{request_context['research']}\n</research_context>", *annotations,
-                f"<resource_status>\n{request_context['resources']}\n</resource_status>"]
-        if prompt_item is not None:
-            tail.append(f"# Current task\n\n{prompt_item['content']}")
-        result = self._cache_input(ModelInputData(input=items, instructions=request_context["instructions"]))
-        result.input.append({"role": "user", "content": "\n\n".join(tail)})
-        return result
-
-    async def _select_cache_input(self, data: CallModelData[Any], *, model: str) -> ModelInputData:
-        return self._cache_input(data.model_data, model=model)
-
-    def _cache_input(self, data: ModelInputData, *, model: str | None = None) -> ModelInputData:
+    def _cache_input(self, items: list[Any]) -> list[Any]:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
 
-        Mark stable instructions and retained conversation, never the replaced status tail.
+        Mark the stable snapshot and a growing retained prefix, never the replaced status tail.
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
         provider = self.model_provider
         if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
-                or not (model or self.context.model).removeprefix("~").startswith("anthropic/")):
-            return data
-        selected = list(data.input)
-        if data.instructions:
-            selected.insert(0, {"role": "developer", "content": data.instructions})
+                or self.model_family != "anthropic"):
+            return items
+        selected = list(items)
         candidates = []
+        anchor = None
         explicit = False
-        for index, item in enumerate(selected):
+        for index, item in enumerate(items):
             if not isinstance(item, dict):
                 continue
             field = "output" if item.get("type") == "function_call_output" else "content"
@@ -708,229 +278,12 @@ class OpenAIAgentsRuntime:
             selected[index] = {**item, field: content}
             candidate = (index, field, texts[-1])
             candidates.append(candidate)
+            if is_standing_context(item):
+                anchor = candidate
         if candidates and not explicit:
-            for index, field, position in {candidates[0], candidates[-1]}:
+            for index, field, position in {anchor or candidates[0], candidates[-1]}:
                 selected[index][field][position]["prompt_cache_breakpoint"] = {"mode": "explicit"}
-        return ModelInputData(input=selected, instructions=None)
-
-    def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
-        ctx = ctx or self.context
-
-        async def invoke(_: ToolContext[Any], raw: str):
-            try:
-                output = await tool.invoke(ctx, tool.Arguments.model_validate_json(raw or "{}"))
-                if isinstance(output, list):
-                    return [
-                        ToolOutputImage(image_url="data:image/png;base64," + base64.b64encode(item.png).decode())
-                        if isinstance(item, ToolImage)
-                        else ToolOutputText(text=item)
-                        for item in output
-                    ]
-                return output
-            except (ToolError, ValidationError) as exc:
-                return f"error: {exc}"
-
-        return FunctionTool(
-            name=tool.name,
-            description=tool.description,
-            on_invoke_tool=invoke,
-            params_json_schema=ensure_strict_json_schema(tool.Arguments.model_json_schema()),
-        )
-
-    def _delegate(self, name: str) -> FunctionTool:
-        config = self.drop_in.config
-        if self.delegates:
-            return self._interactive_tool(name)
-        if name not in config.agents:
-            return self._coding_tool(self.coding_agents[name])
-        spec = config.agents[name]
-        max_turns = sys.maxsize if spec.max_turns == "unlimited" else spec.max_turns
-        tool = self.agents[name].as_tool(
-            tool_name=name,
-            tool_description=spec.description,
-            # Agent.as_tool treats None as the SDK's default 10 turns.
-            max_turns=max_turns,
-            hooks=self.hooks,
-            run_config=self.run_config,
-        )
-        invoke_tool = tool.on_invoke_tool
-
-        async def invoke(context: ToolContext[Any], raw: str) -> str:
-            async with self._delegation.slot():
-                return await invoke_tool(context, raw)
-
-        tool.on_invoke_tool = invoke
-        return tool
-
-    def _json_tool(self, name: str, description: str, arguments: type[Arguments], callback) -> FunctionTool:
-        async def invoke(_: ToolContext[Any], raw: str) -> str:
-            try:
-                return json.dumps(await callback(arguments.model_validate_json(raw)))
-            except (ValueError, ValidationError) as exc:
-                return json.dumps({'error': str(exc)})
-        return FunctionTool(name=name, description=description, on_invoke_tool=invoke,
-                            params_json_schema=ensure_strict_json_schema(arguments.model_json_schema()))
-
-    def _interactive_tool(self, name: str) -> FunctionTool:
-        async def start(args):
-            return self.delegates.start(name, args.brief)
-        config = self.drop_in.config
-        description = (config.agents[name].description if name in config.agents else self.coding_agents[name].description)
-        return self._json_tool(name, description +
-                               ' Starts in the background; collect results with delegate_inbox.', BriefArguments, start)
-
-    # TODO(AE-329): Move communication tool construction into a dedicated class.
-    def _communication_tools(self, name: str) -> list[FunctionTool]:
-        config = self.drop_in.config
-        if name != config.orchestrator:
-            async def report(args, *, question):
-                active = self._delegate_context.get()
-                if not active:
-                    raise ValueError('No active delegate conversation')
-                mailbox = self.delegates.mailboxes.delegate(active[0])
-                receipt = mailbox.ask_pi(args.message) if question else mailbox.report_progress(args.message)
-                self.delegates.flush_events()
-                return receipt
-            return [self._json_tool('ask_pi', 'Ask the PI a question without interrupting it. Continue independent work.',
-                                    MessageArguments, partial(report, question=True)),
-                    self._json_tool('report_progress', 'Report completed work, evidence, blockers and next step to the PI.',
-                                    MessageArguments, partial(report, question=False))]
-
-        async def send(args):
-            return await self.delegates.send(**args.model_dump())
-
-        async def stop(args):
-            return await self.delegates.stop(args.task_id)
-
-        async def progress(args):
-            return self.delegates.request_progress(args.task_id)
-
-        async def inbox(args):
-            limit = self.coding_result_wait_seconds
-            seconds = args.wait_seconds if limit == 'unlimited' else min(args.wait_seconds, limit)
-            return await self.delegates.inbox(seconds)
-
-        tools = [self._json_tool('send_message', 'Steer or answer a delegate. Resumes ended conversations; interrupt=true '
-                                'stops active work before resuming. Use task IDs from dispatch/inbox.', SendArguments, send),
-                 self._json_tool('interrupt_delegate', 'Stop a delegate and await cleanup. Does not resume it.',
-                                 TaskArguments, stop),
-                 self._json_tool('request_progress', 'Ask an active delegate for a fresh progress report; returns a receipt, '
-                                 'not the report. Read delegate_inbox for the response.', TaskArguments, progress),
-                 self._json_tool('delegate_inbox', 'Inspect all delegate status and messages and collect every ready result. '
-                                 'wait_seconds=0 checks immediately; a positive wait wakes on any new message or task '
-                                 'completion, failure or interruption, or returns when idle or timed out. Waiting never '
-                                 'stops delegate work.',
-                                 InboxArguments, inbox)]
-        return tools
-
-    async def _run_delegate(self, task: dict, prompt: str) -> str:
-        ctx = self.context
-        name = task['name']
-        if name in self.coding_agents:
-            if prompt != task['brief'] and not self.delegates.mailboxes.get(task['id'])['conversation_id']:
-                prompt = task['brief'] + '\n\n' + prompt
-            async with self.delegation_slot(background=True):
-                result = await self.coding_agents[name].run(
-                    prompt, ctx, mailbox=self.delegates.mailboxes.delegate(task['id']))
-                if not result.completed:
-                    raise RuntimeError(result.as_tool_output())
-                return result.as_tool_output()
-        session = self.context_strategy.session(task['id'], ctx)
-        if prompt != task['brief'] and not await session.get_items():
-            prompt = task['brief'] + '\n\n' + prompt
-        # Persist the incoming turn before inference so injected mail retains its true chronological position.
-        await session.add_items([{'role': 'user', 'content': prompt}])
-        token = self._delegate_context.set((task['id'], []))
-        try:
-            async with self.delegation_slot(background=True):
-                result = await Runner.run(self.agents[name], [], context=ctx, session=session, hooks=self.hooks,
-                                          max_turns=count_limit(self.drop_in.config.agents[name].max_turns),
-                                          run_config=replace(self.run_config, workflow_name=f"delegate:{name}:{task['id']}"))
-                return str(result.final_output)
-        finally:
-            self._delegate_context.reset(token)
-
-    def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
-        async def invoke(_: ToolContext[Any], raw: str) -> str:
-            brief = BriefArguments.model_validate_json(raw).brief
-
-            async def execute() -> CodingResult:
-                async with self._delegation_slot(background=self.background_coding):
-                    return await agent.run(brief, ctx)
-
-            if self.background_coding:
-                if task := self._coding_tasks.get(agent.name):
-                    if task.done():
-                        return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
-                    return (f"error: '{agent.name}' is still {self._running(agent.name, ctx.now())}. Check it with "
-                            f"{agent.name}_result(wait=false) or collect it with {agent.name}_result(wait=true) "
-                            "before starting another brief.")
-                self._coding_started[agent.name] = ctx.now()
-                self._coding_tasks[agent.name] = asyncio.create_task(execute())
-                cancelled = self._coding_cancelled.pop(agent.name, None)
-                return (
-                    f"[coding agent started] {agent.name}. Choose rest durations while it works; "
-                    f"call {agent.name}_result(wait=false) to check or {agent.name}_result(wait=true) to await "
-                    "and collect the result."
-                    + (f" Its previous brief was cancelled at {_stamp(cancelled[1])}; partial changes from it may be "
-                       "in the workspace." if cancelled else "")
-                )
-            return (await execute()).as_tool_output()
-
-        description = agent.description
-        if self.background_coding:
-            description += f" Starts in the background; collect its result using {agent.name}_result."
-        return FunctionTool(
-            name=agent.name,
-            description=description,
-            on_invoke_tool=invoke,
-            params_json_schema=ensure_strict_json_schema(BriefArguments.model_json_schema()),
-        )
-
-
-def _stamp(moment: datetime) -> str:
-    return moment.isoformat(timespec="seconds")
-
-
-def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str], *,
-                after_ts: str | None = None) -> MCPServerStdio:
-    options = {"params": {"command": config.command, "args": config.args, "env": config.resolved_env(name, env)},
-               "name": name, "cache_tools_list": True, "client_session_timeout_seconds": config.timeout_seconds,
-               "max_retry_attempts": 0}
-    return MCPServerStdio(**options) if after_ts is None else _SteeringServer(after_ts=after_ts, **options)
-
-
-class _SteeringServer(MCPServerStdio):
-    """The steering MCP server: agents see only Slack messages posted after the run start (`after_ts`)."""
-
-    def __init__(self, *, after_ts: str, **options: Any) -> None:
-        super().__init__(**options)
-        self.after_ts = after_ts
-
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None,
-                        meta: dict[str, Any] | None = None) -> CallToolResult:
-        result = await super().call_tool(tool_name, arguments, meta)
-        if result.is_error:
-            return result
-        text = "\n".join(block.text for block in result.content if block.type == "text")
-        try:
-            visible = within_run(tool_name, text, self.after_ts)
-        except ValueError:
-            return CallToolResult(content=[TextContent(type="text", text=WITHHELD)], is_error=True)
-        if visible is None and tool_name not in MESSAGE_TOOLS:
-            return result
-        # Message listings reach agents as filtered text only, never as other content blocks.
-        return CallToolResult(content=[TextContent(type="text", text=visible or "")])
-
-
-class _UnfilteredCalls:
-    """Steering's own reads and posts. Thread scans need every page and cursor; Steering applies `after_ts` itself."""
-
-    def __init__(self, server: MCPServerStdio) -> None:
-        self.server = server
-
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
-        return await MCPServerStdio.call_tool(self.server, tool_name, arguments)
+        return selected
 
 
 async def probe_model(
@@ -938,80 +291,18 @@ async def probe_model(
 ) -> str:
     """Run one traced provisioning call with the configured model provider."""
     _trace_agents_sdk(telemetry)
-    model = env.get("CRUX_MODEL")
-    if not model:
+    if not env.get("CRUX_MODEL"):
         raise InvalidDropInError("CRUX_MODEL is not set")
+    connection = ModelConnection(model_provider, env)
     async with AsyncExitStack() as stack:
-        if model_provider.type == "openai-compatible" or model_provider.max_request_bytes is not None:
-            client = await stack.enter_async_context(_validate_and_get_client(model_provider, env))
-            model = OpenAIProvider(
-                openai_client=client, use_responses=model_provider.api == "responses"
-            ).get_model(model)
+        connection.prepare(stack)
         agent = Agent(
             name="probe",
             instructions="Reply with exactly the text you are asked for.",
-            model=model,
-            model_settings=_model_settings(model_provider, env),
+            model=connection.model("probe"),
+            model_settings=connection.settings(),
         )
         return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
-
-
-def _validate_and_get_client(options: ModelProvider, env: Mapping[str, str]) -> AsyncOpenAI:
-    api_key = env.get(options.api_key_env)
-    if not api_key:
-        raise InvalidDropInError(f"{options.api_key_env} is not set")
-    client_options = {}
-    if options.max_request_bytes is not None:
-        # TODO(AE-316): Look up this limit by provider/model instead of configuring it per drop-in.
-        # https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at
-        async def check_request_size(request) -> None:
-            size = len(request.content)
-            if size > options.max_request_bytes:
-                raise RequestSizeExceededError(size, options.max_request_bytes)
-
-        client_options['http_client'] = DefaultAsyncHttpxClient(event_hooks={'request': [check_request_size]})
-    return AsyncOpenAI(api_key=api_key, base_url=str(options.base_url) if options.base_url else None, **client_options)
-
-
-def _provider_ended_response(context: RetryPolicyContext) -> bool:
-    """A response the provider cut short for its own reasons, such as a content-filter cutoff or a failed status. The
-    SDK reports these with one message prefix. Running out of output tokens would only repeat, so it isn't retried."""
-    message = str(context.error)
-    return (isinstance(context.error, ModelBehaviorError)
-            and message.startswith("Responses stream ended with terminal event")
-            and "max_output_tokens" not in message)
-
-
-# A provider outage, overload or filter cutoff should cost a wait, not the run: an exception here cancels the
-# iteration's running coding agents.
-TRANSIENT_FAILURES = retry_policies.any(
-    retry_policies.provider_suggested(),
-    retry_policies.retry_after(),
-    retry_policies.network_error(),
-    retry_policies.http_status([408, 409, 429, 500, 502, 503, 504]),
-    _provider_ended_response,
-)
-# Retries per model call, backing off from 2s to 60s: about four minutes before a failure ends the iteration.
-MODEL_RETRIES = 8
-
-
-def _model_settings(options: ModelProvider, env: Mapping[str, str]) -> ModelSettings:
-    settings = ModelSettings(
-        reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None,
-                            summary="auto" if options.api == "responses" else None),
-        retry=ModelRetrySettings(
-            max_retries=MODEL_RETRIES, policy=TRANSIENT_FAILURES,
-            backoff=ModelRetryBackoffSettings(initial_delay=2, max_delay=60, multiplier=2, jitter=True),
-        ),
-    )
-    if options.type == "openai-compatible":
-        # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
-        settings.preserve_raw_usage = True
-        settings.extra_body = options.extra_body or None
-        if options.api == "responses":
-            settings.store = False
-            settings.response_include = ["reasoning.encrypted_content"]
-    return settings
 
 
 def _trace_agents_sdk(telemetry: Telemetry) -> None:
