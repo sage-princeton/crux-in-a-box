@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 from agents.memory import OpenAIResponsesCompactionSession
 
-from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
+from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, STANDING_CONTEXT_HEADER
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.telemetry import GenerationOutcome, NullTelemetry
 from crux_scaffold.usage import Budget, UsageLedger
@@ -169,19 +169,24 @@ def test_compaction_refreshes_context_on_the_next_turn(drop_in_dir, assemble, re
 
     async def run():
         async with scaffold.runtime as runtime:
+            await runtime.session.add_items([{"role": "developer", "content": STANDING_CONTEXT_HEADER + "OLD"}])
             await runtime.run("hello", workflow="main")
             if retain_snapshot:
                 scaffold.strategy.client.output.insert(0, {"role": "developer", "content": [
-                    {"type": "input_text", "text": "# CRUX standing context\nSTALE"}]})
+                    {"type": "input_text", "text": STANDING_CONTEXT_HEADER + "STALE"}]})
             (drop_in_dir / "workspace/REQUEST.md").write_text("Current request.")
             await runtime.session.run_compaction({"force": True})
-            assert "<resource_status>" not in str(scaffold.strategy.client.calls[0]["input"])
+            compact_input = scaffold.strategy.client.calls[0]
+            assert "previous_response_id" not in compact_input
+            assert "<resource_status>" not in str(compact_input["input"])
+            assert "OLD" not in str(compact_input["input"])
             await runtime.run("after compaction", workflow="main")
             await runtime.run("continue", workflow="main")
             assert "<resource_status>" not in str(await runtime.session.get_items())
 
     asyncio.run(run())
     assert "Not created yet" in str(pm.inputs[0])
+    assert "STALE" not in str(pm.inputs) and "OLD" not in str(pm.inputs)
     assert str(pm.inputs[1]).count("Current request.") == 1
     assert str(pm.inputs[2]).count("Current request.") == 1
     assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
