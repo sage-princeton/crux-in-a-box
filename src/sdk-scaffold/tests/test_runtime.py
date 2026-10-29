@@ -3,8 +3,8 @@ import json
 
 import pytest
 
+from crux_scaffold.agent_runtimes.base import Verdict
 from crux_scaffold.errors import InvalidDropInError
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import Verdict
 
 from drop_ins import add_fake_slack, edit
 from scripted import ScriptedModel, call, say, tool_outputs

@@ -10,9 +10,9 @@ from types import SimpleNamespace
 import pytest
 from test_blind_review import submission_pdf
 
+from crux_scaffold.agent_runtimes.base import TurnOutcome, Verdict
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.gates import GateContext, GateResult
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import TurnOutcome, Verdict
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 

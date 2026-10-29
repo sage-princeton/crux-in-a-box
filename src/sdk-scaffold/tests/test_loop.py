@@ -3,11 +3,11 @@ import json
 
 import pytest
 
+from crux_scaffold.agent_runtimes.base import TurnOutcome, Verdict
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES
 from crux_scaffold.loop import LOOPS, RunState, StateFile
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import TurnOutcome, Verdict
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.usage import Budget
 from crux_scaffold.workspace import RunContext, Workspace
