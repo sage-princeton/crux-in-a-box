@@ -6,11 +6,9 @@ out of the box.
 
 from __future__ import annotations
 
-import asyncio
 import base64
-from collections.abc import AsyncGenerator, Callable, Mapping
-from contextlib import AsyncExitStack, asynccontextmanager
-from contextvars import ContextVar
+from collections.abc import Callable, Mapping
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, Self
@@ -38,14 +36,15 @@ from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import ValidationError
 
-from crux_scaffold.coding_agents import CodingAgent, CodingResult
+from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import CountLimit, count_limit
 from crux_scaffold.config import delegation_order
 from crux_scaffold.context_strategies import ContextStrategy, is_standing_context
 from crux_scaffold.errors import InvalidDropInError, ToolError
-from crux_scaffold.openai_agents_sdk._delegate_call import _DelegateCall
 from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
 from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
+from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
 from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
 from crux_scaffold.openai_agents_sdk.usage_hooks import UsageHooks
@@ -66,7 +65,7 @@ class OpenAIAgentsRuntime:
     Adapt scaffold tools, coding agents and MCP servers into SDK agents and tools. The context strategy stores
     the orchestrator's conversation; delegated calls start fresh with their brief and declared standing context.
     Expose provider settings directly as `model_provider` and derive `model_family` from the run's model name.
-    Own delegation capacity, background coding tasks, usage hooks and client/server cleanup for the run.
+    Use shared delegation capacity and coding tasks; own usage hooks and client/server cleanup for the run.
     """
 
     type_name = "openai-agents"
@@ -79,25 +78,23 @@ class OpenAIAgentsRuntime:
         context: RunContext,
         tools: Mapping[str, Tool],
         coding_agents: Mapping[str, CodingAgent],
+        delegation: DelegationLimiter,
+        coding_tasks: CodingTasks,
         context_strategy: ContextStrategy,
         instructions: Callable[[str], str],
         max_turns: CountLimit = 50,
-        background_coding: bool = False,
         models: Mapping[str, Model] | None = None,
     ) -> None:
         self.model_provider = model_provider
         self.max_turns = max_turns
-        self.background_coding = background_coding
         self.drop_in = drop_in
         self.context = context
         self.tools = tools
         self.coding_agents = coding_agents
         self.context_strategy = context_strategy
         self.instructions = instructions
-        self._delegate_limit = drop_in.config.delegation.max_concurrent
-        self._active_delegates = 0
-        self._delegate_changed = asyncio.Condition()
-        self._delegate_call: ContextVar[_DelegateCall | None] = ContextVar("delegate_call", default=None)
+        self._delegation = delegation
+        self._coding_tasks = coding_tasks
         self.models = dict(models or {})
         self.hooks = UsageHooks(context.usage)
         self.run_config = RunConfig(call_model_input_filter=self._select_input)
@@ -105,7 +102,6 @@ class OpenAIAgentsRuntime:
         self.servers: dict[str, MCPServerStdio] = {}
         self.client: AsyncOpenAI | None = None
         self.provider: OpenAIProvider | None = None
-        self._coding_tasks: dict[str, asyncio.Task[CodingResult]] = {}
         self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
 
@@ -125,57 +121,10 @@ class OpenAIAgentsRuntime:
             return "openai"
         return None
 
-    @asynccontextmanager
-    async def _delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
-        """Bound delegated work across this runtime; suspend a parent while its nested calls run."""
-        limit = self._delegate_limit
-        if limit is None:
-            yield
-            return
-        parent = None if background else self._delegate_call.get()
-        changed = self._delegate_changed
-        async with self._suspend_delegate(parent):
-            async with changed:
-                await changed.wait_for(lambda: self._active_delegates < limit)
-                self._active_delegates += 1
-                call = _DelegateCall(asyncio.current_task(), active=True)
-            token = self._delegate_call.set(call)
-            try:
-                yield
-            finally:
-                self._delegate_call.reset(token)
-                async with changed:
-                    call.closed = True
-                    if call.active:
-                        call.active = False
-                        self._active_delegates -= 1
-                    changed.notify_all()
-
-    @asynccontextmanager
-    async def _suspend_delegate(self, parent: _DelegateCall | None) -> AsyncGenerator[None, None]:
-        limit = self._delegate_limit
-        if limit is None or parent is None:
-            yield
-            return
-        changed = self._delegate_changed
-        async with changed:
-            parent.children += 1
-            if parent.active:
-                parent.active = False
-                self._active_delegates -= 1
-            changed.notify_all()
-        try:
-            yield
-        finally:
-            async with changed:
-                parent.children -= 1
-                changed.notify_all()
-                await changed.wait_for(lambda: parent.closed or parent.task.cancelling() or parent.children
-                                       or parent.active or self._active_delegates < limit)
-                if not (parent.closed or parent.task.cancelling() or parent.children or parent.active):
-                    parent.active = True
-                    self._active_delegates += 1
-                    changed.notify_all()
+    @property
+    def background_coding(self) -> bool:
+        """Whether coding delegates return before their work completes."""
+        return self._coding_tasks.background
 
     def _build(self) -> None:
         if self.agents:
@@ -259,7 +208,7 @@ class OpenAIAgentsRuntime:
 
     async def __aexit__(self, *_exc_info: object) -> None:
         try:
-            await self._cancel_coding()
+            await self._coding_tasks.cancel()
         finally:
             await self._stack.aclose()
 
@@ -283,7 +232,7 @@ class OpenAIAgentsRuntime:
                 outcome = TurnOutcome(final_output="", completed=False)
             else:
                 outcome = TurnOutcome(final_output=str(result.final_output), completed=True)
-            remaining = [f"{name}: {await self._coding_result(name, wait=True)}" for name in list(self._coding_tasks)]
+            remaining = await self._coding_tasks.drain()
             if remaining:
                 report = "Scaffold coding completion report (uncollected delegate outputs):\n\n" + "\n\n".join(
                     remaining
@@ -292,7 +241,7 @@ class OpenAIAgentsRuntime:
             outcome.final_output = "\n\n".join(part for part in [outcome.final_output, *remaining] if part)
             return outcome
         except BaseException:
-            await self._cancel_coding()
+            await self._coding_tasks.cancel()
             raise
 
     def _check_result_names(self, names: set[str]) -> None:
@@ -306,35 +255,13 @@ class OpenAIAgentsRuntime:
         if collisions := sorted(generated & names):
             raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
 
-    async def _cancel_coding(self) -> None:
-        tasks = list(self._coding_tasks.values())
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        self._coding_tasks.clear()
-
-    async def _coding_result(self, name: str, *, wait: bool) -> str:
-        task = self._coding_tasks.get(name)
-        if task is None:
-            return f"error: No uncollected coding task for '{name}'."
-        if not wait and not task.done():
-            return f"[coding agent running] {name}. Use rest before checking again, or call {name}_result(wait=true)."
-        try:
-            async with self._suspend_delegate(self._delegate_call.get()):
-                return (await task).as_tool_output()
-        except Exception as exc:  # noqa: BLE001 - Worker failures return to the PI; cancellation propagates.
-            return f"error: Coding agent '{name}' failed: {exc}"
-        finally:
-            if self._coding_tasks.get(name) is task:
-                del self._coding_tasks[name]
-
     def _coding_result_tool(self, name: str) -> FunctionTool:
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             try:
                 args = CodingResultArguments.model_validate_json(raw)
             except ValidationError as exc:
                 return f"error: {exc}"
-            return await self._coding_result(name, wait=args.wait)
+            return await self._coding_tasks.collect(name, wait=args.wait)
 
         return FunctionTool(
             name=f"{name}_result",
@@ -537,32 +464,16 @@ class OpenAIAgentsRuntime:
         invoke_tool = tool.on_invoke_tool
 
         async def invoke(context: ToolContext[Any], raw: str) -> str:
-            async with self._delegation_slot():
+            async with self._delegation.slot():
                 return await invoke_tool(context, raw)
 
         tool.on_invoke_tool = invoke
         return tool
 
     def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
-        ctx = self.context
-
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             brief = BriefArguments.model_validate_json(raw).brief
-
-            async def execute() -> CodingResult:
-                async with self._delegation_slot(background=self.background_coding):
-                    return await agent.run(brief, ctx)
-
-            if self.background_coding:
-                if agent.name in self._coding_tasks:
-                    return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
-                self._coding_tasks[agent.name] = asyncio.create_task(execute())
-                return (
-                    f"[coding agent started] {agent.name}. Choose rest durations while it works; "
-                    f"call {agent.name}_result(wait=false) to check or {agent.name}_result(wait=true) to await "
-                    "and collect the result."
-                )
-            return (await execute()).as_tool_output()
+            return await self._coding_tasks.run(agent, brief)
 
         description = agent.description
         if self.background_coding:
