@@ -187,7 +187,7 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 
 `PhaseConfig.max_iterations` accepts a positive integer (default 1) or the string
 `"unlimited"`. The latter skips iteration exhaustion while retaining budget checks.
-`AgentConfig.max_turns` (default 30), `OpenAIAgentsOptions.max_turns` (default 50),
+`AgentConfig.max_turns` (default 30), `RuntimeConfig.max_turns` (default 50),
 and `JudgeOptions.max_turns` (default 20) accept the same `CountLimit` type.
 `count_limit` maps `"unlimited"` to `None` for the SDK's native unbounded runner.
 Existing numeric defaults are preserved. These settings do not disable budget
@@ -238,7 +238,7 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 ## OpenAI Agents SDK integration
 
-`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_runtime.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `openai_agents_sdk/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider_options.py`, `openai_agents_options.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
+`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_runtime.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `openai_agents_sdk/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider.py`, `runtime_config.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
 
 The package's nine classes connect as follows. Nodes outside the package show its callers and execution dependencies; arrows describe construction, use or returned values.
 
@@ -285,7 +285,14 @@ flowchart TD
 
 `BriefArguments` and `CodingResultArguments` describe coding-tool inputs; `_DelegateCall` is internal scheduling state. `TurnOutcome` and `Verdict` carry results back to the loop and gates. `UsageHooks` implements the SDK's `RunHooks` callbacks and records tokens in `UsageLedger`.
 
-`scaffold.py` constructs `OpenAIAgentsRuntime(options, *, drop_in, context, tools, coding_agents, context_strategy, instructions, models=None)` with its dependencies passed directly. `models` substitutes scripted models by agent name; the scaffold's `runtime_overrides` supplies this test seam. `OpenAIAgentsOptions.from_config` validates `[runtime]` and reports `InvalidDropInError` for invalid options. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Options include `max_turns`, `model_provider`, `background_coding` and `steering`. The CLI validates runtime settings without steering during provisioning and passes only the model-provider settings to the module-level `probe_model` function.
+`scaffold.py` constructs `OpenAIAgentsRuntime(*, model_provider, drop_in, context, tools, coding_agents, context_strategy, instructions, max_turns=50, background_coding=False, models=None)` with its dependencies and runtime properties passed directly. `models` substitutes scripted models by agent name; the scaffold's `runtime_overrides` supplies this test seam. `RuntimeConfig.from_config` validates `[runtime]` at the composition boundary and reports `InvalidDropInError` for invalid settings. The runtime does not retain this configuration object. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Steering is assembled separately into `RunContext.steering`. The CLI validates runtime settings without steering during provisioning and passes only the model provider to the module-level `probe_model` function.
+
+| Runtime property | Meaning |
+|---|---|
+| `model_provider` | A `ModelProvider` declaring the endpoint, API adapter, credential variable and request extras. |
+| `model_family` | A derived `anthropic`, `google`, `openai` or `None`, based on `RunContext.model` after stripping a leading `~`. The prefixes `anthropic/`, `google/` and `openai/` identify their families, including model names with preset suffixes. An unprefixed name on the direct OpenAI provider resolves to `openai`; other names remain unclassified. This value is not a separate TOML setting. |
+| `max_turns` | The orchestrator's per-iteration turn limit, default 50; `"unlimited"` disables it. |
+| `background_coding` | Whether coding delegates start as background tasks, default `False`. |
 
 The `instructions(agent_name) -> str` constructor callback supplies the complete instructions for an agent. The composition root joins the generated setup, optional drop-in guidance and persona for the orchestrator; other agents receive only their own persona. Personas are read at assembly time. Standing context is validated at launch and injected separately as strategy-controlled developer messages. The runtime calls `instructions` on every model call, including delegated calls, through an SDK instructions callback: the setup reads live loop state and must reflect phase changes and resumed iterations.
 
@@ -303,7 +310,7 @@ The generated setup uses assembled tool and coding-agent descriptions and only c
 | `describe()` | Runtime details, including provider and one line per agent, printed by `check`. |
 | `delegation_slot(*, background=False)` | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
 
-The module-level `probe_model(env, prompt, telemetry, *, model_provider)` makes one traced model call without constructing a runtime or running a loop. It receives only validated `ModelProviderOptions`. The CLI ignores steering and unresolved prompt/operator placeholders during a probe; `check` and `run` require a fully prepared drop-in.
+The module-level `probe_model(env, prompt, telemetry, *, model_provider)` makes one traced model call without constructing a runtime or running a loop. It receives only validated `ModelProvider`. The CLI ignores steering and unresolved prompt/operator placeholders during a probe; `check` and `run` require a fully prepared drop-in.
 
 **The behavior the rest of the scaffold relies on:**
 
@@ -327,7 +334,7 @@ The module-level `probe_model(env, prompt, telemetry, *, model_provider)` makes 
 
 ### Model providers in `openai-agents`
 
-The existing runtime's `model_provider` options configure the SDK's `OpenAIProvider`; this is not another component registry. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy. Omitting `[runtime.model_provider]` uses direct OpenAI with the Responses API; declaring the table requires explicit `type` and `api` values.
+The runtime's `model_provider` property configures the SDK's `OpenAIProvider`; this is not another component registry. `ModelProvider` is a strict, frozen Pydantic model, independent of the generic component `Options` class. Keeping the provider inside the runtime preserves the SDK boundary and reuses the existing loop, tools, MCP, delegates and context strategy. Omitting `[runtime.model_provider]` uses direct OpenAI with the Responses API; declaring the table requires explicit `type` and `api` values.
 
 | `[runtime.model_provider]` key | Contract |
 |---|---|
@@ -473,7 +480,7 @@ malformed responses, duplicate/restart recovery and uncertain posts without a ne
 
 ### Runtime delivery contract
 
-`OpenAIAgentsOptions.steering` is an optional strict `SteeringOptions` table under
+`RuntimeConfig.steering` is an optional strict `SteeringOptions` table under
 `[runtime.steering]` (see the README for all keys). `scaffold.py` validates its
 server reference and constructs `RunContext.steering`. `openai-agents` starts that
 MCP server even when no agent exposes its tools, verifies the required read/post

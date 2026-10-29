@@ -15,8 +15,8 @@ from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, CommandGate, LlmJudgeGate
 from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, StateFile
-from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
 from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
 from crux_scaffold.steering import Steering
 from crux_scaffold.telemetry import Telemetry
@@ -49,11 +49,13 @@ class Scaffold:
         for gate in self.loop.gates.values():
             gate.validate_tools(self.tools)
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
+        runtime_config = RuntimeConfig.from_config(config.runtime)
         self.runtime = OpenAIAgentsRuntime(
-            OpenAIAgentsOptions.from_config(config.runtime), drop_in=drop_in, context=self.context,
+            model_provider=runtime_config.model_provider, drop_in=drop_in, context=self.context,
             tools=self.tools, coding_agents=self.coding_agents, context_strategy=self.strategy,
-            instructions=self._instructions, **(runtime_overrides or {}))
-        steering = self.runtime.options.steering
+            instructions=self._instructions, max_turns=runtime_config.max_turns,
+            background_coding=runtime_config.background_coding, **(runtime_overrides or {}))
+        steering = runtime_config.steering
         if steering:
             if steering.server not in config.mcp_servers:
                 raise InvalidDropInError(f"steering uses undefined MCP server '{steering.server}'")
@@ -92,7 +94,7 @@ class Scaffold:
                  "", "## Loop and gates", "", *self._loop_instructions(),
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
-        turns = self.runtime.options.max_turns
+        turns = self.runtime.max_turns
         lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
                      else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
         lines += [f"- `{name}`: {self.tools[name].description}" for name in spec.tools]
@@ -144,7 +146,7 @@ class Scaffold:
                    "The root orchestrator uses no slot. Native subagents inside coding harnesses consume no "
                    "additional scaffold slots or depth.")]
         coding = [name for name in names if name in self.coding_agents]
-        if coding and self.runtime.options.background_coding:
+        if coding and self.runtime.background_coding:
             lines += ["Coding delegates start in the background with one outstanding task per name across callers."]
             for name in coding:
                 lines.append(f"Use `{name}_result(wait=false)` to check status or collect a completed result; "

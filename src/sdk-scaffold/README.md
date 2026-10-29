@@ -47,6 +47,8 @@ Agents run directly on the OpenAI Agents SDK. Pluggable components register them
 
 `[runtime]` configures the OpenAI Agents SDK directly. Its optional `type = "openai-agents"` key remains accepted for existing drop-ins; other runtime types are rejected. Runtime implementations are not an extension point.
 
+The runtime exposes `model_provider`, `max_turns` and `background_coding` directly. Its derived `model_family` identifies `anthropic`, `google` or `openai` from the model's vendor prefix after stripping a leading `~`. Unprefixed direct OpenAI names resolve to `openai`; other unrecognized names remain unclassified. Model family is independent of the endpoint: an Anthropic model routed through OpenRouter still has family `anthropic`. The OpenRouter cache check uses this property.
+
 The orchestrator receives a generated setup preamble before its persona. It describes the current phase and gates, delegate execution and limits, tools and MCP access, configured operator steering and escalation, budget/resource policies, remaining rest allowance, standing-context strategy and restart behavior. Optional limits are explicitly unlimited when omitted; phase iteration limits retain their configured value (default 1). It is rendered from the assembled scaffold on each model call, so phase changes and resumed progress stay current. MCP launch arguments and environment values are excluded. Delegate instructions stay scoped to each delegate.
 
 A drop-in can append guidance or disable the generated setup in `scaffold.toml`:

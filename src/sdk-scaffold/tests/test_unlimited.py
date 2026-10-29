@@ -4,14 +4,15 @@ import pytest
 
 from crux_scaffold.config import AgentConfig, PhaseConfig
 from crux_scaffold.gates import JudgeOptions
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsOptions, Verdict
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import Verdict
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 
 from drop_ins import edit
 from scripted import ScriptedModel, call, say
 
 
 @pytest.mark.parametrize("options,required,field", [
-    (OpenAIAgentsOptions, {}, "max_turns"),
+    (RuntimeConfig, {}, "max_turns"),
     (AgentConfig, {"persona": "pi.md"}, "max_turns"),
     (JudgeOptions, {"rubric": "review.md"}, "max_turns"),
     (PhaseConfig, {"name": "work", "prompt": "p.md", "continue_prompt": "c.md"}, "max_iterations"),

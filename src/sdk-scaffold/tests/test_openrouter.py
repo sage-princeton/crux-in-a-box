@@ -11,7 +11,8 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsOptions, OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.telemetry import NullTelemetry, RunIdentity, telemetry_from_env
 
 ENV = {"CRUX_MODEL": "google/gemini-4-argon", "CRUX_REASONING_EFFORT": "low",
@@ -123,7 +124,7 @@ def test_the_orchestrator_history_survives_a_restart(router, drop_in_dir, assemb
 def test_the_same_provider_settings_apply_to_the_probe(router, drop_in_dir):
     requests, pending, _ = router
     pending.append(response(say("SCAFFOLD-PROBE")))
-    options = OpenAIAgentsOptions.from_config(DropInDirectory.load(drop_in_dir).config.runtime)
+    options = RuntimeConfig.from_config(DropInDirectory.load(drop_in_dir).config.runtime)
     assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "Say SCAFFOLD-PROBE", NullTelemetry(),
                                                options=options)) == "SCAFFOLD-PROBE"
     assert requests[0]["provider"]["only"] == ["google-vertex"] and requests[0]["store"] is False

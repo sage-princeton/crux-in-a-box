@@ -13,7 +13,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import replace
 from functools import partial
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, Literal, Self
 
 from agents import (
     Agent,
@@ -39,15 +39,14 @@ from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import ValidationError
 
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
-from crux_scaffold.components import count_limit
+from crux_scaffold.components import CountLimit, count_limit
 from crux_scaffold.config import delegation_order
 from crux_scaffold.context_strategies import ContextStrategy, is_standing_context
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.openai_agents_sdk._delegate_call import _DelegateCall
 from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
 from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
-from crux_scaffold.openai_agents_sdk.model_provider_options import ModelProviderOptions
-from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
+from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
 from crux_scaffold.openai_agents_sdk.usage_hooks import UsageHooks
 from crux_scaffold.openai_agents_sdk.verdict import Verdict
@@ -66,6 +65,7 @@ class OpenAIAgentsRuntime:
 
     Adapt scaffold tools, coding agents and MCP servers into SDK agents and tools. The context strategy stores
     the orchestrator's conversation; delegated calls start fresh with their brief and declared standing context.
+    Expose provider settings directly as `model_provider` and derive `model_family` from the run's model name.
     Own delegation capacity, background coding tasks, usage hooks and client/server cleanup for the run.
     """
 
@@ -73,17 +73,21 @@ class OpenAIAgentsRuntime:
 
     def __init__(
         self,
-        options: OpenAIAgentsOptions,
         *,
+        model_provider: ModelProvider,
         drop_in: DropInDirectory,
         context: RunContext,
         tools: Mapping[str, Tool],
         coding_agents: Mapping[str, CodingAgent],
         context_strategy: ContextStrategy,
         instructions: Callable[[str], str],
+        max_turns: CountLimit = 50,
+        background_coding: bool = False,
         models: Mapping[str, Model] | None = None,
     ) -> None:
-        self.options = options
+        self.model_provider = model_provider
+        self.max_turns = max_turns
+        self.background_coding = background_coding
         self.drop_in = drop_in
         self.context = context
         self.tools = tools
@@ -104,6 +108,22 @@ class OpenAIAgentsRuntime:
         self._coding_tasks: dict[str, asyncio.Task[CodingResult]] = {}
         self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
+
+    @property
+    def model_family(self) -> Literal["anthropic", "google", "openai"] | None:
+        """Derive the model vendor from its prefix, ignoring a leading OpenRouter alias marker.
+
+        Unprefixed names on the direct OpenAI provider belong to OpenAI. Other unrecognized names stay
+        unclassified so family-specific request changes are never applied by guesswork.
+        """
+        model = self.context.model.removeprefix("~")
+        if model.startswith("anthropic/"):
+            return "anthropic"
+        if model.startswith("google/"):
+            return "google"
+        if model.startswith("openai/") or ("/" not in model and self.model_provider.type == "openai"):
+            return "openai"
+        return None
 
     @asynccontextmanager
     async def delegation_slot(self, *, background: bool = False) -> AsyncGenerator[None, None]:
@@ -161,17 +181,17 @@ class OpenAIAgentsRuntime:
         if self.agents:
             return
         config, ctx = self.drop_in.config, self.context
-        if self.options.model_provider.type == "openai-compatible":
-            self.client = _validate_and_get_client(self.options.model_provider, ctx.env)
+        if self.model_provider.type == "openai-compatible":
+            self.client = _validate_and_get_client(self.model_provider, ctx.env)
             self.provider = OpenAIProvider(
-                openai_client=self.client, use_responses=self.options.model_provider.api == "responses"
+                openai_client=self.client, use_responses=self.model_provider.api == "responses"
             )
-        if self.options.background_coding:
+        if self.background_coding:
             declared = set(self.tools) | set(config.agents) | set(config.coding_agents)
             self._check_result_names(declared)
         used = {server for agent in config.agents.values() for server in agent.mcp_servers}
-        if self.options.steering:
-            used.add(self.options.steering.server)
+        if ctx.steering:
+            used.add(ctx.steering.options.server)
         for name in sorted(used):
             server = config.mcp_servers[name]
             self.servers[name] = MCPServerStdio(
@@ -185,7 +205,7 @@ class OpenAIAgentsRuntime:
             spec = config.agents[name]
             tools = [self._function_tool(self.tools[tool]) for tool in spec.tools]
             tools += [self._delegate(delegate) for delegate in spec.delegates]
-            if self.options.background_coding:
+            if self.background_coding:
                 tools += [
                     self._coding_result_tool(delegate)
                     for delegate in spec.delegates
@@ -197,7 +217,7 @@ class OpenAIAgentsRuntime:
                 tools=tools,
                 mcp_servers=[self.servers[server] for server in spec.mcp_servers],
                 model=self._model(name),
-                model_settings=_model_settings(self.options.model_provider, self.context.env),
+                model_settings=_model_settings(self.model_provider, self.context.env),
             )
 
     async def __aenter__(self) -> Self:
@@ -209,7 +229,7 @@ class OpenAIAgentsRuntime:
                 await self._stack.enter_async_context(self.client)
             for server in self.servers.values():
                 await self._stack.enter_async_context(server)
-                if self.options.background_coding:
+                if self.background_coding:
                     self._check_result_names({tool.name for tool in await server.list_tools()})
             if steering:
                 steering.transport = self.servers[steering.options.server]
@@ -254,7 +274,7 @@ class OpenAIAgentsRuntime:
                     orchestrator,
                     input,
                     context=self.context,
-                    max_turns=count_limit(self.options.max_turns),
+                    max_turns=count_limit(self.max_turns),
                     hooks=self.hooks,
                     session=self.session,
                     run_config=replace(self.run_config, workflow_name=workflow),
@@ -342,7 +362,7 @@ class OpenAIAgentsRuntime:
             instructions=rubric,
             output_type=Verdict,
             model=self._model(JUDGE),
-            model_settings=_model_settings(self.options.model_provider, self.context.env),
+            model_settings=_model_settings(self.model_provider, self.context.env),
             tools=[self._function_tool(self.tools[tool], ctx) for tool in tools],
         )
         try:
@@ -371,7 +391,7 @@ class OpenAIAgentsRuntime:
     def describe(self) -> list[str]:
         self.build()
         config = self.drop_in.config
-        provider = self.options.model_provider
+        provider = self.model_provider
         return [
             f"model provider {provider.type} ({provider.api})",
             *(
@@ -441,9 +461,9 @@ class OpenAIAgentsRuntime:
         Mark the stable snapshot and a growing retained prefix, never the replaced status tail.
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
-        provider = self.options.model_provider
+        provider = self.model_provider
         if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
-                or not self.context.model.removeprefix("~").startswith("anthropic/")):
+                or self.model_family != "anthropic"):
             return items
         selected = list(items)
         candidates = []
@@ -530,10 +550,10 @@ class OpenAIAgentsRuntime:
             brief = BriefArguments.model_validate_json(raw).brief
 
             async def execute() -> CodingResult:
-                async with self.delegation_slot(background=self.options.background_coding):
+                async with self.delegation_slot(background=self.background_coding):
                     return await agent.run(brief, ctx)
 
-            if self.options.background_coding:
+            if self.background_coding:
                 if agent.name in self._coding_tasks:
                     return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
                 self._coding_tasks[agent.name] = asyncio.create_task(execute())
@@ -545,7 +565,7 @@ class OpenAIAgentsRuntime:
             return (await execute()).as_tool_output()
 
         description = agent.description
-        if self.options.background_coding:
+        if self.background_coding:
             description += f" Starts in the background; collect its result using {agent.name}_result."
         return FunctionTool(
             name=agent.name,
@@ -556,7 +576,7 @@ class OpenAIAgentsRuntime:
 
 
 async def probe_model(
-    env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, model_provider: ModelProviderOptions
+    env: Mapping[str, str], prompt: str, telemetry: Telemetry, *, model_provider: ModelProvider
 ) -> str:
     """Run one traced provisioning call with the configured model provider."""
     trace_agents_sdk(telemetry)
@@ -578,20 +598,20 @@ async def probe_model(
         return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
 
 
-def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:
-    api_key = env.get(options.api_key_env)
+def _validate_and_get_client(model_provider: ModelProvider, env: Mapping[str, str]) -> AsyncOpenAI:
+    api_key = env.get(model_provider.api_key_env)
     if not api_key:
-        raise InvalidDropInError(f"{options.api_key_env} is not set")
-    return AsyncOpenAI(api_key=api_key, base_url=str(options.base_url))
+        raise InvalidDropInError(f"{model_provider.api_key_env} is not set")
+    return AsyncOpenAI(api_key=api_key, base_url=str(model_provider.base_url))
 
 
-def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
+def _model_settings(model_provider: ModelProvider, env: Mapping[str, str]) -> ModelSettings:
     settings = ModelSettings(reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"))
-    if options.type == "openai-compatible":
+    if model_provider.type == "openai-compatible":
         # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
         settings.preserve_raw_usage = True
-        settings.extra_body = options.extra_body or None
-        if options.api == "responses":
+        settings.extra_body = model_provider.extra_body or None
+        if model_provider.api == "responses":
             settings.store = False
             settings.response_include = ["reasoning.encrypted_content"]
         else:
