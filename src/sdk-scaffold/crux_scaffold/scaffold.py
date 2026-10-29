@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any
 
 import crux_scaffold.external_resources  # noqa: F401  registers compute resource providers
-from crux_scaffold.agent_runtimes.assembly import Assembly
 from crux_scaffold.agent_runtimes.openai_agents_options import OpenAIAgentsOptions
 from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
@@ -46,19 +45,20 @@ class Scaffold:
         self.loop = LOOPS.create("loop", config.loop, gates={name: GATES.create(name, table)
                                                              for name, table in config.gates.items()})
         self.coding_agents = self._coding_agents()
-        tools = self._tools()
+        self.tools = self._tools()
         for gate in self.loop.gates.values():
-            gate.validate_tools(tools)
+            gate.validate_tools(self.tools)
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
-        self.assembly = Assembly(drop_in, self.context, tools, self.coding_agents, self.strategy, self._instructions)
-        self.runtime = OpenAIAgentsRuntime(OpenAIAgentsOptions.from_config(config.runtime), assembly=self.assembly,
-                                          **(runtime_overrides or {}))
+        self.runtime = OpenAIAgentsRuntime(
+            OpenAIAgentsOptions.from_config(config.runtime), drop_in=drop_in, context=self.context,
+            tools=self.tools, coding_agents=self.coding_agents, context_strategy=self.strategy,
+            instructions=self._instructions, **(runtime_overrides or {}))
         steering = self.runtime.options.steering
         if steering:
             if steering.server not in config.mcp_servers:
                 raise InvalidDropInError(f"steering uses undefined MCP server '{steering.server}'")
             self.context.steering = Steering(steering, state_dir, None, telemetry, recipient=config.orchestrator)
-        elif any(tool.type_name == "escalate" for tool in self.assembly.tools.values()):
+        elif any(tool.type_name == "escalate" for tool in self.tools.values()):
             raise InvalidDropInError("escalate requires runtime.steering")
 
     def _tools(self) -> dict[str, Tool]:
@@ -92,12 +92,12 @@ class Scaffold:
                  "", "## Loop and gates", "", *self._loop_instructions(),
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
-        if turns := self.runtime.options.max_turns:
-            lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
-                         else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
-        lines += [f"- `{name}`: {self.assembly.tools[name].description}" for name in spec.tools]
+        turns = self.runtime.options.max_turns
+        lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
+                     else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
+        lines += [f"- `{name}`: {self.tools[name].description}" for name in spec.tools]
         for name in spec.tools:
-            tool = self.assembly.tools[name]
+            tool = self.tools[name]
             if isinstance(tool, RunShell):
                 lines.append(f"`{name}` command timeout {tool.options.timeout_seconds:g}s; each call starts in "
                              "the workspace root and returns its exit code and combined output.")
@@ -172,7 +172,7 @@ class Scaffold:
                   "supersede older instructions. Rest wakes for steering; arbitrary model/tool calls and native "
                   "coding-result waits are never interrupted. Replies in the configured source arrive by the same "
                   "route. Delivery state and identified messages survive restart.")]
-        if any(self.assembly.tools[name].type_name == "escalate"
+        if any(self.tools[name].type_name == "escalate"
                for name in self.drop_in.config.agents[self.drop_in.config.orchestrator].tools):
             lines.append("Use escalate for broken resources or operator action, reuse the same request_id on retries, "
                          "and continue independent work while awaiting the operator's reply.")
@@ -207,7 +207,7 @@ class Scaffold:
                          "overlapping costs are not added. Reports can lag; stale or missing measurements are "
                          "unknown, not zero. An outage alone does not stop the run. These are pacing controls.")
         for name in self.drop_in.config.agents[self.drop_in.config.orchestrator].tools:
-            tool = self.assembly.tools[name]
+            tool = self.tools[name]
             if isinstance(tool, Rest):
                 policy = tool.options
                 remaining = max(0, policy.total_seconds - tool.used_seconds)
