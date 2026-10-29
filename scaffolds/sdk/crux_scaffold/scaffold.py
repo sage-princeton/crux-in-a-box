@@ -17,6 +17,8 @@ from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, CommandGate, LlmJudgeGate
 from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, StateFile
+from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
 from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
 from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
@@ -57,9 +59,11 @@ class Scaffold:
                                      "own conversation")
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
         runtime_config = RuntimeConfig.from_config(config.runtime)
+        delegation = DelegationLimiter(config.delegation.max_concurrent)
+        coding_tasks = CodingTasks(self.context, delegation, background=runtime_config.background_coding)
         self.runtime = OpenAIAgentsRuntime(
             model_provider=runtime_config.model_provider, drop_in=drop_in, context=self.context,
-            tools=self.tools, coding_agents=self.coding_agents, context_strategy=self.strategy,
+            tools=self.tools, coding_agents=self.coding_agents, delegation=delegation, coding_tasks=coding_tasks, context_strategy=self.strategy,
             instructions=self._instructions, research_context=self._research_context, max_turns=runtime_config.max_turns,
             background_coding=runtime_config.background_coding,
             interactive_delegates=runtime_config.interactive_delegates, coding_result_wait_seconds=runtime_config.coding_result_wait_seconds, **(runtime_overrides or {}))

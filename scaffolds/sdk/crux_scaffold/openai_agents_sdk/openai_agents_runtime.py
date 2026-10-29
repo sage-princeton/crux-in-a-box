@@ -6,7 +6,6 @@ out of the box.
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import hashlib
 import json
@@ -49,6 +48,8 @@ from pydantic import ValidationError
 from crux_scaffold.openai_agents_sdk._delegate_call import _DelegateCall
 from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
 from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
+from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
 from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
 from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
@@ -104,6 +105,8 @@ class OpenAIAgentsRuntime:
         context: RunContext,
         tools: Mapping[str, Tool],
         coding_agents: Mapping[str, CodingAgent],
+        delegation: DelegationLimiter,
+        coding_tasks: CodingTasks,
         context_strategy: ContextStrategy,
         instructions: Callable[[str], str],
         research_context: Callable[[str], str] = lambda name: "",
@@ -335,7 +338,7 @@ class OpenAIAgentsRuntime:
                 outcome = TurnOutcome(final_output="", completed=False)
             else:
                 outcome = TurnOutcome(final_output=str(result.final_output), completed=True)
-            remaining = [f"{name}: {await self._coding_result(name, wait=True)}" for name in list(self._coding_tasks)]
+            remaining = await self._coding_tasks.drain()
             if remaining:
                 report = "Scaffold coding completion report (uncollected delegate outputs):\n\n" + "\n\n".join(
                     remaining
@@ -753,7 +756,7 @@ class OpenAIAgentsRuntime:
         invoke_tool = tool.on_invoke_tool
 
         async def invoke(context: ToolContext[Any], raw: str) -> str:
-            async with self._delegation_slot():
+            async with self._delegation.slot():
                 return await invoke_tool(context, raw)
 
         tool.on_invoke_tool = invoke
@@ -848,8 +851,6 @@ class OpenAIAgentsRuntime:
             self._delegate_context.reset(token)
 
     def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
-        ctx = self.context
-
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             brief = BriefArguments.model_validate_json(raw).brief
 
