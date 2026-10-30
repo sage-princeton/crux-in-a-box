@@ -11,7 +11,6 @@ import base64
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import replace
-from functools import partial
 from typing import Any, Literal, Self
 
 from agents import (
@@ -227,13 +226,11 @@ class OpenAIAgentsRuntime(AgentRuntime):
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self._steering_items = []
         orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
-        history = await self.session.get_items()
-        input = self._turn_input(orchestrator.name, prompt, history)
         try:
             try:
                 result = await Runner.run(
                     orchestrator,
-                    input,
+                    prompt,
                     context=self.assembly.context,
                     max_turns=count_limit(self.options.max_turns),
                     hooks=self.hooks,
@@ -343,12 +340,6 @@ class OpenAIAgentsRuntime(AgentRuntime):
             )
         return result.final_output
 
-    def _turn_input(self, name: str, prompt: str, history: list[Any]) -> list[Any]:
-        drop_in, ctx = self.assembly.drop_in, self.assembly.context
-        load = partial(drop_in.standing_context, drop_in.config.agents[name], agent=name, telemetry=ctx.telemetry)
-        prefix = self.assembly.context_strategy.inject_standing_context(history, load)
-        return [*prefix, {"role": "user", "content": prompt}]
-
     def describe(self) -> list[str]:
         self.build()
         config = self.assembly.drop_in.config
@@ -425,45 +416,45 @@ class OpenAIAgentsRuntime(AgentRuntime):
                         raise InvalidDropInError(status) from None
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
-        items = list(self.assembly.context_strategy.select(list(data.model_data.input)))
+        history = [item for item in data.model_data.input if not is_standing_context(item)]
+        prompt = history[-1]["content"] if history and history[-1].get("role") == "user" else None
+        items = list(self.assembly.context_strategy.select(history))
+        if prompt is not None and items and items[-1] == history[-1]:
+            items.pop()
+
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
             # until its next run reloads the durable session, even when a strategy trims older conversation.
             items.extend(item for item in self._steering_items if item not in items)
+        research = self.assembly.research_context(data.agent.name)
+        annotations.insert(0, f"<research_context>\n{research}\n</research_context>")
         status = await self.assembly.context.budget_status()
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")
-        items = self._cache_input(items)
-        # The filter's additions are not stored by Runner. Append after selection so a fresh
-        # snapshot survives trimming without changing the reusable instructions/history prefix.
-        # A user message keeps Gemini adapters from folding volatile status into system instructions.
-
-        # Gemini seems to *not* cache if we use role: developer here; only role: user works.
-        # OpenAI *will* cache with either role: user or role: developer.
-        # For now, we're using role: user since that works on both platforms
-        # TODO: re-visit this to see what effects this has on performance/how the model providers treat this approach
-        items.append({"role": "user", "content": "\n\n".join(annotations)})
-        return ModelInputData(input=items, instructions=data.model_data.instructions)
+        result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
+        if prompt is not None:
+            annotations.append(f"# Current task\n\n{prompt}")
+        result.input.append({"role": "user", "content": "\n\n".join(annotations)})
+        return result
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
-        # Judges get only cache markers, without context selection, steering or resource metadata.
-        return ModelInputData(input=self._cache_input(list(data.model_data.input)),
-                              instructions=data.model_data.instructions)
+        return self._cache_input(data.model_data)
 
-    def _cache_input(self, items: list[Any]) -> list[Any]:
+    def _cache_input(self, data: ModelInputData) -> ModelInputData:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
 
-        Mark the stable snapshot and a growing retained prefix, never the replaced status tail.
+        Mark stable instructions and retained conversation, never the replaced status tail.
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
         provider = self.options.model_provider
         if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
                 or not self.assembly.context.model.removeprefix("~").startswith("anthropic/")):
-            return items
-        selected = list(items)
+            return data
+        selected = list(data.input)
+        if data.instructions:
+            selected.insert(0, {"role": "developer", "content": data.instructions})
         candidates = []
-        anchor = None
         explicit = False
-        for index, item in enumerate(items):
+        for index, item in enumerate(selected):
             if not isinstance(item, dict):
                 continue
             field = "output" if item.get("type") == "function_call_output" else "content"
@@ -484,12 +475,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
             selected[index] = {**item, field: content}
             candidate = (index, field, texts[-1])
             candidates.append(candidate)
-            if is_standing_context(item):
-                anchor = candidate
         if candidates and not explicit:
-            for index, field, position in {anchor or candidates[0], candidates[-1]}:
+            for index, field, position in {candidates[0], candidates[-1]}:
                 selected[index][field][position]["prompt_cache_breakpoint"] = {"mode": "explicit"}
-        return selected
+        return ModelInputData(input=selected, instructions=None)
 
     def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
         ctx = ctx or self.assembly.context
@@ -526,7 +515,6 @@ class OpenAIAgentsRuntime(AgentRuntime):
             max_turns=count_limit(spec.max_turns),
             hooks=self.hooks,
             run_config=self.run_config,
-            input_builder=lambda data: self._turn_input(name, data["params"]["input"], []),
         )
         invoke_tool = tool.on_invoke_tool
 

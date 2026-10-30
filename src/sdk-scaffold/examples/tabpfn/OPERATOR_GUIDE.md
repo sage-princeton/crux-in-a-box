@@ -178,3 +178,8 @@ scrubbed artifacts before using the fleet's workspace teardown flow.
 Local acceptance uses `ciab-devenv` with its Slack/RunPod fixtures, local Langfuse
 and the production systemd unit. PR-specific bounded rehearsal scripts and evidence
 belong in the PR description and temporary directories, not this example.
+
+The scaffold loads personas and `context` files once as stable instructions. It
+refreshes the bounded `PLAN.md` summary in a temporary user prefix on every model
+call, alongside scaffold workflow and resource state. Keep detailed logs, review
+verdicts and experiment outputs in their existing files; link them from PLAN.md.

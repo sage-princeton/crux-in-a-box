@@ -67,7 +67,7 @@ def test_no_model_polling_is_needed_and_delivery_survives_restart(drop_in_dir, a
     for items in pm.inputs:
         assert [m["text"] for m in messages(items)] == ["Use the restored dataset"]
     assert "precedence" in pm.instructions[0]
-    assert all(sum(is_standing_context(item) for item in items) == 1 for items in pm.inputs)
+    assert all(sum(is_standing_context(item) for item in items) == 0 for items in pm.inputs)
     assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
     assert "total tokens: 0" in pm.inputs[0][-1]["content"]
     assert "total tokens: 15" in pm.inputs[1][-1]["content"]
@@ -83,7 +83,7 @@ def test_no_model_polling_is_needed_and_delivery_survives_restart(drop_in_dir, a
         assert len(messages(history)) == 1
         assert "<resource_status>" not in str(history)
         assert len(messages(pm2.inputs[0])) == 1
-        assert sum(is_standing_context(item) for item in pm2.inputs[0]) == 1
+        assert sum(is_standing_context(item) for item in pm2.inputs[0]) == 0
     asyncio.run(resumed())
 
 
@@ -181,7 +181,7 @@ def test_transport_status_changes_only_the_trailing_context(drop_in_dir, assembl
         steering.state["status"] = next(statuses)
 
     steering.poll = poll
-    history = [{"role": "user", "content": "question"}]
+    history = [{"role": "user", "content": "question"}, {"role": "assistant", "content": "answer"}]
     data = CallModelData(ModelInputData(input=history, instructions="fixed"),
                          scaffold.runtime.agents["pm"], scaffold.context)
 

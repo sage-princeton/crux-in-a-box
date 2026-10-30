@@ -10,7 +10,7 @@ from crux_scaffold.coding_agents import CodingResult
 from crux_scaffold.usage import TokenUsage
 
 from drop_ins import edit
-from scripted import ScriptedModel, call, say, tool_outputs
+from scripted import ScriptedModel, call, current_task, say, tool_outputs
 
 
 def limits(root, concurrent=None, depth=None):
@@ -39,7 +39,7 @@ def test_nested_parallel_children_finish_even_with_one_slot(drop_in_dir, assembl
         return await asyncio.wait_for(scaffold.run(), 2)
 
     assert asyncio.run(exercise()).final_output == "done"
-    assert scaffold.coding_agents["engineer"].briefs == ["first", "second"]
+    assert list(map(current_task, scaffold.coding_agents["engineer"].briefs)) == ["first", "second"]
     assert len(tool_outputs(reviewer.inputs[-1])) == 2
     assert "Review standing context." in str(reviewer.inputs[0])
     assert scaffold.context.usage.by_source["reviewer"].requests == 2
@@ -71,7 +71,7 @@ def test_concurrency_is_shared_across_sibling_callers(drop_in_dir, assemble, mon
             nonlocal active, peak
             active += 1
             peak = max(peak, active)
-            started.put_nowait(brief)
+            started.put_nowait(current_task(brief))
             try:
                 await release.acquire()
                 return CodingResult(completed=True, final_response="finished", usage=TokenUsage())
@@ -163,7 +163,7 @@ def test_nested_cancellation_does_not_wait_for_unrelated_work(drop_in_dir, assem
         release = asyncio.Event()
 
         async def execute(brief, ctx):
-            started.put_nowait(brief)
+            started.put_nowait(current_task(brief))
             await release.wait()
             return CodingResult(completed=True, final_response="ok", usage=TokenUsage())
 
@@ -288,7 +288,7 @@ def test_background_workers_share_capacity_with_their_waiting_parent(
             peak = max(peak, active)
             try:
                 await asyncio.sleep(0.01)
-                finished.append(brief)
+                finished.append(current_task(brief))
                 return CodingResult(completed=True, final_response=brief, usage=TokenUsage(requests=1))
             finally:
                 active -= 1
@@ -319,7 +319,7 @@ def test_background_cleanup_releases_running_and_queued_slots(drop_in_dir, assem
         calls = []
 
         async def execute(brief, ctx):
-            calls.append(brief)
+            calls.append(current_task(brief))
             started.set()
             await asyncio.Event().wait()
 

@@ -17,7 +17,7 @@ These terms follow `ciab-design-docs` (*CRUX Scaffold Philosophy* and *CRUX Scaf
 | **Agent**, **orchestrator** | An LLM agent declared with a persona, standing context and tools. The orchestrator is the agent that receives the loop's prompts. |
 | **Coding agent** | A non-interactive coding-agent SDK session (Codex now, Claude Code later) that agents delegate implementation to. It runs the full coding harness as a subprocess, with its own tools, sandbox and context management, so it is far more capable at changing code than an agent. Declare an agent for planning, coordination and talking to people, and a coding agent for code changes. |
 | **Delegate** | An agent or coding agent that another agent calls as a tool. It starts from a fresh context holding only the caller's brief. |
-| **Persona**, **standing context** | Who an agent is (`personas/*.md`); the operator-declared files it needs, injected at boundaries chosen by its context strategy. |
+| **Persona**, **standing context** | Who an agent is (`personas/*.md`); durable operating files loaded once at assembly (`context`), separate from refreshed research state (`workspace_context`). |
 | **Toolkit**, **tool** | The functions agents can call: built-ins plus a drop-in's extensions. |
 | **Loop**, **phase**, **iteration** | The outer loop runs phases in order. Each phase repeats iterations, one prompt to the orchestrator each, until its gates pass. |
 | **Gate** | A check the loop runs between iterations (the team's *gating criteria*): a deterministic verifier, or a judgment by an isolated model the agents cannot author. A failing gate produces the next prompt. |
@@ -36,7 +36,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 |---|---|---|
 | Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents`; OpenAI and compatible Responses/Chat Completions providers |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
-| Context management and standing-context injection | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
+| Conversation retention and compaction | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; `escalate` outbox |
@@ -45,7 +45,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
-The orchestrator receives a generated setup preamble before its persona. It describes the current phase and gates, delegate execution and limits, tools and MCP access, configured operator steering and escalation, budget/resource policies, remaining rest allowance, standing-context strategy and restart behavior. Optional limits are explicitly unlimited when omitted; phase iteration limits retain their configured value (default 1). It is rendered from the assembled scaffold on each model call, so phase changes and resumed progress stay current. MCP launch arguments and environment values are excluded. Delegate instructions stay scoped to each delegate.
+The orchestrator receives a generated setup before its persona and static context. It describes the scaffold, phases and gates, available delegates/tools, steering, configured limits, context policy and restart behavior. These instructions are assembled once. Delegates get their own scoped setup and static files. Current phase, iteration, gate outcomes, research state and remaining resources belong in the dynamic user context. MCP launch arguments and environment values are excluded.
 
 A drop-in can append guidance or disable the generated setup in `scaffold.toml`:
 
@@ -55,7 +55,7 @@ enabled = true  # false disables the generated setup
 append = "Use the operator channel for questions about scope."
 ```
 
-Both keys are optional. `append` is inline text placed after the generated setup and before the persona; it still applies when `enabled = false`. Disabling generation also removes the generated steering guidance. Personas define task-specific instructions on every model call; standing-context snapshots are delivered separately through the context strategy.
+Both keys are optional. `append` is inline text placed after the generated setup and before the persona; it still applies when `enabled = false`. Disabling generation also removes the generated steering guidance. Personas and `context` files remain stable instructions; `workspace_context` is refreshed separately from conversation selection.
 
 The web-cms-product-change demo in this design, as a C4 container view:
 
@@ -121,23 +121,34 @@ iteration limit. Existing numeric defaults remain unchanged. The built-in phased
 loop checks budgets between iterations; unlimited turns alone do not enforce
 spending or deadlines within an iteration.
 
-Each agent and coding agent chooses its own standing context in `scaffold.toml`:
+Each agent and coding agent declares its existing context sources in `scaffold.toml`:
 
 ```toml
 [agents.product_manager]
 persona = "personas/product_manager.md"
-context = ["workspace/AGENTS.md"]        # static files relative to the drop-in (run-harness on a box)
-workspace_context = ["REQUEST.md", "LOG.md"]  # dynamic paths relative to the workspace
-context_max_chars = 32000                # total snapshot limit, including truncation notice
+context = ["workspace/AGENTS.md"]        # stable instructions, drop-in-relative
+workspace_context = ["REQUEST.md"]       # concise current state, workspace-relative
+context_max_chars = 32000                # static file text, loaded at assembly
+workspace_context_max_chars = 8000       # dynamic file text per call
 ```
 
-Static files must exist at launch. Dynamic paths may be created during the run; absent files appear as `[Not created yet.]`. Paths stay within their declared root, including symlinks. Files are read when the strategy injects a snapshot. `persistent` injects once on the first turn and keeps that snapshot across restarts. `openai_compaction` also injects on the first turn after compaction. `trim_recent` refreshes when the previous snapshot falls outside its recent history and retains it throughout tool calls. Personas remain model instructions on every call.
+Static files must exist at launch. Dynamic files may be created later; missing state is labeled unknown. Every load checks path confinement, including symlinks. Both limits include headings and truncation notices (minimum 200). Dynamic files share their budget, identify their source and modification time, and explicitly mark truncation. File recency does not certify the freshness of its claims. Keep plans/results/review dispositions concise and reference full artifacts, logs and review files; the scaffold does not summarize scientific claims with another model.
 
-Snapshots are developer messages saved with the conversation. They are capped at `context_max_chars` (default 32,000; minimum 200), with a notice directing the agent to read the full files when truncated. Each fresh agent delegate and each coding brief reads its own current snapshot. For coding agents it becomes developer instructions in their fresh SDK session; their coding harness manages subsequent context. A persistent conversation does not refresh files on every turn, so agents still read files they need updated between snapshots.
+The existing SDK input filter implements this request structure:
 
-On each SDK agent call, current resource usage and any steering transport warning are appended after the selected conversation as a temporary user message. This keeps changing status out of the reusable prompt prefix, including on Gemini adapters that fold developer messages into system instructions. The message is not saved in the session or included in later compaction. Standing context remains developer messages; cache reuse still depends on the provider and on other inputs staying unchanged.
+```text
+instructions: fixed scaffold setup + persona + declared static files
+messages:     selected conversation history
+              current tool calls/results, if continuing the same turn
+              newly delivered operator steering, if any
+              user: fresh research/workflow/resource context + current task (first call only)
+```
 
-Claude models (`anthropic/...`, including presets) through OpenRouter automatically receive up to two explicit cache breakpoints: one on the latest standing-context snapshot (or first retained text block) and one on the latest retained text message or tool result. The second breakpoint advances as history grows; both precede the temporary status message. These request-only markers are rebuilt after context selection and never saved in sessions or passed to compaction. They work with both Responses and Chat Completions. Explicit markers supplied by an extension take precedence. Other models and gateways keep their existing request format; no additional configuration is needed for OpenRouter Claude runs.
+The first call combines the fresh prefix with the next task. Subsequent tool calls keep that task and complete tool exchanges in history, appending fresh context without repeating the task. Only raw tasks, actual exchanges and steering enter SQLite. All context strategies use this same assembly path; compaction explicitly receives durable input rather than the last provider response ID, which could include ephemeral context. On restart, known legacy standing-context developer snapshots (including typed text blocks) are excluded from model/compaction input; genuine historical messages remain. This does not fix replay of an interrupted loop's launch prompt (AE-295), nor remove information already embedded in an encrypted historical compaction.
+
+Agent delegates receive their own sources and brief, without the caller's conversation. Coding agents receive stable developer instructions plus a fresh context-prefixed brief at invocation; their harness owns later calls. Isolated judges retain their rubric and declared evidence without research/workflow/resource context.
+
+Claude models through OpenRouter receive the static instructions once as a request-only developer message instead of the top-level `instructions` string, allowing an explicit cache breakpoint on that content. A second breakpoint covers the latest retained text block, before the dynamic tail. The instruction breakpoint is present even on the first call or when trimming leaves no history. Explicit extension markers take precedence; markers never enter sessions or compaction. Other providers retain their existing adapter behavior.
 
 Cache hits require an unchanged prefix, the model's minimum token count and an unexpired entry (five minutes by default). Changing instructions, tools or selected history can require a new write. Top-level automatic `cache_control` alone would cache the replaced status tail and miss on the next call; use the runtime's retained-prefix breakpoints instead. See [Anthropic's prefix-checking rules](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#how-automatic-prefix-checking-works) and [OpenRouter's caching adapters](https://openrouter.ai/docs/guides/best-practices/prompt-caching#anthropic-claude). Isolated judges receive cache markers without run status or steering metadata; one-shot provisioning probes keep their existing behavior.
 
@@ -491,7 +502,8 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 - **Reasoning summaries are requested and traced.** Native OpenAI Agents calls set the Responses API reasoning-summary setting to `auto`, which selects the most detailed summarizer available for the model; their SDK response spans carry returned summary text. Delegated Codex calls use `model_reasoning_summary = "auto"` for the same selection and send each returned reasoning item as a `codex:reasoning` span. These are model-generated summaries, not private chain-of-thought; a model or provider may omit them.
 - **Generations stay small.** Langfuse reads an Agents SDK generation's input and output from `input.value` and `output.value`, so the SDK's per-message attributes (`llm.input_messages.*`) are not recorded. They grow with the conversation, and past OpenTelemetry's 128-attribute limit they would evict the span's session, tags, model and usage.
 - **A stopped scaffold flushes.** SIGTERM or SIGINT ends every open observation with level `WARNING` and a `stopped` status message before the process exits. A SIGKILL, such as from the OOM killer, still loses the open iteration's root and anything not yet flushed. Langfuse's flush interval is 5 seconds.
-- **Standing-context snapshots are visible.** `standing_context:<agent>` spans report the declared paths, injected character count and whether truncation occurred. `compaction:<agent>` generations record compaction usage in telemetry and the budget.
+- **Model inputs are inspectable.** SDK generations use the existing OpenInference exporter: Input contains the ordered model messages, and Responses instructions are in Model Parameters (`instructions`) and the complete response output. Chat Completions includes instructions in its message list; Claude/OpenRouter uses the first developer message with a cache marker. Fresh state is labeled `<research_context>` and `<resource_status>`; a new task follows `# Current task` in the trailing user message. On tool continuations, the raw task remains in history and the tail refreshes state only. Earlier user messages are conversation history, not additional newly submitted tasks.
+- **Compaction is inspectable too.** `compaction:<agent>` generations record the actual filtered request arguments and complete compacted response, including retained messages, encrypted compaction items and usage. Encrypted content remains opaque; previous observations remain available. Coding generations record their developer instructions and actual prefixed brief; inner Codex requests remain owned by its harness.
 
 ## Environment
 

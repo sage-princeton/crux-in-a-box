@@ -24,6 +24,7 @@ class StandingContextOptions(Options):
     context: list[str] = Field(default_factory=list)
     workspace_context: list[str] = Field(default_factory=list)
     context_max_chars: int = Field(32_000, ge=200)
+    workspace_context_max_chars: int = Field(8_000, ge=200)
 
 
 class AgentConfig(StandingContextOptions):

@@ -3,8 +3,7 @@ Strategies operate on the agent runtime's conversation items; the built-ins targ
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
-from collections.abc import Callable
+from abc import ABC
 from typing import Any
 
 from agents import Session, SQLiteSession
@@ -21,13 +20,12 @@ STANDING_CONTEXT_HEADER = "# CRUX standing context\n\n"
 
 
 def is_standing_context(item: Any) -> bool:
-    return (isinstance(item, dict) and item.get("role") == "developer"
-            and isinstance(item.get("content"), str) and item["content"].startswith(STANDING_CONTEXT_HEADER))
-
-
-def snapshot(load: Callable[[], str]) -> list[Any]:
-    text = load()
-    return [{"role": "developer", "content": STANDING_CONTEXT_HEADER + text}] if text else []
+    if not isinstance(item, dict) or item.get("role") != "developer":
+        return False
+    content = item.get("content")
+    if isinstance(content, list):
+        content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+    return isinstance(content, str) and content.startswith(STANDING_CONTEXT_HEADER)
 
 
 class ContextStrategy(Component, ABC):
@@ -42,10 +40,6 @@ class ContextStrategy(Component, ABC):
         """The items sent to the model on the next call; the stored history is unchanged."""
         return items
 
-    @abstractmethod
-    def inject_standing_context(self, history: list[Any], load: Callable[[], str]) -> list[Any]:
-        """Return context messages to prepend to the next turn and save with its conversation. Load lazily."""
-
 
 CONTEXT_STRATEGIES: Registry[ContextStrategy] = Registry("context strategy")
 
@@ -56,9 +50,6 @@ class Persistent(ContextStrategy):
 
     type_name = "persistent"
 
-    def inject_standing_context(self, history: list[Any], load: Callable[[], str]) -> list[Any]:
-        return [] if any(is_standing_context(item) for item in history) else snapshot(load)
-
 
 class TrimRecentOptions(Options):
     max_items: int = Field(200, ge=1)
@@ -67,20 +58,12 @@ class TrimRecentOptions(Options):
 @CONTEXT_STRATEGIES.register
 class TrimRecent(ContextStrategy):
     """Send only the most recent items, starting at a user message so tool calls are never split from their results.
-    Preserve the latest standing-context snapshot even when it falls outside the recent items."""
+    Dynamic context is added separately by the runtime after selection."""
 
     type_name = "trim_recent"
     Options = TrimRecentOptions
 
     def select(self, items: list[Any]) -> list[Any]:
-        recent = self._recent(items)
-        context = next((item for item in reversed(items) if is_standing_context(item)), None)
-        return [context, *recent] if context is not None and context not in recent else recent
-
-    def inject_standing_context(self, history: list[Any], load: Callable[[], str]) -> list[Any]:
-        return [] if any(is_standing_context(item) for item in self._recent(history)) else snapshot(load)
-
-    def _recent(self, items: list[Any]) -> list[Any]:
         if len(items) <= self.options.max_items:
             return items
         recent = items[-self.options.max_items:]
@@ -109,13 +92,14 @@ class MeteredCompactClient:
         return self
 
     async def compact(self, **kwargs: Any) -> Any:
+        if "input" in kwargs:
+            kwargs["input"] = [item for item in kwargs["input"] if not is_standing_context(item)]
         if self._client is None:
             self._client = AsyncOpenAI(api_key=self._ctx.env.get("OPENAI_API_KEY"))
-        with self._ctx.telemetry.generation(self._source, kwargs["model"], {"items": len(kwargs.get("input", []))}) \
-                as outcome:
+        with self._ctx.telemetry.generation(self._source, kwargs["model"], kwargs) as outcome:
             compacted = await self._client.responses.compact(**kwargs)
             usage = compacted.usage
-            outcome.output = {"items": len(compacted.output)}
+            outcome.output = compacted.model_dump(mode="json")
             outcome.usage = TokenUsage(requests=1, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
                                        cached_input_tokens=usage.input_tokens_details.cached_tokens,
                                        reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens)
@@ -135,19 +119,11 @@ class OpenAICompaction(ContextStrategy):
         super().__init__(name, options)
         self.client = client
 
-    def inject_standing_context(self, history: list[Any], load: Callable[[], str]) -> list[Any]:
-        for item in reversed(history):
-            if is_standing_context(item):
-                return []
-            if isinstance(item, dict) and item.get("type") == "compaction":
-                break
-        return snapshot(load)
-
     def session(self, session_id: str, ctx: RunContext) -> Session:
         trigger, model = self.options.trigger_items, ctx.model
         try:
             return OpenAIResponsesCompactionSession(
-                session_id, super().session(session_id, ctx), model=model,
+                session_id, super().session(session_id, ctx), model=model, compaction_mode="input",
                 client=MeteredCompactClient(self.client, ctx, f"compaction:{session_id}"),
                 should_trigger_compaction=lambda context: len(context["compaction_candidate_items"]) >= trigger)
         except ValueError as exc:

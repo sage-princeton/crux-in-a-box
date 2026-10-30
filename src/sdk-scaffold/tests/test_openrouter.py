@@ -90,7 +90,7 @@ def test_argon_tools_delegates_billing_and_session_state(router, drop_in_dir, as
     assert all(request["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False} for request in requests)
     assert all(request["reasoning"] == {"effort": "low", "summary": "auto"} for request in requests)
     assert all("reasoning.encrypted_content" in request["include"] for request in requests)
-    assert requests[1]["instructions"] == "You are the reviewer."
+    assert requests[1]["instructions"].startswith("You are the reviewer.")
     assert "<resource_status>" in str(requests[1]["input"][-1])
     assert "Handle the request" not in str(requests[1]["input"])
     assert requests[0]["instructions"] == requests[2]["instructions"]
@@ -250,10 +250,17 @@ def test_claude_cache_boundaries_follow_retained_history_without_entering_the_se
                                 "message": message}], "usage": {"prompt_tokens": 100, "completion_tokens": 30,
                                                                     "total_tokens": 130}})
 
+    exporter = InMemorySpanExporter()
+    env.update(RUN_SLUG="Context-Wire-Test", LANGFUSE_PUBLIC_KEY=f"pk-context-{api}-{strategy}",
+               LANGFUSE_SECRET_KEY="sk-context-test", LANGFUSE_BASE_URL="http://127.0.0.1:9")
+    telemetry = telemetry_from_env(env, RunIdentity.from_env(env), span_exporter=exporter)
+
     async def turn(prompt):
-        scaffold = assemble(drop_in_dir, env=env)
+        scaffold = assemble(drop_in_dir, env=env, telemetry=telemetry)
         async with scaffold.runtime as runtime:
-            await runtime.run(prompt, workflow="test")
+            with telemetry.trace("wire-context"):
+                await runtime.run(prompt, workflow="test")
+            telemetry.flush()
             return await runtime.session.get_items()
 
     stored = asyncio.run(turn("Make the changes."))
@@ -261,19 +268,34 @@ def test_claude_cache_boundaries_follow_retained_history_without_entering_the_se
     assert "prompt_cache_breakpoint" not in str(stored)
     assert "<resource_status>" not in str(stored)
     snapshots = [item for item in stored if item.get("role") == "developer"]
-    assert all(isinstance(item["content"], str) for item in snapshots)
-    if strategy == "persistent":
-        assert len(snapshots) == 1
+    assert snapshots == []
     wire = [request["input" if api == "responses" else "messages"] for request in requests]
-    for items in wire:
+    for index, items in enumerate(wire):
         marked = [item for item in items if "prompt_cache_breakpoint" in str(item)]
-        assert len(marked) == 2
-        assert "# CRUX standing context" in str(marked[0])
+        assert len(marked) == (2 if 0 < index < 3 or index == 3 and strategy == "persistent" else 1)
+        assert marked[0] == items[0]
+        assert items[0]["role"] == "developer"
+        assert "PM standing context." in str(items[0])
+        assert str(items).count("PM standing context.") == 1
+        assert requests[index].get("instructions") is None
+        assert items[0] == wire[0][0]
+        assert "# CRUX standing context" not in str(items)
         assert "<resource_status>" not in str(marked)
         assert str(items).count("<resource_status>") == 1
     for items in wire[1:3]:
         last = next(item for item in reversed(items) if "prompt_cache_breakpoint" in str(item))
         assert last.get("type") == "function_call_output" if api == "responses" else last["role"] == "tool"
+
+    generations = [span for span in exporter.get_finished_spans()
+                   if span.attributes.get("openinference.span.kind") == "LLM"]
+    assert len(generations) == len(requests)
+    for span, request in zip(generations, requests, strict=True):
+        assert not any(key.startswith("langfuse.observation.") for key in span.attributes)
+        native = json.loads(span.attributes["input.value"])
+        assert native == request["input" if api == "responses" else "messages"]
+        assert request["tools"]
+        assert json.loads(span.attributes["output.value"])
+        assert len(span.attributes) < 128
 
 
 @pytest.mark.parametrize("model,host", [
@@ -294,7 +316,7 @@ def test_explicit_extension_breakpoints_take_precedence(router, drop_in_dir, ass
     requests, pending, _ = router
     pending.append(response(say("done")))
     scaffold = assemble(drop_in_dir, env={**ENV, "CRUX_MODEL": "anthropic/claude-fable-5.1"})
-    scaffold.strategy.inject_standing_context = lambda history, load: [{"role": "developer", "content": [
+    scaffold.strategy.select = lambda history: [{"role": "developer", "content": [
         {"type": "input_text", "text": str(index), "prompt_cache_breakpoint": {"mode": "explicit"}}
         for index in range(4)]}]
     asyncio.run(scaffold.run())

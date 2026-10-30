@@ -7,7 +7,7 @@ from test_coding_agents import ANSWER, COMMAND, FakeCodex, RecordingTelemetry, c
 from crux_scaffold.errors import InvalidDropInError
 
 from drop_ins import edit
-from scripted import ScriptedModel, call, say, tool_outputs
+from scripted import ScriptedModel, call, current_task, say, tool_outputs
 
 
 def background(root, *, max_turns=50):
@@ -75,12 +75,12 @@ def test_pi_revises_rest_while_workers_progress_and_collects_results(drop_in_dir
 
         async def delayed(brief, ctx):
             nonlocal active
-            active = brief
-            while not releases[brief].is_set():
-                progress.append(brief)
+            active = current_task(brief)
+            while not releases[current_task(brief)].is_set():
+                progress.append(current_task(brief))
                 await asyncio.sleep(0)
             result = await execute(brief, ctx)
-            finished.append(brief)
+            finished.append(current_task(brief))
             active = None
             return result
 
@@ -118,7 +118,7 @@ def test_pi_revises_rest_while_workers_progress_and_collects_results(drop_in_dir
     assert len(pm.inputs) == len(turns)
     saved = json.loads((tmp_path / "state/state.json").read_text())
     assert saved["usage"]["by_source"]["engineer"]["requests"] == 2
-    assert worker.briefs == ["short", "long"]
+    assert list(map(current_task, worker.briefs)) == ["short", "long"]
 
 
 def test_uncollected_coding_work_cannot_be_replaced(drop_in_dir, assemble):
@@ -128,7 +128,7 @@ def test_uncollected_coding_work_cannot_be_replaced(drop_in_dir, assemble):
                        call("engineer_result", {"wait": True}, "result"), say("done"))
     scaffold = assemble(drop_in_dir, {"pm": pm})
     asyncio.run(scaffold.run())
-    assert scaffold.coding_agents["engineer"].briefs == ["first"]
+    assert list(map(current_task, scaffold.coding_agents["engineer"].briefs)) == ["first"]
     assert "error" in tool_outputs(pm.inputs[-1])[1].lower()
 
 
@@ -143,7 +143,7 @@ def test_result_errors_are_recoverable_and_worker_exceptions_are_delivered(drop_
     execute = scaffold.coding_agents["engineer"].execute
 
     async def fail_once(brief, ctx):
-        if brief == "fail":
+        if current_task(brief) == "fail":
             raise RuntimeError("worker failed")
         return await execute(brief, ctx)
 
