@@ -29,6 +29,9 @@ tabpfn_telemetry.jsonl
 .claude/worktrees/
 CLAUDE.local.md
 
+# brainstorming/design-spec drafts — working notes, not committed source
+docs/superpowers/
+
 # local env files hold live API keys — never commit (rotate the key if one leaks)
 .env
 .env.*
