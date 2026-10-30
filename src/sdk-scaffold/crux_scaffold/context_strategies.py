@@ -96,11 +96,10 @@ class MeteredCompactClient:
             kwargs["input"] = [item for item in kwargs["input"] if not is_standing_context(item)]
         if self._client is None:
             self._client = AsyncOpenAI(api_key=self._ctx.env.get("OPENAI_API_KEY"))
-        with self._ctx.telemetry.generation(self._source, kwargs["model"], {"items": len(kwargs.get("input", []))}) \
-                as outcome:
+        with self._ctx.telemetry.generation(self._source, kwargs["model"], kwargs) as outcome:
             compacted = await self._client.responses.compact(**kwargs)
             usage = compacted.usage
-            outcome.output = {"items": len(compacted.output)}
+            outcome.output = compacted.model_dump(mode="json")
             outcome.usage = TokenUsage(requests=1, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
                                        cached_input_tokens=usage.input_tokens_details.cached_tokens,
                                        reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens)

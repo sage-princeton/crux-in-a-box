@@ -1,9 +1,10 @@
 import asyncio
 from contextlib import contextmanager
-from types import SimpleNamespace
 
 import pytest
 from agents.memory import OpenAIResponsesCompactionSession
+from openai._models import construct_type
+from openai.types.responses import CompactedResponse
 
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, STANDING_CONTEXT_HEADER
 from crux_scaffold.errors import InvalidDropInError
@@ -87,10 +88,12 @@ class FakeCompactClient:
 
     async def compact(self, **kwargs):
         self.calls.append(kwargs)
-        usage = SimpleNamespace(input_tokens=1000, output_tokens=200,
-                                input_tokens_details=SimpleNamespace(cached_tokens=600),
-                                output_tokens_details=SimpleNamespace(reasoning_tokens=50))
-        return SimpleNamespace(output=self.output, usage=usage)
+        self.response = construct_type(type_=CompactedResponse, value={
+            "id": "cmp-response", "created_at": 1, "object": "response.compaction", "output": self.output,
+            "usage": {"input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200,
+                      "input_tokens_details": {"cached_tokens": 600, "cache_write_tokens": 0},
+                      "output_tokens_details": {"reasoning_tokens": 50}}})
+        return self.response
 
 
 def compaction_context(tmp_path, env, telemetry=None):
@@ -119,16 +122,26 @@ def test_openai_compaction_needs_an_openai_run_model(tmp_path):
 
 
 def test_openai_compaction_calls_count_toward_the_budget_and_reach_telemetry(tmp_path):
-    client, telemetry = FakeCompactClient(), RecordingTelemetry()
+    client = FakeCompactClient([{"type": "compaction", "id": "cmp_1", "encrypted_content": "opaque"}])
+    telemetry = RecordingTelemetry()
     ctx = compaction_context(tmp_path, {"CRUX_MODEL": "gpt-test"}, telemetry)
     strategy = CONTEXT_STRATEGIES.create("context", {"type": "openai_compaction"}, client=client)
     session = strategy.session("pm", ctx)
-    asyncio.run(session.run_compaction({"force": True}))
+    async def compact():
+        await session.add_items([user("Keep this task"), {"role": "assistant", "content": "Keep this result"},
+                                 {"role": "developer", "content": STANDING_CONTEXT_HEADER + "STALE"}])
+        await session.run_compaction({"force": True})
+
+    asyncio.run(compact())
     assert client.calls[0]["model"] == "gpt-test"
     usage = ctx.usage.by_source["compaction:pm"]
     assert (usage.requests, usage.input_tokens, usage.output_tokens) == (1, 1000, 200)
-    [(name, model, _, _, traced)] = telemetry.generations
+    [(name, model, traced_input, traced_output, traced)] = telemetry.generations
     assert (name, model) == ("compaction:pm", "gpt-test")
+    assert traced_input == client.calls[0]
+    assert "Keep this task" in str(traced_input) and "Keep this result" in str(traced_input)
+    assert "STALE" not in str(traced_input)
+    assert traced_output == client.response.model_dump(mode="json")
     assert (traced.cached_input_tokens, traced.reasoning_output_tokens, traced.total_tokens) == (600, 50, 1200)
 
 

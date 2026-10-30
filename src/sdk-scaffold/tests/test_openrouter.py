@@ -272,7 +272,13 @@ def test_claude_cache_boundaries_follow_retained_history_without_entering_the_se
     wire = [request["input" if api == "responses" else "messages"] for request in requests]
     for index, items in enumerate(wire):
         marked = [item for item in items if "prompt_cache_breakpoint" in str(item)]
-        assert len(marked) == (2 if 0 < index < 3 or index == 3 and strategy == "persistent" else 0)
+        assert len(marked) == (2 if 0 < index < 3 or index == 3 and strategy == "persistent" else 1)
+        assert marked[0] == items[0]
+        assert items[0]["role"] == "developer"
+        assert "PM standing context." in str(items[0])
+        assert str(items).count("PM standing context.") == 1
+        assert requests[index].get("instructions") is None
+        assert items[0] == wire[0][0]
         assert "# CRUX standing context" not in str(items)
         assert "<resource_status>" not in str(marked)
         assert str(items).count("<resource_status>") == 1
@@ -285,15 +291,16 @@ def test_claude_cache_boundaries_follow_retained_history_without_entering_the_se
     assert len(generations) == len(requests)
     for span, request in zip(generations, requests, strict=True):
         assembled = json.loads(span.attributes["langfuse.observation.input"])
-        layout = json.loads(span.attributes["langfuse.observation.metadata.request_layout"])
+        assert "langfuse.observation.metadata.request_layout" not in span.attributes
         native = json.loads(span.attributes["input.value"])
         if api == "responses":
-            assert assembled["instructions"] == request["instructions"]
+            assert assembled["instructions"] is None
             assert assembled["messages"] == native == request["input"]
         else:
             assert native == request["messages"]
-            assert native[0]["content"] == assembled["instructions"]
-        assert layout["context_index"] == len(assembled["messages"]) - 1
+            assert assembled["instructions"] is None
+            block = assembled["messages"][0]["content"][0]
+            assert native[0] == {"role": "developer", "content": [{**block, "type": "text"}]}
         assert request["tools"]
         assert json.loads(span.attributes["langfuse.observation.output"]) == json.loads(span.attributes["output.value"])
         assert len(span.attributes) < 128

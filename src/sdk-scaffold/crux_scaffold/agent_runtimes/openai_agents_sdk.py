@@ -79,8 +79,7 @@ class RequestTraceProcessor(TracingProcessor):
         request, data = _REQUEST.get(), span.span_data
         if request is not None and data.type in {"response", "generation"}:
             current = get_current_span()
-            current.set_attribute("langfuse.observation.input", json.dumps(request["input"]))
-            current.set_attribute("langfuse.observation.metadata.request_layout", json.dumps(request["layout"]))
+            current.set_attribute("langfuse.observation.input", json.dumps(request))
             output = data.response if data.type == "response" else data.output
             if output is not None:
                 encoded = output.model_dump_json() if data.type == "response" else json.dumps(output)
@@ -486,8 +485,6 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if new_task and prompt_index is not None:
             items.pop(prompt_index)
 
-        history_end = len(items) if new_task else prompt_index
-        exchanges_end = len(items)
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
             # until its next run reloads the durable session, even when a strategy trims older conversation.
@@ -496,56 +493,40 @@ class OpenAIAgentsRuntime(AgentRuntime):
         annotations.insert(0, f"<research_context>\n{research}\n</research_context>")
         status = await self.assembly.context.budget_status()
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")
-        items = self._cache_input(items)
+        result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
         if new_task:
             annotations.append(f"# Current task\n\n{prompt}")
-        context_index = len(items)
-        items.append({"role": "user", "content": "\n\n".join(annotations)})
+        result.input.append({"role": "user", "content": "\n\n".join(annotations)})
         if turn is not None:
             turn["calls"] += 1
-        layout = {
-            "stage": "sdk_model_input", "agent": data.agent.name,
-            "model_call_in_turn": turn["calls"] if turn else None,
-            "new_task": new_task, "context_index": context_index,
-            "task_index": context_index if new_task else prompt_index,
-            "history_end": history_end,
-            "in_turn_end": exchanges_end,
-            "steering_indices": list(range(exchanges_end, context_index)),
-            "in_turn_start": None if new_task or prompt_index is None else prompt_index + 1,
-            "legacy_snapshots_removed": len(data.model_data.input) - len(history),
-            "context_sources": self.assembly.drop_in.config.agents[data.agent.name].workspace_context,
-            "indices": "Zero-based messages indices; end boundaries are exclusive. Context is not persisted.",
-        }
-        result = ModelInputData(input=items, instructions=data.model_data.instructions)
-        self._trace_request(result, layout)
+        self._trace_request(result)
         return result
 
     @staticmethod
-    def _trace_request(data: ModelInputData, layout: dict) -> None:
-        _REQUEST.set({"input": {"instructions": data.instructions, "messages": data.input}, "layout": layout})
+    def _trace_request(data: ModelInputData) -> None:
+        _REQUEST.set({"instructions": data.instructions, "messages": data.input})
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
-        result = ModelInputData(input=self._cache_input(list(data.model_data.input)),
-                                instructions=data.model_data.instructions)
-        self._trace_request(result, {"stage": "sdk_model_input", "agent": data.agent.name,
-                                    "visibility": "isolated_review", "context_index": None})
+        result = self._cache_input(data.model_data)
+        self._trace_request(result)
         return result
 
-    def _cache_input(self, items: list[Any]) -> list[Any]:
+    def _cache_input(self, data: ModelInputData) -> ModelInputData:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
 
-        Mark a growing retained conversation prefix, never the replaced status tail.
+        Mark stable instructions and retained conversation, never the replaced status tail.
         Normalize text consistently on every request and copy it so markers cannot enter sessions.
         """
         provider = self.options.model_provider
         if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
                 or not self.assembly.context.model.removeprefix("~").startswith("anthropic/")):
-            return items
-        selected = list(items)
+            return data
+        selected = list(data.input)
+        if data.instructions:
+            selected.insert(0, {"role": "developer", "content": data.instructions})
         candidates = []
-        anchor = None
         explicit = False
-        for index, item in enumerate(items):
+        for index, item in enumerate(selected):
             if not isinstance(item, dict):
                 continue
             field = "output" if item.get("type") == "function_call_output" else "content"
@@ -566,12 +547,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
             selected[index] = {**item, field: content}
             candidate = (index, field, texts[-1])
             candidates.append(candidate)
-            if is_standing_context(item):
-                anchor = candidate
         if candidates and not explicit:
-            for index, field, position in {anchor or candidates[0], candidates[-1]}:
+            for index, field, position in {candidates[0], candidates[-1]}:
                 selected[index][field][position]["prompt_cache_breakpoint"] = {"mode": "explicit"}
-        return selected
+        return ModelInputData(input=selected, instructions=None)
 
     def _function_tool(self, tool: Tool, ctx: RunContext | None = None) -> FunctionTool:
         ctx = ctx or self.assembly.context

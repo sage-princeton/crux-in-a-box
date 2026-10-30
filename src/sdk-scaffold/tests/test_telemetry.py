@@ -217,7 +217,7 @@ def test_generation_usage_is_split_into_the_exclusive_buckets_langfuse_prices():
     assert usage_details(TokenUsage(requests=1, input_tokens=10, output_tokens=5)) == {"input": 10, "output": 5}
 
 
-def test_generation_input_and_layout_match_model_boundary(langfuse, drop_in_dir, assemble):
+def test_generation_input_matches_model_boundary_without_layout_metadata(langfuse, drop_in_dir, assemble):
     from drop_ins import edit
 
     telemetry, exporter = langfuse
@@ -238,22 +238,17 @@ def test_generation_input_and_layout_match_model_boundary(langfuse, drop_in_dir,
 
     asyncio.run(run())
     generations = [span for span in exporter.get_finished_spans() if span.name == "response"]
-    requests = {}
+    requests = []
     for span in generations:
-        layout = json.loads(span.attributes["langfuse.observation.metadata.request_layout"])
+        assert "langfuse.observation.metadata.request_layout" not in span.attributes
         request = json.loads(span.attributes["langfuse.observation.input"])
-        requests.setdefault(layout["agent"], []).append((request, layout))
+        requests.append(request)
         assert len(span.attributes) < 128
         assert request["messages"] == json.loads(span.attributes["input.value"])
         assert json.loads(span.attributes["langfuse.observation.output"]) == json.loads(span.attributes["output.value"])
-        assert layout["context_index"] == len(request["messages"]) - 1
-    for model, name in [(pm, "pm"), (reviewer, "reviewer")]:
-        for index, (request, layout) in enumerate(requests[name]):
-            assert request == {"instructions": model.instructions[index], "messages": model.inputs[index]}
-    first, tools, second = requests["pm"]
-    assert first[1]["new_task"] is True and first[1]["history_end"] == 0
-    assert tools[1]["new_task"] is False and tools[1]["task_index"] == 0
-    assert tools[0]["messages"][tools[1]["in_turn_start"]]["type"] == "function_call"
-    assert second[1]["new_task"] is True and second[1]["history_end"] > 0
-    assert "Experiment result" not in str(requests["reviewer"])
-    assert "First task" not in str(requests["reviewer"])
+    assert len(requests) == len(pm.inputs) + len(reviewer.inputs)
+    for model in (pm, reviewer):
+        for instructions, messages in zip(model.instructions, model.inputs, strict=True):
+            assert {"instructions": instructions, "messages": messages} in requests
+    assert "Experiment result" not in str(reviewer.inputs)
+    assert "First task" not in str(reviewer.inputs)
