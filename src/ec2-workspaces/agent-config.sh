@@ -172,3 +172,10 @@ load_drop_in_path() {
       || die "Fix $DROP_IN_PATH/provision.json and commit it before provisioning."
   fi
 }
+
+load_workspace_dir() {
+  WORKSPACE_DIR="$(cfg WORKSPACE_DIR)"
+  [ -n "$WORKSPACE_DIR" ] || return 0
+  case "$WORKSPACE_DIR" in /*) ;; *) WORKSPACE_DIR="$1/$WORKSPACE_DIR" ;; esac
+  [ -d "$WORKSPACE_DIR" ] || die "WORKSPACE_DIR must name an existing local directory."
+}

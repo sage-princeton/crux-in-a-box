@@ -96,6 +96,10 @@ flowchart LR
 
 ## A drop-in directory
 
+The [contrastive RL example](examples/contrastive-rl/OPERATOR_GUIDE.md) uses Argon
+and the standard workspace provisioner with private `placeholders.txt` and
+`secrets.json` operator files, six hours, $100 inference and $30 RunPod.
+
 ```
 scaffold.toml            the declaration (see examples/web-cms-product-change/scaffold.toml)
 PROMPT.md                first phase's prompt, sent verbatim

@@ -1,5 +1,12 @@
 # Run software declarations
 
+`DROP_IN_PATH` stages the committed drop-in, including its workspace. Optional
+`WORKSPACE_DIR` copies a local working directory over that workspace, including
+prepared research inputs kept outside Git. Relative paths resolve from the
+repository root. Git metadata, virtual environments and Python caches are omitted.
+Keep credentials and raw sessions outside the selected directory. Without this
+setting, provisioning stages only the committed workspace.
+
 Commit an optional `provision.json` at the root of the directory selected by
 `DROP_IN_PATH`, next to `scaffold.toml`. The shared EC2 provisioner validates the
 committed declaration before creating resources, stages a root-owned snapshot at

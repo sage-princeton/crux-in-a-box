@@ -1,0 +1,14 @@
+# Copy to placeholders.txt beside this file.
+# Set the intended AWS_PROFILE before provisioning, or supply ambient credentials.
+AWS_PROFILE=
+AWS_REGION=us-east-1
+INSTANCE_TYPE=m7i.2xlarge
+ROOT_DISK_GB=100
+USE_ELASTIC_IP=false
+KEY_NAME=crux-acp
+AGENT_PLATFORM=openai-agents
+MODEL_PROVIDER=openrouter
+OPENAI_AGENTS_MODEL=google/gemini-4-argon
+OPENAI_AGENTS_REASONING_EFFORT=high
+DROP_IN_PATH=src/sdk-scaffold/examples/contrastive-rl
+WORKSPACE_DIR=src/sdk-scaffold/examples/contrastive-rl/workspace

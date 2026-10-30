@@ -42,6 +42,10 @@ runs-export/
 clean-room-old
 logs-for-release
 
+# Prepared third-party research inputs are copied from WORKSPACE_DIR.
+src/sdk-scaffold/examples/contrastive-rl/workspace/crtr/
+src/sdk-scaffold/examples/contrastive-rl/workspace/SOURCE.json
+
 # Monitoring deployment state, plans, and operator configuration.
 src/monitoring/terraform/.terraform/
 *.tfstate
