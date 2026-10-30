@@ -290,19 +290,11 @@ def test_claude_cache_boundaries_follow_retained_history_without_entering_the_se
                    if span.attributes.get("openinference.span.kind") == "LLM"]
     assert len(generations) == len(requests)
     for span, request in zip(generations, requests, strict=True):
-        assembled = json.loads(span.attributes["langfuse.observation.input"])
-        assert "langfuse.observation.metadata.request_layout" not in span.attributes
+        assert not any(key.startswith("langfuse.observation.") for key in span.attributes)
         native = json.loads(span.attributes["input.value"])
-        if api == "responses":
-            assert assembled["instructions"] is None
-            assert assembled["messages"] == native == request["input"]
-        else:
-            assert native == request["messages"]
-            assert assembled["instructions"] is None
-            block = assembled["messages"][0]["content"][0]
-            assert native[0] == {"role": "developer", "content": [{**block, "type": "text"}]}
+        assert native == request["input" if api == "responses" else "messages"]
         assert request["tools"]
-        assert json.loads(span.attributes["langfuse.observation.output"]) == json.loads(span.attributes["output.value"])
+        assert json.loads(span.attributes["output.value"])
         assert len(span.attributes) < 128
 
 

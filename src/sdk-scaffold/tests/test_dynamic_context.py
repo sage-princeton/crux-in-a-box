@@ -10,7 +10,8 @@ from scripted import ScriptedModel, call, say
 
 
 @pytest.mark.parametrize("strategy", ['type = "persistent"', 'type = "trim_recent"\nmax_items = 1'])
-def test_fresh_context_follows_history_without_entering_the_session(drop_in_dir, assemble, strategy):
+@pytest.mark.parametrize("next_task", ["Plan experiment B", "Check experiment A"])
+def test_fresh_context_follows_history_without_entering_the_session(drop_in_dir, assemble, strategy, next_task):
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
          f'orchestrator = "pm"\n[context]\n{strategy}')
     edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',
@@ -23,7 +24,7 @@ def test_fresh_context_follows_history_without_entering_the_session(drop_in_dir,
     async def run():
         async with scaffold.runtime as runtime:
             await runtime.run("Check experiment A", workflow="main")
-            await runtime.run("Plan experiment B", workflow="main")
+            await runtime.run(next_task, workflow="main")
             return await runtime.session.get_items()
 
     stored = asyncio.run(run())
@@ -34,11 +35,13 @@ def test_fresh_context_follows_history_without_entering_the_session(drop_in_dir,
     assert pm.inputs[0][-1]["content"].endswith("Check experiment A")
     assert "Experiment A succeeded" in pm.inputs[1][-1]["content"]
     assert pm.inputs[1][-2]["type"] == "function_call_output"
-    assert pm.inputs[2][-1]["content"].endswith("Plan experiment B")
+    assert pm.inputs[2][-1]["content"].endswith(next_task)
+    assert "# Current task" not in pm.inputs[1][-1]["content"]
+    assert sum(item.get("content") == "Check experiment A" for item in pm.inputs[2]) == (strategy == 'type = "persistent"')
     assert all(str(items).count("<research_context>") == 1 for items in pm.inputs)
     assert "<research_context>" not in str(stored)
     assert STANDING_CONTEXT_HEADER not in str(stored)
-    assert sum(item.get("content") == "Check experiment A" for item in stored) == 1
+    assert sum(item.get("content") == "Check experiment A" for item in stored) == 1 + (next_task == "Check experiment A")
 
 
 def test_restart_filters_legacy_snapshots_in_both_wire_shapes(drop_in_dir, assemble):

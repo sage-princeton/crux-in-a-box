@@ -67,9 +67,9 @@ def test_each_iteration_is_one_trace_holding_sdk_spans_gates_and_coding_agent_wo
     assert workflows and {span.name for span in workflows} == {"main"}
     assert not any(span.name.startswith("standing_context:") for span in spans)
     generation = next(span for span in spans if span.name == "response")
-    request = json.loads(generation.attributes["langfuse.observation.input"])
-    assert "PM standing context." in request["instructions"]
-    assert "<research_context>" in request["messages"][-1]["content"]
+    parameters = json.loads(generation.attributes["llm.invocation_parameters"])
+    assert "PM standing context." in parameters["instructions"]
+    assert "<research_context>" in json.loads(generation.attributes["input.value"])[-1]["content"]
     assert "Agent workflow" not in {span.name for span in spans}
     assert {span.context.trace_id for span in spans} == {root.context.trace_id}
 
@@ -217,7 +217,7 @@ def test_generation_usage_is_split_into_the_exclusive_buckets_langfuse_prices():
     assert usage_details(TokenUsage(requests=1, input_tokens=10, output_tokens=5)) == {"input": 10, "output": 5}
 
 
-def test_generation_input_matches_model_boundary_without_layout_metadata(langfuse, drop_in_dir, assemble):
+def test_native_generation_payloads_match_models_across_delegation_and_turns(langfuse, drop_in_dir, assemble):
     from drop_ins import edit
 
     telemetry, exporter = langfuse
@@ -240,15 +240,14 @@ def test_generation_input_matches_model_boundary_without_layout_metadata(langfus
     generations = [span for span in exporter.get_finished_spans() if span.name == "response"]
     requests = []
     for span in generations:
-        assert "langfuse.observation.metadata.request_layout" not in span.attributes
-        request = json.loads(span.attributes["langfuse.observation.input"])
-        requests.append(request)
+        assert not any(key.startswith("langfuse.observation.") for key in span.attributes)
+        parameters = json.loads(span.attributes["llm.invocation_parameters"])
+        requests.append((parameters["instructions"], json.loads(span.attributes["input.value"])))
         assert len(span.attributes) < 128
-        assert request["messages"] == json.loads(span.attributes["input.value"])
-        assert json.loads(span.attributes["langfuse.observation.output"]) == json.loads(span.attributes["output.value"])
+        assert json.loads(span.attributes["output.value"])["output"]
     assert len(requests) == len(pm.inputs) + len(reviewer.inputs)
     for model in (pm, reviewer):
         for instructions, messages in zip(model.instructions, model.inputs, strict=True):
-            assert {"instructions": instructions, "messages": messages} in requests
+            assert (instructions, messages) in requests
     assert "Experiment result" not in str(reviewer.inputs)
     assert "First task" not in str(reviewer.inputs)

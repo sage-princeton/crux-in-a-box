@@ -8,10 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 from collections.abc import Mapping
-from contextlib import AsyncExitStack, contextmanager
-from contextvars import ContextVar
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from typing import Any, Literal, Self
 
@@ -24,7 +22,6 @@ from agents import (
     RunContextWrapper,
     RunHooks,
     Runner,
-    set_trace_processors,
     set_tracing_disabled,
 )
 from agents.exceptions import MaxTurnsExceeded
@@ -35,12 +32,10 @@ from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool import ToolOutputImage, ToolOutputText
 from agents.tool_context import ToolContext
-from agents.tracing import TracingProcessor
 from openai import AsyncOpenAI
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
-from opentelemetry.trace import get_current_span
 from pydantic import Field, HttpUrl, ValidationError, model_validator
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
@@ -56,49 +51,6 @@ from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
-
-_TURN: ContextVar[dict | None] = ContextVar("scaffold_turn", default=None)
-_REQUEST: ContextVar[dict | None] = ContextVar("scaffold_request", default=None)
-
-
-@contextmanager
-def request_scope():
-    turn_token = _TURN.set({"prompt": None, "calls": 0})
-    request_token = _REQUEST.set(None)
-    try:
-        yield
-    finally:
-        _REQUEST.reset(request_token)
-        _TURN.reset(turn_token)
-
-
-class RequestTraceProcessor(TracingProcessor):
-    """Enrich the existing generation before OpenInference closes its OTel span."""
-
-    def on_span_end(self, span) -> None:
-        request, data = _REQUEST.get(), span.span_data
-        if request is not None and data.type in {"response", "generation"}:
-            current = get_current_span()
-            current.set_attribute("langfuse.observation.input", json.dumps(request))
-            output = data.response if data.type == "response" else data.output
-            if output is not None:
-                encoded = output.model_dump_json() if data.type == "response" else json.dumps(output)
-                current.set_attribute("langfuse.observation.output", encoded)
-
-    def on_span_start(self, span) -> None:
-        pass
-
-    def on_trace_start(self, trace) -> None:
-        pass
-
-    def on_trace_end(self, trace) -> None:
-        pass
-
-    def shutdown(self) -> None:
-        pass
-
-    def force_flush(self) -> None:
-        pass
 
 
 class ModelProviderOptions(Options):
@@ -272,18 +224,13 @@ class OpenAIAgentsRuntime(AgentRuntime):
             await self._stack.aclose()
 
     async def run(self, prompt: str, *, workflow: str) -> TurnOutcome:
-        with request_scope():
-            return await self._run(prompt, workflow=workflow)
-
-    async def _run(self, prompt: str, *, workflow: str) -> TurnOutcome:
         self._steering_items = []
         orchestrator = self.agents[self.assembly.drop_in.config.orchestrator]
-        input = self._turn_input(prompt)
         try:
             try:
                 result = await Runner.run(
                     orchestrator,
-                    input,
+                    prompt,
                     context=self.assembly.context,
                     max_turns=count_limit(self.options.max_turns),
                     hooks=self.hooks,
@@ -377,15 +324,14 @@ class OpenAIAgentsRuntime(AgentRuntime):
             tools=[self._function_tool(self.assembly.tools[tool], ctx) for tool in tools],
         )
         try:
-            with request_scope():
-                result = await Runner.run(
-                    agent,
-                    evidence,
-                    context=ctx,
-                    max_turns=max_turns,
-                    hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
-                    run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=self._select_cache_input),
-                )
+            result = await Runner.run(
+                agent,
+                evidence,
+                context=ctx,
+                max_turns=max_turns,
+                hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
+                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=self._select_cache_input),
+            )
         except MaxTurnsExceeded:
             return Verdict(
                 passed=False,
@@ -393,11 +339,6 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 feedback=f"The judge ran out of turns ({max_turns}) before reaching a verdict.",
             )
         return result.final_output
-
-    def _turn_input(self, prompt: str) -> list[Any]:
-        if turn := _TURN.get():
-            turn["prompt"] = prompt
-        return [{"role": "user", "content": prompt}]
 
     def describe(self) -> list[str]:
         self.build()
@@ -476,14 +417,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
         history = [item for item in data.model_data.input if not is_standing_context(item)]
+        prompt = history[-1]["content"] if history and history[-1].get("role") == "user" else None
         items = list(self.assembly.context_strategy.select(history))
-        turn = _TURN.get()
-        prompt = turn["prompt"] if turn else None
-        prompt_index = next((index for index in range(len(items) - 1, -1, -1)
-                             if items[index].get("role") == "user" and items[index].get("content") == prompt), None)
-        new_task = turn is not None and turn["calls"] == 0 and prompt is not None
-        if new_task and prompt_index is not None:
-            items.pop(prompt_index)
+        if prompt is not None and items and items[-1] == history[-1]:
+            items.pop()
 
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
@@ -494,22 +431,13 @@ class OpenAIAgentsRuntime(AgentRuntime):
         status = await self.assembly.context.budget_status()
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")
         result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
-        if new_task:
+        if prompt is not None:
             annotations.append(f"# Current task\n\n{prompt}")
         result.input.append({"role": "user", "content": "\n\n".join(annotations)})
-        if turn is not None:
-            turn["calls"] += 1
-        self._trace_request(result)
         return result
-
-    @staticmethod
-    def _trace_request(data: ModelInputData) -> None:
-        _REQUEST.set({"instructions": data.instructions, "messages": data.input})
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
-        result = self._cache_input(data.model_data)
-        self._trace_request(result)
-        return result
+        return self._cache_input(data.model_data)
 
     def _cache_input(self, data: ModelInputData) -> ModelInputData:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
@@ -587,14 +515,12 @@ class OpenAIAgentsRuntime(AgentRuntime):
             max_turns=count_limit(spec.max_turns),
             hooks=self.hooks,
             run_config=self.run_config,
-            input_builder=lambda data: self._turn_input(data["params"]["input"]),
         )
         invoke_tool = tool.on_invoke_tool
 
         async def invoke(context: ToolContext[Any], raw: str) -> str:
-            with request_scope():
-                async with self.delegation_slot():
-                    return await invoke_tool(context, raw)
+            async with self.delegation_slot():
+                return await invoke_tool(context, raw)
 
         tool.on_invoke_tool = invoke
         return tool
@@ -676,6 +602,4 @@ def instrument_agents_sdk() -> None:
     span's oldest attributes: Langfuse's session, tags, model and usage."""
     instrumentor = OpenAIAgentsInstrumentor()
     if not instrumentor.is_instrumented_by_opentelemetry:
-        set_trace_processors([RequestTraceProcessor()])
-        instrumentor.instrument(exclusive_processor=False,
-                                config=TraceConfig(hide_input_messages=True, hide_output_messages=True))
+        instrumentor.instrument(config=TraceConfig(hide_input_messages=True, hide_output_messages=True))

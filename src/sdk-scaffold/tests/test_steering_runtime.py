@@ -181,7 +181,7 @@ def test_transport_status_changes_only_the_trailing_context(drop_in_dir, assembl
         steering.state["status"] = next(statuses)
 
     steering.poll = poll
-    history = [{"role": "user", "content": "question"}]
+    history = [{"role": "user", "content": "question"}, {"role": "assistant", "content": "answer"}]
     data = CallModelData(ModelInputData(input=history, instructions="fixed"),
                          scaffold.runtime.agents["pm"], scaffold.context)
 
