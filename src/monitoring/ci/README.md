@@ -44,8 +44,10 @@ SSM document. Its upload role grants only workspace writes, narrowed by a sessio
 policy to one snapshot object. Run hosts need SSM management; the existing
 roles listed in `workspace_roles` receive `workspace-agent-policy.json`. This
 grants only agent heartbeat and message channels, without additional parameter
-reads. It includes the shared role for new runs and the current pilot's dedicated
-role.
+reads. It includes the shared role for new runs and pilot4's dedicated role,
+`crux-run-crux-web-pilot4`. When retiring a workspace role, update `workspace_roles`
+and the role ARN in `plan-policy.json` before deleting it; otherwise deployment
+will try to attach the monitoring policy to a missing role.
 
 PR plans use the separate read-only `crux-monitoring-plan` role and read-only
 cross-account Terraform state role. `plan-policy.json` grants the current RDS,
