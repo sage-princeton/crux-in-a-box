@@ -22,7 +22,7 @@ def ensure_stack(client, template, parameters):
         status = stack['StackStatus']
         if status == 'CREATE_IN_PROGRESS':
             client.get_waiter('stack_create_complete').wait(StackName='crux-account')
-        elif status != 'CREATE_COMPLETE':
+        elif status not in ('CREATE_COMPLETE', 'UPDATE_COMPLETE', 'UPDATE_ROLLBACK_COMPLETE'):
             raise ValueError('Installation is not ready; inspect its CloudFormation events before retrying')
         existing = client.get_template(StackName='crux-account')['TemplateBody']
         if existing != template or {p['ParameterKey']: p['ParameterValue'] for p in stack.get('Parameters', [])} != {p['ParameterKey']: p['ParameterValue'] for p in parameters}:

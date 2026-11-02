@@ -20,9 +20,10 @@ def test_create_uses_shared_installation_tag_and_returns_outputs():
     assert api.create_stack.call_args.kwargs['Tags']==[{'Key':'CruxInstallation','Value':'crux-account'}]
 
 
-def test_retry_from_another_laptop_does_not_recreate_installation():
+@pytest.mark.parametrize("status", ["CREATE_COMPLETE", "UPDATE_COMPLETE", "UPDATE_ROLLBACK_COMPLETE"])
+def test_retry_from_another_laptop_does_not_recreate_installation(status):
     """Identical setup needs only AWS resources, never a saved local receipt."""
-    api=client({'StackName':'crux-account','StackStatus':'CREATE_COMPLETE',
+    api=client({'StackName':'crux-account','StackStatus':status,
                 'Tags':[{'Key':'CruxInstallation','Value':'crux-account'}],'Parameters':[]})
     api.get_template.return_value={'TemplateBody':{}}
     ensure_stack(api,{},[])
