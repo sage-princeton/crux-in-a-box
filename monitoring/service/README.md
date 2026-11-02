@@ -4,6 +4,13 @@ Collect workspace evidence and model traces, assess Run status/incidents, and
 serve the authenticated monitoring website. Requires Python 3.12, Node/npm,
 Docker and PostgreSQL 18. AWS deployment uses Terraform and an explicit profile.
 
+## Usage
+
+Deploy and verify the service using the [release runbook](ci/README.md#usage).
+[design.md](design.md) describes collection, storage, assessments and notifications.
+
+## Development
+
 From the repository root, with a disposable database ending in `_test`:
 
 ```sh
@@ -15,6 +22,5 @@ ruff check monitoring/service
 ruff format --check monitoring/service
 ```
 
-Tests truncate that disposable database. For deployment and release checks use
-[ci](ci/README.md). [design.md](design.md) describes collection, storage,
-assessments and notifications.
+Tests truncate that disposable database. Use the [release checks](ci/README.md#development)
+for Terraform and workflow changes.

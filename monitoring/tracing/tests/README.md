@@ -3,6 +3,8 @@
 Check production Codex exporters against synthetic rollouts and a local OTLP
 collector. Requires Python 3.12, Node 22 and npm; no live model credentials.
 
+## Development
+
 From the repository root:
 
 ```sh
