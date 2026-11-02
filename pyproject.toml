@@ -6,8 +6,9 @@ src = ["monitoring/service", "scaffolds/sdk", "devops/ec2-workspaces", "monitori
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
-testpaths = ["monitoring/service/tests", "scaffolds/sdk/tests", "monitoring/tracing/tests", "devops/ec2-workspaces/tests"]
+testpaths = ["monitoring/service/tests", "scaffolds/sdk/tests", "monitoring/tracing/tests", "devops/ec2-workspaces/tests", "devops/tests"]
 pythonpath = [
+    "devops",
     "monitoring/service",
     "scaffolds/sdk",
     "scaffolds/sdk/tests",

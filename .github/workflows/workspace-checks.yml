@@ -33,6 +33,10 @@ jobs:
           for script in devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh; do
             bash -n "$script"
           done
+      - name: Invoker contracts and resource lifecycle
+        run: |
+          python3 -m pip install -r requirements-dev.txt
+          python3 -m pytest -q devops/tests
       - name: ShellCheck
         # SSH commands intentionally expand locally; quoted tildes are remote paths.
         run: shellcheck -x -e SC2029,SC2088 devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh
