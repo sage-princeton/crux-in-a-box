@@ -1,0 +1,7 @@
+{
+  "name": "research-example",
+  "scaffold": "sdk",
+  "inputs": "./research-inputs",
+  "model": "gpt-5.4-mini",
+  "effort": "low"
+}

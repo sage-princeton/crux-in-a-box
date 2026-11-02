@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[3]
 @pytest.mark.parametrize("model", ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "future-model"])
 @pytest.mark.parametrize("effort", ["none", "minimal", "low", "medium", "high", "xhigh", "max", "invalid"])
 def test_openai_scaffolds_share_effort_validation(model, effort):
+    """Verify openai scaffolds share effort validation."""
     results = []
     for platform, prefix in [("codex", "CODEX"), ("openai-agents", "OPENAI_AGENTS")]:
         result = subprocess.run(
@@ -55,6 +56,7 @@ load_agent_config settings
 
 @pytest.mark.parametrize("mode", ["", "stop-hook", "live", "invalid"])
 def test_codex_trace_preflight(mode):
+    """Verify codex trace preflight."""
     result = subprocess.run(
         [
             "bash",
@@ -88,6 +90,7 @@ printf '%s' "$CODEX_TRACE_MODE"
 
 
 def test_needrestart_excludes_both_run_services():
+    """Verify needrestart excludes both run services."""
     install_script = (ROOT / "devops/ec2-workspaces/install-run.sh").read_text()
     rules = install_script.split("<<'PERL'\n", 1)[1].split("\nPERL", 1)[0]
     result = subprocess.run(
@@ -134,7 +137,14 @@ SDK = {"AGENT_PLATFORM": "openai-agents", "OPENAI_AGENTS_MODEL": "gpt-6-astra",
 
 
 class AgentConfigTests(unittest.TestCase):
+    """Verify shell provisioning settings and credential boundaries."""
     def shell(self, script, values=None, success=True):
+        """Execute a provisioning fragment and assert its expected outcome.
+
+        :param script: Shell fragment appended to the test prelude.
+        :param values: Environment settings for the fragment.
+        :param success: Whether a zero exit code is expected.
+        :returns: Combined command output for further assertions."""
         result = subprocess.run(["bash", "-c", PRELUDE + script], cwd=ROOT,
                                 env={"PATH": os.environ["PATH"], **(values or {})},
                                 capture_output=True, text=True, check=False)
@@ -142,17 +152,18 @@ class AgentConfigTests(unittest.TestCase):
         return result.stdout + result.stderr
 
     def test_sdk_requires_no_acp_pins_or_agentrq(self):
+        """Verify sdk requires no acp pins or agentrq."""
         self.assertEqual(self.shell('load_agent_config all; '
                          'printf "%s|%s" "$SCAFFOLD_MODULE" "$ACP_COMMAND"; '
                          '! scaffold_needs agentrq', SDK), "sdk|")
 
-    def test_acp_requires_release_pins(self):
-        for key in ("ACP_GATEWAY_VERSION", "ACP_GATEWAY_TARBALL_URL", "ACP_GATEWAY_SHA256"):
-            with self.subTest(key=key):
-                values = {k: v for k, v in ACP.items() if k != key}
-                self.assertIn(key, self.shell("load_agent_config all", values, False))
+    def test_acp_model_settings_do_not_duplicate_manifest_versions(self):
+        """Verify acp model settings do not duplicate manifest versions."""
+        self.shell("load_agent_config all", {k: ACP[k] for k in
+                   ("CODEX_MODEL", "CODEX_REASONING_EFFORT")})
 
     def test_main_model_effort_rules_survive_sdk_merge(self):
+        """Verify main model effort rules survive sdk merge."""
         cases = [("gpt-6-astra", "max", True), ("gpt-6.1-sol", "xhigh", True),
                  ("gpt-6-astra", "none", False), ("gpt-6-luna", "none", True),
                  ("gpt-6-astra", "minimal", False)]
@@ -166,16 +177,19 @@ class AgentConfigTests(unittest.TestCase):
         self.shell("load_agent_config settings", {**claude, "CLAUDE_EFFORT": "none"}, False)
 
     def test_sdk_effort_and_provider_validation(self):
+        """Verify sdk effort and provider validation."""
         self.shell("load_agent_config all", {**SDK, "OPENAI_AGENTS_REASONING_EFFORT": "low"})
         self.shell("load_agent_config all", {**SDK, "OPENAI_AGENTS_REASONING_EFFORT": "minimal"}, False)
         self.shell("load_agent_config all", {**SDK, "OPENAI_AGENTS_REASONING_EFFORT": "invalid"}, False)
         self.shell("load_agent_config all", {**SDK, "MODEL_PROVIDER": "openrouter"})
 
     def test_settings_does_not_require_install_pins(self):
+        """Verify settings does not require install pins."""
         self.shell("load_agent_config settings", {k: ACP[k] for k in
                    ("CODEX_MODEL", "CODEX_REASONING_EFFORT")})
 
     def test_run_service_secrets_pass_through_without_provider_or_agentrq_keys(self):
+        """Verify run service secrets pass through without provider or agentrq keys."""
         secrets = {"OPENAI_API_KEY": "fixture-openai", "ANTHROPIC_API_KEY": "fixture-anthropic",
                        "OPENROUTER_API_KEY": "fixture-openrouter", "AGENTRQ_WORKSPACE_TOKEN": "fixture-token",
                        "AGENTRQ_WORKSPACE_ID": "fixture-workspace", "GH_TOKEN": "fixture-github",
@@ -188,6 +202,7 @@ class AgentConfigTests(unittest.TestCase):
         self.assertEqual(json.loads(result), {k: secrets[k] for k in ("GH_TOKEN", "VERCEL_TOKEN")})
 
     def test_service_secrets_cannot_override_scaffold_environment(self):
+        """Verify service secrets cannot override scaffold environment."""
         output = self.shell('check_run_api_key_clashes \'{"CRUX_MODEL":"fixture-private"}\' '
                             '\'{"OPENAI_API_KEY":"fixture-openai"}\' \'CRUX_MODEL="gpt-5.4"\'',
                             success=False)

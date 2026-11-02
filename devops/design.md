@@ -1,26 +1,75 @@
-# AWS installation and resources
+# DevOps design
 
-Account setup creates the `crux-account` CloudFormation stack, tagged
-`CruxInstallation=crux-account`. It owns a VPC/public subnet, route, restricted SSH
-ingress, imported public key and instance profile. Profile region and STS account
-identity define the scope. No default-profile fallback is permitted.
-
-Deployment discovers current stack outputs and the supported Ubuntu image through
-SSM. The installation is independent from Runs, with termination protection and no
-local account receipt. Credentials go to a shared SSM SecureString, never into
-source or CloudFormation parameters. The Box role reads shared tracing settings
-and supports SSM registration for authenticated host-key discovery.
+Account setup creates the named `crux-account` CloudFormation stack, tagged
+`CruxInstallation=crux-account`, and shared SSM configuration. Each deployment
+reads that stack's current outputs and the selected explicit AWS profile. There
+is no generated account file or local Run receipt. The operator owns one Run JSON;
+model, required effort, provider and varying Box/resource requirements live there.
 
 ```mermaid
-flowchart LR
-    Setup[Account setup] --> Stack[Named/tagged CloudFormation installation]
-    Stack -->|Live lookup| Drivers[Native AWS drivers]
-    Run[Run resource graph] --> Drivers
-    Drivers --> EC2[Box, addresses, IAM and storage]
+flowchart TD
+    Setup[Idempotent account setup] --> Shared[Named/tagged AWS installation]
+    Run[Run JSON + explicit secrets] --> Checks[1. Status checks]
+    Shared -->|Read live outputs| Checks
+    Checks --> Create[2. Create Box and declared resources]
+    Create --> Configure[3. Configure Scaffold and verify]
+    Configure --> Stopped[Ready, stopped]
+    Stopped -->|Separate start command| Begin[4. Begin Run]
+    subgraph deploy [python devops/crux.py deploy]
+        Checks
+        Create
+        Configure
+    end
 ```
 
-Native boto3 drivers observe cloud state, validate ownership, reconcile using
-stable names/tokens and delete in reverse dependency order. Address and volume
-attachments are separate from assets so retention remains independent. The
-[contract design](crux_devops/design.md) defines driver responsibilities. Drivers
-never require a local receipt after interrupted creation or deletion.
+```mermaid
+C4Container
+    Person(operator, "Developer", "Supplies one Run definition and explicit secrets")
+    System_Boundary(crux, "CRUX") {
+        Container(invoker, "Invoker", "Python", "Discovers, validates and reconciles live resources")
+        Container(box, "Run Box", "Ubuntu and systemd", "Hosts one Scaffold and Run")
+        Container(controller, "AgentRQ controller", "Independent Ubuntu service", "Routes ACP workspaces")
+    }
+    System_Ext(aws, "AWS", "Named CloudFormation installation, EC2/IAM/SSM resources")
+    System_Ext(model, "Model provider", "Inference")
+    Rel(operator, invoker, "deploy / start / destroy")
+    Rel(invoker, aws, "Read current state and reconcile", "boto3")
+    Rel(invoker, box, "Bundle, configuration and service operations", "SSH")
+    Rel(invoker, controller, "Reconcile named workspaces", "HTTPS")
+    Rel(box, model, "Run inference", "HTTPS")
+    Rel(box, controller, "ACP gateway", "HTTPS")
+```
+
+The installation supplies a public subnet, route, restricted SSH ingress, imported
+public key and instance role. Network CIDRs and the Ubuntu family are fixed
+implementation choices. Instance roles permit shared tracing configuration and
+SSM host-key discovery; they do not grant research workloads account administration.
+CloudFormation owns this shared infrastructure, outside Run teardown. Changes to
+existing installation settings require reviewing a CloudFormation change set;
+identical setup can be retried from any authorized laptop.
+
+Resources declare dependencies, managed/external ownership and delete/retain
+policy. Names and ownership tokens derive from account, region, Run name and
+resource ID. Drivers observe current provider state, check ownership and recover
+interrupted creation without a laptop record. Teardown stops the Run, then walks
+dependencies in reverse; retained assets survive. PR #16 can add auxiliary-resource
+and grant drivers using this contract. A grant can be deleted before its retained
+asset, and ownership checks must protect successor handoffs.
+
+The Invoker uses Python for AWS, HTTP, JSON/TOML and bundle assembly. Focused
+Box-side shell programs install packages and operate systemd. SSM authenticates
+SSH host-key discovery. Bundles and known-hosts files are temporary; secrets travel
+separately. An installed marker on the Box describes its actual configuration and
+is published only after configuration/probes succeed. Commands read it together
+with systemd state; failed configuration cannot authorize start. An installed Run
+is not reconfigured or restarted by retrying deploy.
+
+For ACP, begin-Run starts the gateway and submits the installed `PROMPT.md` to its
+workspace. The task's stable name is resolved through AgentRQ on each invocation,
+including terminal tasks, so a lost response can be recovered without a local
+task ID. Run status includes both gateway state and controller task status.
+
+AgentRQ remains independent from Runs. ACP deployment discovers its endpoint from
+`/crux/controller/url` and manages only its own named workspace. A Run's graph never
+contains controller infrastructure. The following controller layer provides its
+native deploy/start interface.

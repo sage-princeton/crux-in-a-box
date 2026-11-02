@@ -1,0 +1,10 @@
+{
+  "name": "crux-claude-box",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "@anthropic-ai/claude-code": "2.1.272",
+    "@agentclientprotocol/claude-agent-acp": "0.77.0",
+    "@agentrq/acp-gateway": "0.4.1"
+  }
+}
