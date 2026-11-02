@@ -73,7 +73,7 @@ class Resource:
 
 @dataclass(frozen=True)
 class Scaffold:
-    """Describe the selected runtime and Run-owned model/provider settings."""
+    """Describe Agent orchestration and task inputs with Run-owned model settings."""
     type: str
     platform: str
     drop_in: str
