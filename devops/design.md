@@ -91,3 +91,9 @@ Ubuntu package manifests feed both Box installers and an isolated daily audit
 image. This covers apt packages outside Dependabot's ecosystems. The audit exports
 package and vulnerability reports; it does not silently upgrade a running research
 service. Terraform and Go proxy modules retain their native dependency manifests.
+
+Audit reports include packages discovered in the images; they are review evidence,
+not a zero-vulnerability gate or a Dependabot submission for Ubuntu. The AWS CLI
+v2 vendor archive and caller-declared Run tools are outside automatic version
+updates. NodeSource and Caddy repository setup URLs are maintained manually;
+the installed packages are included in the Ubuntu audit.

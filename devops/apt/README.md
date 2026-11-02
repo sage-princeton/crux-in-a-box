@@ -10,7 +10,8 @@ From the repository root:
 docker build --pull -t crux-apt:audit -f devops/apt/Dockerfile .
 ```
 
-The daily and pull-request Ubuntu audit exports package/vulnerability reports.
+The daily and pull-request Ubuntu audit exports package/vulnerability reports;
+findings are reported without failing the workflow. Review the exported reports.
 Runtime, CI and application dependency policy is described in [design.md](../design.md).
 
 ## Development
