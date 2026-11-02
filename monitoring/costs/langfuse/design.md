@@ -46,4 +46,3 @@ zero totals with `has_data: false`; callers must show that data is missing.
 Nonempty results do not prove every generation is priced or exported.
 Upstream failures and malformed responses return 502, never a fabricated zero.
 Missing/invalid authorization returns 401; invalid requests return 400.
-
