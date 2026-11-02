@@ -68,8 +68,13 @@ def execute(args):
             result = deployment.deploy(bundle,values)
         else:
             trust_box(aws,lifecycle,known_hosts)
-            result = {'start':invoker.start,'status':invoker.status,'health':invoker.health,'destroy':invoker.destroy}[args.command]()
-    return {'run':run.name,'phase':result['phase'],'resources':result['resources'],'log':str(log)}
+            result = {'start':deployment.begin_run,'status':invoker.status,'health':invoker.health,'destroy':invoker.destroy}[args.command]()
+            if args.command == 'status' and config.scaffold != 'sdk':
+                workspace = next(r for r in run.resources if r.id == 'workspace')
+                result['task'] = lifecycle.drivers[workspace.type].task(workspace,
+                    result['resources'][workspace.id]['outputs'], lifecycle.context)
+    return {'run':run.name,'phase':result['phase'],'resources':result['resources'],'log':str(log),
+            **({'task':result['task']} if 'task' in result else {})}
 
 
 def main():

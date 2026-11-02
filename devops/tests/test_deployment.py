@@ -51,6 +51,32 @@ def test_check_failure_prevents_creation():
     invoker.configure.assert_not_called()
 
 
+def test_acp_begin_submits_installed_prompt_only_after_gateway_start():
+    """Use installed task input and start the gateway before submitting ACP work."""
+    from crux_devops.lifecycle import Lifecycle
+
+    config = RunConfiguration.parse({'name':'example','scaffold':'codex','inputs':'inputs',
+                                   'model':'test','effort':'low'})
+    run = resolve(config, account() | {'controller_url':'https://controller.test'})
+    workspace = Mock()
+    lifecycle = Lifecycle(run, {'agentrq.workspace':workspace, 'aws.ec2':Mock()})
+    invoker = Mock()
+    state = {'deployment':{'host':'box.test','bundle_sha256':'a'*64},
+             'resources':{'workspace':{'outputs':{'workspace_id':'w'}}}}
+    invoker.status.return_value = state
+    invoker.start.return_value = state
+    invoker.transport.prompt.return_value = 'Installed task.'
+    workspace.begin.return_value = {'id':'t','status':'notstarted'}
+    calls = Mock()
+    calls.attach_mock(invoker.transport.prompt,'prompt')
+    calls.attach_mock(invoker.start,'start')
+    calls.attach_mock(workspace.begin,'submit')
+    result = Deployment(lifecycle,invoker).begin_run()
+    assert [call[0] for call in calls.mock_calls] == ['prompt','start','submit']
+    assert workspace.begin.call_args.args[-1] == 'Installed task.'
+    assert result['task'] == {'id':'t','status':'notstarted'}
+
+
 @pytest.mark.parametrize('credential', ['secrets', 'ssh_key'])
 def test_private_credentials_cannot_be_bundled_as_task_inputs(tmp_path, monkeypatch, credential):
     """Reject credential files under task inputs before opening an AWS session.

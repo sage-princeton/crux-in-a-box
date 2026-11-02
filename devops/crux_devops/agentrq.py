@@ -171,6 +171,51 @@ class Workspace:
         token = self.client(resource).request('/workspaces/'+urllib.parse.quote(workspace['id'], safe='')+'/token')['token']
         return {'AGENTRQ_WORKSPACE_ID': workspace['id'], 'AGENTRQ_WORKSPACE_TOKEN': token}
 
+    def task(self, resource, observed, context):
+        """Read the named Run task from its owned workspace, including terminal tasks.
+
+        :param resource: Workspace resource declaration.
+        :param observed: Current workspace identity.
+        :param context: Stable Run ownership context.
+        :returns: Task ID/status, or None when it has not been submitted.
+        """
+        workspace = self.find(resource, context, observed)
+        if workspace is None:
+            return None
+        path = '/workspaces/'+urllib.parse.quote(workspace['id'], safe='')+'/tasks'
+        offset, matches = 0, []
+        while True:
+            page = self.client(resource).request(path+f'?limit=50&offset={offset}&status=notstarted,ongoing,blocked,completed,rejected')['tasks']
+            matches.extend(task for task in page if task['title'] == 'CRUX Run '+context.run.name)
+            if len(page) < 50:
+                break
+            offset += len(page)
+        if len(matches) > 1:
+            raise ValueError('Multiple tasks match this Run; inspect the controller before starting')
+        return {key:matches[0][key] for key in ('id','status')} if matches else None
+
+    def begin(self, resource, observed, context, prompt):
+        """Submit the installed prompt once, recovering any existing named Run task.
+
+        :param resource: Workspace resource declaration.
+        :param observed: Current workspace identity.
+        :param context: Stable Run ownership context.
+        :param prompt: Caller task read from the installed bundle.
+        :returns: Existing or newly created task ID/status, without prompt or credentials.
+        """
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError('ACP inputs require a nonempty PROMPT.md')
+        existing = self.task(resource, observed, context)
+        if existing is not None:
+            return existing
+        workspace = self.find(resource, context, observed)
+        if workspace is None:
+            raise ValueError('Configure the ACP workspace before starting a Run')
+        result = self.client(resource).request('/workspaces/'+urllib.parse.quote(workspace['id'], safe='')+'/tasks',
+            {'task':{'title':'CRUX Run '+context.run.name, 'body':prompt,
+                     'createdBy':'human', 'assignee':'agent', 'status':'notstarted', 'allowAllCommands':True}})['task']
+        return {key:result[key] for key in ('id','status')}
+
     def destroy(self, resource, observed, context):
         """Delete the currently owned resource; absence is already a successful result.
 

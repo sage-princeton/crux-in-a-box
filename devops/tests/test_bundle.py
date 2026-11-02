@@ -103,3 +103,28 @@ def test_provider_is_rendered_without_changing_caller_inputs(source, tmp_path):
         rendered=tomllib.loads(archive.extractfile('input/scaffold.toml').read().decode())
     assert rendered['runtime']['model_provider']==provider
     assert (source/'scaffolds/sdk/run-harness/test/scaffold.toml').read_bytes()==original
+
+
+@pytest.mark.parametrize('content', [None, '', ' \n'])
+def test_acp_requires_a_task_prompt_before_resource_creation(source, tmp_path, monkeypatch, content):
+    """Reject absent or empty ACP prompts before a deployment bundle is produced.
+
+    :param source: Minimal tracked source fixture.
+    :param tmp_path: Private output directory.
+    :param monkeypatch: Replaces unrelated dependency lookup.
+    :param content: Missing, empty or whitespace-only task input.
+    """
+    from dataclasses import replace
+
+    from crux_devops.spec import Scaffold
+
+    monkeypatch.setattr('crux_devops.bundle.scaffold_dependencies', lambda *args: {})
+    spec = replace(run(), scaffold=Scaffold('agentrq','codex','scaffolds/sdk/run-harness/test','test','low'))
+    prompt = source/spec.scaffold.drop_in/'PROMPT.md'
+    if content is None:
+        prompt.unlink()
+    else:
+        prompt.write_text(content)
+    with pytest.raises((ValueError, FileNotFoundError)):
+        assemble(source, spec, tmp_path/'bundle.tar.gz')
+    assert not (tmp_path/'bundle.tar.gz').exists()

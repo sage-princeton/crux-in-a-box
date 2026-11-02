@@ -71,8 +71,25 @@ class Deployment:
         return self.invoker.configure(bundle, {k: v for k, v in secrets.items() if k != 'AGENTRQ_ROOT_TOKEN'})
 
     def begin_run(self):
-        """Start the configured Run only on explicit request; return its status summary."""
-        return self.invoker.start()
+        """Start SDK execution or submit the installed ACP task on explicit request.
+
+        :returns: Live installation status and, for ACP, its recoverable task ID/status.
+        """
+        if self.lifecycle.run.scaffold.type == 'sdk':
+            return self.invoker.start()
+        state = self.invoker.status()
+        if not state.get('deployment'):
+            raise ValueError('Configure the Scaffold before starting a Run')
+        installed = state['deployment']
+        prompt = self.invoker.transport.prompt(host=installed['host'], owner=self.lifecycle.context.owner,
+                                               bundle_sha256=installed['bundle_sha256'])
+        if not prompt.strip():
+            raise ValueError('ACP inputs require a nonempty PROMPT.md')
+        state = self.invoker.start()
+        resource = next(r for r in self.lifecycle.run.resources if r.id == 'workspace')
+        task = self.lifecycle.drivers[resource.type].begin(resource,
+            state['resources'][resource.id]['outputs'], self.lifecycle.context, prompt)
+        return state | {'task':task}
 
     def deploy(self, bundle, secrets):
         """Prepare a stopped Run, or return an already completed deployment unchanged.

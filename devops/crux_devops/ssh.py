@@ -78,7 +78,7 @@ print(json.dumps(value))
         return json.loads(result.stdout)
 
     def configure(self, *, host, bundle, secrets, settings):
-        """Compute configure.
+        """Upload a verified bundle and private settings, then install a stopped Scaffold.
 
         :param host: Owned Box address.
         :param bundle: Verified deployment bundle metadata or extracted bundle path.
@@ -109,7 +109,7 @@ print(json.dumps(value))
             self.command(host, ['rm', '-rf', '--', remote])
 
     def start(self, *, host, owner, bundle_sha256):
-        """Compute start.
+        """Start the installed systemd service after verifying Box ownership.
 
         :param host: Owned Box address.
         :param owner: Stable expected deployment owner.
@@ -129,7 +129,7 @@ print(json.dumps(value))
                             'stop', owner, bundle_sha256])
 
     def health(self, *, host, owner, bundle_sha256):
-        """Compute health.
+        """Verify the installed unit without starting it; raise on failed health checks.
 
         :param host: Owned Box address.
         :param owner: Stable expected deployment owner.
@@ -137,3 +137,24 @@ print(json.dumps(value))
         """
         self.command(host, ['sudo', 'bash', '/opt/crux-deployments/'+bundle_sha256+'/source/devops/box/operate.sh',
                             'health', owner, bundle_sha256])
+
+    def prompt(self, *, host, owner, bundle_sha256):
+        """Read the ACP task from the verified installed bundle without logging its text.
+
+        :param host: Owned Box address.
+        :param owner: Expected installation owner.
+        :param bundle_sha256: Expected installed bundle digest.
+        :returns: Installed PROMPT.md text; mismatched ownership or missing input raises.
+        """
+        if not host or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:' for c in host):
+            raise ValueError('Invalid Box SSH address')
+        program = """import json, pathlib, sys
+value = json.loads(pathlib.Path('/etc/crux-deployment.json').read_text())
+if (value['owner'], value['bundle_sha256']) != tuple(sys.argv[1:]):
+    raise ValueError('Box installation changed before task submission')
+print(json.dumps((pathlib.Path('/opt/crux-deployments') / value['bundle_sha256'] / 'input/PROMPT.md').read_text()))
+"""
+        result = subprocess.run(['ssh',*self.options,'ubuntu@'+host,
+            shlex.join(['sudo','python3','-c',program,owner,bundle_sha256])],
+            check=True,capture_output=True,text=True,timeout=60)
+        return json.loads(result.stdout)

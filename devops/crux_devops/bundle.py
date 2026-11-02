@@ -41,6 +41,8 @@ def assemble(source, run, output, *, drop_in=None, provider=None):
     if output.resolve().is_relative_to(source) or output.resolve().is_relative_to(inputs):
         raise ValueError('Write deployment bundles outside source and Run inputs')
     scaffold_dependencies(source, run.scaffold.platform)
+    if run.scaffold.type == 'agentrq' and not (inputs/'PROMPT.md').read_text().strip():
+        raise ValueError('ACP inputs require a nonempty PROMPT.md')
     if run.scaffold.type == 'sdk':
         scaffold = tomllib.loads((inputs/'scaffold.toml').read_text())
         if provider is not None:

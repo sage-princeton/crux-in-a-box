@@ -46,6 +46,12 @@ auxiliary resources belong in Run JSON. The secrets JSON maps environment names
 to credentials. ACP commands also pass `--secrets` containing `AGENTRQ_ROOT_TOKEN`
 for workspace lookup; that root token never reaches a Run Box.
 
+ACP inputs must include `PROMPT.md`. `start` reads that installed prompt, starts
+the gateway and submits one named AgentRQ task. Retrying recovers the same task,
+including completed tasks; `status` reports its ID/status alongside service state.
+Task instructions should explicitly require the Agent to mark the task completed
+in AgentRQ after verifying its work.
+
 See [design.md](design.md) and [Run software declarations](ec2-workspaces/provisioning.md).
 
 ## Development

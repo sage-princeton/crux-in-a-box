@@ -64,6 +64,11 @@ is published only after configuration/probes succeed. Commands read it together
 with systemd state; failed configuration cannot authorize start. An installed Run
 is not reconfigured or restarted by retrying deploy.
 
+For ACP, begin-Run starts the gateway and submits the installed `PROMPT.md` to its
+workspace. The task's stable name is resolved through AgentRQ on each invocation,
+including terminal tasks, so a lost response can be recovered without a local
+task ID. Run status includes both gateway state and controller task status.
+
 AgentRQ remains independent from Runs. ACP deployment discovers its endpoint from
 `/crux/controller/url` and manages only its own named workspace. A Run's graph never
 contains controller infrastructure. The following controller layer provides its

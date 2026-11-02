@@ -12,11 +12,20 @@ class API:
         """Bind collaborators and configuration for subsequent operations."""
         self.workspaces = {}
         self.fail = False
+        self.tasks = []
 
     def request(self, path, body=None, method=None):
         """Issue a bounded JSON HTTP request and return the decoded response."""
         if path == '/workspaces' and body is None:
             return {'workspaces': list(self.workspaces.values())}
+        if '/tasks?' in path:
+            return {'tasks': self.tasks}
+        if path.endswith('/tasks'):
+            task = dict(body['task'], id=str(len(self.tasks)+1))
+            self.tasks.append(task)
+            if self.fail:
+                raise RuntimeError('response lost after task creation')
+            return {'task': task}
         if path == '/workspaces':
             value = dict(body['workspace'], id=str(len(self.workspaces)+1))
             self.workspaces[value['id']] = value
@@ -75,3 +84,25 @@ def test_missing_root_credential_fails_before_api_requests(tmp_path):
     with pytest.raises(ValueError, match='ROOT_TOKEN'):
         driver.preflight(state.run.resources[0], state.context)
     api.assert_not_called()
+
+
+def test_begin_recovers_a_task_after_lost_response_and_keeps_completed_work(tmp_path):
+    """Submit once and recover the same completed task without a local task ID.
+
+    :param tmp_path: Empty local directory proving no receipt is written.
+    """
+    api = API()
+    state = lifecycle(tmp_path, api)
+    observed = state.apply()['resources']['workspace']['outputs']
+    resource = state.run.resources[0]
+    driver = state.drivers[resource.type]
+    api.fail = True
+    with pytest.raises(RuntimeError, match='response lost'):
+        driver.begin(resource, observed, state.context, 'Do the declared task.')
+    api.fail = False
+    api.tasks[0]['status'] = 'completed'
+    recovered = lifecycle(tmp_path, api)
+    task = recovered.drivers[resource.type].begin(resource, observed, recovered.context, 'Do the declared task.')
+    assert task == {'id': '1', 'status': 'completed'}
+    assert len(api.tasks) == 1
+    assert not list(tmp_path.iterdir())
