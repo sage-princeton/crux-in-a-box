@@ -24,10 +24,11 @@ from agents import (
     Runner,
     set_tracing_disabled,
 )
-from agents.exceptions import MaxTurnsExceeded
+from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.items import ModelResponse
 from agents.mcp import MCPServerStdio
 from agents.models.interface import Model
+from agents.retry import ModelRetryBackoffSettings, ModelRetrySettings, RetryPolicyContext, retry_policies
 from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool import ToolOutputImage, ToolOutputText
@@ -91,6 +92,9 @@ class ModelProviderOptions(Options):
 
 class OpenAIAgentsOptions(Options):
     max_turns: CountLimit = 50
+    # Retries per model call for transient provider failures, backing off from 2s to 60s (about four minutes for 8).
+    # A failure that outlasts them ends the iteration; 0 also turns off the HTTP client's own retries.
+    model_retries: int = Field(8, ge=0)
     model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
     background_coding: bool = False
     steering: SteeringOptions | None = None
@@ -361,7 +365,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
         model = env.get("CRUX_MODEL")
         if not model:
             raise InvalidDropInError("CRUX_MODEL is not set")
-        provider_options = (options or OpenAIAgentsOptions()).model_provider
+        options = options or OpenAIAgentsOptions()
+        provider_options = options.model_provider
         async with AsyncExitStack() as stack:
             if provider_options.type == "openai-compatible":
                 client = await stack.enter_async_context(_validate_and_get_client(provider_options, env))
@@ -372,7 +377,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 name="probe",
                 instructions="Reply with exactly the text you are asked for.",
                 model=model,
-                model_settings=_model_settings(provider_options, env),
+                model_settings=_model_settings(provider_options, env, options.model_retries),
             )
             return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
 
@@ -384,7 +389,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         return self.provider.get_model(model) if self.provider else model
 
     def _settings(self) -> ModelSettings:
-        return _model_settings(self.options.model_provider, self.assembly.context.env)
+        return _model_settings(self.options.model_provider, self.assembly.context.env, self.options.model_retries)
 
     def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
         return self.assembly.instructions(agent.name)
@@ -574,8 +579,34 @@ def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, st
     return AsyncOpenAI(api_key=api_key, base_url=str(options.base_url))
 
 
-def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
-    settings = ModelSettings(reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"))
+def _provider_ended_response(context: RetryPolicyContext) -> bool:
+    """A response the provider cut short for its own reasons, such as a content-filter cutoff or a failed status. The
+    SDK reports these with one message prefix. Running out of output tokens would only repeat, so it isn't retried."""
+    message = str(context.error)
+    return (isinstance(context.error, ModelBehaviorError)
+            and message.startswith("Responses stream ended with terminal event")
+            and "max_output_tokens" not in message)
+
+
+# A provider outage, overload or filter cutoff should cost a wait, not the run: an exception here cancels the
+# iteration's running coding agents.
+TRANSIENT_FAILURES = retry_policies.any(
+    retry_policies.provider_suggested(),
+    retry_policies.retry_after(),
+    retry_policies.network_error(),
+    retry_policies.http_status([408, 409, 429, 500, 502, 503, 504]),
+    _provider_ended_response,
+)
+
+
+def _model_settings(options: ModelProviderOptions, env: Mapping[str, str], retries: int) -> ModelSettings:
+    settings = ModelSettings(
+        reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"),
+        retry=ModelRetrySettings(
+            max_retries=retries, policy=TRANSIENT_FAILURES,
+            backoff=ModelRetryBackoffSettings(initial_delay=2, max_delay=60, multiplier=2, jitter=True),
+        ),
+    )
     if options.type == "openai-compatible":
         # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
         settings.preserve_raw_usage = True
