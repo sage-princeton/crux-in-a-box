@@ -21,7 +21,15 @@ api_key_env = "OPENROUTER_API_KEY"
 
 
 class SDKConfigTests(unittest.TestCase):
+    """Verify provider configuration, credentials and selected coding-agent probes."""
     def inspect(self, text, provider="direct", success=True, model="google/gemini-4-argon"):
+        """Inspect SDK provider TOML and assert its validation result.
+
+        :param text: Input TOML document.
+        :param provider: Provider selection supplied to the compatibility reader.
+        :param success: Whether valid parsed output is expected.
+        :param model: Model name used for provider compatibility checks.
+        :returns: Parsed JSON output or expected failure diagnostics."""
         result = subprocess.run(
             [sys.executable, str(DIRECTORY / "sdk_config.py"), "--model-provider", provider, "--model", model],
             input=text, capture_output=True, text=True, check=False,
@@ -30,9 +38,11 @@ class SDKConfigTests(unittest.TestCase):
         return json.loads(result.stdout) if success else result.stderr
 
     def test_default_provider_needs_only_openai_and_no_coding_probe(self):
+        """Verify default provider needs only openai and no coding probe."""
         self.assertEqual(self.inspect(DIRECT), {"api_key_env": "OPENAI_API_KEY", "coding_agent": None})
 
     def test_compatible_provider_selects_its_credential_with_either_legacy_setting(self):
+        """Verify compatible provider selects its credential with either legacy setting."""
         for provider in ("direct", "openrouter"):
             with self.subTest(provider=provider):
                 self.assertEqual(self.inspect(COMPATIBLE, provider)["api_key_env"], "OPENROUTER_API_KEY")
@@ -41,11 +51,13 @@ class SDKConfigTests(unittest.TestCase):
         self.assertEqual(self.inspect(custom)["api_key_env"], "MODEL_GATEWAY_KEY")
 
     def test_openrouter_setting_cannot_hide_missing_or_mismatched_drop_in_provider(self):
+        """Verify openrouter setting cannot hide missing or mismatched drop in provider."""
         for config in (DIRECT, COMPATIBLE.replace("openrouter.ai", "models.example.test")):
             with self.subTest(config=config):
                 self.assertIn("MODEL_PROVIDER=openrouter", self.inspect(config, "openrouter", success=False))
 
     def test_invalid_provider_settings_fail_without_echoing_values(self):
+        """Verify invalid provider settings fail without echoing values."""
         cases = [
             COMPATIBLE.replace('api = "responses"', 'api = "invalid"'),
             COMPATIBLE.replace('api = "responses"', ''),
@@ -63,10 +75,12 @@ class SDKConfigTests(unittest.TestCase):
                 self.assertNotIn("fixture-private", self.inspect(config, success=False))
 
     def test_only_declared_coding_harnesses_are_probed(self):
+        """Verify only declared coding harnesses are probed."""
         config = DIRECT + '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
         self.assertEqual(self.inspect(config)["coding_agent"], "codex")
 
     def test_codex_inherits_responses_endpoint_and_requires_presets_for_routing(self):
+        """Verify codex inherits responses endpoint and requires presets for routing."""
         worker = '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
         routing = '\n[runtime.model_provider.extra_body.provider]\nonly = ["google-vertex"]\nallow_fallbacks = false\n'
         self.assertEqual(self.inspect(COMPATIBLE + worker), {
@@ -81,11 +95,13 @@ class SDKConfigTests(unittest.TestCase):
         self.assertIsNone(self.inspect(COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"'))["coding_agent"])
 
     def test_compatible_provider_rejects_openai_only_compaction(self):
+        """Verify compatible provider rejects openai only compaction."""
         config = COMPATIBLE + '\n[context]\ntype = "openai_compaction"\ntrigger_items = 200\n'
         self.assertIn("trim_recent", self.inspect(config, success=False))
         self.assertEqual(self.inspect(DIRECT + '\n[context]\ntype = "openai_compaction"\n')["api_key_env"], "OPENAI_API_KEY")
 
     def test_model_probe_loads_drop_in_and_only_declared_coding_harnesses(self):
+        """Verify model probe loads drop in and only declared coding harnesses."""
         with tempfile.TemporaryDirectory() as directory:
             for coding_agent in (None, "codex"):
                 for probe_exit in (0, 1):
@@ -117,6 +133,7 @@ scaffold_probe_model
                             self.assertEqual(args[args.index("--coding-agent") + 1], coding_agent)
 
     def test_custom_selected_credential_is_not_duplicated_as_a_tool_key(self):
+        """Verify custom selected credential is not duplicated as a tool key."""
         with tempfile.TemporaryDirectory() as directory:
             secrets = Path(directory) / "secrets.json"
             secrets.write_text(json.dumps({"MODEL_GATEWAY_KEY": "fixture-provider", "GH_TOKEN": "fixture-tool",
@@ -135,18 +152,13 @@ run_api_keys_json "$2"
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), {"GH_TOKEN": "fixture-tool"})
 
-    def test_committed_config_selects_credentials_before_validation(self):
+    def test_staged_config_selects_credentials_before_validation(self):
+        """Verify staged config selects credentials before validation."""
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             (repo / "drop-in/workspace").mkdir(parents=True)
             (repo / "drop-in/workspace/AGENTS.md").write_text("context")
             (repo / "drop-in/scaffold.toml").write_text(COMPATIBLE)
-            subprocess.run(["git", "init", "-q", directory], check=True)
-            subprocess.run(["git", "-C", directory, "add", "."], check=True)
-            subprocess.run(["git", "-C", directory, "-c", "user.name=Test", "-c",
-                            "user.email=test@example.test", "commit", "-qm", "fixture"], check=True)
-            # The dirty working copy must not change what provisioning will stage.
-            (repo / "drop-in/scaffold.toml").write_text(DIRECT)
             secrets = repo / "secrets.json"
             secrets.write_text(json.dumps({"OPENROUTER_API_KEY": "fixture-router", "GH_TOKEN": "fixture-tool",
                                            "OPENAI_API_KEY": "fixture-unused"}))
@@ -158,10 +170,13 @@ cfg() { printf '%s' "${!1:-}"; }
 warn() { :; }
 die() { printf '%s\\n' "$*" >&2; exit 1; }
 load_agent_config settings
-load_drop_in_path "$2"
+source "$1/scaffolds/sdk.sh"
+SCAFFOLD_PYTHON="$4"
+DROP_IN_DIR="$2/drop-in"
+scaffold_preflight
 validate_agent_key "$3"
 jq -n --arg key "$API_KEY_NAME" --argjson extra "$(run_api_keys_json "$3")" '{key: $key, extra: $extra}'
-''', "test", str(DIRECTORY), directory, str(secrets)],
+''', "test", str(DIRECTORY), directory, str(secrets), sys.executable],
                 env={"PATH": os.environ["PATH"], "AGENT_PLATFORM": "openai-agents",
                      "OPENAI_AGENTS_MODEL": "google/gemini-4-argon", "OPENAI_AGENTS_REASONING_EFFORT": "high",
                      "DROP_IN_PATH": "drop-in", "MODEL_PROVIDER": "openrouter"},
