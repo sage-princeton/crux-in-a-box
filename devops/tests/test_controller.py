@@ -103,3 +103,34 @@ def test_controller_tags_preserve_control_role_without_run_enrollment():
     actual={t['Key']:t['Value'] for t in tags(controller.resources[0],context)}
     assert actual['CruxRole']=='control'
     assert 'MonitorWithCruxMonitor' not in actual
+
+
+def test_controller_redeploys_after_teardown_with_retained_assets(aws):
+    """Recreate controller compute while recovering retained address and data.
+
+    :param aws: Isolated Moto AWS backend with explicit profile verification.
+    """
+    from crux_devops.controller_spec import resolve
+    from crux_devops.lifecycle import Lifecycle
+    from devops.tests.test_aws import box
+
+    compute = box(aws)
+    ec2 = aws.test_session.client('ec2')
+    subnet = ec2.describe_subnets(SubnetIds=[compute.config['subnet_id']])['Subnets'][0]
+    account = {key: compute.config[key] for key in ('profile', 'region', 'account')}
+    account.update(box=compute.config, vpc_id=subnet['VpcId'],
+                   availability_zone=subnet['AvailabilityZone'], ssh_cidr='192.0.2.1/32')
+    controller = resolve({}, account)
+    first = Lifecycle(controller, aws.registry()).apply()
+    first_id = first['resources']['box']['outputs']['instance_id']
+    first_token = ec2.describe_instances(InstanceIds=[first_id])['Reservations'][0]['Instances'][0]['ClientToken']
+    Lifecycle(controller, aws.registry()).destroy()
+    second = Lifecycle(controller, aws.registry()).apply()
+    second_id = second['resources']['box']['outputs']['instance_id']
+    assert second_id != first_id
+    assert second['resources']['address']['outputs'] == first['resources']['address']['outputs']
+    assert second['resources']['data']['outputs'] == first['resources']['data']['outputs']
+    second_token = ec2.describe_instances(InstanceIds=[second_id])['Reservations'][0]['Instances'][0]['ClientToken']
+    assert second_token != first_token
+    assert Lifecycle(controller, aws.registry()).apply()['resources']['box']['outputs']['instance_id'] == second_id
+    Lifecycle(controller, aws.registry()).destroy()

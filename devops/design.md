@@ -71,7 +71,10 @@ task ID. Run status includes both gateway state and controller task status.
 
 AgentRQ has its own resource graph and lifecycle. Its data volume and address are
 retained during controller teardown, which requires confirming dependent Runs are
-idle. A healthy controller publishes its endpoint at `/crux/controller/url`; ACP
+idle. Deploying again recreates compute and recovers the retained address and data.
+Its launch token derives from the new IAM instance-profile identity, so retries
+reuse the current Box without replaying the terminated Box's creation request.
+A healthy controller publishes its endpoint at `/crux/controller/url`; ACP
 Run deployment reads it at runtime. Run teardown removes only its own workspace,
 never the controller. See the [resource contract](crux_devops/design.md).
 

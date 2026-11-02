@@ -21,6 +21,8 @@ Successful start publishes the HTTPS endpoint in SSM for ACP Run discovery.
 Teardown retains the controller's address and encrypted data volume. Preserve data
 and confirm no active Runs depend on it before teardown. Public HTTPS is authenticated
 by AgentRQ; the SSH network is restricted by account setup.
+To restore the controller afterward, repeat `deploy` and `start` with the same
+configuration; its retained address and data are reused.
 
 ## Development
 

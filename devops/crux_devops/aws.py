@@ -1,6 +1,7 @@
 """Native AWS resource drivers; shared infrastructure must be declared explicitly."""
 import re
 import time
+import uuid
 
 import boto3
 from botocore.exceptions import ClientError
@@ -218,7 +219,10 @@ class EC2:
             if error.response['Error']['Code'] == 'InvalidInstanceID.NotFound':
                 return None
             raise
-        return one([i for r in result['Reservations'] for i in r['Instances']])
+        instances = [i for r in result['Reservations'] for i in r['Instances']]
+        if not instance and getattr(context.run, 'kind', None) == 'controller':
+            instances = [i for i in instances if i['State']['Name'] != 'terminated']
+        return one(instances)
 
     def preflight(self, resource, context):
         """Validate declaration, access and live ownership before any creation.
@@ -288,10 +292,15 @@ class EC2:
                 elif instance['State']['Name'] not in ('running', 'pending'):
                     raise ValueError('Box is not startable; inspect its current state')
             else:
+                token = context.token(resource)
+                if getattr(context.run, 'kind', None) == 'controller':
+                    profile = self.aws.session(resource).client('iam').get_instance_profile(
+                        InstanceProfileName=config['instance_profile'])['InstanceProfile']
+                    token = str(uuid.uuid5(uuid.UUID(token), profile['InstanceProfileId']))
                 instance = launch(ec2,
                     ImageId=config['image_id'], InstanceType=config['instance_type'],
                     KeyName=config['key_name'], MinCount=1, MaxCount=1,
-                    ClientToken=context.token(resource),
+                    ClientToken=token,
                     NetworkInterfaces=[{'DeviceIndex': 0, 'AssociatePublicIpAddress': True,
                                         'SubnetId': config['subnet_id'], 'Groups': config['security_group_ids']}],
                     IamInstanceProfile={'Name': config['instance_profile']},
