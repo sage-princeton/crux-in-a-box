@@ -77,4 +77,3 @@ reuse the current Box without replaying the terminated Box's creation request.
 A healthy controller publishes its endpoint at `/crux/controller/url`; ACP
 Run deployment reads it at runtime. Run teardown removes only its own workspace,
 never the controller. See the [resource contract](crux_devops/design.md).
-
