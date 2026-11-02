@@ -69,7 +69,11 @@ workspace. The task's stable name is resolved through AgentRQ on each invocation
 including terminal tasks, so a lost response can be recovered without a local
 task ID. Run status includes both gateway state and controller task status.
 
-AgentRQ remains independent from Runs. ACP deployment discovers its endpoint from
-`/crux/controller/url` and manages only its own named workspace. A Run's graph never
-contains controller infrastructure. The following controller layer provides its
-native deploy/start interface.
+AgentRQ has its own resource graph and lifecycle. Its data volume and address are
+retained during controller teardown, which requires confirming dependent Runs are
+idle. Deploying again recreates compute and recovers the retained address and data.
+Its launch token derives from the new IAM instance-profile identity, so retries
+reuse the current Box without replaying the terminated Box's creation request.
+A healthy controller publishes its endpoint at `/crux/controller/url`; ACP
+Run deployment reads it at runtime. Run teardown removes only its own workspace,
+never the controller. See the [resource contract](crux_devops/design.md).
