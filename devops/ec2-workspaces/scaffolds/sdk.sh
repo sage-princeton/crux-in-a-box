@@ -15,7 +15,7 @@ scaffold_install_preflight() {
 
 scaffold_install_sandbox() {
   info "Bubblewrap and Ubuntu AppArmor sandbox prerequisites"
-  apt-get install -y -qq bubblewrap apparmor-profiles apparmor-utils >/dev/null \
+  bash "$CRUX_SOURCE_ROOT/devops/apt/install.sh" sdk \
     || die "Installing Bubblewrap/AppArmor prerequisites failed"
   if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || true)" = 1 ]; then
     local profile=/etc/apparmor.d/bwrap-userns-restrict
@@ -31,7 +31,6 @@ scaffold_install_sandbox() {
 scaffold_install() {
   scaffold_install_sandbox
   info "SDK scaffold venv at $SCAFFOLD_DIR/.venv"
-  apt-get install -y -qq python3 >/dev/null
   export UV_CACHE_DIR=/var/cache/crux-uv
   "$RUN_HOME/.local/bin/uv" venv --quiet --allow-existing --python /usr/bin/python3 "$SCAFFOLD_DIR/.venv" \
     || die "Could not create the scaffold venv"

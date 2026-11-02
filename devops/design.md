@@ -77,3 +77,17 @@ reuse the current Box without replaying the terminated Box's creation request.
 A healthy controller publishes its endpoint at `/crux/controller/url`; ACP
 Run deployment reads it at runtime. Run teardown removes only its own workspace,
 never the controller. See the [resource contract](crux_devops/design.md).
+
+## Dependency maintenance
+
+Production installation consumes the same pip, npm, Compose and Docker declarations
+that Dependabot scans. npm locks agent/adaptor versions and integrity; Python
+requirements and project metadata declare installers, validators and SDK packages.
+Controller and CI tools use pinned images. Weekly version updates are grouped by
+component; security fixes remain individual and depend on GitHub dependency graph,
+alerts and security updates being enabled for the repository.
+
+Ubuntu package manifests feed both Box installers and an isolated daily audit
+image. This covers apt packages outside Dependabot's ecosystems. The audit exports
+package and vulnerability reports; it does not silently upgrade a running research
+service. Terraform and Go proxy modules retain their native dependency manifests.

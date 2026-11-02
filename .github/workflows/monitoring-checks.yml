@@ -60,7 +60,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - run: python -m pip install -r monitoring/service/web-requirements.txt -r requirements-dev.txt 'moto[s3,ec2,ssm]>=5,<6' PyYAML==6.0.3
+      - run: python -m pip install -r monitoring/service/web-requirements.txt -r requirements-dev.txt -r monitoring/service/ci/requirements-test.txt
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -87,15 +87,16 @@ jobs:
           docker run --rm --network host --read-only --tmpfs /tmp -e DATABASE_URL crux-monitoring:check alembic upgrade head
           docker build --platform linux/amd64 -f monitoring/service/Dockerfile.proxy -t crux-proxy:check monitoring/service
           docker run --rm --read-only --network none crux-proxy:check caddy version
-      - name: Install Trivy
+      - name: Install declared trivy
         id: trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.75.0
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker build --output "type=local,dest=$RUNNER_TEMP/trivy" .github/tools/trivy
+          echo "$RUNNER_TEMP/trivy" >> "$GITHUB_PATH"
       - name: Scan Python source and configuration
         run: |
           mkdir -p "$RUNNER_TEMP/security"
-          pip install bandit==1.9.4
+          pip install -r monitoring/service/ci/requirements-security.txt
           bandit -r monitoring/service -x monitoring/service/tests --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
           bandit -r monitoring/service -x monitoring/service/tests -ll
           trivy fs --scanners misconfig,secret --skip-dirs monitoring/service/tests --skip-dirs monitoring/service/node_modules --format json --output "$RUNNER_TEMP/security/source.json" monitoring/service
@@ -125,10 +126,12 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: '1.14.8'
-          terraform_wrapper: false
+      - name: Install declared terraform
+        id: terraform
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker build --output "type=local,dest=$RUNNER_TEMP/terraform" .github/tools/terraform
+          echo "$RUNNER_TEMP/terraform" >> "$GITHUB_PATH"
       - run: terraform fmt -check
       - run: terraform init -backend=false -lockfile=readonly
       - run: terraform validate
@@ -137,7 +140,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install Checkov
-        run: pip install checkov==3.3.19
+        run: pip install -r ../../../monitoring/service/ci/requirements-infrastructure.txt
       - name: Gate Terraform security
         run: |
           mkdir -p "$RUNNER_TEMP/checkov"
