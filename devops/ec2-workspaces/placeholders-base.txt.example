@@ -66,7 +66,8 @@ CLAUDE_ACP_VERSION=0.77.0
 # The drop-in directory staged at /srv/crux-run/run-harness, as a repo-relative
 # path. Default: run-harness. openai-agents needs one with a scaffold.toml,
 # e.g. scaffolds/sdk/run-harness/web-cms-product-change.
-# DROP_IN_PATH=scaffolds/codex/run-harness
+# ACP run-harness directories are placeholders; supply your own task inputs.
+# DROP_IN_PATH=path/to/your/run-inputs
 # Optional: commit provision.json alongside the drop-in's scaffold.toml to
 # declare run-specific OS packages, pinned CLI downloads and command checks.
 # See provisioning.md. No declaration means no additional software.

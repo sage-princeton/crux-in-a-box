@@ -1,3 +1,14 @@
-# Compatibility commands
+# Compatibility paths
 
-Active deployment lives in [devops/](../devops/README.md). The shell entry points here forward to the new locations during the layout migration.
+`monitoring/terraform` links to the active Terraform configuration so trusted
+checks on the default branch can evaluate layout changes.
+
+## Usage
+
+Use [monitoring/service/terraform](../monitoring/service/terraform) for deployment
+work and the [DevOps runbook](../devops/README.md) for provisioning commands.
+
+## Development
+
+Edit and validate the canonical files using the
+[monitoring release checks](../monitoring/service/ci/README.md#development).
