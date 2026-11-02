@@ -33,5 +33,5 @@ Boxes. SDK Runs do not require it. Auxiliary resources can outlive a Run, so the
 ownership and deletion policy must be explicit rather than inferred from a Box name.
 
 OpenClaw and its obsolete export/cost tooling are deleted. Git history is the
-recovery mechanism. Temporary forwarding entry points support the directory move;
-the Terraform path link supports trusted default-branch PR planning.
+recovery mechanism. Deployment commands live only in their owning directories. The temporary
+Terraform path link supports trusted default-branch PR planning.

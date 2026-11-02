@@ -1,3 +1,5 @@
-# Compatibility commands
+# Terraform automation compatibility
 
-Active deployment lives in [devops/](../devops/README.md). The shell entry points here forward to the new locations during the layout migration.
+`monitoring/terraform` links to the active monitoring Terraform directory so
+trusted default-branch planning can inspect this stack. Use the
+[monitoring runbook](../monitoring/service/README.md); no deployment commands live here.
