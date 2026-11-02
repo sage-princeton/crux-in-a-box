@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[3]
 @pytest.mark.parametrize("restriction", ["1", "0", None])
 @pytest.mark.parametrize("existing", [False, True])
 def test_install_loads_bubblewrap_profile_only_when_required(tmp_path, restriction, existing):
+    """Verify install loads bubblewrap profile only when required."""
     source = (ROOT / "devops/ec2-workspaces/scaffolds/sdk.sh").read_text()
     for path in ("/proc/sys/kernel", "/usr/share/apparmor", "/etc/apparmor.d"):
         source = source.replace(path, str(tmp_path / path.lstrip("/")))
@@ -68,6 +69,7 @@ scaffold_install_sandbox
 
 @pytest.mark.parametrize("probe_exit", [0, 1])
 def test_sandbox_probe_uses_service_environment_and_propagates_failures(tmp_path, probe_exit):
+    """Verify sandbox probe uses service environment and propagates failures."""
     commands = tmp_path / "commands.json"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
