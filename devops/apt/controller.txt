@@ -1,0 +1,9 @@
+docker.io
+docker-compose-v2
+jq
+curl
+ca-certificates
+debian-keyring
+debian-archive-keyring
+apt-transport-https
+gnupg

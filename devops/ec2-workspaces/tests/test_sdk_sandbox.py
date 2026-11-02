@@ -13,11 +13,17 @@ ROOT = Path(__file__).resolve().parents[3]
 @pytest.mark.parametrize("restriction", ["1", "0", None])
 @pytest.mark.parametrize("existing", [False, True])
 def test_install_loads_bubblewrap_profile_only_when_required(tmp_path, restriction, existing):
+    """Verify install loads bubblewrap profile only when required."""
     source = (ROOT / "devops/ec2-workspaces/scaffolds/sdk.sh").read_text()
     for path in ("/proc/sys/kernel", "/usr/share/apparmor", "/etc/apparmor.d"):
         source = source.replace(path, str(tmp_path / path.lstrip("/")))
     module = tmp_path / "sdk.sh"
     module.write_text(source)
+    binaries = tmp_path / "bin"
+    binaries.mkdir()
+    apt = binaries / "apt-get"
+    apt.write_text("#!/bin/sh\nprintf 'packages:%s\\n' \"$*\" >&2\n")
+    apt.chmod(0o755)
     setting = tmp_path / "proc/sys/kernel/apparmor_restrict_unprivileged_userns"
     setting.parent.mkdir(parents=True)
     if restriction is not None:
@@ -39,7 +45,6 @@ source "$1"
 info() { :; }
 ok() { :; }
 die() { echo "$*" >&2; exit 1; }
-apt-get() { printf 'packages:%s\\n' "$*" >&2; }
 apparmor_parser() { printf 'load:%s\\n' "$*"; }
 scaffold_install_sandbox
 """,
@@ -49,6 +54,7 @@ scaffold_install_sandbox
         capture_output=True,
         text=True,
         check=False,
+        env=dict(os.environ, CRUX_SOURCE_ROOT=str(ROOT), PATH=str(binaries) + os.pathsep + os.environ['PATH']),
     )
     assert result.returncode == 0, result.stderr
     assert "bubblewrap" in result.stderr and "apparmor-profiles" in result.stderr
@@ -63,6 +69,7 @@ scaffold_install_sandbox
 
 @pytest.mark.parametrize("probe_exit", [0, 1])
 def test_sandbox_probe_uses_service_environment_and_propagates_failures(tmp_path, probe_exit):
+    """Verify sandbox probe uses service environment and propagates failures."""
     commands = tmp_path / "commands.json"
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()

@@ -1,0 +1,2 @@
+moto[s3,ec2,ssm]==5.2.4
+PyYAML==6.0.3

@@ -60,3 +60,7 @@ Install `devops/requirements-test.txt`, then run `python -m pytest devops/tests`
 and `python -m ruff check devops` from the repository root. Validate the account
 template with the [account checks](account/README.md#development) and exercise
 [Box adapters](ec2-workspaces/README.md#development) in ciab-devenv.
+
+Dependency updates arrive as grouped weekly version PRs and individual security
+fixes. Review them with the same checks and Box acceptance workflow as code changes.
+The [Ubuntu audit](apt/README.md) covers operating-system packages.
