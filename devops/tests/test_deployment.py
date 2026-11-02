@@ -13,7 +13,7 @@ def configuration():
 
 
 def account():
-    """Return generated installation settings without cloud access."""
+    """Return an installation-discovery fixture without cloud access."""
     return {'profile':'test','region':'us-east-1','account':'123456789012',
             'box':{'image_id':'ami-test','subnet_id':'subnet-test','security_group_ids':['sg-test'],
                    'key_name':'key','instance_profile':'profile'}}

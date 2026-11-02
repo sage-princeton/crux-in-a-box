@@ -14,7 +14,7 @@ from .spec import fields
 class APIError(RuntimeError):
     """Represent an AgentRQ HTTP failure without retaining response credentials."""
     def __init__(self, code):
-        """Bind collaborators and configuration for subsequent operations.
+        """Store the HTTP status and build a credential-free failure message.
 
         :param code: HTTP response status.
         """
@@ -25,7 +25,7 @@ class APIError(RuntimeError):
 class Client:
     """Provide authenticated, bounded AgentRQ JSON requests."""
     def __init__(self, *, url, token, ssl_context=None):
-        """Bind collaborators and configuration for subsequent operations.
+        """Validate the HTTPS origin and establish an authenticated cookie session.
 
         :param url: Controller HTTPS origin.
         :param token: Private root login token.
@@ -44,7 +44,7 @@ class Client:
     def request(self, path, body=None, method=None):
         """Issue a bounded JSON HTTP request and return the decoded response.
 
-        :param path: Selected filesystem path.
+        :param path: AgentRQ API-relative URL path.
         :param body: Optional JSON request payload.
         :param method: Optional explicit HTTP method.
         """
