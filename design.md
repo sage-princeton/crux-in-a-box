@@ -25,3 +25,6 @@ Boxes. SDK Runs do not require it. Auxiliary resources can outlive a Run, so the
 ownership and deletion policy must be explicit rather than inferred from a Box name.
 
 The temporary Terraform path link supports trusted default-branch PR planning.
+
+The [DevOps design](devops/design.md) documents the four-phase Invoker, single Run
+configuration and separate explicit start.

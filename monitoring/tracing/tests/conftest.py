@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from collector import Collector
-from pins import HERE, PLACEHOLDERS, expectations_file, fixture_dir, read_pins
+from pins import HERE, MANIFEST, expectations_file, fixture_dir, read_pins
 from plugin_runner import fetch_plugin, run_stop_hook
 
 UPDATE_GUIDE = HERE / "README.md"
@@ -28,7 +28,7 @@ def pytest_sessionstart(session):
     if not fixtures.is_dir():
         have = sorted(p.name for p in (HERE / "fixtures").iterdir() if p.is_dir())
         problems += [
-            (f"CODEX PIN CHANGED: {PLACEHOLDERS.name} pins CODEX_VERSION={pins['CODEX_VERSION']} and "
+            (f"CODEX PIN CHANGED: {MANIFEST.name} pins CODEX_VERSION={pins['CODEX_VERSION']} and "
              f"CODEX_ACP_VERSION={pins['CODEX_ACP_VERSION']},"),
             f"but there are no rollout fixtures for that pair (expected {fixtures.relative_to(HERE)}/).",
             f"Fixtures exist for: {', '.join(have) or 'nothing'}.",
@@ -38,7 +38,7 @@ def pytest_sessionstart(session):
     if not expectations.is_file():
         have = sorted(p.name for p in (HERE / "expectations").glob("plugin-*.json"))
         problems += [
-            f"PLUGIN PIN CHANGED: {PLACEHOLDERS.name} pins TRACING_PLUGIN_VERSION={pins['TRACING_PLUGIN_VERSION']},",
+            f"PLUGIN PIN CHANGED: {MANIFEST.name} pins TRACING_PLUGIN_VERSION={pins['TRACING_PLUGIN_VERSION']},",
             f"but there are no observability expectations for it (expected {expectations.relative_to(HERE)}).",
             f"Expectations exist for: {', '.join(have) or 'nothing'}.",
             "Re-derive what the new plugin version exports from the fixtures and write them down.",

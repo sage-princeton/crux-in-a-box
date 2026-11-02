@@ -1,7 +1,7 @@
-# Deployment contracts
+# Invoker library
 
-Run configuration and resource lifecycle interfaces used by CRUX Invokers. Requires
-Python 3.12 and the repository's test dependencies.
+Python contracts, resource drivers, bundles and Box operations behind the operator
+CLI. Requires Python 3.12 and the parent Python project.
 
 Import `RunConfiguration` to validate operator inputs and `Lifecycle` to reconcile
 resource drivers. The [DevOps runbook](../README.md) covers operator commands;

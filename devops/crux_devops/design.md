@@ -1,26 +1,30 @@
-# Deployment contracts
+# Resource reconciliation
 
-The operator Run document owns its name, Scaffold, input path, model and required
-effort. Optional provider, differing Box size and auxiliary resources are declared
-once there. Installation-wide AWS scope belongs to the Invoker, outside this file.
-The resolved `Run` graph is transient, not a second configuration file.
+`RunConfiguration` is the operator's configuration. Resolution supplies stable
+installation values from AWS and creates a transient `Run` graph. A resource has
+an ID, registered type, provider configuration, dependencies, ownership and teardown
+policy. External resources must be retained. Duplicate IDs, unknown fields,
+missing dependencies and cycles fail before mutation.
 
-```mermaid
-flowchart LR
-    Run[Run definition] --> Check[1. Status checks]
-    Check --> Create[2. Create Box]
-    Create --> Configure[3. Configure Scaffold]
-    Configure -->|Explicit start| Begin[4. Begin Run]
-```
+`Lifecycle` receives the graph and a registry of drivers. `observe` reads live
+provider state; `preflight` checks configuration/access without mutation; `ensure`
+reconciles a resource using freshly observed dependency outputs; `destroy` deletes
+only the currently owned resource. All checks precede creation, and deletion walks
+the graph in reverse. No lifecycle method reads or writes local state.
 
-`Lifecycle` checks all drivers before mutation, reconciles dependencies in order,
-and tears them down in reverse. Resources declare managed/external ownership and
-delete/retain policy. External resources must be retained. Drivers observe live
-state, recover named/tagged resources after interruption, and verify ownership
-before mutation. Context tokens derive from account, region, deployment kind, Run
-name and resource ID. No lifecycle method reads or writes local receipts.
+The stable context identity includes account, region, deployment kind and Run name.
+Resource tokens derive from that identity and the resource ID. AWS resources carry
+ownership tags and native client tokens; AgentRQ workspaces carry an ownership
+marker. Discovery includes resources created before an interrupted response.
+A remote ownership change prevents mutation, protecting auxiliary-resource handoffs.
 
-Auxiliary assets and access grants can have different lifetimes: a grant depends
-on the Box and asset, is deleted first, and may leave the asset retained. Future
-drivers must protect successor ownership during handoffs. Controller resources
-can use the same contract while retaining an independent lifecycle.
+EC2, security groups, IAM profiles, public keys, Elastic IPs, EBS volumes and their
+attachments have separate drivers. Attachments depend on both endpoints and refuse
+to steal another Box's resource. Shared installation resources stay outside the Run
+graph. SDK Runs have no AgentRQ workspace; ACP Runs have one managed workspace.
+The controller uses the same resource contract without a research Scaffold.
+
+Native SDK calls require an explicit AWS profile and verify the authenticated
+account. There is no default-profile fallback. Secrets are never resource outputs.
+The Box's installed configuration and systemd state establish whether a Run is
+ready or active; local logs and temporary bundles have no authority over lifecycle.

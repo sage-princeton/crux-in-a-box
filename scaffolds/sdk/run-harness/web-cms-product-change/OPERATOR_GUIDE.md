@@ -40,8 +40,8 @@ It is deliberately underspecified: the demo expects the agent to ask before it b
 
 To run the demo on an EC2 run box instead of locally:
 
-1. In `devops/ec2-workspaces/placeholders-base.txt`, set `AGENT_PLATFORM=openai-agents`, `OPENAI_AGENTS_MODEL`, `OPENAI_AGENTS_REASONING_EFFORT` and `DROP_IN_PATH=scaffolds/sdk/run-harness/web-cms-product-change`.
-2. Put `OPENAI_API_KEY` and `SLACK_BOT_TOKEN` in the base secrets, then run `./make-new-workspace.sh <slug>`. Provisioning ends with `SCAFFOLD-PROBE ok: openai-agents, codex`.
+1. Follow the [Box runbook](../../../../devops/ec2-workspaces/README.md) with `scaffold.type=sdk`, `platform=openai-agents`, your model/effort and `drop_in=scaffolds/sdk/run-harness/web-cms-product-change`.
+2. Put `OPENAI_API_KEY` and `SLACK_BOT_TOKEN` in the private Run secrets and run `crux provision` with that Run JSON and a private state path. Provisioning ends with `SCAFFOLD-PROBE ok: openai-agents, codex`.
 3. On the box, resolve the placeholders and check the drop-in:
    ```bash
    cd /srv/crux-run/run-harness

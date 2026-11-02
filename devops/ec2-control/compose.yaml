@@ -1,0 +1,19 @@
+{
+  "services": {
+    "agentrq": {
+      "image": "agentrq/agentrq:0.13.4@sha256:da4dd7cd017d15a1bceb158bceb238856c638aea826fc2121b530a26b39c2736",
+      "container_name": "agentrq",
+      "env_file": [
+        "agentrq.env"
+      ],
+      "ports": [
+        "127.0.0.1:${AGENTRQ_PORT:-2026}:2026",
+        "${PRIVATE_IP:?controller private IP required}:${AGENTRQ_PORT:-2026}:2026"
+      ],
+      "volumes": [
+        "/srv/agentrq/_storage:/_storage",
+        "/srv/agentrq/_certs:/_certs"
+      ]
+    }
+  }
+}

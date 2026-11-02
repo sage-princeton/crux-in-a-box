@@ -30,7 +30,7 @@ jobs:
           shellcheck --version
       - name: Bash syntax
         run: |
-          for script in devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh; do
+          for script in devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh devops/box/*.sh devops/ec2-control/*.sh; do
             bash -n "$script"
           done
       - name: Invoker contracts and resource lifecycle
@@ -40,7 +40,7 @@ jobs:
           cfn-lint devops/account/template.yaml
       - name: ShellCheck
         # SSH commands intentionally expand locally; quoted tildes are remote paths.
-        run: shellcheck -x -e SC2029,SC2088 devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh
+        run: shellcheck -x -e SC2029,SC2088 devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh devops/box/*.sh devops/ec2-control/*.sh
       - name: SDK provider provisioning tests
         run: python3 -m unittest discover -s devops/ec2-workspaces -p 'test_*.py'
       - name: Changed-file whitespace
