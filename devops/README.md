@@ -2,7 +2,8 @@
 
 Prepare an AWS account and deploy isolated SDK, Codex or Claude Runs. Requires
 Python 3.12, OpenSSH, an authenticated explicit AWS profile with a region, and an
-operator SSH key (`~/.ssh/id_ed25519`, or pass `--ssh-key`). Keep secrets outside source.
+operator SSH key (`~/.ssh/id_ed25519`, or pass `--ssh-key`). Keep secrets and private
+keys outside both source and the Run input directory.
 
 ## Usage
 

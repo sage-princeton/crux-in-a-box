@@ -49,3 +49,35 @@ def test_check_failure_prevents_creation():
         Deployment(lifecycle,invoker).deploy({}, {})
     lifecycle.apply.assert_not_called()
     invoker.configure.assert_not_called()
+
+
+@pytest.mark.parametrize('credential', ['secrets', 'ssh_key'])
+def test_private_credentials_cannot_be_bundled_as_task_inputs(tmp_path, monkeypatch, credential):
+    """Reject credential files under task inputs before opening an AWS session.
+
+    :param tmp_path: Isolated Run configuration and input directory.
+    :param monkeypatch: Pytest replacement of the AWS session factory.
+    :param credential: CLI credential path placed inside the bundle input tree.
+    """
+    import json
+    from argparse import Namespace
+
+    from devops import crux
+
+    inputs = tmp_path / 'inputs'
+    inputs.mkdir()
+    secret = tmp_path / 'credentials.json'
+    secret.write_text('{"OPENAI_API_KEY":"fixture"}')
+    run_file = tmp_path / 'run.json'
+    run_file.write_text(json.dumps({'name': 'example', 'scaffold': 'sdk',
+        'inputs': 'inputs', 'model': 'test', 'effort': 'low'}))
+    args = Namespace(run=run_file, command='deploy', secrets=secret,
+                     ssh_key=tmp_path/'key', profile='explicit')
+    nested = inputs / 'credential-file'
+    nested.write_text(secret.read_text())
+    setattr(args, credential, nested)
+    session = Mock(side_effect=AssertionError('AWS must not be contacted'))
+    monkeypatch.setattr(crux.boto3, 'Session', session)
+    with pytest.raises(ValueError, match='outside.*inputs'):
+        crux.execute(args)
+    session.assert_not_called()

@@ -36,11 +36,11 @@ def execute(args):
     values = {}
     if args.secrets:
         secret_path = args.secrets.expanduser().resolve()
-        if secret_path.is_relative_to(SOURCE):
-            raise ValueError('Keep secrets outside source')
+        if secret_path.is_relative_to(SOURCE) or secret_path.is_relative_to(config.inputs):
+            raise ValueError('Keep secrets outside source and Run inputs')
         values = json.loads(secret_path.read_text())
-    if key.is_relative_to(SOURCE):
-        raise ValueError('Keep SSH private keys outside source')
+    if key.is_relative_to(SOURCE) or key.is_relative_to(config.inputs):
+        raise ValueError('Keep SSH private keys outside source and Run inputs')
     session = boto3.Session(profile_name=args.profile)
     if not session.region_name:
         raise ValueError('Configure a region for the explicitly selected AWS profile')
