@@ -294,7 +294,7 @@ For an `openai-compatible` provider at `openrouter.ai` and an `anthropic/` model
 
 Markers are applied after context selection on copies of the request items/content blocks; never mutate session or context-strategy items. The request-only instruction message and dynamic snapshots are never saved to the session or compaction; legacy detection accepts both string and typed-text content. Signed reasoning, tool-call IDs and non-text content are preserved. Empty text cannot be a breakpoint. If an extension supplies any explicit `prompt_cache_breakpoint`, its placement takes precedence and the runtime adds no markers, avoiding Anthropic's four-breakpoint limit. Isolated judges use a cache-only input filter, without context selection or run metadata. Probes and coding-agent SDKs are unaffected. Other models/endpoints receive no automatic markers. Top-level automatic `cache_control` is unnecessary for this layout and can write the volatile tail on every request.
 
-The [Google Argon smoke test drop-in](../examples/google-argon-smoke-test/scaffold.toml) configures OpenRouter with a Vertex-only route. The operator must separately configure Vertex BYOK and disable shared-capacity fallback on that account, then verify the actual response's billing/provider evidence.
+The [Google Argon smoke test drop-in](../run-harness/google-argon-smoke-test/scaffold.toml) configures OpenRouter with a Vertex-only route. The operator must separately configure Vertex BYOK and disable shared-capacity fallback on that account, then verify the actual response's billing/provider evidence.
 
 ### Optional background coding
 
