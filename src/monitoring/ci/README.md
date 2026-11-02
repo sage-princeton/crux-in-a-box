@@ -42,14 +42,17 @@ The runtime role can read inventory, fetch its configuration and RDS-managed
 credentials, access private evidence, and invoke the dedicated workspace-copy
 SSM document. Its upload role grants only workspace writes, narrowed by a session
 policy to one snapshot object. Run hosts need SSM management; the existing
-roles listed in `workspace_roles` receive `workspace-agent-policy.json`. This
-grants only agent heartbeat and message channels, without additional parameter
-reads. It includes the shared role for new runs and the current pilot's dedicated
-role.
+shared roles listed in `workspace_roles` receive `workspace-agent-policy.json`.
+This grants only agent heartbeat and message channels, without additional
+parameter reads. The list contains `crux-system-role`; do not add per-workspace
+roles. Dedicated workspace roles must receive these permissions from their own
+provisioning lifecycle so retiring a workspace cannot break monitoring deployment.
 
 PR plans use the separate read-only `crux-monitoring-plan` role and read-only
 cross-account Terraform state role. `plan-policy.json` grants the current RDS,
-SSM, EC2, IAM, ECR and S3 read operations and is managed by Terraform. The plan
+SSM, EC2, IAM, ECR and S3 read operations and is managed by Terraform. Its IAM
+scope includes monitoring's own roles and shared workspace roles, not individual
+runs. These lists configure permissions, not fleet discovery. The plan
 trust policy permits the main ref and the trusted `Monitor Terraform plan`
 workflow; deployment refreshes it to remove the retired bootstrap branch.
 Terraform's deployment backend keeps its existing cross-account state role.
