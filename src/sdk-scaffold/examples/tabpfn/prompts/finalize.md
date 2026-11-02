@@ -3,9 +3,18 @@ FINALIZATION_REASON.json. A resource-reserve transition is not an acceptance.
 
 Harvest/checkpoint work in flight, retrieve results, and terminate this run's
 RunPod pods after copying their artifacts. Inspect running processes; stop only
-this run's experiments. Improve the abstract, introduction, Figure 1 and structure
-with a cold-reader pass. Inspect PDF pages and figures visually. Keep the main body
-at most nine pages and the plain-text abstract at most 200 words. Rebuild the PDF.
+this run's experiments.
+
+This is a time to make sure that a human reviewer can clearly understand your
+paper. Ask a subagent to try to read the paper through with the explicit goal of
+identifying jargon or findings that are most likely to be confusing to a human
+reviewer. Take enormous care with respect to the abstract, introduction, and
+figures throughout the text — these are the easiest way for a reviewer to take
+issue with the work. You should aim to have at least both a diagram of the setup
+and a main figure in the text, but should probably aim for more than this.
+
+Inspect PDF pages and figures visually. Keep the main body at most nine pages and
+the plain-text abstract at most 200 words. Rebuild the PDF.
 
 Ship README.md with setup, licenses/data provenance, limitations and one-command
 headline reproduction via reproduce.sh. Actually rerun it and save the command,

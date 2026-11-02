@@ -8,10 +8,10 @@ cap is configured. Allocate resources in PLAN.md and revise with evidence.
 The scaffold reports measurements and freshness; unknown spend is not zero.
 
 Explore distinct mechanisms before choosing one. Use recognized datasets,
-appropriate baselines, multiple seeds/conditions and explicit uncertainty. A
-negative claim needs evidence commensurate with its scope. Read the closest
-prior work in full and state the contribution over it in one sentence. Prefer
-new evidence to defensive prose when a reviewer identifies a real flaw.
+appropriate baselines, multiple seeds/conditions and explicit uncertainty. Strive
+to find the most compelling positive finding supported by the evidence. Read the
+closest prior work in full and state the contribution over it in one sentence.
+Prefer new evidence to defensive prose when a reviewer identifies a real flaw.
 
 Keep PLAN.md as a concise current summary (aim below 6,000 characters), replacing
 stale state rather than appending history. Include results and artifact paths,
@@ -20,9 +20,12 @@ addressed, deferred or rejected with reasons. Cite REVIEW_STATUS.json and the
 archived review for full feedback; do not copy either wholesale into PLAN.md.
 
 Keep an append-only LOG.md of consequential decisions, results and dead ends with
-artifact paths. Initialize a local git repository and commit useful increments;
-no remote is provisioned. Pin experimental package versions, dataset identifiers,
-splits, seeds and checkpoint hashes. The paper's numbers must trace to files.
+artifact paths. The PI keeps a local git repository and commits useful increments
+after checking delegated results; no remote is provisioned. All agents share one
+working tree, so assistants and workers use git read-only (status, diff, log,
+blame) and never stage, commit, switch branches, stash, reset or clean unless a
+brief says so. Pin experimental package versions, dataset identifiers, splits,
+seeds and checkpoint hashes. The paper's numbers must trace to files.
 Spot-check delegated results; never invent experiments, citations or reviews.
 
 Build paper/paper.tex with `cd paper && latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex`.

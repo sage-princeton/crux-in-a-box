@@ -3,3 +3,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .state/
+# Generated locally by examples/tabpfn/render_prompts.py for reading and editing; not committed.
+examples/tabpfn/PROMPTS.md

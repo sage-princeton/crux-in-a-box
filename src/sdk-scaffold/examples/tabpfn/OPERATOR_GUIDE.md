@@ -20,6 +20,15 @@ lags can cause overshoot; this is not a provider billing guarantee. Use dedicate
 run credentials/accounts and provider-side controls when an invoice ceiling is
 required. A missing/stale cost measurement remains explicitly unknown.
 
+`render_prompts.py` writes `PROMPTS.md`: the drop-in's prompt text, one block
+per file, then the setup section the scaffold generates, for reading and rewriting
+(for example in Google Docs). The file is not committed; generate a current copy
+from `src/sdk-scaffold`:
+
+```bash
+.venv/bin/python examples/tabpfn/render_prompts.py
+```
+
 ## Dependencies and deployment
 
 Use a worktree containing this committed change: production stages its `HEAD`.

@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import importlib.util
 import json
 import shutil
 import sys
@@ -231,3 +232,10 @@ def test_final_gate_preserves_reject_and_requires_current_evidence(scaffold):
     assert json.loads(workspace.read_file("RUN_OUTCOME.json"))["accepted"] is False
     workspace.write_file("evidence/result.txt", "changed")
     assert not asyncio.run(gate.check(ctx)).passed
+
+
+def test_render_prompts_still_renders_the_drop_in():
+    spec = importlib.util.spec_from_file_location("tabpfn_render_prompts", EXAMPLE / "render_prompts.py")
+    render_prompts = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(render_prompts)
+    assert render_prompts.render().startswith("# TabPFN run: prompts")
