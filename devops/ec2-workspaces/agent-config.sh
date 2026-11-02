@@ -156,4 +156,3 @@ load_sdk_config() {
     || die "Fix the SDK provider configuration before provisioning."
   API_KEY_NAME="$(printf '%s' "$SDK_CONFIG_JSON" | jq -r '.api_key_env')"
 }
-

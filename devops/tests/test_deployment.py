@@ -49,5 +49,3 @@ def test_check_failure_prevents_creation():
         Deployment(lifecycle,invoker).deploy({}, {})
     lifecycle.apply.assert_not_called()
     invoker.configure.assert_not_called()
-
-
