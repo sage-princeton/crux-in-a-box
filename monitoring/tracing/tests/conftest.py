@@ -16,6 +16,10 @@ UPDATE_GUIDE = HERE / "README.md"
 
 
 def _banner(lines: list[str]) -> str:
+    """Format diagnostic lines with the fixture update guide.
+
+    :param lines: Problems to display.
+    :returns: Human-readable failure banner."""
     bar = "=" * 78
     return "\n".join([bar, *lines, f"See {UPDATE_GUIDE.relative_to(HERE.parents[1])} for the update steps.", bar])
 
@@ -49,16 +53,19 @@ def pytest_sessionstart(session):
 
 @pytest.fixture(scope="session")
 def pins() -> dict[str, str]:
+    """Return installed dependency pins for this test session."""
     return read_pins()
 
 
 @pytest.fixture(scope="session")
 def manifest(pins) -> dict:
+    """Return the rollout fixture manifest selected by the supplied version pins."""
     return json.loads((fixture_dir(pins) / "manifest.json").read_text())
 
 
 @pytest.fixture(scope="session")
 def rollouts(pins):
+    """Load and return the scenario module selected by the supplied version pins."""
     path = fixture_dir(pins) / "rollouts.py"
     spec = importlib.util.spec_from_file_location("codex_rollouts", path)
     module = importlib.util.module_from_spec(spec)
@@ -69,6 +76,7 @@ def rollouts(pins):
 
 @pytest.fixture(scope="session")
 def expect(pins) -> dict:
+    """Return expected observations for the supplied tracing plugin version."""
     return json.loads(expectations_file(pins).read_text())
 
 
@@ -86,6 +94,10 @@ def stop_hook(plugin, tmp_path):
     """Run the Stop hook against a rollout, exporting into `collector`; `turn` is the turn that stopped."""
 
     def run(transcript: Path, collector: Collector, turn=None):
+        """Run the hook for the supplied transcript/turn and return its successful result.
+
+        :param collector: Local receiver whose requests must all be valid.
+        """
         result = run_stop_hook(plugin, transcript, collector.url, tmp_path / "home",
                                turn_id=turn and turn.turn_id, last_message=turn and turn.final_text)
         assert result.returncode == 0, f"Stop hook failed:\n{result.stderr}"
@@ -102,6 +114,7 @@ def traced(rollouts, stop_hook, tmp_path):
     Returns (scenario, spans, hook run)."""
 
     def run(name: str):
+        """Execute the named rollout and return its scenario, spans and hook result."""
         scenario = rollouts.SCENARIOS[name]()
         transcript = scenario.write(tmp_path / "sessions")
         with Collector() as collector:

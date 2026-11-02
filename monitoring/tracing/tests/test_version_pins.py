@@ -9,6 +9,7 @@ UPDATE = "Re-record the fixtures / re-derive the expectations as monitoring/trac
 
 
 def test_fixture_manifest_matches_codex_pins(manifest, pins):
+    """Verify fixture manifest matches codex pins."""
     assert (manifest["codex_version"], manifest["codex_acp_version"]) == (
         pins["CODEX_VERSION"], pins["CODEX_ACP_VERSION"]
     ), f"Fixture manifest models codex {manifest['codex_version']} / codex-acp {manifest['codex_acp_version']}, " \
@@ -16,10 +17,12 @@ def test_fixture_manifest_matches_codex_pins(manifest, pins):
 
 
 def test_fixture_rollouts_carry_the_bundled_codex_version(rollouts, manifest):
+    """Verify fixture rollouts carry the bundled codex version."""
     assert rollouts.CLI_VERSION == manifest["bundled_codex_version"]
 
 
 def test_codex_acp_lock_matches_recorded_rollout_version(manifest):
+    """Verify codex acp lock matches recorded rollout version."""
     packages = json.loads(MANIFEST.with_name('package-lock.json').read_text())['packages']
     adapter = 'node_modules/@agentclientprotocol/codex-acp'
     package = packages.get(adapter+'/node_modules/@openai/codex', packages.get('node_modules/@openai/codex'))
@@ -28,10 +31,12 @@ def test_codex_acp_lock_matches_recorded_rollout_version(manifest):
 
 
 def test_expectations_match_plugin_pin(expect, pins):
+    """Verify expectations match plugin pin."""
     assert expect["plugin_version"] == pins["TRACING_PLUGIN_VERSION"], UPDATE
 
 
 def test_plugin_under_test_is_the_pinned_version(plugin, pins):
+    """Verify plugin under test is the pinned version."""
     version = json.loads((plugin / "package.json").read_text())["version"]
     assert version == pins["TRACING_PLUGIN_VERSION"], \
         f"Testing plugin {version}, but TRACING_PLUGIN_VERSION is {pins['TRACING_PLUGIN_VERSION']}."

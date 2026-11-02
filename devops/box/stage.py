@@ -27,7 +27,12 @@ def replace_tree(source, target, preserve=()):
 
 
 def main():
-    """Parse command arguments, execute the requested operation and report failures."""
+    """Verify the bundle, stage Scaffold inputs and write pending Box configuration.
+
+    Reads bundle, settings and secrets paths from ``sys.argv``. Preserves the Run
+    workspace and publishes only a pending marker until installation succeeds.
+    :returns: None; writes the Box filesystem or raises on invalid input.
+    """
     bundle, settings_path, secrets_path = map(Path, sys.argv[1:])
     manifest = json.loads((bundle/'bundle.json').read_text())
     for name, digest in manifest['files'].items():
