@@ -66,3 +66,7 @@ runbook. Avoid repeating parent documentation; the parent owns overlapping conte
 design.md explains implemented decisions and component interactions, using Mermaid
 for complex relationships. Update both alongside code in each PR. These maintained
 design documents are distinct from uncommitted brainstorming notes.
+
+Every class and function must have a succinct docblock describing purpose,
+behavior and inputs/outputs. Python docblocks use reStructuredText (`:param:`,
+`:returns:` and `:raises:` when relevant). Keep them current with implementation.
