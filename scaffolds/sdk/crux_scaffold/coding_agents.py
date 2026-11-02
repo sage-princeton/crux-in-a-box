@@ -1,5 +1,6 @@
 """Coding agents: non-interactive coding-agent SDK sessions (Codex today, Claude Code later) that agents delegate
-implementation to. The coding agent brings its own proprietary scaffold; the drop-in only adds standing context."""
+implementation to. The coding agent brings its own proprietary scaffold; the drop-in adds standing context and can
+replace its system prompt."""
 
 from __future__ import annotations
 
@@ -22,9 +23,11 @@ from crux_scaffold.workspace import RunContext
 
 
 class CodingAgentOptions(StandingContextOptions):
-    """What every coding agent declares: the tool description its callers see, and its standing-context files."""
+    """What every coding agent declares: the tool description its callers see, its standing-context files and,
+    optionally, a drop-in file that replaces the coding harness's built-in system prompt."""
 
     description: str
+    system_prompt: str | None = None
 
 
 class CodingResult(BaseModel):
@@ -48,10 +51,11 @@ class CodingAgent(Component):
 
     def __init__(self, name: str, options: CodingAgentOptions, *,
                  developer_instructions: str | Callable[[], str] = "",
-                 research_context: Callable[[], str] = lambda: "") -> None:
+                 research_context: Callable[[], str] = lambda: "", system_prompt: str = "") -> None:
         super().__init__(name, options)
         self._developer_instructions = developer_instructions
         self._research_context = research_context
+        self.system_prompt = system_prompt
 
     @property
     def developer_instructions(self) -> str:
@@ -84,6 +88,8 @@ CODING_AGENTS: Registry[CodingAgent] = Registry("coding agent")
 class CodexOptions(CodingAgentOptions):
     sandbox: Literal["read-only", "workspace-write", "full-access"] = "workspace-write"
     approval_mode: Literal["deny_all", "auto_review"] = "deny_all"
+    # Codex loads AGENTS.md from the workspace itself; turn this off when `context` already supplies it.
+    project_docs: bool = True
 
 
 ClientFactory = Callable[[RunContext], AsyncCodex]
@@ -121,13 +127,17 @@ class CodexCodingAgent(CodingAgent):
     Options = CodexOptions
 
     def __init__(self, name: str, options: CodexOptions, *, developer_instructions: str | Callable[[], str] = "",
-                 research_context: Callable[[], str] = lambda: "",
+                 research_context: Callable[[], str] = lambda: "", system_prompt: str = "",
                  client_factory: ClientFactory = codex_client) -> None:
-        super().__init__(name, options, developer_instructions=developer_instructions, research_context=research_context)
+        super().__init__(name, options, developer_instructions=developer_instructions, research_context=research_context,
+                         system_prompt=system_prompt)
         self.client_factory = client_factory
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
+        config: dict[str, Any] = {"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto"}
+        if not self.options.project_docs:
+            config["project_doc_max_bytes"] = 0
         (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
         async with self.client_factory(ctx) as codex:
             if ctx.env.get("OPENAI_API_KEY") and not ctx.env.get("CRUX_CODEX_BASE_URL"):
@@ -135,8 +145,8 @@ class CodexCodingAgent(CodingAgent):
             thread = await codex.thread_start(
                 cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
-                developer_instructions=instructions or None,
-                config={"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto"})
+                base_instructions=self.system_prompt or None,
+                developer_instructions=instructions or None, config=config)
             turn = await thread.turn(brief, effort=ctx.reasoning_effort)
             final_response, usage, ended = "", TokenUsage(requests=1), None
             async with aclosing(turn.stream()) as events:

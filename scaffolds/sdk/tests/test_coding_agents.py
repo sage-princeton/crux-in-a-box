@@ -16,6 +16,8 @@ from crux_scaffold.telemetry import GenerationOutcome, NullTelemetry
 from crux_scaffold.usage import Budget, UsageLedger
 from crux_scaffold.workspace import RunContext, Workspace
 
+from drop_ins import edit, write_tree
+
 
 def item(payload):
     return ItemCompletedNotification.model_validate(
@@ -118,7 +120,8 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
     result = asyncio.run(agent.run("TASK: add location", ctx))
     assert fake.logins == ["sk-test"]
     assert fake.starts == [{"cwd": str(tmp_path), "model": "gpt-codex-test", "sandbox": Sandbox.workspace_write,
-                            "approval_mode": ApprovalMode.deny_all, "developer_instructions": "# Standing context",
+                            "approval_mode": ApprovalMode.deny_all, "base_instructions": None,
+                            "developer_instructions": "# Standing context",
                             "config": {"model_context_window": 1_000_000,
                                        "model_reasoning_summary": "auto"}}]
     assert fake.thread.turns == [("TASK: add location", {"effort": "high"})]
@@ -175,6 +178,26 @@ def test_codex_loads_current_instructions_for_each_fresh_brief(tmp_path):
     source.write_text("second spec")
     asyncio.run(agent.run("second brief", ctx))
     assert [start["developer_instructions"] for start in fake.starts] == ["first spec", "second spec"]
+
+
+def test_codex_can_replace_its_system_prompt_and_skip_its_own_agents_md(tmp_path):
+    fake = FakeCodex([completed()])
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x", "project_docs": False},
+                                 system_prompt="You are a research worker.", client_factory=lambda ctx: fake)
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
+                     NullTelemetry())
+    asyncio.run(agent.run("TASK", ctx))
+    assert fake.starts[0]["base_instructions"] == "You are a research worker."
+    assert fake.starts[0]["config"]["project_doc_max_bytes"] == 0
+
+
+def test_the_scaffold_reads_a_coding_agent_system_prompt_from_the_drop_in(drop_in_dir, assemble):
+    write_tree(drop_in_dir, {"prompts/engineer.md": "You are the engineer.\n"})
+    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "scripted"\nsystem_prompt = "prompts/engineer.md"')
+    assert assemble(drop_in_dir).coding_agents["engineer"].system_prompt == "You are the engineer."
+    (drop_in_dir / "prompts/engineer.md").unlink()
+    with pytest.raises(InvalidDropInError, match="prompts/engineer.md not found"):
+        assemble(drop_in_dir)
 
 
 @pytest.mark.parametrize("compatible", [False, True])

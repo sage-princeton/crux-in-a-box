@@ -93,8 +93,9 @@ class ScriptedCodingAgent(CodingAgent):
 
     def __init__(self, name: str, options: ScriptedCodingOptions, *,
                  developer_instructions: str | Callable[[], str] = "",
-                 research_context: Callable[[], str] = lambda: "") -> None:
-        super().__init__(name, options, developer_instructions=developer_instructions, research_context=research_context)
+                 research_context: Callable[[], str] = lambda: "", system_prompt: str = "") -> None:
+        super().__init__(name, options, developer_instructions=developer_instructions, research_context=research_context,
+                         system_prompt=system_prompt)
         self.briefs: list[str] = []
         self.instructions: list[str] = []
 

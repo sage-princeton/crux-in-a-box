@@ -97,23 +97,29 @@ max_turns = "unlimited"
 [coding_agents.worker_a]
 type = "codex"
 description = "Full Codex research assistant: investigate, implement, experiment, or write within the brief's file scope. May use native subagents."
+system_prompt = "prompts/codex-worker.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
 sandbox = "full-access"
+project_docs = false
 
 [coding_agents.worker_b]
 type = "codex"
 description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
 sandbox = "full-access"
+project_docs = false
 
 [coding_agents.worker_c]
 type = "codex"
 description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
 sandbox = "full-access"
+project_docs = false
 
 [tools.run_shell]
 timeout_seconds = 600

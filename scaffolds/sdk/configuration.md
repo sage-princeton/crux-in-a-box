@@ -46,6 +46,8 @@ workspace_context_max_chars = 8000       # dynamic file text per call
 
 Static files must exist at launch. Dynamic files may be created later; missing state is labeled unknown. Every load checks path confinement, including symlinks. Both limits include headings and truncation notices (minimum 200). Dynamic files share their budget, identify their source and modification time, and explicitly mark truncation. File recency does not certify the freshness of its claims. Keep plans/results/review dispositions concise and reference full artifacts, logs and review files; the scaffold does not summarize scientific claims with another model.
 
+A coding agent's harness brings its own system prompt, written for an interactive session with a person. `system_prompt = "prompts/worker.md"` under `[coding_agents.<name>]` replaces it with a drop-in file, read once at assembly; Codex receives it as its base instructions. Codex also loads `AGENTS.md` from the workspace by itself: set `project_docs = false` when `context` already supplies that file, so the worker doesn't read it twice.
+
 The existing SDK input filter implements this request structure:
 
 ```text
