@@ -1,19 +1,34 @@
 # DevOps
 
-Provision Run Boxes and the independent AgentRQ controller. Requires AWS CLI,
-an authenticated explicit AWS profile, Python 3.12, jq, curl and OpenSSH.
-Keep credentials and private configuration outside the checkout.
+Shared AWS installation and native resource drivers. Requires Python 3.12, OpenSSH,
+an authenticated explicit AWS profile with a region, and an operator SSH key.
+Keep credentials outside source.
 
 ## Usage
 
-1. For ACP, prepare the [controller](ec2-control/README.md).
-2. Follow the [Run Box runbook](ec2-workspaces/README.md) for deployment and teardown.
-3. Use [AWS utilities](aws/) only for resources managed independently of Runs.
+From the repository root:
+
+```sh
+python3 -m venv /private/crux-tools
+/private/crux-tools/bin/pip install ./devops
+/private/crux-tools/bin/python devops/setup_account.py --profile crux-2-acct-admin-access \
+  --ssh-cidr 203.0.113.10/32 --secrets /private/system-secrets.json
+```
+
+Replace the example CIDR with your operator network. The default key is
+`~/.ssh/id_ed25519`; pass `--ssh-key` for another key. Shared secrets follow
+[run-system-secrets.json.example](ec2-workspaces/run-system-secrets.json.example).
+Identical setup can be repeated from any authorized laptop. Existing settings
+changes require a reviewed CloudFormation change set.
+
+The script creates the named/tagged `crux-account` stack and shared SSM parameter.
+Drivers discover cloud resources at runtime; setup produces no local state file.
+[design.md](design.md) describes account installation and resource reconciliation.
+
 
 ## Development
 
-Use the [repository checks](../README.md#development), then the
-[Run Box checks](ec2-workspaces/README.md#development) or
-[controller checks](ec2-control/README.md#development) for the code you change.
-Exercise provisioning in ciab-devenv against this worktree before deploying to AWS.
-The [system design](../design.md) describes component boundaries.
+Install `devops/requirements-test.txt`, then run `python -m pytest devops/tests`
+and `python -m ruff check devops` from the repository root. Validate the account
+template with the [account checks](account/README.md#development). Exercise the
+selected worktree in ciab-devenv before deploying to AWS.

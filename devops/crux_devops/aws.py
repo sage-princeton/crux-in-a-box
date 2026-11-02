@@ -1,0 +1,550 @@
+"""Native AWS resource drivers; shared infrastructure must be declared explicitly."""
+import re
+import time
+
+import boto3
+from botocore.exceptions import ClientError
+
+from .spec import fields
+
+SCOPE = ('profile', 'region', 'account')
+
+
+def launch(ec2, **request):
+    """Launch EC2 with bounded retries for IAM propagation failures.
+
+    :param ec2: Authenticated EC2 client.
+    """
+    for attempt in range(30):
+        try:
+            return ec2.run_instances(**request)
+        except ClientError as error:
+            details=error.response['Error']
+            if attempt == 29 or details['Code'] != 'InvalidParameterValue' or 'Invalid IAM Instance Profile' not in details.get('Message',''):
+                raise
+            time.sleep(2)
+
+
+class AWS:
+    """Create explicit-profile sessions and native AWS resource drivers."""
+    def __init__(self, session_factory=boto3.Session):
+        """Bind collaborators and configuration for subsequent operations.
+
+        :param session_factory: Factory for authenticated boto3 sessions.
+        """
+        self.factory = session_factory
+        self.sessions = {}
+
+    def session(self, resource):
+        """Return a cached explicit-profile AWS session after verifying its account.
+
+        :param resource: Resource declaration being reconciled.
+        """
+        config = resource.config
+        for key in SCOPE:
+            if not isinstance(config.get(key), str) or not config[key]:
+                raise ValueError(f'{resource.id} requires explicit AWS {key}')
+        if not re.fullmatch(r'\d{12}', config['account']):
+            raise ValueError('AWS account must be 12 digits')
+        scope = tuple(config[k] for k in SCOPE)
+        if scope not in self.sessions:
+            session = self.factory(profile_name=config['profile'], region_name=config['region'])
+            identity = session.client('sts').get_caller_identity()
+            if identity['Account'] != config['account']:
+                raise ValueError('Authenticated AWS account differs from the declared account')
+            self.sessions[scope] = session
+        return self.sessions[scope]
+
+    def registry(self):
+        """Return the native driver registry supported by this AWS backend."""
+        from .fleet import Identity, KeyPair, SecurityGroup
+        from .storage import Attachment, Volume
+        return {'aws.ec2': EC2(self), 'aws.elastic_ip': ElasticIP(self),
+                'aws.address_attachment': AddressAttachment(self), 'aws.volume': Volume(self),
+                'aws.volume_attachment': Attachment(self), 'aws.security_group': SecurityGroup(self),
+                'aws.identity': Identity(self), 'aws.key_pair': KeyPair(self)}
+
+
+def tags(resource, context):
+    """Build provider tags from the stable deployment/resource identity.
+
+    :param resource: Resource declaration being reconciled.
+    :param context: Stable deployment ownership and creation-token context.
+    """
+    controller = getattr(context.run, 'kind', None) == 'controller'
+    return [{'Key': k, 'Value': v} for k, v in {
+        'Name': context.run.name, 'CruxRole': 'control' if controller else 'run',
+        **({} if controller else {'MonitorWithCruxMonitor': '1'}),
+        'CruxOwner': context.owner, 'CruxResource': resource.id,
+        'CruxToken': context.token(resource),
+    }.items()]
+
+
+def filters(resource, context):
+    """Build tag filters that also expose resources whose ownership changed.
+
+    :param resource: Resource declaration being reconciled.
+    :param context: Stable deployment ownership and creation-token context.
+    """
+    return [{'Name': 'tag:' + t['Key'], 'Values': [t['Value']]}
+            for t in tags(resource, context) if t['Key'] == 'CruxToken']
+
+
+def owned(value, resource, context):
+    """Reject a resource whose live ownership tags differ from the expected identity.
+
+    :param value: Configuration value to validate.
+    :param resource: Resource declaration being reconciled.
+    :param context: Stable deployment ownership and creation-token context.
+    """
+    actual = {t['Key']: t['Value'] for t in value.get('Tags', [])}
+    if actual.get('CruxOwner') != context.owner or actual.get('CruxToken') != context.token(resource):
+        raise ValueError(f'Refusing to mutate {resource.id}: remote ownership changed')
+
+
+def one(values):
+    """Return one matching remote resource, None if absent, or reject ambiguity.
+
+    :param values: Input mapping; credential values must not be logged.
+    """
+    if len(values) > 1:
+        raise ValueError('Multiple resources match the deployment identity; inspect before continuing')
+    return values[0] if values else None
+
+
+class EC2:
+    """Manage owned or explicitly external EC2 Boxes using live AWS state."""
+    def observe(self, resource, context):
+        """Return current Box addresses/identity, or None after termination.
+
+        :param resource: Box declaration.
+        :param context: Stable Run ownership identity.
+        :returns: Live EC2 outputs; foreign ownership raises ValueError.
+        """
+        current = self.find(resource, context)
+        if current is None:
+            return None
+        if resource.ownership == 'managed':
+            owned(current, resource, context)
+        if current['State']['Name'] in ('terminated', 'shutting-down'):
+            return None
+        return {'instance_id':current['InstanceId'],'public_ip':current.get('PublicIpAddress'),
+                'private_ip':current.get('PrivateIpAddress')}
+
+    def __init__(self, aws):
+        """Bind collaborators and configuration for subsequent operations.
+
+        :param aws: Explicit-profile native AWS backend.
+        """
+        self.aws = aws
+
+    def verify(self, resource, observed, context):
+        """Verify that the observed Box still exists and belongs to this deployment.
+
+        :param resource: Resource declaration being reconciled.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        instance = self.find(resource, context, observed)
+        if instance is None:
+            raise ValueError('The recorded Box no longer exists')
+        if resource.ownership == 'managed':
+            owned(instance, resource, context)
+
+    def quiescent(self, resource, observed, context):
+        """Return whether the observed Box is absent or can no longer run an agent.
+
+        :param resource: Resource declaration being reconciled.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        instance = self.find(resource, context, observed)
+        if instance is None:
+            return True
+        if resource.ownership == 'managed':
+            owned(instance, resource, context)
+        return instance['State']['Name'] in ('stopped', 'stopping', 'terminated', 'shutting-down')
+
+    def settings(self, resource, context, outputs=None):
+        """Resolve EC2 launch settings from explicit values or declared resource outputs.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        :param outputs: Resolved dependency outputs, if available.
+        """
+        config = dict(resource.config)
+        resources = {r.id: r for r in context.run.resources}
+        for field, reference, kind, output in (
+            ('key_name', 'key_resource', 'aws.key_pair', 'key_name'),
+            ('instance_profile', 'identity_resource', 'aws.identity', 'instance_profile'),
+            ('security_group_ids', 'security_group_resources', 'aws.security_group', 'group_id'),
+        ):
+            if (field in config) == (reference in config):
+                raise ValueError(f'Box requires exactly one of {field} or {reference}')
+            if reference not in config:
+                value = config[field]
+                if field == 'security_group_ids':
+                    if not isinstance(value, list) or not value or any(not isinstance(v, str) or not v for v in value):
+                        raise ValueError('Box security_group_ids must be a nonempty list')
+                elif not isinstance(value, str) or not value:
+                    raise ValueError(f'Box {field} must be a nonempty string')
+                continue
+            ids = config[reference] if field == 'security_group_ids' else [config[reference]]
+            if not isinstance(ids, list) or not ids or any(not isinstance(i, str) for i in ids):
+                raise ValueError('Box resource references must be nonempty resource IDs')
+            for key in ids:
+                dependency = resources.get(key)
+                if not dependency or dependency.type != kind or key not in resource.depends_on:
+                    raise ValueError(f'{reference} must be a declared {kind} dependency')
+                if any(dependency.config.get(k) != config[k] for k in ('account', 'region')):
+                    raise ValueError('Box resource dependencies must share its AWS scope')
+            values = [outputs[key][output] for key in ids] if outputs is not None else None
+            config[field] = values if field == 'security_group_ids' or values is None else values[0]
+        return config
+
+    def find(self, resource, context, observed=None):
+        """Find the declared remote resource by stable identity or explicit external ID.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        """
+        ec2 = self.aws.session(resource).client('ec2')
+        instance = (observed or {}).get('instance_id') or resource.config.get('instance_id')
+        try:
+            result = ec2.describe_instances(**({'InstanceIds': [instance]} if instance else
+                                               {'Filters': filters(resource, context)}))
+        except ClientError as error:
+            if error.response['Error']['Code'] == 'InvalidInstanceID.NotFound':
+                return None
+            raise
+        return one([i for r in result['Reservations'] for i in r['Instances']])
+
+    def preflight(self, resource, context):
+        """Validate declaration, access and live ownership before any creation.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        config = resource.config
+        if resource.ownership == 'external':
+            fields(config, (*SCOPE, 'instance_id'), (*SCOPE, 'instance_id'), 'external EC2')
+            if not self.find(resource, context):
+                raise ValueError('External Box does not exist')
+            return
+        required = (*SCOPE, 'image_id', 'instance_type', 'subnet_id')
+        fields(config, (*required, 'disk_gb', 'iops', 'throughput', 'security_group_ids', 'key_name',
+                        'instance_profile', 'security_group_resources', 'key_resource', 'identity_resource'), required, 'EC2')
+        config = self.settings(resource, context)
+        for key in ('image_id', 'instance_type', 'subnet_id'):
+            if not isinstance(config[key], str) or not config[key]:
+                raise ValueError(f'EC2 {key} must be a nonempty string')
+        groups = config['security_group_ids']
+        if groups is not None and (not isinstance(groups, list) or not groups or any(not isinstance(v, str) or not v for v in groups)):
+            raise ValueError('EC2 security_group_ids must be a nonempty list')
+        for key, default in (('disk_gb', 100), ('iops', 6000), ('throughput', 250)):
+            value = config.get(key, default)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f'EC2 {key} must be a positive integer')
+        session = self.aws.session(resource)
+        ec2 = session.client('ec2')
+        images = ec2.describe_images(ImageIds=[config['image_id']])['Images']
+        if not images or images[0].get('State') != 'available':
+            raise ValueError('Selected AMI is not available')
+        subnet = ec2.describe_subnets(SubnetIds=[config['subnet_id']])['Subnets'][0]
+        security = ec2.describe_security_groups(GroupIds=groups)['SecurityGroups'] if groups else [
+            {'VpcId': r.config['vpc_id']} for r in context.run.resources if r.id in config['security_group_resources']]
+        if any(g['VpcId'] != subnet['VpcId'] for g in security):
+            raise ValueError('Box subnet and security groups must belong to the same VPC')
+        if config['key_name'] is not None:
+            ec2.describe_key_pairs(KeyNames=[config['key_name']])
+        if config['instance_profile'] is not None:
+            session.client('iam').get_instance_profile(InstanceProfileName=config['instance_profile'])
+        existing = self.find(resource, context)
+        if existing:
+            owned(existing, resource, context)
+            if existing['State']['Name'] in ('shutting-down', 'terminated'):
+                raise ValueError('Box was terminated; create a new deployment')
+
+    def ensure(self, resource, previous, dependencies, context):
+        """Reconcile the declared resource idempotently and return its current outputs.
+
+        :param resource: Resource declaration being reconciled.
+        :param previous: Current provider outputs from observation, not a local receipt.
+        :param dependencies: Observed outputs of declared resource dependencies.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        config = resource.config if resource.ownership == 'external' else self.settings(resource, context, dependencies)
+        ec2 = self.aws.session(resource).client('ec2')
+        instance = self.find(resource, context, previous)
+        if resource.ownership == 'external':
+            if instance is None or instance['State']['Name'] != 'running':
+                raise ValueError('External Box must already be running')
+        else:
+            if instance:
+                owned(instance, resource, context)
+                if instance['State']['Name'] == 'stopped':
+                    ec2.start_instances(InstanceIds=[instance['InstanceId']])
+                elif instance['State']['Name'] not in ('running', 'pending'):
+                    raise ValueError('Box is not startable; inspect its current state')
+            else:
+                instance = launch(ec2,
+                    ImageId=config['image_id'], InstanceType=config['instance_type'],
+                    KeyName=config['key_name'], MinCount=1, MaxCount=1,
+                    ClientToken=context.token(resource),
+                    NetworkInterfaces=[{'DeviceIndex': 0, 'AssociatePublicIpAddress': True,
+                                        'SubnetId': config['subnet_id'], 'Groups': config['security_group_ids']}],
+                    IamInstanceProfile={'Name': config['instance_profile']},
+                    MetadataOptions={'HttpTokens': 'required'},
+                    BlockDeviceMappings=[{'DeviceName': '/dev/sda1', 'Ebs': {
+                        'VolumeType': 'gp3', 'VolumeSize': config.get('disk_gb', 100),
+                        'Iops': config.get('iops', 6000), 'Throughput': config.get('throughput', 250),
+                        'Encrypted': True, 'DeleteOnTermination': True}}],
+                    TagSpecifications=[{'ResourceType': kind, 'Tags': tags(resource, context)}
+                                       for kind in ('instance', 'volume')],
+                )['Instances'][0]
+            for waiter in ('instance_running', 'instance_status_ok'):
+                ec2.get_waiter(waiter).wait(InstanceIds=[instance['InstanceId']],
+                                            WaiterConfig={'Delay': 10, 'MaxAttempts': 90})
+        instance = self.find(resource, context, {'instance_id': instance['InstanceId']})
+        return {'instance_id': instance['InstanceId'], 'public_ip': instance.get('PublicIpAddress'),
+                'private_ip': instance.get('PrivateIpAddress')}
+
+    def stop(self, resource, observed, context):
+        """Stop the owned resource and wait until it is safe to release dependencies.
+
+        :param resource: Resource declaration being reconciled.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        ec2 = self.aws.session(resource).client('ec2')
+        instance = self.find(resource, context, observed)
+        if not instance:
+            return
+        owned(instance, resource, context)
+        status = instance['State']['Name']
+        if status == 'shutting-down':
+            ec2.get_waiter('instance_terminated').wait(InstanceIds=[instance['InstanceId']])
+            return
+        if status in ('terminated', 'stopped'):
+            return
+        if status == 'pending':
+            ec2.get_waiter('instance_running').wait(InstanceIds=[instance['InstanceId']])
+        if status != 'stopping':
+            ec2.stop_instances(InstanceIds=[instance['InstanceId']])
+        ec2.get_waiter('instance_stopped').wait(InstanceIds=[instance['InstanceId']],
+                                              WaiterConfig={'Delay': 10, 'MaxAttempts': 90})
+
+    def destroy(self, resource, observed, context):
+        """Delete the currently owned resource; absence is already a successful result.
+
+        :param resource: Resource declaration being reconciled.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        ec2 = self.aws.session(resource).client('ec2')
+        instance = self.find(resource, context, observed)
+        if not instance:
+            return
+        owned(instance, resource, context)
+        if instance['State']['Name'] != 'terminated':
+            ec2.terminate_instances(InstanceIds=[instance['InstanceId']])
+            ec2.get_waiter('instance_terminated').wait(InstanceIds=[instance['InstanceId']],
+                                                     WaiterConfig={'Delay': 10, 'MaxAttempts': 90})
+
+
+class ElasticIP:
+    """Manage Elastic IP allocation independently from Box lifetime."""
+    def observe(self, resource, context):
+        """Return the current declared address, checking managed ownership.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        current = self.find(resource, context)
+        if current is None:
+            return None
+        if resource.ownership == 'managed':
+            owned(current, resource, context)
+        return {'allocation_id':current['AllocationId'],'public_ip':current['PublicIp']}
+
+    def __init__(self, aws):
+        """Bind collaborators and configuration for subsequent operations.
+
+        :param aws: Explicit-profile native AWS backend.
+        """
+        self.aws = aws
+
+    def find(self, resource, context, observed=None):
+        """Find the declared remote resource by stable identity or explicit external ID.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        """
+        ec2 = self.aws.session(resource).client('ec2')
+        allocation = (observed or {}).get('allocation_id') or resource.config.get('allocation_id')
+        try:
+            return one(ec2.describe_addresses(**({'AllocationIds': [allocation]} if allocation else
+                                                  {'Filters': filters(resource, context)}))['Addresses'])
+        except ClientError as error:
+            if error.response['Error']['Code'] == 'InvalidAllocationID.NotFound':
+                return None
+            raise
+
+    def preflight(self, resource, context):
+        """Validate declaration, access and live ownership before any creation.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        required = (*SCOPE, 'allocation_id') if resource.ownership == 'external' else SCOPE
+        fields(resource.config, required, required, 'Elastic IP')
+        address = self.find(resource, context)
+        if resource.ownership == 'external' and not address:
+            raise ValueError('External Elastic IP does not exist')
+        if address and resource.ownership == 'managed':
+            owned(address, resource, context)
+
+    def ensure(self, resource, previous, dependencies, context):
+        """Reconcile the declared resource idempotently and return its current outputs.
+
+        :param resource: Resource declaration being reconciled.
+        :param previous: Current provider outputs from observation, not a local receipt.
+        :param dependencies: Observed outputs of declared resource dependencies.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        address = self.find(resource, context, previous)
+        if address is None:
+            if resource.ownership == 'external':
+                raise ValueError('External Elastic IP disappeared')
+            address = self.aws.session(resource).client('ec2').allocate_address(
+                Domain='vpc', TagSpecifications=[{'ResourceType': 'elastic-ip', 'Tags': tags(resource, context)}])
+        elif resource.ownership == 'managed':
+            owned(address, resource, context)
+        return {'allocation_id': address['AllocationId'], 'public_ip': address['PublicIp']}
+
+    def destroy(self, resource, observed, context):
+        """Delete the currently owned resource; absence is already a successful result.
+
+        :param resource: Resource declaration being reconciled.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        address = self.find(resource, context, observed)
+        if address is None:
+            return
+        owned(address, resource, context)
+        if address.get('AssociationId'):
+            raise ValueError('Elastic IP is still attached; remove its attachment first')
+        self.aws.session(resource).client('ec2').release_address(AllocationId=address['AllocationId'])
+
+
+class AddressAttachment:
+    """Bind an Elastic IP to its owned Box without stealing another association."""
+    def observe(self, resource, context):
+        """Resolve the live association; refuse an address attached to another Box.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        box, address = self.dependencies(resource, context)
+        current = ElasticIP(self.aws).find(address, context)
+        if not current or not current.get('AssociationId'):
+            return None
+        instance = EC2(self.aws).find(box, context)
+        if not instance or current.get('InstanceId') != instance['InstanceId']:
+            raise ValueError('Address attachment changed ownership')
+        owned(instance, box, context)
+        return {'association_id':current['AssociationId'],'allocation_id':current['AllocationId'],
+                'instance_id':instance['InstanceId'],'public_ip':current['PublicIp']}
+
+    def __init__(self, aws):
+        """Bind collaborators and configuration for subsequent operations.
+
+        :param aws: Explicit-profile native AWS backend.
+        """
+        self.aws = aws
+
+    def dependencies(self, resource, context):
+        """Validate and return the declared attachment endpoints.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        fields(resource.config, (*SCOPE, 'box', 'address'), (*SCOPE, 'box', 'address'), 'address attachment')
+        by_id = {r.id: r for r in context.run.resources}
+        box = by_id.get(resource.config['box'])
+        address = by_id.get(resource.config['address'])
+        if not box or not address or box.type != 'aws.ec2' or address.type != 'aws.elastic_ip':
+            raise ValueError('Address attachment requires an EC2 Box and an Elastic IP resource')
+        if box.ownership != 'managed' or resource.ownership != 'managed':
+            raise ValueError('An address attachment requires a managed Box and managed attachment')
+        if sum(r.type == 'aws.address_attachment' and r.config.get('box') == box.id for r in context.run.resources) > 1:
+            raise ValueError('Only one Elastic IP attachment is supported per Box')
+        if not {box.id, address.id} <= set(resource.depends_on):
+            raise ValueError('Address attachment must depend on its Box and address')
+        for other in (box, address):
+            if any(other.config.get(key) != resource.config.get(key) for key in ('region', 'account')):
+                raise ValueError('Address attachment dependencies must share its AWS account and region')
+        return box, address
+
+    def preflight(self, resource, context):
+        """Validate declaration, access and live ownership before any creation.
+
+        :param resource: Resource declaration being reconciled.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        box, address = self.dependencies(resource, context)
+        self.aws.session(resource)
+        current = ElasticIP(self.aws).find(address, context)
+        if current and current.get('AssociationId'):
+            instance = EC2(self.aws).find(box, context)
+            if instance is None or current.get('InstanceId') != instance['InstanceId']:
+                raise ValueError('Elastic IP is attached to another Box; refusing to steal it')
+
+    def ensure(self, resource, previous, dependencies, context):
+        """Reconcile the declared resource idempotently and return its current outputs.
+
+        :param resource: Resource declaration being reconciled.
+        :param previous: Current provider outputs from observation, not a local receipt.
+        :param dependencies: Observed outputs of declared resource dependencies.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        box, address = self.dependencies(resource, context)
+        instance = EC2(self.aws).find(box, context, dependencies[box.id])
+        owned(instance, box, context)
+        current = ElasticIP(self.aws).find(address, context, dependencies[address.id])
+        if current.get('AssociationId') and current.get('InstanceId') != instance['InstanceId']:
+            raise ValueError('Elastic IP is attached to another Box; refusing to steal it')
+        association = current.get('AssociationId')
+        if previous.get('association_id') and association != previous['association_id']:
+            raise ValueError('Address attachment changed outside this deployment')
+        if not association:
+            association = self.aws.session(resource).client('ec2').associate_address(
+                AllocationId=current['AllocationId'], InstanceId=instance['InstanceId'],
+                AllowReassociation=False)['AssociationId']
+        return {'association_id': association, 'allocation_id': current['AllocationId'],
+                'instance_id': instance['InstanceId'], 'public_ip': current['PublicIp']}
+
+    def destroy(self, resource, observed, context):
+        """Delete the currently owned resource; absence is already a successful result.
+
+        :param resource: Resource declaration being reconciled.
+        :param observed: Fresh provider outputs identifying the resource to inspect.
+        :param context: Stable deployment ownership and creation-token context.
+        """
+        box, address = self.dependencies(resource, context)
+        current = ElasticIP(self.aws).find(address, context, observed)
+        if current is None or not current.get('AssociationId'):
+            return
+        instance = EC2(self.aws).find(box, context)
+        if not observed and (instance is None or current.get('InstanceId') != instance['InstanceId']):
+            return
+        if instance is None:
+            raise ValueError('Cannot prove ownership of the attached Box')
+        owned(instance, box, context)
+        if current.get('InstanceId') != instance['InstanceId'] or (
+                observed.get('association_id') and current['AssociationId'] != observed['association_id']):
+            raise ValueError('Address attachment changed ownership; refusing to detach it')
+        self.aws.session(resource).client('ec2').disassociate_address(AssociationId=current['AssociationId'])

@@ -1,0 +1,2 @@
+moto[ec2,iam,sts]==5.2.4
+cfn-lint==1.59.0

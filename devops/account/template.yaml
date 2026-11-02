@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Shared CRUX network and identities, independent from disposable Runs.
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+  com.aws.cloudformation.Context:
+    ref: ../design.md
+    must: [Keep installation infrastructure outside Run teardown graphs.]
+Parameters:
+  SshCidr:
+    Type: String
+    AllowedPattern: '[0-9.]+/[0-9]+'
+    Description: Invoker IPv4 network permitted to SSH; setup rejects unrestricted ingress.
+  PublicKey:
+    Type: String
+    AllowedPattern: 'ssh-(rsa|ed25519) .+'
+    Description: Public SSH key only; the private key stays on the Invoker.
+Resources:
+  Network:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 172.26.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+  Internet:
+    Type: AWS::EC2::InternetGateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Network
+      InternetGatewayId: !Ref Internet
+  Subnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Network
+      CidrBlock: 172.26.0.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [0, !GetAZs '']
+  Routes:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Network
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref Routes
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref Internet
+  RouteBinding:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref Subnet
+      RouteTableId: !Ref Routes
+  RunIngress:
+    Type: AWS::EC2::SecurityGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Allow operator transport without exposing Scaffold services.
+        must: [Restrict SSH to the installation's operator network.]
+    Properties:
+      VpcId: !Ref Network
+      GroupDescription: CRUX operator SSH
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SshCidr
+  Key:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Sub '${AWS::StackName}-operator'
+      PublicKeyMaterial: !Ref PublicKey
+  RunRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Read shared tracing configuration and register for authenticated host-key discovery.
+        must: [No Run credentials or private SSH keys in the template.]
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: ec2.amazonaws.com}
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: crux-bootstrap
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/crux/system/env'
+              - Effect: Allow
+                Action:
+                  - ssm:UpdateInstanceInformation
+                  - ssmmessages:CreateControlChannel
+                  - ssmmessages:CreateDataChannel
+                  - ssmmessages:OpenControlChannel
+                  - ssmmessages:OpenDataChannel
+                Resource: '*'
+  RunProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref RunRole]
+Outputs:
+  VpcId:
+    Description: Installation network
+    Value: !Ref Network
+  SubnetId:
+    Description: Public Run subnet
+    Value: !Ref Subnet
+  AvailabilityZone:
+    Description: Zone for controller data volumes
+    Value: !GetAtt Subnet.AvailabilityZone
+  GroupId:
+    Description: Operator SSH security group
+    Value: !Ref RunIngress
+  KeyName:
+    Description: Imported operator public key
+    Value: !Ref Key
+  InstanceProfile:
+    Description: Run bootstrap identity
+    Value: !Ref RunProfile
