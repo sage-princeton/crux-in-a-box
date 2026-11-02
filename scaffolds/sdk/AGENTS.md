@@ -2,7 +2,7 @@
 
 These rules apply to every change under `scaffolds/sdk/`. The secret-hygiene rules in the repo's root `CLAUDE.md` still apply; this file adds what is specific to the scaffold. Before changing code, read:
 
-- [README.md](README.md) for the terminology and design;
+- [design.md](design.md) for the terminology and design;
 - [docs/extending.md](docs/extending.md) for each extension point's contract.
 
 ## Extend the existing abstractions first
@@ -53,7 +53,7 @@ Don't add special cases for one drop-in to the package. Don't add an extension p
 - a `scaffold.toml` key;
 - a contract that other components rely on.
 
-If the change is user-facing, update the README in the same change. That includes:
+Update design.md for architecture, configuration.md for configuration contracts, and README.md for changed prerequisites or runbook commands in the same change. That includes:
 
 - the design table;
 - the drop-in layout;

@@ -2,7 +2,7 @@
 
 A local image for running the web-cms-product-change demo end to end on a laptop: the scaffold, the demo drop-in and the Slack MCP server in one container. It is for local development and testing only; nothing here is pushed to a registry, and run boxes install the scaffold directly rather than using this image.
 
-How to run the demo, including which secrets to export, is in the scaffold [README](../README.md#run-the-demo-in-docker).
+How to run the demo, including which secrets to export, is in the scaffold [README](../configuration.md#run-the-demo-in-docker).
 
 ## Notes for development
 
