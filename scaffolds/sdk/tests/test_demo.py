@@ -10,7 +10,7 @@ from drop_ins import FAKE_SLACK
 from scripted import ScriptedModel, call, say
 
 DEMO = Path(__file__).resolve().parents[1] / "run-harness" / "web-cms-product-change"
-CHECK_ENV = {"CRUX_MODEL": "gpt-test", "SLACK_BOT_TOKEN": "xoxb-test"}
+CHECK_ENV = {"CRUX_MODEL": "gpt-test", "SLACK_BOT_TOKEN": "xoxb-test", "OPENROUTER_API_KEY": "unused"}
 THREAD = "1700000000.000100"
 
 
@@ -98,7 +98,7 @@ def test_the_demo_runs_both_phases_through_its_gates(tmp_path, capsys):
         slept.append(seconds)
 
     rc = main(["run", "--drop-in", str(root), "--state-dir", str(tmp_path / "state")],
-              env={"CRUX_MODEL": "gpt-test", "SLACK_BOT_TOKEN": "xoxb-test", "FAKE_SLACK_LOG": str(log)}, sleep=sleep,
+              env={**CHECK_ENV, "FAKE_SLACK_LOG": str(log)}, sleep=sleep,
               runtime_overrides={"models": {"product_manager": pm}})
     assert rc == 0
     assert capsys.readouterr().out.startswith("loop completed in phase implement")

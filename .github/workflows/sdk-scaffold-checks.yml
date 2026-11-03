@@ -46,5 +46,6 @@ jobs:
       - run: docker build --tag crux-sdk-scaffold-demo --file docker/Dockerfile .
       - name: Stage and check the demo in the container (no model calls)
         run: >-
-          docker run --rm --init -e SLACK_CHANNEL_ID=C0000000000 -e SLACK_BOT_TOKEN=xoxb-ci -e CRUX_MODEL=ci
+          docker run --rm --init --network none
+          -e SLACK_CHANNEL_ID=C0000000000 -e SLACK_BOT_TOKEN=xoxb-ci -e CRUX_MODEL=ci -e OPENROUTER_API_KEY=unused
           crux-sdk-scaffold-demo check
