@@ -1,10 +1,8 @@
 import asyncio
 import hashlib
-import importlib.util
 import json
 import shutil
 import sys
-import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,25 +17,6 @@ PILOT = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl"
 ENV = {"CRUX_MODEL": "google/gemini-4-argon", "OPENROUTER_API_KEY": "test",
        "RUN_SLUG": "contrastive-test", "RUNPOD_API_KEY": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test"}
-
-
-@pytest.fixture
-def preparation():
-    spec = importlib.util.spec_from_file_location("contrastive_preparation", PILOT / "prepare.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-@pytest.fixture
-def source_archive(tmp_path, preparation, monkeypatch):
-    archive = tmp_path / "source.zip"
-    with zipfile.ZipFile(archive, "w") as source:
-        source.comment = b"d100ecf1dc6f76ce3299862e494f6a750ad94346"
-        source.writestr("CRTR-main/README.md", "Reference implementation")
-        source.writestr("CRTR-main/runner.py", "print('fixture')")
-    monkeypatch.setattr(preparation, "ARCHIVE_SHA256", hashlib.sha256(archive.read_bytes()).hexdigest())
-    return archive
 
 
 @pytest.fixture
@@ -69,41 +48,20 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert scaffold.context.model == "google/gemini-4-argon"
 
 
-def test_preparation_stages_exact_source_without_operator_channel(pilot_dir, preparation, source_archive):
-    output = pilot_dir
-    preparation.prepare(output, source_archive)
-    assert (output / "workspace/crtr/README.md").read_text() == "Reference implementation"
-    provenance = json.loads((output / "workspace/SOURCE.json").read_text())
-    assert provenance["archive_sha256"] == preparation.ARCHIVE_SHA256
+def test_pilot_bundles_complete_pinned_source_without_archive_preparation():
+    workspace = PILOT / "workspace"
+    source = workspace / "crtr"
+    provenance = json.loads((workspace / "SOURCE.json").read_text())
+    assert provenance["archive_sha256"] == "9a1734f6e11608f2b4e235c752028657c01cd097beacc6c57d09bcda2cb38cc0"
     assert provenance["revision"] == "d100ecf1dc6f76ce3299862e494f6a750ad94346"
-    assert "steering" not in DropInDirectory.load(output).config.runtime
-    assert (output / "scaffold.toml").read_text() == (PILOT / "scaffold.toml").read_text()
-
-
-def test_preparation_rejects_wrong_archive_without_partial_output(pilot_dir, preparation, source_archive):
-    source_archive.write_bytes(b"wrong archive")
-    with pytest.raises(ValueError, match="checksum"):
-        preparation.prepare(pilot_dir, source_archive)
-    assert not (pilot_dir / "workspace/crtr").exists()
-
-
-def test_preparation_preserves_existing_run(pilot_dir, preparation, source_archive):
-    output = pilot_dir / "workspace/crtr"
-    output.mkdir()
-    (output / "results.txt").write_text("existing work")
-    with pytest.raises(ValueError, match="exists"):
-        preparation.prepare(pilot_dir, source_archive)
-    assert (output / "results.txt").read_text() == "existing work"
-
-
-@pytest.mark.parametrize("member", ["CRTR-main/../../escape", "/escape", "other/runner.py"])
-def test_preparation_rejects_unsafe_archive_paths(pilot_dir, preparation, source_archive, monkeypatch, member):
-    with zipfile.ZipFile(source_archive, "a") as source:
-        source.writestr(member, "untrusted")
-    monkeypatch.setattr(preparation, "ARCHIVE_SHA256", hashlib.sha256(source_archive.read_bytes()).hexdigest())
-    with pytest.raises(ValueError, match="archive"):
-        preparation.prepare(pilot_dir, source_archive)
-    assert not (pilot_dir / "workspace/crtr").exists()
+    assert provenance["source"] == "crtr/"
+    files = provenance["files"]
+    assert len(files) == 103
+    assert {"LICENSE", "runner.py", "example_checkpoints/rubik/crtr.pt",
+            "example_datasets/rubik/example.pkl", "training_datasets/sokoban_eval_boards/eval_boards.pkl"} <= files.keys()
+    for relative, expected_sha256 in files.items():
+        with (source / relative).open("rb") as stream:
+            assert hashlib.file_digest(stream, "sha256").hexdigest() == expected_sha256, relative
 
 
 @pytest.mark.parametrize("resource,amount,reason", [("models", 90, "model spend reserve"),

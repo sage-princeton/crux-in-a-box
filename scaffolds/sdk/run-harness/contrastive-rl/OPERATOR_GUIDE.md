@@ -8,33 +8,48 @@ also applies that budget and reserves the last hour/final 10% for finishing.
 ## Operator files
 
 placeholders.txt and secrets.json beside this guide are the operator inputs.
-Both are ignored and mode 600. The prepared secrets file contains the supplied
+Both are ignored; keep them mode 600. The secrets file needs your
 OpenRouter and RunPod keys plus the existing cost-tracker URL/token. AWS
 credentials stay in the operator environment and are not delivered to the agent.
 Shared Langfuse credentials come from SSM /crux/system/env, using the CRUX project.
 
-For another operator, copy the .example files and fill their values. The config
-selects this directory with DROP_IN_PATH=scaffolds/sdk/run-harness/contrastive-rl.
-Omit RUN_SLUG in the base placeholders; make-new-workspace.sh sets it.
+After checking out this branch, copy the .example files and fill their values:
+
+    cp scaffolds/sdk/run-harness/contrastive-rl/placeholders.txt.example \
+      scaffolds/sdk/run-harness/contrastive-rl/placeholders.txt
+    cp scaffolds/sdk/run-harness/contrastive-rl/secrets.json.example \
+      scaffolds/sdk/run-harness/contrastive-rl/secrets.json
+    chmod 600 scaffolds/sdk/run-harness/contrastive-rl/placeholders.txt \
+      scaffolds/sdk/run-harness/contrastive-rl/secrets.json
+
+The config selects this directory with
+DROP_IN_PATH=scaffolds/sdk/run-harness/contrastive-rl. Omit RUN_SLUG in the base
+placeholders; make-new-workspace.sh sets it. AWS access must permit provisioning
+and reading the shared SSM settings; the cost-tracker service must be available.
 
 ## Create the workspace
 
-Commit the drop-in before provisioning; the existing scripts stage HEAD.
-Prepare the local working directory once, preserving the entire supplied archive:
+The full supplied CRTR input is checked in under workspace/crtr, including all
+103 original files, its MIT license, example datasets and checkpoints (about
+123 MB unpacked). workspace/SOURCE.json records its revision, original archive
+SHA-256 and each file's SHA-256. No ZIP, download or source preparation is needed.
+Full training datasets beyond the supplied examples remain optional external
+inputs; see crtr/README.md and inspect the available data before choosing a task.
 
-    python3 scaffolds/sdk/run-harness/contrastive-rl/prepare.py \
-      --archive contrastive-reinforcement-learning/CRTR-main.zip
+The existing scripts stage HEAD. Commit any harness changes before provisioning.
+The example uses the committed workspace; WORKSPACE_DIR is only needed when you
+intentionally want to overlay a separate local workspace.
 
 With the intended AWS session exported, run from the repository root:
 
-    devops/ec2-workspaces/make-new-workspace.sh contrastive-rl-argon-20261029 \
+    devops/ec2-workspaces/make-new-workspace.sh contrastive-rl-trial \
       --base-config scaffolds/sdk/run-harness/contrastive-rl/placeholders.txt \
       --base-secrets scaffolds/sdk/run-harness/contrastive-rl/secrets.json --dry-run
 
-Run the same command without --dry-run to provision. It installs the SDK and run
-software and copies the prepared WORKSPACE_DIR into the staged drop-in, including
-ignored research data. Credentials stay outside that directory. Provisioning
-delivers credentials and probes SDK/Codex inference into Langfuse. It leaves
+Choose a unique run slug in place of contrastive-rl-trial. Run the same command
+without --dry-run to provision. It installs the SDK and run software and stages
+the committed drop-in, including the CRTR inputs. Credentials stay outside the
+workspace. Provisioning delivers credentials and probes SDK/Codex inference into Langfuse. It leaves
 crux-sdk-run stopped.
 
 ## Prepare and start

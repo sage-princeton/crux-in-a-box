@@ -13,8 +13,8 @@ does not increase your budget. Leave provider account limits unchanged. Maintain
 a current spend ledger and check budget_status before delegating or reviewing.
 
 Use the supplied question/context and `crtr/` as your starting input. SOURCE.json
-records the archive revision/hash. Choose and justify your method; the operator
-has not selected a geometry. Keep the original scorer as a baseline, match data
+records the archive revision/hash and checksums of the bundled files. Choose and
+justify your method; the operator has not selected a geometry. Keep the original scorer as a baseline, match data
 and compute in comparisons, and distinguish asymmetric scores from normalized
 conditional probabilities. Small, well-supported results or diagnosed failures
 are useful; do not claim broad superiority from this short pilot.

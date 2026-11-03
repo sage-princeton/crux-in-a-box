@@ -11,4 +11,3 @@ MODEL_PROVIDER=openrouter
 OPENAI_AGENTS_MODEL=google/gemini-4-argon
 OPENAI_AGENTS_REASONING_EFFORT=high
 DROP_IN_PATH=scaffolds/sdk/run-harness/contrastive-rl
-WORKSPACE_DIR=scaffolds/sdk/run-harness/contrastive-rl/workspace

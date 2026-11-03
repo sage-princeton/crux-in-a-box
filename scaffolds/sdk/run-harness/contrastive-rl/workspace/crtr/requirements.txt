@@ -1,0 +1,15 @@
+rubik_solver @ git+https://github.com/Podkamienna/python-rubik
+torch==2.3.1
+numpy==1.26.4
+chex==0.1.89
+matplotlib==3.9.0
+tqdm==4.66.4
+imageio==2.34.1
+jax==0.6.2
+jumanji==1.1.1
+scikit-learn==1.5.0
+minari==0.5.3
+gin==0.1.6
+gin-config==0.5.0
+gym==0.26.2
+gym-notices==0.0.8

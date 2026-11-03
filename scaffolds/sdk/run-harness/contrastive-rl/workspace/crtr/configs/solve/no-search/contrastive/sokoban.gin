@@ -1,0 +1,30 @@
+run.seed = 0
+run.job_class = @SolveJob
+    SolveJob.n_actions = 1
+    SolveJob.generate_problems = @gen_problems_sokoban.generate_problems_sokoban
+    SolveJob.shuffles = 1000
+    SolveJob.metric = 'l2'
+
+
+    SolveJob.network = @LNConvNet()
+    LNConvNet.input_size = 7
+    LNConvNet.repr_dim = 64
+    LNConvNet.hidden_size = 64
+    LNConvNet.depth = 8
+
+    SolveJob.solver_class = @BestFSSolver
+    BestFSSolver.goal_builder_class = @TrivialPolicy
+        TrivialPolicy.env = @CustomSokobanEnv
+        CustomSokobanEnv.generator = @CustomSokobanGenerator
+            CustomSokobanEnv.boards_path = "training_datasets/sokoban_eval_boards/eval_boards.pkl"
+        CustomSokobanEnv.grid_size = 12
+
+    BestFSSolver.max_tree_size = 6000
+    BestFSSolver.max_tree_depth = -1
+    BestFSSolver.value_estimator_class = @ValueEstimator
+    BestFSSolver.checkpoint_path = 'example_checkpoints/sokoban/crtr.pt'
+    
+    SolveJob.n_jobs = 1000
+    SolveJob.n_parallel_workers = 1
+    SolveJob.batch_size = 200
+    SolveJob.budget_checkpoints = [50, 100, 500, 1000]
