@@ -8,10 +8,14 @@ from agents.models.multi_provider import MultiProvider
 from openai.types.responses import ResponseReasoningItem
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from test_blind_review import configure_blind
+from test_coding_agents import ANSWER, FakeCodex, completed, item, usage
+from test_context_strategies import FakeCompactClient
 
 from crux_scaffold import cli
 from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
+from crux_scaffold.coding_agents import CODING_AGENTS
+from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.telemetry import (
     LangfuseTelemetry,
     NullTelemetry,
@@ -19,8 +23,10 @@ from crux_scaffold.telemetry import (
     telemetry_from_env,
     usage_details,
 )
-from crux_scaffold.usage import TokenUsage
+from crux_scaffold.usage import Budget, TokenUsage, UsageLedger
+from crux_scaffold.workspace import RunContext, Workspace
 
+from drop_ins import edit
 from scripted import ScriptedModel, StoppedModel, call, say
 
 ENV = {"RUN_SLUG": "Demo-Slug", "CRUX_WORKSPACE_ID": "ws1", "CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "low"}
@@ -121,6 +127,7 @@ def test_a_stopped_scaffold_sends_what_finished_and_marks_what_did_not(langfuse)
     spans = {span.name: span for span in exporter.get_finished_spans()}
     assert set(spans) == {"implement #1", "engineer", "codex:commandExecution"}
     assert spans["codex:commandExecution"].attributes.get("langfuse.observation.level") is None
+    assert "langfuse.observation.usage_details" not in spans["engineer"].attributes
     for name in ("implement #1", "engineer"):
         assert spans[name].attributes["langfuse.observation.level"] == "WARNING"
         assert "stopped" in spans[name].attributes["langfuse.observation.status_message"]
@@ -180,6 +187,111 @@ def test_openai_agents_reasoning_summary_is_exported_in_the_sdk_response(langfus
     responses = [span.attributes.get("output.value", "") for span in exporter.get_finished_spans()
                  if span.attributes.get("openinference.span.kind") == "LLM"]
     assert any(summary in response for response in responses)
+
+
+@pytest.mark.parametrize("max_items,expected_before,expected_selected,expected_retained", [
+    (1, [1, 3, 5], [1, 3, 1], [[0], [0, 1, 2], [4]]),
+    (200, [1, 3, 5], [1, 3, 5], [[0], [0, 1, 2], [0, 1, 2, 3, 4]]),
+])
+def test_context_selections_reach_langfuse_without_logging_history_or_adding_usage(
+    langfuse, drop_in_dir, assemble, max_items, expected_before, expected_selected, expected_retained,
+):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
+         f'orchestrator = "pm"\n[context]\ntype = "trim_recent"\nmax_items = {max_items}')
+    pm = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "read"), say("first"), say("second"))
+    scaffold = assemble(drop_in_dir, {"pm": pm}, env=ENV, telemetry=telemetry)
+
+    async def run():
+        with telemetry.trace("selection test"):
+            async with scaffold.runtime as runtime:
+                await runtime.run("history-only-sentinel", workflow="main")
+                await runtime.run("again", workflow="main")
+
+    asyncio.run(run())
+    telemetry.flush()
+    spans = exporter.get_finished_spans()
+    root = next(span for span in spans if span.name == "selection test")
+    selections = [span for span in spans if span.name == "context:select"]
+    assert len(selections) == 3
+    inputs = [json.loads(span.attributes["langfuse.observation.input"]) for span in selections]
+    outputs = [json.loads(span.attributes["langfuse.observation.output"]) for span in selections]
+    assert [value["items_before"] for value in inputs] == expected_before
+    assert all(value["agent"] == "pm" and value["strategy"] == "trim_recent"
+               and value["max_items"] == max_items for value in inputs)
+    assert [value["items_selected"] for value in outputs] == expected_selected
+    assert [value["retained_positions"] for value in outputs] == expected_retained
+    assert [value["items_dropped"] for value in outputs] == [
+        before - selected for before, selected in zip(expected_before, expected_selected, strict=True)]
+    assert all("PM standing context." in str(instructions) for instructions in pm.instructions)
+    assert all(span.context.trace_id == root.context.trace_id for span in selections)
+    assert all("history-only-sentinel" not in str(span.attributes) for span in selections)
+    assert all("langfuse.observation.usage_details" not in span.attributes for span in selections)
+    assert scaffold.context.usage.total_tokens == 45
+    stored = asyncio.run(scaffold.runtime.session.get_items())
+    assert "history-only-sentinel" in str(stored)
+
+
+@pytest.mark.parametrize("summary,content", [
+    (["Compared candidate actions."], []),
+    ([], ["Compared candidate actions."]),
+    ([], []),
+])
+def test_codex_reasoning_fields_and_usage_snapshots_reach_langfuse_without_double_counting(
+    langfuse, tmp_path, summary, content,
+):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    first = usage(100, 30, cached=25, cache_write=5, reasoning=20)
+    second = usage(250, 80, cached=75, cache_write=10, reasoning=50)
+    second.token_usage.last = usage(150, 50, cached=50, cache_write=5, reasoning=30).token_usage.last
+    fake = FakeCodex([
+        item({"type": "reasoning", "id": "r1", "summary": summary, "content": content}),
+        first, second, second, item(ANSWER), completed(),
+    ])
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
+                                 client_factory=lambda ctx: fake)
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", ENV, UsageLedger(), Budget(), telemetry)
+    with telemetry.trace("coding test"):
+        asyncio.run(agent.run("TASK", ctx))
+    telemetry.flush()
+    spans = exporter.get_finished_spans()
+    generation = next(span for span in spans if span.name == "engineer")
+    reasoning = next(span for span in spans if span.name == "codex:reasoning")
+    assert json.loads(reasoning.attributes["langfuse.observation.output"]) == {
+        "id": "r1", "summary": summary, "content": content}
+    snapshots = [span for span in spans if span.name == "codex:usage"]
+    assert len(snapshots) == 3
+    observed = [json.loads(span.attributes["langfuse.observation.output"]) for span in snapshots]
+    assert [value["total"]["inputTokens"] for value in observed] == [100, 250, 250]
+    assert observed[1]["last"]["cachedInputTokens"] == 50
+    assert observed[1]["last"]["reasoningOutputTokens"] == 30
+    assert all(span.parent.span_id == generation.context.span_id for span in [reasoning, *snapshots])
+    assert all("langfuse.observation.usage_details" not in span.attributes for span in snapshots)
+    assert json.loads(generation.attributes["langfuse.observation.usage_details"]) == {
+        "input": 165, "input_cached_tokens": 75, "input_cache_creation": 10,
+        "output": 30, "output_reasoning_tokens": 50}
+    persisted = UsageLedger.model_validate_json(ctx.usage.model_dump_json()).by_source["engineer"]
+    assert persisted == TokenUsage(requests=1, input_tokens=250, output_tokens=80, cached_input_tokens=75,
+                                   cache_write_input_tokens=10, reasoning_output_tokens=50)
+
+
+def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_ledger(langfuse, tmp_path):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", ENV, UsageLedger(), Budget(), telemetry)
+    strategy = CONTEXT_STRATEGIES.create("context", {"type": "openai_compaction"}, client=FakeCompactClient())
+    with telemetry.trace("compaction test"):
+        asyncio.run(strategy.session("pm", ctx).run_compaction({"force": True}))
+    telemetry.flush()
+    generations = [span for span in exporter.get_finished_spans() if span.name == "compaction:pm"]
+    assert len(generations) == 1
+    assert json.loads(generations[0].attributes["langfuse.observation.usage_details"]) == {
+        "input": 400, "input_cached_tokens": 600, "output": 150, "output_reasoning_tokens": 50}
+    persisted = UsageLedger.model_validate_json(ctx.usage.model_dump_json()).by_source["compaction:pm"]
+    assert persisted == TokenUsage(requests=1, input_tokens=1000, output_tokens=200, cached_input_tokens=600,
+                                   reasoning_output_tokens=50)
 
 
 def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, monkeypatch):

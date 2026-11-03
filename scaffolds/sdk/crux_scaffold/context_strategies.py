@@ -103,7 +103,9 @@ class MeteredCompactClient:
             outcome.usage = TokenUsage(requests=1, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
                                        cached_input_tokens=usage.input_tokens_details.cached_tokens,
                                        reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens)
-        self._ctx.usage.add(self._source, usage.input_tokens, usage.output_tokens)
+        self._ctx.usage.add(self._source, usage.input_tokens, usage.output_tokens,
+                            cached_input_tokens=usage.input_tokens_details.cached_tokens,
+                            reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens)
         return compacted
 
 

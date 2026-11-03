@@ -123,7 +123,7 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
                                        "model_reasoning_summary": "auto"}}]
     assert fake.thread.turns == [("TASK: add location", {"effort": "high"})]
     assert log == ["stream:ItemCompletedNotification", "record:codex:commandExecution:tool",
-                   "stream:ThreadTokenUsageUpdatedNotification",
+                   "stream:ThreadTokenUsageUpdatedNotification", "record:codex:usage:span",
                    "stream:ItemCompletedNotification", "record:codex:agentMessage:span",
                    "stream:TurnCompletedNotification"]
     assert (result.completed, result.final_response) == (True, "Added location; 6 tests pass.")
@@ -138,7 +138,8 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
 
 def test_codex_reasoning_summary_is_sent_to_telemetry(tmp_path):
     summary = "I compared the alternatives before selecting the implementation."
-    reasoning = item({"type": "reasoning", "id": "r1", "summary": [summary], "content": ["private content"]})
+    content = "Compared candidate actions."
+    reasoning = item({"type": "reasoning", "id": "r1", "summary": [summary], "content": [content]})
     fake = FakeCodex([reasoning, item(ANSWER), completed()])
     telemetry = RecordingTelemetry([])
     agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
@@ -150,7 +151,7 @@ def test_codex_reasoning_summary_is_sent_to_telemetry(tmp_path):
 
     reasoning_records = [record for record in telemetry.records if record[0] == "codex:reasoning"]
     assert len(reasoning_records) == 1
-    assert reasoning_records[0][3] == {"summary": [summary]}
+    assert reasoning_records[0][3] == {"id": "r1", "summary": [summary], "content": [content]}
 
 
 def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):

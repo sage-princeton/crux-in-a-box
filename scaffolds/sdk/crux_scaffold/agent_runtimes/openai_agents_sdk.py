@@ -418,7 +418,17 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 annotations.append(f"Steering transport status: {steering.state['status']}")
         history = [item for item in data.model_data.input if not is_standing_context(item)]
         prompt = history[-1]["content"] if history and history[-1].get("role") == "user" else None
-        items = list(self.assembly.context_strategy.select(history))
+        strategy = self.assembly.context_strategy
+        items = list(strategy.select(list(history)))
+        positions = {id(item): index for index, item in enumerate(history)}
+        retained = [positions.get(id(item)) for item in items]
+        self.assembly.context.telemetry.record(
+            "context:select", "span",
+            {"agent": data.agent.name, "strategy": strategy.type_name,
+             "max_items": getattr(strategy.options, "max_items", None), "items_before": len(history)},
+            {"items_selected": len(items), "items_dropped": len(history) - len(set(retained) - {None}),
+             "retained_positions": retained},
+        )
         if prompt is not None and items and items[-1] == history[-1]:
             items.pop()
 
