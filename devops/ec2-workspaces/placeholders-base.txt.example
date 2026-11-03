@@ -68,6 +68,8 @@ CLAUDE_ACP_VERSION=0.77.0
 # e.g. scaffolds/sdk/run-harness/web-cms-product-change.
 # ACP run-harness directories are placeholders; supply your own task inputs.
 # DROP_IN_PATH=path/to/your/run-inputs
+# Optional local working directory to copy over the committed workspace.
+# WORKSPACE_DIR=path/to/workspace
 # Optional: commit provision.json alongside the drop-in's scaffold.toml to
 # declare run-specific OS packages, pinned CLI downloads and command checks.
 # See provisioning.md. No declaration means no additional software.

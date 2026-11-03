@@ -89,9 +89,11 @@ jobs:
           docker run --rm --read-only --network none crux-proxy:check caddy version
       - name: Install Trivy
         id: trivy
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.75.0
+        run: |
+          bash monitoring/service/ci/install-trivy.sh 0.75.0 \
+            c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f \
+            "$HOME/.local/bin"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Scan Python source and configuration
         run: |
           mkdir -p "$RUNNER_TEMP/security"

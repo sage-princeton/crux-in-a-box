@@ -2,6 +2,12 @@
 
 ## A drop-in directory
 
+The [contrastive RL example](run-harness/contrastive-rl/OPERATOR_GUIDE.md) uses Argon
+and the standard workspace provisioner with private `placeholders.txt` and
+`secrets.json` operator files, six hours, $100 inference and $30 RunPod. Its pinned
+CRTR source, example datasets and checkpoints are checked in with the workspace;
+no source archive or preparation step is required.
+
 ```
 scaffold.toml            the declaration (see run-harness/web-cms-product-change/scaffold.toml)
 PROMPT.md                first phase's prompt, sent verbatim
