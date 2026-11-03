@@ -42,9 +42,9 @@ commit ranges with TruffleHog.
 
 | Directory | Purpose |
 | --- | --- |
-| [devops/](devops/README.md) | Box provisioning, Scaffold configuration and controller deployment. |
-| [scaffolds/](scaffolds/README.md) | Agent orchestration, prompts, tools, context and Run inputs. |
-| [monitoring/](monitoring/README.md) | Fleet monitoring, traces and model-cost collection. |
+| [devops/](devops/README.md) | Shared environment provisioning and operations. |
+| [scaffolds/](scaffolds/README.md) | Agent execution environments and environment-specific experiment inputs. |
+| [monitoring/](monitoring/README.md) | Run observation, costs, status, and incident assessment. |
 | [utilities/](utilities/README.md) | Support tools used independently of deployment. |
 
 [design.md](design.md) explains how these components work together.
@@ -54,8 +54,7 @@ commit ranges with TruffleHog.
 | Term | Meaning |
 | --- | --- |
 | Box | Remote execution environment, normally EC2. |
-| Run | Execution of a task on a Box. |
-| Scaffold | Defines and orchestrates one or more Agents, providing tools, context, prompts and steering interfaces. |
-| Invoker | Environment from which deployment and Run start are invoked. |
-| Agent | The outer-loop agent or one of its delegates. |
-| Harness | Scaffold, Agents, context and configuration assembled for a Run. |
+| Run | Execution of a CRUX task on a Box. |
+| Scaffold | The "runtime" of the agent, including defining subagents, providing tools, context, and steering interfaces. E.g., Claude Code, Codex, Agent SDK |
+| Invoker | Environment from which deployment and Run are invoked. |
+| Harness | The combination of the aforementioned components and necessary inputs/configurations (prompts, context, tools) for a specific Run. |
