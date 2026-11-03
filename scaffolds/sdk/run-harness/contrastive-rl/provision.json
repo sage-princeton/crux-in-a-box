@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "apt_packages": ["latexmk", "texlive-latex-extra", "texlive-fonts-recommended", "poppler-utils", "python3-venv", "rsync", "unzip"],
+  "checks": [
+    {"name": "latex", "argv": ["latexmk", "-v"]},
+    {"name": "pdf-text", "argv": ["pdftotext", "-v"]},
+    {"name": "pdf-render", "argv": ["pdftoppm", "-v"]},
+    {"name": "python-venv", "argv": ["python3", "-m", "venv", "--help"]}
+  ]
+}

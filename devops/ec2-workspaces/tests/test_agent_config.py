@@ -123,6 +123,27 @@ cfg() { local key="$1"; printf '%s' "${!key:-}"; }
 warn() { printf '%s\n' "$*" >&2; }
 die() { printf '%s\n' "$*" >&2; exit 1; }
 '''
+
+
+@pytest.mark.parametrize("selection", ["", "relative", "absolute", "missing"])
+def test_workspace_directory_selection(tmp_path, selection):
+    workspace = tmp_path / "inputs"
+    workspace.mkdir()
+    directory = {"": "", "relative": "inputs", "absolute": str(workspace),
+                 "missing": "absent"}[selection]
+    result = subprocess.run(
+        ["bash", "-c", PRELUDE + 'load_workspace_dir "$REPOSITORY"; printf "%s" "$WORKSPACE_DIR"'],
+        cwd=ROOT,
+        env={"PATH": os.environ["PATH"], "WORKSPACE_DIR": directory, "REPOSITORY": str(tmp_path)},
+        capture_output=True, text=True, check=False,
+    )
+    assert (result.returncode == 0) == (selection != "missing")
+    if selection != "missing":
+        assert result.stdout == (str(workspace) if selection else "")
+    else:
+        assert "existing local directory" in result.stderr
+
+
 ACP = {"CODEX_MODEL": "gpt-6-astra", "CODEX_REASONING_EFFORT": "max",
            "CODEX_VERSION": "0.154.0", "CODEX_ACP_VERSION": "1.10.0",
            "TRACING_PLUGIN_VERSION": "0.4.0", "TRACING_HOOK_TRUSTED_HASH": "a" * 64,

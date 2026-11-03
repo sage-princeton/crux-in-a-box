@@ -42,6 +42,10 @@ runs-export/
 clean-room-old
 logs-for-release
 
+# Prepared third-party research inputs are copied from WORKSPACE_DIR.
+scaffolds/sdk/run-harness/contrastive-rl/workspace/crtr/
+scaffolds/sdk/run-harness/contrastive-rl/workspace/SOURCE.json
+
 # Monitoring deployment state, plans, and operator configuration.
 monitoring/service/terraform/.terraform/
 *.tfstate
@@ -65,3 +69,9 @@ monitoring/service/node_modules/
 .envrc.*
 .direnv/
 docs/superpowers/
+
+# Generated research reports and plans stay local.
+/reports/
+/docs/plans/
+**/workspace/PLAN.md
+.worktrees

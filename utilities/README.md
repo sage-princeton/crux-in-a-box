@@ -25,3 +25,5 @@ shellcheck bootstrap/bootstrap-gog.sh
 ```
 
 Secret scanning is owned by the TruffleHog CI workflow.
+
+The [secret scanner](security/scan-secrets.py) checks derived run exports against credential shapes and an optional on-box literal blacklist. It reports counts without printing matches.
