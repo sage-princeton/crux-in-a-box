@@ -23,10 +23,10 @@ required. A missing/stale cost measurement remains explicitly unknown.
 `render_prompts.py` writes `PROMPTS.md`: the drop-in's prompt text, one block
 per file, then the setup section the scaffold generates, for reading and rewriting
 (for example in Google Docs). The file is not committed; generate a current copy
-from `src/sdk-scaffold`:
+from `scaffolds/sdk`:
 
 ```bash
-.venv/bin/python examples/tabpfn/render_prompts.py
+.venv/bin/python run-harness/tabpfn/render_prompts.py
 ```
 
 ## Dependencies and deployment
