@@ -46,7 +46,6 @@ commit ranges with TruffleHog.
 | [scaffolds/](scaffolds/README.md) | Agent orchestration, prompts, tools, context and Run inputs. |
 | [monitoring/](monitoring/README.md) | Fleet monitoring, traces and model-cost collection. |
 | [utilities/](utilities/README.md) | Support tools used independently of deployment. |
-| [src/](src/README.md) | Temporary Terraform path compatibility. |
 
 [design.md](design.md) explains how these components work together.
 

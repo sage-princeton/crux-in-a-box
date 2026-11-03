@@ -23,5 +23,3 @@ component owns its tests and dependencies.
 An AgentRQ controller has an independent lifecycle from its workspaces and Run
 Boxes. SDK Runs do not require it. Auxiliary resources can outlive a Run, so their
 ownership and deletion policy must be explicit rather than inferred from a Box name.
-
-The temporary Terraform path link supports trusted default-branch PR planning.
