@@ -67,10 +67,18 @@ workspace artifacts and the state directory together on the box. The loop reques
 deletion only of RunPod pods marked with this run's exact RUN_SLUG. Retrieve
 results before exit and inspect CLEANUP_STATUS.json and the provider console.
 
+The model allowance uses Langfuse-reported dollars. Before treating it as a
+provider-dollar cap, verify that the cost tracker's prices match the actual route
+and BYOK billing basis, including cache reads and reasoning. Reporting delays
+and in-flight work can still overshoot the allowance; the OpenRouter key limit
+is separate and is not modified by this example.
+
 Use export_trace.py with the service environment and utilities/security/scan-secrets.py to
 extract and scrub SDK sessions plus run-filtered Langfuse observations on the box.
 Transfer only scanned outputs into ignored runs-export/. Raw sessions, telemetry
-and the literal secret blacklist stay on the box.
+and the literal secret blacklist stay on the box. The exporter removes complete
+private-key blocks and includes agent-created SSH key lines in its on-box
+blacklist so clipped command output cannot bypass vendor-prefix scans.
 
 After evidence collection, use the existing
 devops/ec2-workspaces/teardown-workspace-aws-resources.sh with the generated

@@ -148,16 +148,24 @@ def test_trace_export_scrubs_sessions_and_delegate_observations_before_writing(t
     state.mkdir()
     (state / "state.json").write_text(json.dumps({"usage": {"started_at": "2026-10-29T12:00:00+00:00"}}))
     env = {"RUN_SLUG": "contrastive-test", "PORTAL_TOKEN": "example-only-portal-value-12345"}
+    monkeypatch.setattr(module.Path, "home", lambda: tmp_path)
+    ssh = tmp_path / ".ssh"
+    ssh.mkdir()
+    marker = "-" * 5
+    key_body = "synthetic-private-key-body-without-a-vendor-prefix-1234567890"
+    (ssh / "id_fixture").write_text(f"{marker}BEGIN OPENSSH PRIVATE KEY{marker}\n{key_body}\n"
+                                    f"{marker}END OPENSSH PRIVATE KEY{marker}\n")
     with sqlite3.connect(state / "sessions.sqlite") as database:
         database.execute("CREATE TABLE agent_messages (id INTEGER, session_id TEXT, message_data TEXT, created_at TEXT)")
         database.execute("INSERT INTO agent_messages VALUES (1, 'pi', ?, '2026-10-29T12:01:00')",
-                         (json.dumps({"content": "portal=" + env["PORTAL_TOKEN"]}),))
+                         (json.dumps({"content": "portal=" + env["PORTAL_TOKEN"] + " fragment=" + key_body}),))
     monkeypatch.setattr(module, "observations", lambda env, start: iter([
         {"environment": "contrastive-test", "name": "delegate", "output": env["PORTAL_TOKEN"]}]))
     scanner = PILOT.parents[3] / "utilities/security/scan-secrets.py"
     output = tmp_path / "export"
     module.export_trace(state, output, env, scanner)
     assert env["PORTAL_TOKEN"] not in (output / "run_events.jsonl").read_text()
+    assert key_body not in (output / "run_events.jsonl").read_text()
     records = [json.loads(line) for line in (output / "run_events.jsonl").read_text().splitlines()]
     assert {record["source"] for record in records} == {"session", "langfuse"}
     assert json.loads((output / "run_summary.json").read_text())["events"] == 2
@@ -167,6 +175,22 @@ def test_trace_export_scrubs_sessions_and_delegate_observations_before_writing(t
     with pytest.raises(ValueError, match="withheld"):
         module.export_trace(state, tmp_path / "blocked-export", env, scanner)
     assert not (tmp_path / "blocked-export").exists()
+
+
+@pytest.mark.parametrize("escaped", [False, True])
+def test_trace_scrubber_removes_private_key_bodies_in_plain_and_json_encoded_text(escaped):
+    spec = importlib.util.spec_from_file_location("contrastive_export", PILOT / "export_trace.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    marker = "-" * 5
+    body = "synthetic-private-material-without-a-vendor-prefix"
+    key = f"{marker}BEGIN OPENSSH PRIVATE KEY{marker}\n{body}\n{marker}END OPENSSH PRIVATE KEY{marker}"
+    value = json.dumps({"stdout": key}) if escaped else key
+    cleaned = module.scrub(value, [], [])
+    assert body not in cleaned
+    assert "[REDACTED]" in cleaned
+    if escaped:
+        assert json.loads(cleaned)["stdout"] == "[REDACTED]"
 
 
 def test_export_rejects_cross_run_observations(tmp_path, monkeypatch):

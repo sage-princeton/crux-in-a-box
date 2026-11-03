@@ -15,6 +15,9 @@ import urllib.parse
 from datetime import UTC, datetime
 from pathlib import Path
 
+PRIVATE_KEY_BLOCK = re.compile(
+    r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)")
+
 
 def read_page(env: dict, query: dict) -> dict:
     url = urllib.parse.urlsplit(env["LANGFUSE_BASE_URL"])
@@ -59,6 +62,7 @@ def scrub(value, literals: list[str], patterns):
     if isinstance(value, list):
         return [scrub(item, literals, patterns) for item in value]
     if isinstance(value, str):
+        value = PRIVATE_KEY_BLOCK.sub("[REDACTED]", value)
         for literal in literals:
             value = value.replace(literal, "[REDACTED]")
         for _, pattern in patterns:
@@ -76,6 +80,17 @@ def export_trace(state: Path, output: Path, env: dict, scanner: Path) -> None:
         r"(?i)(key|token|secret|password|credential)", key)}, key=len, reverse=True)
     if not literals:
         raise ValueError("Load the service environment before exporting; no secret blacklist available")
+    # Agent-created SSH keys need literal coverage too: clipped tool output can omit their headers.
+    ssh = Path.home() / ".ssh"
+    if ssh.is_dir():
+        for path in ssh.iterdir():
+            if not path.is_file() or path.is_symlink():
+                continue
+            with path.open(errors="ignore") as stream:
+                text = stream.read(100_001)
+            if len(text) <= 100_000 and PRIVATE_KEY_BLOCK.search(text):
+                literals.extend(line for line in text.splitlines() if len(line) > 24)
+        literals = sorted(set(literals), key=len, reverse=True)
     saved_state = json.loads((state / "state.json").read_text())
     start = saved_state["usage"]["started_at"]
     if not start:

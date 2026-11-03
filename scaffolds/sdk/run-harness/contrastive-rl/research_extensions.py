@@ -7,7 +7,7 @@ from pathlib import Path
 import crux_scaffold
 from crux_scaffold.errors import InvalidDropInError
 
-source = Path(crux_scaffold.__file__).resolve().parents[1] / "examples/tabpfn/tabpfn_extensions.py"
+source = Path(crux_scaffold.__file__).resolve().parents[1] / "run-harness/tabpfn/tabpfn_extensions.py"
 if not source.is_file():
     raise InvalidDropInError("The pilot requires the SDK source tree with its TabPFN research example")
 spec = importlib.util.spec_from_file_location("crux_drop_in.tabpfn_extensions", source)

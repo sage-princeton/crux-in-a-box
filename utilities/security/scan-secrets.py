@@ -64,10 +64,10 @@ PATTERNS = [
     # must mix letters and digits: that is what every API key / token / hash
     # looks like, and it keeps prose such as "auth: authentication_error" quiet.
     ("labelled_secret",
-     r"(?i)\b(?:api[_\-]?key|apikey|secret|token|password|passwd|pwd|auth"
+     (r"(?i)\b(?:api[_\-]?key|apikey|secret|token|password|passwd|pwd|auth"
      r"|access[_\-]?token|refresh[_\-]?token|client[_\-]?secret|private[_\-]?key)"
      r"(?:\\?[\"'])?\s*(?:[:=]|=>)\s*(?:\\?[\"'])?(?![\[*<{])"
-     r"(?=[A-Za-z_\-]*[0-9])(?=[0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{16,}"),
+     r"(?=[A-Za-z_\-]*[0-9])(?=[0-9_\-]*[A-Za-z])[A-Za-z0-9_\-]{16,}")),
 ]
 
 COMPILED = [(name, re.compile(rx)) for name, rx in PATTERNS]
@@ -134,7 +134,7 @@ def main(argv=None):
         try:
             blacklist = load_blacklist(args.blacklist)
         except OSError as e:
-            print("scan-secrets: cannot read blacklist: %s" % e.strerror, file=sys.stderr)
+            print(f"scan-secrets: cannot read blacklist: {e.strerror}", file=sys.stderr)
             return 2
 
     files = expand_paths(args.paths)
@@ -150,7 +150,7 @@ def main(argv=None):
         try:
             counts, bl_counts, lines = scan_file(path, blacklist)
         except OSError as e:
-            print("scan-secrets: cannot read %s: %s" % (path, e.strerror), file=sys.stderr)
+            print(f"scan-secrets: cannot read {path}: {e.strerror}", file=sys.stderr)
             return 2
         total_lines += lines
         file_hits = sum(counts.values()) + sum(bl_counts)
@@ -163,19 +163,19 @@ def main(argv=None):
 
     grand = sum(totals.values()) + sum(bl_totals)
     width = max(len(name) for name, _ in COMPILED) + 2
-    print("scan-secrets: %d file(s), %d line(s), %d blacklist entr%s"
-          % (len(files), total_lines, len(blacklist), "y" if len(blacklist) == 1 else "ies"))
+    suffix = "y" if len(blacklist) == 1 else "ies"
+    print(f"scan-secrets: {len(files)} file(s), {total_lines} line(s), {len(blacklist)} blacklist entr{suffix}")
     if not args.quiet:
         for name, _ in COMPILED:
-            print("  %-*s %d" % (width, name, totals[name]))
-        print("  %-*s %d" % (width, "blacklist_literal", sum(bl_totals)))
+            print(f"  {name:<{width}} {totals[name]}")
+        print(f"  {'blacklist_literal':<{width}} {sum(bl_totals)}")
         for i, n in enumerate(bl_totals):
             if n:
-                print("    blacklist entry #%d (%d chars): %d" % (i + 1, len(blacklist[i]), n))
+                print(f"    blacklist entry #{i + 1} ({len(blacklist[i])} chars): {n}")
     for path, n in per_file_hits:
-        print("  HIT %s: %d" % (path, n))
+        print(f"  HIT {path}: {n}")
     if grand:
-        print("total: %d hit(s) — NOT CLEAN" % grand)
+        print(f"total: {grand} hit(s) — NOT CLEAN")
         return 1
     print("total: 0 hit(s) — clean")
     return 0
