@@ -1,26 +1,14 @@
-# Agent RQ - crus-in-a-box v3
+# Compatibility paths
 
-## Terminology
-
-- **Workspace**: This is a space for a single run. This corresponds to a
-  workspace in the Agent RQ interface and a EC2 box.
-- **Controller**: This is the Agent RQ interface. It's where we send and
-  receive messages to/from agents. Workspaces appear on the controller's
-  dashboard. We can connect to the controller's dashboard via https.
-
-## How it works
-
-- The interface between the controller and each workspace's box is ACP
-- We abstract out multiple agents; each EC2 instance can have it's own agent
+`monitoring/terraform` links to the active Terraform configuration so trusted
+checks on the default branch can evaluate layout changes.
 
 ## Usage
 
-### Adding a new workspace
+Use [monitoring/service/terraform](../monitoring/service/terraform) for deployment
+work and the [DevOps runbook](../devops/README.md) for provisioning commands.
 
-Use `make-new-workspace.sh`. This will set up a workspace on the controller
-and will also provision all required AWS resources.
-Set `AGENT_PLATFORM=codex|claude` and the matching model, effort, and API-key
-settings; see [workspace provisioning](ec2-workspaces/README.md).
-FIXME: consider copying in the run-harness directory here
+## Development
 
-_(more usage information to be added here)_
+Edit and validate the canonical files using the
+[monitoring release checks](../monitoring/service/ci/README.md#development).

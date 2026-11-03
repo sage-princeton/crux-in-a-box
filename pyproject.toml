@@ -1,15 +1,15 @@
 [tool.ruff]
 target-version = "py312"
 line-length = 120
-include = ["pyproject.toml", "src/**/*.py", "tests/**/*.py"]
-src = ["src/monitoring", "src/sdk-scaffold", "src/ec2-workspaces", "tests/codex-observability", "tests/workspace-provisioning"]
+include = ["pyproject.toml", "devops/**/*.py", "monitoring/service/**/*.py", "monitoring/tracing/codex/**/*.py", "monitoring/tracing/tests/**/*.py", "scaffolds/**/*.py"]
+src = ["monitoring/service", "scaffolds/sdk", "devops/ec2-workspaces", "monitoring/tracing/tests", "devops/ec2-workspaces/tests"]
 
 [tool.pytest.ini_options]
 addopts = ["--import-mode=importlib"]
-testpaths = ["src/monitoring/tests", "src/sdk-scaffold/tests", "tests/codex-observability", "tests/workspace-provisioning"]
+testpaths = ["monitoring/service/tests", "scaffolds/sdk/tests", "monitoring/tracing/tests", "devops/ec2-workspaces/tests"]
 pythonpath = [
-    "src/monitoring",
-    "src/sdk-scaffold",
-    "src/sdk-scaffold/tests",
-    "tests/codex-observability",
+    "monitoring/service",
+    "scaffolds/sdk",
+    "scaffolds/sdk/tests",
+    "monitoring/tracing/tests",
 ]

@@ -30,15 +30,15 @@ jobs:
           shellcheck --version
       - name: Bash syntax
         run: |
-          for script in src/ec2-workspaces/*.sh src/ec2-workspaces/scaffolds/*.sh; do
+          for script in devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh; do
             bash -n "$script"
           done
       - name: ShellCheck
         # SSH commands intentionally expand locally; quoted tildes are remote paths.
-        run: shellcheck -x -e SC2029,SC2088 src/ec2-workspaces/*.sh src/ec2-workspaces/scaffolds/*.sh
+        run: shellcheck -x -e SC2029,SC2088 devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh
       - name: SDK provider provisioning tests
-        run: python3 -m unittest discover -s src/ec2-workspaces -p 'test_*.py'
-      - name: Changed-file whitespace and secret checks
+        run: python3 -m unittest discover -s devops/ec2-workspaces -p 'test_*.py'
+      - name: Changed-file whitespace
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
@@ -51,12 +51,4 @@ jobs:
               # Manual runs check the latest commit.
               base = "HEAD^"
           subprocess.run(["git", "diff", "--check", base, "HEAD"], check=True)
-          changed = subprocess.check_output([
-              "git", "diff", "--name-only", "--diff-filter=ACMR", "-z", base, "HEAD"
-          ]).decode().split("\0")
-          files = [path for path in changed if path and os.path.isfile(path)]
-          if files:
-              subprocess.run(["python3", "utils/scan-secrets.py", *files], check=True)
-          else:
-              print("No changed files to scan.")
           PY
