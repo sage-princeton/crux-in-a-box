@@ -86,10 +86,10 @@ CODING_AGENTS: Registry[CodingAgent] = Registry("coding agent")
 
 
 class CodexOptions(CodingAgentOptions):
+    # Required: Codex's built-in system prompt is written for an interactive session with a person.
+    system_prompt: str
     sandbox: Literal["read-only", "workspace-write", "full-access"] = "workspace-write"
     approval_mode: Literal["deny_all", "auto_review"] = "deny_all"
-    # Codex loads AGENTS.md from the workspace itself; turn this off when `context` already supplies it.
-    project_docs: bool = True
 
 
 ClientFactory = Callable[[RunContext], AsyncCodex]
@@ -135,9 +135,6 @@ class CodexCodingAgent(CodingAgent):
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
-        config: dict[str, Any] = {"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto"}
-        if not self.options.project_docs:
-            config["project_doc_max_bytes"] = 0
         (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
         async with self.client_factory(ctx) as codex:
             if ctx.env.get("OPENAI_API_KEY") and not ctx.env.get("CRUX_CODEX_BASE_URL"):
@@ -146,7 +143,10 @@ class CodexCodingAgent(CodingAgent):
                 cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
                 base_instructions=self.system_prompt or None,
-                developer_instructions=instructions or None, config=config)
+                developer_instructions=instructions or None,
+                # Standing context arrives through `context`, so Codex doesn't also load the workspace's AGENTS.md.
+                config={"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto",
+                        "project_doc_max_bytes": 0})
             turn = await thread.turn(brief, effort=ctx.reasoning_effort)
             final_response, usage, ended = "", TokenUsage(requests=1), None
             async with aclosing(turn.stream()) as events:

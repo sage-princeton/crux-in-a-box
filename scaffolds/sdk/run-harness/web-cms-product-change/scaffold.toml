@@ -57,6 +57,7 @@ delegates = ["engineer"]
 
 [coding_agents.engineer]
 type = "codex"
+system_prompt = "prompts/engineer.md"
 description = "A Codex coding agent that implements one written change in site/. It sees only your brief, so include the task, the acceptance criteria verbatim and the files in scope. It returns what it changed."
 context = ["workspace/ENGINEERING.md"]
 workspace_context = ["REQUEST.md"]

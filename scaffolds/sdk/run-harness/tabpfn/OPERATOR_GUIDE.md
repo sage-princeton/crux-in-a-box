@@ -10,7 +10,7 @@ Codex entry points each hold one outstanding brief; SDK assistant calls and nati
 Codex fan-out have no configured concurrency/depth cap. The Codex workers use
 `prompts/codex-worker.md` in place of Codex's built-in system prompt, which is
 written for an interactive session with a person, and read `AGENTS.md` once, from
-their standing context (`project_docs = false`).
+their standing context.
 
 Research advances after an Accept (Overall 5/6 or 6/6). The loop also moves to
 finalization at one hour remaining, $180 model spend, or $90 RunPod spend. These

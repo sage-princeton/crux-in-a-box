@@ -108,12 +108,15 @@ class RecordingTelemetry(NullTelemetry):
         return Generation()
 
 
+CODEX = {"type": "codex", "description": "x", "system_prompt": "prompts/worker.md"}
+
 def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_completes(tmp_path):
     log = []
     fake = FakeCodex([item(COMMAND), usage(1200, 300, cached=900, cache_write=200, reasoning=40), item(ANSWER),
                       completed()], log)
     telemetry = RecordingTelemetry(log)
-    cls, options = CODING_AGENTS.resolve("engineer", {"type": "codex", "description": "Implements specs."})
+    cls, options = CODING_AGENTS.resolve("engineer", {"type": "codex", "description": "Implements specs.",
+                                                        "system_prompt": "prompts/worker.md"})
     agent = cls("engineer", options, developer_instructions="# Standing context", client_factory=lambda ctx: fake)
     env = {"OPENAI_API_KEY": "sk-test", "CRUX_MODEL": "gpt-codex-test", "CRUX_REASONING_EFFORT": "high"}
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(), telemetry)
@@ -123,7 +126,7 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
                             "approval_mode": ApprovalMode.deny_all, "base_instructions": None,
                             "developer_instructions": "# Standing context",
                             "config": {"model_context_window": 1_000_000,
-                                       "model_reasoning_summary": "auto"}}]
+                                       "model_reasoning_summary": "auto", "project_doc_max_bytes": 0}}]
     assert fake.thread.turns == [("TASK: add location", {"effort": "high"})]
     assert log == ["stream:ItemCompletedNotification", "record:codex:commandExecution:tool",
                    "stream:ThreadTokenUsageUpdatedNotification",
@@ -144,7 +147,7 @@ def test_codex_reasoning_summary_is_sent_to_telemetry(tmp_path):
     reasoning = item({"type": "reasoning", "id": "r1", "summary": [summary], "content": ["private content"]})
     fake = FakeCodex([reasoning, item(ANSWER), completed()])
     telemetry = RecordingTelemetry([])
-    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
+    agent = CODING_AGENTS.create("engineer", CODEX,
                                  client_factory=lambda ctx: fake)
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"},
                      UsageLedger(), Budget(), telemetry)
@@ -158,7 +161,7 @@ def test_codex_reasoning_summary_is_sent_to_telemetry(tmp_path):
 
 def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):
     fake = FakeCodex([completed(status="failed", error={"message": "sandbox denied"})])
-    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"}, client_factory=lambda ctx: fake)
+    agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
                      NullTelemetry())
     result = asyncio.run(agent.run("TASK", ctx))
@@ -170,7 +173,7 @@ def test_codex_loads_current_instructions_for_each_fresh_brief(tmp_path):
     fake = FakeCodex([completed()])
     source = tmp_path / "REQUEST.md"
     source.write_text("first spec")
-    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
+    agent = CODING_AGENTS.create("engineer", CODEX,
                                  developer_instructions=source.read_text, client_factory=lambda ctx: fake)
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
                      NullTelemetry())
@@ -180,15 +183,22 @@ def test_codex_loads_current_instructions_for_each_fresh_brief(tmp_path):
     assert [start["developer_instructions"] for start in fake.starts] == ["first spec", "second spec"]
 
 
-def test_codex_can_replace_its_system_prompt_and_skip_its_own_agents_md(tmp_path):
+def test_codex_replaces_its_system_prompt_and_skips_its_own_agents_md(tmp_path):
     fake = FakeCodex([completed()])
-    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x", "project_docs": False},
-                                 system_prompt="You are a research worker.", client_factory=lambda ctx: fake)
+    agent = CODING_AGENTS.create("engineer", CODEX, system_prompt="You are a research worker.",
+                                 client_factory=lambda ctx: fake)
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
                      NullTelemetry())
     asyncio.run(agent.run("TASK", ctx))
     assert fake.starts[0]["base_instructions"] == "You are a research worker."
     assert fake.starts[0]["config"]["project_doc_max_bytes"] == 0
+
+
+def test_codex_requires_a_system_prompt(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "codex"')
+    edit(drop_in_dir, "scaffold.toml", 'writes = { "site/NOTE.md" = "done" }\nresponse = "wrote site/NOTE.md"', "")
+    with pytest.raises(InvalidDropInError, match="engineer.*system_prompt"):
+        assemble(drop_in_dir)
 
 
 def test_the_scaffold_reads_a_coding_agent_system_prompt_from_the_drop_in(drop_in_dir, assemble):
@@ -223,7 +233,7 @@ def test_codex_client_uses_the_run_environment_and_provider(tmp_path, monkeypatc
 
 def test_compatible_codex_does_not_log_in_to_openai(tmp_path):
     fake = FakeCodex([item(ANSWER), completed()])
-    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"}, client_factory=lambda ctx: fake)
+    agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
     env = {"CRUX_MODEL": "google/gemini-4-argon@preset/vertex-only", "OPENAI_API_KEY": "fixture-unused",
            "CRUX_CODEX_BASE_URL": "https://openrouter.ai/api/v1", "CRUX_CODEX_API_KEY_ENV": "OPENROUTER_API_KEY"}
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(), NullTelemetry())

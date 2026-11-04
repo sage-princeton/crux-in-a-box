@@ -224,7 +224,8 @@ def test_generated_result_tool_name_collisions_fail_before_model_calls(drop_in_d
 
 def test_codex_stream_delivers_progress_during_rest_and_final_result_to_pi(drop_in_dir, assemble):
     background(drop_in_dir)
-    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "codex"')
+    edit(drop_in_dir, "scaffold.toml", 'type = "scripted"', 'type = "codex"\nsystem_prompt = "prompts/engineer.md"')
+    (drop_in_dir / "prompts/engineer.md").write_text("You are the engineer.\n")
     edit(drop_in_dir, "scaffold.toml", 'writes = { "site/NOTE.md" = "done" }\nresponse = "wrote site/NOTE.md"', "")
     pm = ScriptedModel(call("engineer", {"brief": "implement"}, "start"),
                        call("rest", {"seconds": 10, "reason": "initial estimate"}, "rest1"),
