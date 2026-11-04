@@ -15,6 +15,7 @@ from crux_scaffold import cli
 from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
 from crux_scaffold.coding_agents import CODING_AGENTS
+from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.telemetry import (
     LangfuseTelemetry,
     NullTelemetry,
@@ -249,7 +250,7 @@ def test_codex_reasoning_fields_and_usage_snapshots_reach_langfuse_without_doubl
         item({"type": "reasoning", "id": "r1", "summary": summary, "content": content}),
         first, second, second, item(ANSWER), completed(),
     ])
-    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x", "system_prompt": "prompts/worker.md"},
                                  client_factory=lambda ctx: fake)
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", ENV, UsageLedger(), Budget(), telemetry)
     with telemetry.trace("coding test"):
@@ -284,6 +285,11 @@ def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_l
     model = ScriptedModel(say("handoff"))
     get_response = model.get_response
     async def metered(*args, **kwargs):
+        """Return deterministic cache, reasoning and total-token usage.
+
+        :param args: Forwarded model-call arguments.
+        :param kwargs: Forwarded model-call keyword arguments.
+        """
         assert kwargs["tracing"].is_disabled() and not kwargs["tools"]
         response = await get_response(*args, **kwargs)
         response.usage = Usage(requests=1, input_tokens=1000, output_tokens=200, total_tokens=1200,
@@ -294,7 +300,10 @@ def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_l
     scaffold = assemble(drop_in_dir, {"pm": model}, env=ENV, telemetry=telemetry)
     scaffold.runtime.build()
     with telemetry.trace("compaction test"):
-        asyncio.run(scaffold.runtime._summarize(scaffold.runtime.agents["pm"], "fixed", []))
+        asyncio.run(CONTEXT_STRATEGIES.create("context", {"type": "compaction"})._summarize(
+            [], ctx=scaffold.context, agent=scaffold.runtime.agents["pm"],
+            model_provider=scaffold.runtime.run_config.model_provider,
+            instructions="fixed", prepare_input=scaffold.runtime._cache_input))
     telemetry.flush()
     generations = [span for span in exporter.get_finished_spans() if span.name == "compaction:pm"]
     assert len(generations) == 1

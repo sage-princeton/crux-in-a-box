@@ -34,7 +34,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 |---|---|---|
 | Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents`; OpenAI and compatible Responses/Chat Completions providers |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
-| Conversation retention and compaction | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `local_compaction` |
+| Conversation retention and compaction | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; `escalate` outbox |

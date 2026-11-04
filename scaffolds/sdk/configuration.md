@@ -74,14 +74,14 @@ Cache hits require an unchanged prefix, the model's minimum token count and an u
 ## Conversation retention
 
 `[context]` selects `persistent` (all history), `trim_recent` (a recent window),
-or `local_compaction` (a PI handoff summary plus recent complete exchanges).
+or `compaction` (a PI handoff summary plus recent complete exchanges).
 All retain the original SQLite history. Local compaction uses ordinary inference
 with the same model/provider/effort as the PI, including OpenRouter Argon; it does
 not require a provider compaction endpoint.
 
 ```toml
 [context]
-type = "local_compaction"
+type = "compaction"
 trigger_items = 200
 context_window_tokens = 128000
 # trigger_tokens = 90000  # optional earlier token trigger
@@ -559,7 +559,7 @@ The provisioning probe reads runtime/provider settings before operator preparati
 ignoring steering and unresolved prompt placeholders. `check` and `run` still
 require a fully prepared drop-in.
 
-The automated EC2 flow reads the committed drop-in's provider configuration before selecting and validating its credential. Compatible HTTPS endpoints work with Responses or Chat Completions; declared Codex workers require Responses. `MODEL_PROVIDER=openrouter` is accepted when the drop-in points to OpenRouter, and leaving the legacy setting at `direct` still honors the drop-in. Unselected provider credentials are excluded from the run. `local_compaction` works with the selected provider through ordinary inference, including OpenRouter; no compaction endpoint is required. OpenRouter runs with Codex workers and `extra_body` require a `model@preset/NAME` model; the preset must duplicate those routing settings. Preflight checks the suffix, not the account-side preset or BYOK configuration. Commit drop-in and SDK edits before provisioning: both are staged from `HEAD`.
+The automated EC2 flow reads the committed drop-in's provider configuration before selecting and validating its credential. Compatible HTTPS endpoints work with Responses or Chat Completions; declared Codex workers require Responses. `MODEL_PROVIDER=openrouter` is accepted when the drop-in points to OpenRouter, and leaving the legacy setting at `direct` still honors the drop-in. Unselected provider credentials are excluded from the run. `compaction` works with the selected provider through ordinary inference, including OpenRouter; no compaction endpoint is required. OpenRouter runs with Codex workers and `extra_body` require a `model@preset/NAME` model; the preset must duplicate those routing settings. Preflight checks the suffix, not the account-side preset or BYOK configuration. Commit drop-in and SDK edits before provisioning: both are staged from `HEAD`.
 
 ## Development
 

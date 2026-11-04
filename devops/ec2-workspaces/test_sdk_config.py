@@ -80,8 +80,12 @@ class SDKConfigTests(unittest.TestCase):
                                                success=False))
         self.assertIsNone(self.inspect(COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"'))["coding_agent"])
 
-    def test_local_compaction_uses_the_selected_provider_credential(self):
-        context = '\n[context]\ntype = "local_compaction"\ntrigger_items = 200\n'
+    def test_compaction_uses_the_selected_provider_credential(self):
+        """Verify compaction uses the selected provider credential.
+
+        :returns: None; assertions verify the scenario.
+        """
+        context = '\n[context]\ntype = "compaction"\ntrigger_items = 200\n'
         self.assertEqual(self.inspect(COMPATIBLE + context)["api_key_env"], "OPENROUTER_API_KEY")
         chat = COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"')
         self.assertEqual(self.inspect(chat + context)["api_key_env"], "OPENROUTER_API_KEY")

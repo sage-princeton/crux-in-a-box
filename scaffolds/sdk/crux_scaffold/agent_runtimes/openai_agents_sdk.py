@@ -27,7 +27,7 @@ from agents import (
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.items import ModelResponse
 from agents.mcp import MCPServerStdio
-from agents.models.interface import Model, ModelTracing
+from agents.models.interface import Model
 from agents.retry import ModelRetryBackoffSettings, ModelRetrySettings, RetryPolicyContext, retry_policies
 from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
@@ -43,12 +43,12 @@ from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, 
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
 from crux_scaffold.components import CountLimit, Options, count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.context_strategies import COMPACTION_PROMPT, is_standing_context
+from crux_scaffold.context_strategies import is_standing_context
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
-from crux_scaffold.usage import TokenUsage, UsageLedger
+from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
@@ -429,20 +429,16 @@ class OpenAIAgentsRuntime(AgentRuntime):
         ctx = self.assembly.context
         research = self.assembly.research_context(data.agent.name)
         status = await ctx.budget_status()
-        async def summarize(items):
-            nonlocal status, research
-            summary = await self._summarize(data.agent, data.model_data.instructions, items)
-            status = await ctx.budget_status()
-            research = self.assembly.research_context(data.agent.name)
-            return summary
+        request_context = {
+            "instructions": data.model_data.instructions, "research": research, "resources": status,
+            "tools": [{"name": tool.name, "description": tool.description, "parameters": tool.params_json_schema}
+                      for tool in data.agent.tools if isinstance(tool, FunctionTool)],
+        }
         items = list(await strategy.select_for_call(
             list(history), ctx=ctx,
             session_id=data.agent.name if data.agent.name == self.assembly.drop_in.config.orchestrator else None,
-            request_context={"instructions": data.model_data.instructions, "research": research, "resources": status,
-                             "tools": [{"name": tool.name, "description": tool.description,
-                                        "parameters": tool.params_json_schema}
-                                       for tool in data.agent.tools if isinstance(tool, FunctionTool)]},
-            summarize=summarize,
+            request_context=request_context, agent=data.agent, model_provider=self.run_config.model_provider,
+            prepare_input=self._cache_input, research_context=lambda: self.assembly.research_context(data.agent.name),
         ))
         positions = {id(item): index for index, item in enumerate(history)}
         retained = [positions.get(id(item)) for item in items]
@@ -463,43 +459,13 @@ class OpenAIAgentsRuntime(AgentRuntime):
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
             # until its next run reloads the durable session, even when a strategy trims older conversation.
             items.extend(item for item in self._steering_items if item not in items)
-        annotations.insert(0, f"<research_context>\n{research}\n</research_context>")
-        annotations.append(f"<resource_status>\n{status}\n</resource_status>")
+        annotations.insert(0, f"<research_context>\n{request_context['research']}\n</research_context>")
+        annotations.append(f"<resource_status>\n{request_context['resources']}\n</resource_status>")
         result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
         if prompt is not None:
             annotations.append(f"# Current task\n\n{prompt}")
         result.input.append({"role": "user", "content": "\n\n".join(annotations)})
         return result
-
-    async def _summarize(self, agent: Agent, instructions: str | None, items: list[Any]) -> str:
-        ctx = self.assembly.context
-        source = f"compaction:{agent.name}"
-        model = agent.model
-        if not isinstance(model, Model):
-            model = self.run_config.model_provider.get_model(model)
-        request = self._cache_input(ModelInputData(
-            input=[*items, {"role": "user", "content": COMPACTION_PROMPT}], instructions=instructions))
-        with ctx.telemetry.generation(source, ctx.model, {
-            "instructions": request.instructions, "input": request.input,
-            "model_settings": agent.model_settings.to_json_dict(), "tools": [],
-        }) as outcome:
-            response = await model.get_response(
-                system_instructions=request.instructions, input=request.input, model_settings=agent.model_settings,
-                tools=[], output_schema=None, handoffs=[], tracing=ModelTracing.DISABLED,
-                previous_response_id=None, conversation_id=None, prompt=None,
-            )
-            usage = response.usage
-            outcome.output = [item.model_dump(mode="json") for item in response.output]
-            outcome.usage = TokenUsage(requests=1, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
-                                       cached_input_tokens=usage.input_tokens_details.cached_tokens,
-                                       cache_write_input_tokens=usage.input_tokens_details.cache_write_tokens,
-                                       reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens)
-            ctx.usage.add(source, usage.input_tokens, usage.output_tokens,
-                          cached_input_tokens=outcome.usage.cached_input_tokens,
-                          cache_write_input_tokens=outcome.usage.cache_write_input_tokens,
-                          reasoning_output_tokens=outcome.usage.reasoning_output_tokens)
-            return "\n".join(part.text for item in response.output if item.type == "message"
-                             for part in item.content if part.type == "output_text")
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
         return self._cache_input(data.model_data)
