@@ -68,7 +68,7 @@ def test_argon_provider_and_context_build_without_openai_credentials(scaffold):
     assert "OPENAI_API_KEY" not in scaffold.context.env
     description = scaffold.runtime.describe()
     assert description[0] == "model provider openai-compatible (responses)"
-    assert scaffold.strategy.type_name == "trim_recent"
+    assert scaffold.strategy.type_name == "compaction"
     assert scaffold.runtime.provider is not None
     assert set(scaffold.coding_agents) == {"worker_a", "worker_b", "worker_c"}
     assert scaffold.context.model == "google/gemini-4-argon"

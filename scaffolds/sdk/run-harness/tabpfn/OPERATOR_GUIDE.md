@@ -96,9 +96,21 @@ Model and effort are run environment settings: provisioning maps
 `CRUX_REASONING_EFFORT` for every agent and reviewer. `scaffold.toml` selects the
 OpenRouter Responses endpoint and `OPENROUTER_API_KEY` for the SDK and Codex.
 No provider-specific route or preset is required; OpenRouter account settings
-control routing. Check the actual route and pricing in usage records. The
-example uses `trim_recent` context. Commit changes before provisioning;
+control routing. Check the actual route and pricing in usage records.
+Commit changes before provisioning;
 uncommitted changes are not staged on the box.
+
+The PI uses provider-independent `compaction`: at 200 selected history items or
+512,000 estimated tokens, it summarizes older exchanges and keeps roughly 20
+recent items, preserving complete tool exchanges and the full SQLite history.
+`context_window_tokens = 1048576` records Argon's supported window; the earlier
+token trigger leaves room for MCP schemas, provider encoding, reasoning/output
+and tool-result growth. The October TabPFN pilot peaked at 180,111 input tokens
+and included about 12.5 KB of Slack schemas omitted by the estimator. That pilot
+used GPT-6 Astra; the Argon RL pilot provides the tokenizer calibration, with
+sampled billed input up to 1.34 times a byte-based estimate without MCP schemas.
+Treat the trigger as a conservative estimate, not a hard request-size guarantee.
+Codex workers manage their own context separately.
 
 Fill `secrets.json` with **only** `OPENROUTER_API_KEY`,
 `SLACK_BOT_TOKEN`, `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` and `RUNPOD_API_KEY`.
