@@ -298,7 +298,7 @@ The [Google Argon smoke test drop-in](../run-harness/google-argon-smoke-test/sca
 
 ### Model-call retries
 
-`openai-agents` sets the SDK's runner-managed retry (`ModelSettings.retry`) on every agent, judge and probe, because an exception from a model call ends the iteration and cancels its running coding agents. `TRANSIENT_FAILURES` retries 408, 409, 429 and 5xx responses, network errors and timeouts, provider retry advice, and responses the provider ends early, such as a content-filter cutoff. It does not retry other request errors or a response that ran out of output tokens. `[runtime] model_retries` (default 8) sets the retries per call, backing off from 2 to 60 seconds; `0` also turns off the HTTP client's own retries. Retries resend the same request to the same provider route, which is safe because these requests are stateless (`store = false`, no `previous_response_id`).
+`openai-agents` sets the SDK's runner-managed retry (`ModelSettings.retry`) on every agent, judge and probe, because an exception from a model call ends the iteration and cancels its running coding agents. `TRANSIENT_FAILURES` retries 408, 409, 429 and 5xx responses, network errors and timeouts, provider retry advice, and responses the provider ends early, such as a content-filter cutoff. It does not retry other request errors or a response that ran out of output tokens. `MODEL_RETRIES` (8) sets the retries per call, backing off from 2 to 60 seconds; it is a constant rather than an option because it is rarely worth tuning. Retries resend the same request to the same provider route, which is safe because these requests are stateless (`store = false`, no `previous_response_id`).
 
 ### Optional background coding
 

@@ -7,7 +7,6 @@ from agents.exceptions import ModelBehaviorError
 from agents.models._response_terminal import response_terminal_failure_error
 from openai.types.responses import Response
 
-from drop_ins import edit
 from scripted import ScriptedModel, say
 
 
@@ -66,9 +65,8 @@ def test_errors_a_retry_cannot_fix_still_end_the_turn(drop_in_dir, assemble, del
     assert (pm.attempts, delays) == (1, [])
 
 
-def test_retries_stop_at_the_configured_limit(drop_in_dir, assemble, delays):
-    edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"\n',
-         'orchestrator = "pm"\n\n[runtime]\ntype = "openai-agents"\nmodel_retries = 1\n')
+def test_retries_stop_at_the_limit(drop_in_dir, assemble, delays, monkeypatch):
+    monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.MODEL_RETRIES", 1)
     pm = FlakyModel([status_error(openai.InternalServerError, 504)] * 3, say("done"))
     with pytest.raises(openai.InternalServerError):
         asyncio.run(assemble(drop_in_dir, {"pm": pm}).run())

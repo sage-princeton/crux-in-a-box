@@ -35,9 +35,8 @@ spending or deadlines within an iteration.
 
 A model call that fails for a transient reason (a 5xx or 429 response, a
 network error or a provider's content-filter cutoff) is retried inside the
-turn, backing off from 2 to 60 seconds. `[runtime] model_retries` sets the
-number of retries per call (default 8). Without retries, one such error ends
-the iteration and cancels its running coding agents.
+turn, up to 8 times, backing off from 2 to 60 seconds. A failure that outlasts
+the retries ends the iteration and cancels its running coding agents.
 
 Each agent and coding agent declares its existing context sources in `scaffold.toml`:
 

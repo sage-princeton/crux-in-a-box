@@ -92,9 +92,6 @@ class ModelProviderOptions(Options):
 
 class OpenAIAgentsOptions(Options):
     max_turns: CountLimit = 50
-    # Retries per model call for transient provider failures, backing off from 2s to 60s (about four minutes for 8).
-    # A failure that outlasts them ends the iteration; 0 also turns off the HTTP client's own retries.
-    model_retries: int = Field(8, ge=0)
     model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
     background_coding: bool = False
     steering: SteeringOptions | None = None
@@ -365,8 +362,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         model = env.get("CRUX_MODEL")
         if not model:
             raise InvalidDropInError("CRUX_MODEL is not set")
-        options = options or OpenAIAgentsOptions()
-        provider_options = options.model_provider
+        provider_options = (options or OpenAIAgentsOptions()).model_provider
         async with AsyncExitStack() as stack:
             if provider_options.type == "openai-compatible":
                 client = await stack.enter_async_context(_validate_and_get_client(provider_options, env))
@@ -377,7 +373,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 name="probe",
                 instructions="Reply with exactly the text you are asked for.",
                 model=model,
-                model_settings=_model_settings(provider_options, env, options.model_retries),
+                model_settings=_model_settings(provider_options, env),
             )
             return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
 
@@ -389,7 +385,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         return self.provider.get_model(model) if self.provider else model
 
     def _settings(self) -> ModelSettings:
-        return _model_settings(self.options.model_provider, self.assembly.context.env, self.options.model_retries)
+        return _model_settings(self.options.model_provider, self.assembly.context.env)
 
     def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
         return self.assembly.instructions(agent.name)
@@ -597,13 +593,15 @@ TRANSIENT_FAILURES = retry_policies.any(
     retry_policies.http_status([408, 409, 429, 500, 502, 503, 504]),
     _provider_ended_response,
 )
+# Retries per model call, backing off from 2s to 60s: about four minutes before a failure ends the iteration.
+MODEL_RETRIES = 8
 
 
-def _model_settings(options: ModelProviderOptions, env: Mapping[str, str], retries: int) -> ModelSettings:
+def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
     settings = ModelSettings(
         reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"),
         retry=ModelRetrySettings(
-            max_retries=retries, policy=TRANSIENT_FAILURES,
+            max_retries=MODEL_RETRIES, policy=TRANSIENT_FAILURES,
             backoff=ModelRetryBackoffSettings(initial_delay=2, max_delay=60, multiplier=2, jitter=True),
         ),
     )
