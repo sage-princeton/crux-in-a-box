@@ -13,7 +13,7 @@ interactive session with a person.
 
 placeholders.txt and secrets.json beside this guide are the operator inputs.
 Both are ignored; keep them mode 600. The secrets file needs your
-OpenRouter and RunPod keys plus the existing cost-tracker URL/token. AWS
+OpenRouter and RunPod keys, `SLACK_BOT_TOKEN`, and the existing cost-tracker URL/token. AWS
 credentials stay in the operator environment and are not delivered to the agent.
 Shared Langfuse credentials come from SSM /crux/system/env, using the CRUX project.
 
@@ -30,6 +30,12 @@ The config selects this directory with
 DROP_IN_PATH=scaffolds/sdk/run-harness/contrastive-rl. Omit RUN_SLUG in the base
 placeholders; make-new-workspace.sh sets it. AWS access must permit provisioning
 and reading the shared SSM settings; the cost-tracker service must be available.
+
+Create a Slack app from `slack-app-manifest.yaml`, install it and invite
+`@crux-contrastive-rl` to a dedicated run channel. Store its bot token only in
+`secrets.json`; record the channel ID and the human operator's Slack user ID.
+All listed read scopes are needed by the MCP conversation cache. Reinstall the
+app after scope changes. No Events API or Socket Mode is needed.
 
 ## Create the workspace
 
@@ -58,14 +64,24 @@ crux-sdk-run stopped.
 
 ## Prepare and start
 
-On the new box as ubuntu, validate the staged example:
+On the new box as ubuntu, with the service stopped, resolve the Slack channel,
+operator and starting timestamp, then validate the staged example:
 
-    cd /srv/crux-run/run-harness/workspace/paper
+    cd /srv/crux-run/run-harness
+    python3 prepare.py --channel C0123456789 --operator U0123456789 --after-ts "$(date +%s).000000"
+    cd workspace/paper
     latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex
     sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
       -p EnvironmentFile=/etc/crux-run.env \
       /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold check \
       --drop-in /srv/crux-run/run-harness --state-dir /srv/crux-run/state
+
+Replace both Slack IDs. `prepare.py` refuses to rewrite an already-resolved run;
+use a fresh staged copy for a new run. Post steering as new top-level messages
+after the starting timestamp. Only the configured operator's messages are
+delivered automatically; edits and thread replies are not new channel steering.
+The PI posts launch, milestone, roughly hourly and completion updates to that
+channel and escalates diagnosed blockers while continuing independent work.
 
 Check the configured model is Argon and the probe traces have token usage and
 prices in this run's Langfuse environment. Record prelaunch inference spending in
@@ -82,7 +98,10 @@ and state/tabpfn paths remain unchanged.
 ## Evidence and shutdown
 
 Progress and blockers go to PLAN.md, LOG.md and COMPLETION_REPORT.md. Preserve
-workspace artifacts and the state directory together on the box. The loop requests
+workspace artifacts and the state directory together on the box, including
+`steering.json` and the conversation SQLite store so replies are not redelivered
+on resume. Stop with `sudo systemctl stop crux-sdk-run`; restart the same unit
+without rerunning `prepare.py`. The loop requests
 deletion only of RunPod pods marked with this run's exact RUN_SLUG. Retrieve
 results before exit and inspect CLEANUP_STATUS.json and the provider console.
 

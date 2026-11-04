@@ -56,7 +56,9 @@ and checks evidence hashes; leave enough time to complete it.
 Report setup friction and time to the first baseline/comparison in the completion
 report so the operator can assess environment readiness separately from scientific
 promise. Record any operator interventions. Write progress and diagnosed blockers
-to PLAN.md, LOG.md and the completion report. The run is unattended; continue
-independent work when an external dependency fails and preserve evidence if blocked.
+to PLAN.md, LOG.md and the completion report. The PI also sends Slack progress
+updates and escalates diagnosed external blockers. Operator steering arrives
+automatically at the PI; incorporate it into PLAN.md and subsequent briefs.
+Continue independent work while awaiting a reply and preserve evidence if blocked.
 Never print credentials, put them in prompts/artifacts, or copy inference/service
 credentials onto GPU pods. Use only the environment values required for each job.
