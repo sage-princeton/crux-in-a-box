@@ -2,6 +2,7 @@ import asyncio
 import csv
 import io
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 from agents.run_config import CallModelData, ModelInputData
@@ -196,6 +197,32 @@ def test_transport_status_changes_only_the_trailing_context(drop_in_dir, assembl
         assert "<resource_status>" in recovered.input[-1]["content"]
 
     asyncio.run(check())
+
+
+def test_compaction_cannot_hide_oversized_replayed_steering(drop_in_dir, assemble, tmp_path):
+    """Account for pinned steering even when its original exchange could be summarized.
+
+    :param drop_in_dir: Minimal temporary drop-in.
+    :param assemble: Scaffold assembly fixture.
+    :param tmp_path: Isolated steering state.
+    """
+    env = configured(drop_in_dir, tmp_path)
+    edit(drop_in_dir, 'scaffold.toml', 'orchestrator = "pm"',
+         'orchestrator = "pm"\n[context]\ntype = "compaction"\ntrigger_tokens = 6000\nkeep_recent_items = 1')
+    pm = ScriptedModel(say('must not summarize an irreducible request'))
+    scaffold = assemble(drop_in_dir, {'pm': pm}, env=env)
+    runtime = scaffold.runtime
+    runtime.build()
+    runtime.session = scaffold.strategy.session('pm', scaffold.context)
+    scaffold.context.steering.poll = AsyncMock()
+    pinned = {'role': 'user', 'content': 'Operator request: ' + 'x' * 24000}
+    runtime._steering_items = [pinned]
+    history = [pinned, {'role': 'assistant', 'content': 'Acknowledged'}, {'role': 'user', 'content': 'Continue'}]
+    data = CallModelData(ModelInputData(input=history, instructions='fixed'), runtime.agents['pm'], scaffold.context)
+    with pytest.raises(RuntimeError, match='cannot fit'):
+        asyncio.run(runtime._select_input(data))
+    assert not pm.inputs
+    assert not list(scaffold.context.state_dir.glob('compaction-*.json'))
 
 
 @pytest.mark.parametrize("change", ["undefined_server", "missing_policy", "bad_policy"])

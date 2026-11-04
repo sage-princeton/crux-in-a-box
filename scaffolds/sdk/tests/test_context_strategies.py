@@ -1,11 +1,11 @@
 import asyncio
 import json
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agents import Agent, RunConfig, SQLiteSession
+from agents import Agent, FunctionTool, RunConfig, SQLiteSession
 
-from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, STANDING_CONTEXT_HEADER
+from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, STANDING_CONTEXT_HEADER, estimate_tokens
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.usage import Budget, UsageLedger
@@ -160,8 +160,9 @@ def test_token_trigger_includes_request_context_without_using_item_limit(tmp_pat
         return "summary"
     strategy = local_strategy(context_window_tokens=1000, trigger_tokens=2000, keep_recent_items=1)
     assert asyncio.run(select(strategy, history, ctx, summarize)) == history
-    selected = asyncio.run(select(strategy, history, ctx, summarize, request_context="x" * 3600))
-    assert calls == [history[:2]] and selected[1:] == history[2:]
+    with pytest.raises(RuntimeError, match="cannot fit"):
+        asyncio.run(select(strategy, history, ctx, summarize, request_context="x" * 3600))
+    assert calls == []
 
 
 def test_compaction_never_splits_parallel_tool_exchanges(tmp_path):
@@ -395,3 +396,176 @@ def test_item_limit_options_reject_legacy_trigger_items(kind):
     """
     with pytest.raises(InvalidDropInError, match="Extra inputs are not permitted"):
         CONTEXT_STRATEGIES.create("context", {"type": kind, "trigger_items": 3})
+
+
+@pytest.mark.parametrize('image', [
+    {'type': 'input_image', 'image_url': 'data:image/png;base64,' + 'A' * 3_000_000},
+    {'type': 'input_image', 'image_url': 'https://example.test/image.png'},
+    {'type': 'input_image', 'file_id': 'file-image'},
+    {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,' + 'A' * 3_000_000}},
+])
+def test_image_estimate_counts_visual_input_without_transport_bytes(image):
+    """Charge typed images consistently while preserving nearby text and the original payload.
+
+    :param image: Responses or Chat Completions image content block.
+    """
+    original = json.dumps(image)
+    assert 1024 <= estimate_tokens([image], image_tokens=1024) < 1100
+    assert estimate_tokens([image], image_tokens=2048) - estimate_tokens([image], image_tokens=1024) == 1024
+    assert estimate_tokens([image, {'type': 'input_text', 'text': 'x' * 4000}], image_tokens=1024) > 2000
+    assert estimate_tokens({'type': 'input_text', 'text': original + 'x' * 8000}) > 2000
+    assert json.dumps(image) == original
+
+
+def test_text_and_nullable_schemas_keep_the_json_byte_estimate():
+    """Leave ordinary text and JSON schema type arrays in the text budget.
+
+    :returns: None; assertions compare against the canonical text encoding.
+    """
+    value = {'type': ['object', 'null'], 'description': 'image_url is text: café\n"quoted"',
+             'properties': {'image': {'type': 'string'}}}
+    encoded = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+    assert estimate_tokens(value) == (len(encoded) + 3) // 4
+
+
+def test_pdf_images_do_not_retrigger_compaction_after_checkpoint(tmp_path):
+    """Keep large encoded PDF images without repeatedly summarizing a small recent history.
+
+    :param tmp_path: Isolated workspace and checkpoint directory.
+    """
+    strategy = local_strategy(max_items=6, trigger_tokens=12000, image_tokens=4096, keep_recent_items=2)
+    ctx = compaction_context(tmp_path)
+    image = {'type': 'input_image', 'image_url': 'data:image/png;base64,' + 'A' * 3_000_000}
+    history = [user('old task'), {'role': 'assistant', 'content': 'old answer'}, user('Read the PDF'),
+               {'type': 'function_call', 'call_id': 'pdf', 'name': 'read_pdf', 'arguments': '{}'},
+               {'type': 'function_call_output', 'call_id': 'pdf', 'output': [image]}, user('Continue')]
+    calls = []
+
+    async def summary(items):
+        """Record summarization calls and return a short handoff.
+
+        :param items: Completed history prefix sent for summarization.
+        """
+        calls.append(items)
+        return 'Read the PDF and finish the task.'
+
+    selected = asyncio.run(select(strategy, history, ctx, summary))
+    assert selected[1:] == history[2:]
+    assert asyncio.run(select(strategy, history, ctx, summary)) == selected
+    assert len(calls) == 1
+
+
+def test_compaction_fits_recent_parallel_tool_batch_in_one_pass(tmp_path):
+    """Include an oversized recent batch in the summary and preserve the next user task.
+
+    :param tmp_path: Isolated workspace and checkpoint directory.
+    """
+    strategy = local_strategy(trigger_tokens=3000, keep_recent_items=20)
+    ctx = compaction_context(tmp_path)
+    history = [user('old'), {'role': 'assistant', 'content': 'answer'}, user('Read both'),
+               {'type': 'reasoning', 'id': 'reasoning'},
+               {'type': 'function_call', 'call_id': 'a'}, {'type': 'function_call', 'call_id': 'b'},
+               {'type': 'function_call_output', 'call_id': 'a', 'output': 'x' * 15000},
+               {'type': 'function_call_output', 'call_id': 'b', 'output': 'y' * 15000}, user('Next task')]
+    calls = []
+
+    async def summary(items):
+        """Capture the complete parallel batch selected for summarization.
+
+        :param items: History prefix to summarize.
+        """
+        calls.append(items)
+        return 'Both files were read. Continue with the next task.'
+
+    selected = asyncio.run(select(strategy, history, ctx, summary, request_context='fixed ' * 200))
+    assert calls == [history[:-1]]
+    assert selected[-1] == history[-1]
+    assert estimate_tokens([{'instructions': 'fixed ' * 200}, selected]) < 3000
+    assert asyncio.run(select(strategy, history, ctx, summary, request_context='fixed ' * 200)) == selected
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize('overflow', ['summary', 'refreshed_context'])
+def test_compaction_rechecks_complete_request_before_saving(tmp_path, overflow):
+    """Recompact farther when the actual summary or refreshed context consumes the remaining room.
+
+    :param tmp_path: Isolated workspace and checkpoint directory.
+    :param overflow: Which post-summary input makes the preferred retained suffix too large.
+    """
+    strategy = local_strategy(max_items=5, trigger_tokens=1500, keep_recent_items=3)
+    ctx = compaction_context(tmp_path)
+    history = [user('old'), {'role': 'assistant', 'content': 'answer'}, user('recent ' * 600),
+               {'role': 'assistant', 'content': 'recent answer'}, user('Current task')]
+    context = {'instructions': 'fixed', 'research': '', 'resources': ''}
+    model = ScriptedModel(say('summary ' * 240 if overflow == 'summary' else 'short summary'), say('shorter handoff'))
+    selected = asyncio.run(strategy.select_for_call(history, ctx=ctx, session_id='pm', request_context=context,
+        agent=Agent(name='pm', model=model), model_provider=RunConfig().model_provider,
+        prepare_input=lambda data: data,
+        research_context=lambda: 'new plan ' * 240 if overflow == 'refreshed_context' else 'new plan'))
+    assert len(model.inputs) == 2
+    assert selected[1:] == history[4:]
+    assert estimate_tokens([context, selected]) < 1500
+    checkpoint = json.loads(next(ctx.state_dir.glob('compaction-*.json')).read_text())
+    assert checkpoint['covered_items'] == 4
+    assert ctx.usage.by_source['compaction:pm'].requests == 2
+
+
+@pytest.mark.parametrize('overflow', ['instructions', 'current_task', 'summary', 'refreshed_context'])
+def test_unfittable_request_preserves_checkpoint_and_history(tmp_path, overflow):
+    """Reject irreducible input without committing an unusable checkpoint or deleting history.
+
+    :param tmp_path: Isolated workspace and checkpoint directory.
+    :param overflow: Irreducible part of the request exceeding the token threshold.
+    """
+    strategy = local_strategy(max_items=3, trigger_tokens=1500, keep_recent_items=1)
+    ctx = compaction_context(tmp_path)
+    history = [user('old'), {'role': 'assistant', 'content': 'answer'}, user('recent')]
+    model = ScriptedModel(say('handoff'), say('x' * 6000 if overflow == 'summary' else 'new handoff'))
+    context = {'instructions': '', 'research': '', 'resources': ''}
+
+    async def run():
+        """Establish a valid checkpoint, then verify that a failed selection preserves it.
+
+        :returns: None; assertions inspect the checkpoint and durable conversation.
+        """
+        args = {'ctx': ctx, 'session_id': 'pm', 'request_context': context, 'agent': Agent(name='pm', model=model),
+                'model_provider': RunConfig().model_provider, 'prepare_input': lambda data: data,
+                'research_context': lambda: ''}
+        await strategy.select_for_call(history, **args)
+        path = next(ctx.state_dir.glob('compaction-*.json'))
+        before = path.read_bytes()
+        history.extend([{'role': 'assistant', 'content': 'answer'},
+                        user('x' * 6000 if overflow == 'current_task' else 'current task')])
+        session = strategy.session('pm', ctx)
+        await session.add_items(history)
+        if overflow == 'instructions':
+            context['instructions'] = 'x' * 6000
+        if overflow == 'refreshed_context':
+            args['research_context'] = lambda: 'x' * 6000
+        with pytest.raises(RuntimeError, match='cannot fit'):
+            await strategy.select_for_call(history, **args)
+        assert path.read_bytes() == before
+        assert await session.get_items() == history
+        assert len(model.inputs) == (1 if overflow in {'instructions', 'current_task'} else 2)
+
+    asyncio.run(run())
+
+
+def test_mcp_schema_cannot_bypass_request_limit(drop_in_dir, assemble, monkeypatch):
+    """Reject an oversized MCP schema before sending ordinary inference.
+
+    :param drop_in_dir: Minimal temporary drop-in.
+    :param assemble: Scaffold assembly fixture.
+    :param monkeypatch: Substitute MCP discovery without starting an external server.
+    """
+    edit(drop_in_dir, 'scaffold.toml', 'orchestrator = "pm"',
+         'orchestrator = "pm"\n[context]\ntype = "compaction"\ntrigger_tokens = 6000')
+    tool = FunctionTool(name='large_schema', description='x' * 24000,
+                        params_json_schema={'type': 'object', 'properties': {}}, on_invoke_tool=AsyncMock())
+    monkeypatch.setattr(Agent, 'get_mcp_tools', AsyncMock(return_value=[tool]))
+    model = ScriptedModel(say('should not be called'))
+    scaffold = assemble(drop_in_dir, {'pm': model})
+    with pytest.raises(RuntimeError, match='cannot fit'):
+        asyncio.run(turns(scaffold, 'Start'))
+    assert not model.inputs
+    assert not list(scaffold.context.state_dir.glob('compaction-*.json'))

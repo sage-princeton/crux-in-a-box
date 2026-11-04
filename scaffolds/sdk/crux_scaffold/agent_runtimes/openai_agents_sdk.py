@@ -431,14 +431,41 @@ class OpenAIAgentsRuntime(AgentRuntime):
         status = await ctx.budget_status()
         request_context = {
             "instructions": data.model_data.instructions, "research": research, "resources": status,
-            "tools": [{"name": tool.name, "description": tool.description, "parameters": tool.params_json_schema}
-                      for tool in data.agent.tools if isinstance(tool, FunctionTool)],
+            "tools": [{"type": "function", "name": tool.name, "description": tool.description,
+                       "parameters": tool.params_json_schema, "strict": tool.strict_json_schema}
+                      for tool in await data.agent.get_all_tools(RunContextWrapper(data.context))
+                      if isinstance(tool, FunctionTool)],
         }
+
+        def prepare_request(selected: list[Any]) -> ModelInputData:
+            """Render the same request for token checks and ordinary inference.
+
+            :param selected: Selected history, left unchanged.
+            :returns: Cache-formatted history with pinned steering and refreshed context.
+            """
+            items = list(selected)
+            if prompt_item is not None:
+                for index in range(len(items) - 1, -1, -1):
+                    if items[index] == prompt_item:
+                        items.pop(index)
+                        break
+            if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
+                # Filter additions are not persisted by Runner. Replay delivered steering until history reloads.
+                items.extend(item for item in self._steering_items if item not in items)
+            tail = [f"<research_context>\n{request_context['research']}\n</research_context>", *annotations,
+                    f"<resource_status>\n{request_context['resources']}\n</resource_status>"]
+            if prompt is not None:
+                tail.append(f"# Current task\n\n{prompt}")
+            result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
+            result.input.append({"role": "user", "content": "\n\n".join(tail)})
+            return result
+
         items = list(await strategy.select_for_call(
             list(history), ctx=ctx,
             session_id=data.agent.name if data.agent.name == self.assembly.drop_in.config.orchestrator else None,
             request_context=request_context, agent=data.agent, model_provider=self.run_config.model_provider,
             prepare_input=self._cache_input, research_context=lambda: self.assembly.research_context(data.agent.name),
+            prepare_request=prepare_request,
         ))
         positions = {id(item): index for index, item in enumerate(history)}
         retained = [positions.get(id(item)) for item in items]
@@ -449,23 +476,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             {"items_selected": len(items), "items_dropped": len(history) - len(set(retained) - {None}),
              "retained_positions": retained},
         )
-        if prompt_item is not None:
-            for index in range(len(items) - 1, -1, -1):
-                if items[index] == prompt_item:
-                    items.pop(index)
-                    break
-
-        if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
-            # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
-            # until its next run reloads the durable session, even when a strategy trims older conversation.
-            items.extend(item for item in self._steering_items if item not in items)
-        annotations.insert(0, f"<research_context>\n{request_context['research']}\n</research_context>")
-        annotations.append(f"<resource_status>\n{request_context['resources']}\n</resource_status>")
-        result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
-        if prompt is not None:
-            annotations.append(f"# Current task\n\n{prompt}")
-        result.input.append({"role": "user", "content": "\n\n".join(annotations)})
-        return result
+        return prepare_request(items)
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
         return self._cache_input(data.model_data)

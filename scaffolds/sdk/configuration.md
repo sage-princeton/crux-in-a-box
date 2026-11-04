@@ -80,7 +80,7 @@ recent window without a model call, while `compaction` uses it as a trigger
 to summarize older history. The count includes an existing summary as one item.
 Neither limit splits complete exchanges, so neither is a hard request-size cap.
 For compaction configurations, rename `trigger_items` to `max_items`; the
-old key is rejected. Token triggers and recent-exchange retention are unchanged.
+old key is rejected.
 
 All retain the original SQLite history. Local compaction uses ordinary inference
 with the same model/provider/effort as the PI, including OpenRouter Argon; it does
@@ -93,18 +93,27 @@ max_items = 200
 context_window_tokens = 128000
 # trigger_tokens = 90000  # optional earlier token trigger
 keep_recent_items = 20
+image_tokens = 4096      # estimated allowance per image; tune for the selected model
 ```
 
 Before every PI call, including tool continuations, compaction checks both the
 item count and an approximate token count of the selected conversation, fixed
-instructions, declared function tools and fresh context. The token trigger
+instructions, function/MCP tool schemas and fresh context. The token trigger
 is 90% of `context_window_tokens`, or the lower explicit `trigger_tokens`. The
 128,000-token default is a configurable conservative window, not model metadata;
-set it for the selected model. Estimates use serialized UTF-8 bytes divided by
-four; MCP schemas and provider serialization/media overhead are not measured.
-They cannot guarantee that a provider accepts an oversized request.
-`keep_recent_items` is a soft target that preserves whole tool exchanges. The
-summary and its covered-history position survive restart in a separate checkpoint;
+set it for the selected model. Text estimates use serialized UTF-8 bytes divided
+by four. Typed images use `image_tokens` each instead of counting base64, URL or
+file-reference bytes as text. This configurable allowance is not a provider image
+tokenizer: actual image costs depend on model, dimensions and detail settings.
+Provider serialization and tokenization can differ from these estimates.
+`keep_recent_items` is a soft target that preserves whole tool exchanges; fewer
+items are retained when needed to fit. Before saving a checkpoint, compaction
+rechecks the complete rendered request, including the actual summary, refreshed
+research/resources and replayed steering. It summarizes farther if necessary.
+If no complete cut can bring the estimate strictly below the token trigger, the
+call fails without replacing the checkpoint or sending oversized ordinary
+inference. Fixed instructions, tool schemas and the current task cannot be
+removed to make room. The summary and its covered-history position survive restart in a separate checkpoint;
 keep it with `sessions.sqlite`. Changed history invalidates the checkpoint.
 Compaction calls are billed and traced as `compaction:<agent>`. Durable research
 files remain the source of current plans/results and are refreshed after selection.
