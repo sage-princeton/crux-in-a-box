@@ -27,7 +27,7 @@ from agents import (
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
 from agents.items import ModelResponse
 from agents.mcp import MCPServerStdio
-from agents.models.interface import Model
+from agents.models.interface import Model, ModelTracing
 from agents.retry import ModelRetryBackoffSettings, ModelRetrySettings, RetryPolicyContext, retry_policies
 from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
@@ -43,12 +43,12 @@ from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, 
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
 from crux_scaffold.components import CountLimit, Options, count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.context_strategies import is_standing_context
+from crux_scaffold.context_strategies import COMPACTION_PROMPT, is_standing_context
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
-from crux_scaffold.usage import UsageLedger
+from crux_scaffold.usage import TokenUsage, UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
@@ -418,9 +418,32 @@ class OpenAIAgentsRuntime(AgentRuntime):
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
         history = [item for item in data.model_data.input if not is_standing_context(item)]
-        prompt = history[-1]["content"] if history and history[-1].get("role") == "user" else None
+        prompt_item = history[-1] if history and history[-1].get("role") == "user" else None
+        prompt = prompt_item["content"] if prompt_item is not None else None
+        if data.agent.name == self.assembly.drop_in.config.orchestrator and self._steering_items:
+            stored = [item for item in await self.session.get_items() if not is_standing_context(item)]
+            for index, item in enumerate(stored):
+                if item in self._steering_items and item not in history:
+                    history.insert(index, item)
         strategy = self.assembly.context_strategy
-        items = list(strategy.select(list(history)))
+        ctx = self.assembly.context
+        research = self.assembly.research_context(data.agent.name)
+        status = await ctx.budget_status()
+        async def summarize(items):
+            nonlocal status, research
+            summary = await self._summarize(data.agent, data.model_data.instructions, items)
+            status = await ctx.budget_status()
+            research = self.assembly.research_context(data.agent.name)
+            return summary
+        items = list(await strategy.select_for_call(
+            list(history), ctx=ctx,
+            session_id=data.agent.name if data.agent.name == self.assembly.drop_in.config.orchestrator else None,
+            request_context={"instructions": data.model_data.instructions, "research": research, "resources": status,
+                             "tools": [{"name": tool.name, "description": tool.description,
+                                        "parameters": tool.params_json_schema}
+                                       for tool in data.agent.tools if isinstance(tool, FunctionTool)]},
+            summarize=summarize,
+        ))
         positions = {id(item): index for index, item in enumerate(history)}
         retained = [positions.get(id(item)) for item in items]
         self.assembly.context.telemetry.record(
@@ -430,22 +453,53 @@ class OpenAIAgentsRuntime(AgentRuntime):
             {"items_selected": len(items), "items_dropped": len(history) - len(set(retained) - {None}),
              "retained_positions": retained},
         )
-        if prompt is not None and items and items[-1] == history[-1]:
-            items.pop()
+        if prompt_item is not None:
+            for index in range(len(items) - 1, -1, -1):
+                if items[index] == prompt_item:
+                    items.pop(index)
+                    break
 
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
             # until its next run reloads the durable session, even when a strategy trims older conversation.
             items.extend(item for item in self._steering_items if item not in items)
-        research = self.assembly.research_context(data.agent.name)
         annotations.insert(0, f"<research_context>\n{research}\n</research_context>")
-        status = await self.assembly.context.budget_status()
         annotations.append(f"<resource_status>\n{status}\n</resource_status>")
         result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
         if prompt is not None:
             annotations.append(f"# Current task\n\n{prompt}")
         result.input.append({"role": "user", "content": "\n\n".join(annotations)})
         return result
+
+    async def _summarize(self, agent: Agent, instructions: str | None, items: list[Any]) -> str:
+        ctx = self.assembly.context
+        source = f"compaction:{agent.name}"
+        model = agent.model
+        if not isinstance(model, Model):
+            model = self.run_config.model_provider.get_model(model)
+        request = self._cache_input(ModelInputData(
+            input=[*items, {"role": "user", "content": COMPACTION_PROMPT}], instructions=instructions))
+        with ctx.telemetry.generation(source, ctx.model, {
+            "instructions": request.instructions, "input": request.input,
+            "model_settings": agent.model_settings.to_json_dict(), "tools": [],
+        }) as outcome:
+            response = await model.get_response(
+                system_instructions=request.instructions, input=request.input, model_settings=agent.model_settings,
+                tools=[], output_schema=None, handoffs=[], tracing=ModelTracing.DISABLED,
+                previous_response_id=None, conversation_id=None, prompt=None,
+            )
+            usage = response.usage
+            outcome.output = [item.model_dump(mode="json") for item in response.output]
+            outcome.usage = TokenUsage(requests=1, input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
+                                       cached_input_tokens=usage.input_tokens_details.cached_tokens,
+                                       cache_write_input_tokens=usage.input_tokens_details.cache_write_tokens,
+                                       reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens)
+            ctx.usage.add(source, usage.input_tokens, usage.output_tokens,
+                          cached_input_tokens=outcome.usage.cached_input_tokens,
+                          cache_write_input_tokens=outcome.usage.cache_write_input_tokens,
+                          reasoning_output_tokens=outcome.usage.reasoning_output_tokens)
+            return "\n".join(part.text for item in response.output if item.type == "message"
+                             for part in item.content if part.type == "output_text")
 
     async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
         return self._cache_input(data.model_data)

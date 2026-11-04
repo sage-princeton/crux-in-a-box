@@ -372,3 +372,35 @@ def test_steering_arrives_while_a_background_coding_task_keeps_working(drop_in_d
     assert [m["text"] for m in messages(pm.inputs[1])] == ["Continue the independent task"]
     assert finished == [True]
     assert not scaffold.runtime._coding_tasks
+
+
+
+def test_local_compaction_checkpoint_survives_steering_inserted_during_turn(drop_in_dir, assemble, tmp_path):
+    env = configured(drop_in_dir, tmp_path)
+    edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
+         'orchestrator = "pm"\n[context]\ntype = "local_compaction"\ntrigger_items = 4\nkeep_recent_items = 2')
+    inbox(tmp_path / "inbox.csv", ("2.000000", "Use the restored dataset"))
+    pm = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "one"),
+                       call("read_file", {"path": "AGENTS.md"}, "two"), say("handoff includes operator request"),
+                       say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm}, env=env)
+    async def run():
+        async with scaffold.runtime as runtime:
+            await runtime.run("TASK-SENTINEL", workflow="main")
+            return await runtime.session.get_items()
+    stored = asyncio.run(run())
+    assert len(stored) == 7 and len(messages(stored)) == 1
+    assert str(pm.inputs[0]).count("TASK-SENTINEL") == 1
+    assert "Use the restored dataset" in str(pm.inputs[2])
+    checkpoint = json.loads(next(scaffold.context.state_dir.glob("compaction-*.json")).read_text())
+    assert checkpoint["covered_items"] == 4
+    edit(drop_in_dir, "scaffold.toml", "trigger_items = 4", "trigger_items = 1000")
+    resumed = ScriptedModel(say("recalled"))
+    second = assemble(drop_in_dir, {"pm": resumed}, env=env)
+    async def restart():
+        async with second.runtime as runtime:
+            await runtime.run("Continue", workflow="resume")
+    asyncio.run(restart())
+    assert "handoff includes operator request" in str(resumed.inputs[0])
+    assert '"one"' not in json.dumps(resumed.inputs[0])
+    assert "compaction:pm" not in second.context.usage.by_source

@@ -49,7 +49,7 @@ context_max_chars = 32000                # static file text, loaded at assembly
 workspace_context_max_chars = 8000       # dynamic file text per call
 ```
 
-Static files must exist at launch. Dynamic files may be created later; missing state is labeled unknown. Every load checks path confinement, including symlinks. Both limits include headings and truncation notices (minimum 200). Dynamic files share their budget, identify their source and modification time, and explicitly mark truncation. File recency does not certify the freshness of its claims. Keep plans/results/review dispositions concise and reference full artifacts, logs and review files; the scaffold does not summarize scientific claims with another model.
+Static files must exist at launch. Dynamic files may be created later; missing state is labeled unknown. Every load checks path confinement, including symlinks. Both limits include headings and truncation notices (minimum 200). Dynamic files share their budget, identify their source and modification time, and explicitly mark truncation. File recency does not certify the freshness of its claims. Keep plans/results/review dispositions concise and reference full artifacts, logs and review files; conversation compaction does not replace those durable research records.
 
 A coding agent's harness brings its own system prompt, written for an interactive session with a person. `system_prompt = "prompts/worker.md"` under `[coding_agents.<name>]` replaces it with a drop-in file, read once at assembly. Codex requires one and receives it as its base instructions. The scaffold also turns off Codex's own loading of the workspace's `AGENTS.md`, so a Codex worker reads that file only when its `context` lists it.
 
@@ -63,13 +63,44 @@ messages:     selected conversation history
               user: fresh research/workflow/resource context + current task (first call only)
 ```
 
-The first call combines the fresh prefix with the next task. Subsequent tool calls keep that task and complete tool exchanges in history, appending fresh context without repeating the task. Only raw tasks, actual exchanges and steering enter SQLite. All context strategies use this same assembly path; compaction explicitly receives durable input rather than the last provider response ID, which could include ephemeral context. On restart, known legacy standing-context developer snapshots (including typed text blocks) are excluded from model/compaction input; genuine historical messages remain. This does not fix replay of an interrupted loop's launch prompt (AE-295), nor remove information already embedded in an encrypted historical compaction.
+The first call combines the fresh prefix with the next task. Subsequent tool calls keep that task and complete tool exchanges in history, appending fresh context without repeating the task. Only raw tasks, actual exchanges and steering enter SQLite. All context strategies use this same assembly path; local compaction summarizes conversation history without storing the temporary research/resource tail. On restart, known legacy standing-context developer snapshots (including typed text blocks) are excluded from model/compaction input; genuine historical messages remain. This does not fix replay of an interrupted loop's launch prompt (AE-295).
 
 Agent delegates receive their own sources and brief, without the caller's conversation. Coding agents receive stable developer instructions plus a fresh context-prefixed brief at invocation; their harness owns later calls. Isolated judges retain their rubric and declared evidence without research/workflow/resource context.
 
 Claude models through OpenRouter receive the static instructions once as a request-only developer message instead of the top-level `instructions` string, allowing an explicit cache breakpoint on that content. A second breakpoint covers the latest retained text block, before the dynamic tail. The instruction breakpoint is present even on the first call or when trimming leaves no history. Explicit extension markers take precedence; markers never enter sessions or compaction. Other providers retain their existing adapter behavior.
 
 Cache hits require an unchanged prefix, the model's minimum token count and an unexpired entry (five minutes by default). Changing instructions, tools or selected history can require a new write. Top-level automatic `cache_control` alone would cache the replaced status tail and miss on the next call; use the runtime's retained-prefix breakpoints instead. See [Anthropic's prefix-checking rules](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#how-automatic-prefix-checking-works) and [OpenRouter's caching adapters](https://openrouter.ai/docs/guides/best-practices/prompt-caching#anthropic-claude). Isolated judges receive cache markers without run status or steering metadata; one-shot provisioning probes keep their existing behavior.
+
+## Conversation retention
+
+`[context]` selects `persistent` (all history), `trim_recent` (a recent window),
+or `local_compaction` (a PI handoff summary plus recent complete exchanges).
+All retain the original SQLite history. Local compaction uses ordinary inference
+with the same model/provider/effort as the PI, including OpenRouter Argon; it does
+not require a provider compaction endpoint.
+
+```toml
+[context]
+type = "local_compaction"
+trigger_items = 200
+context_window_tokens = 128000
+# trigger_tokens = 90000  # optional earlier token trigger
+keep_recent_items = 20
+```
+
+Before every PI call, including tool continuations, compaction checks both the
+item count and an approximate token count of the selected conversation, fixed
+instructions, declared function tools and fresh context. The token trigger
+is 90% of `context_window_tokens`, or the lower explicit `trigger_tokens`. The
+128,000-token default is a configurable conservative window, not model metadata;
+set it for the selected model. Estimates use serialized UTF-8 bytes divided by
+four; MCP schemas and provider serialization/media overhead are not measured.
+They cannot guarantee that a provider accepts an oversized request.
+`keep_recent_items` is a soft target that preserves whole tool exchanges. The
+summary and its covered-history position survive restart in a separate checkpoint;
+keep it with `sessions.sqlite`. Changed history invalidates the checkpoint.
+Compaction calls are billed and traced as `compaction:<agent>`. Durable research
+files remain the source of current plans/results and are refreshed after selection.
 
 ## Rest while coding delegates work
 
@@ -528,7 +559,7 @@ The provisioning probe reads runtime/provider settings before operator preparati
 ignoring steering and unresolved prompt placeholders. `check` and `run` still
 require a fully prepared drop-in.
 
-The automated EC2 flow reads the committed drop-in's provider configuration before selecting and validating its credential. Compatible HTTPS endpoints work with Responses or Chat Completions; declared Codex workers require Responses. `MODEL_PROVIDER=openrouter` is accepted when the drop-in points to OpenRouter, and leaving the legacy setting at `direct` still honors the drop-in. Unselected provider credentials are excluded from the run. Compatible providers must use `persistent` or `trim_recent` context because `openai_compaction` calls direct OpenAI. OpenRouter runs with Codex workers and `extra_body` require a `model@preset/NAME` model; the preset must duplicate those routing settings. Preflight checks the suffix, not the account-side preset or BYOK configuration. Commit drop-in and SDK edits before provisioning: both are staged from `HEAD`.
+The automated EC2 flow reads the committed drop-in's provider configuration before selecting and validating its credential. Compatible HTTPS endpoints work with Responses or Chat Completions; declared Codex workers require Responses. `MODEL_PROVIDER=openrouter` is accepted when the drop-in points to OpenRouter, and leaving the legacy setting at `direct` still honors the drop-in. Unselected provider credentials are excluded from the run. `local_compaction` works with the selected provider through ordinary inference, including OpenRouter; no compaction endpoint is required. OpenRouter runs with Codex workers and `extra_body` require a `model@preset/NAME` model; the preset must duplicate those routing settings. Preflight checks the suffix, not the account-side preset or BYOK configuration. Commit drop-in and SDK edits before provisioning: both are staged from `HEAD`.
 
 ## Development
 

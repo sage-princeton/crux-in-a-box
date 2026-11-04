@@ -80,10 +80,12 @@ class SDKConfigTests(unittest.TestCase):
                                                success=False))
         self.assertIsNone(self.inspect(COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"'))["coding_agent"])
 
-    def test_compatible_provider_rejects_openai_only_compaction(self):
-        config = COMPATIBLE + '\n[context]\ntype = "openai_compaction"\ntrigger_items = 200\n'
-        self.assertIn("trim_recent", self.inspect(config, success=False))
-        self.assertEqual(self.inspect(DIRECT + '\n[context]\ntype = "openai_compaction"\n')["api_key_env"], "OPENAI_API_KEY")
+    def test_local_compaction_uses_the_selected_provider_credential(self):
+        context = '\n[context]\ntype = "local_compaction"\ntrigger_items = 200\n'
+        self.assertEqual(self.inspect(COMPATIBLE + context)["api_key_env"], "OPENROUTER_API_KEY")
+        chat = COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"')
+        self.assertEqual(self.inspect(chat + context)["api_key_env"], "OPENROUTER_API_KEY")
+        self.assertEqual(self.inspect(DIRECT + context)["api_key_env"], "OPENAI_API_KEY")
 
     def test_model_probe_loads_drop_in_and_only_declared_coding_harnesses(self):
         with tempfile.TemporaryDirectory() as directory:
