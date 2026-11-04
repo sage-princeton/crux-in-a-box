@@ -75,6 +75,13 @@ Cache hits require an unchanged prefix, the model's minimum token count and an u
 
 `[context]` selects `persistent` (all history), `trim_recent` (a recent window),
 or `compaction` (a PI handoff summary plus recent complete exchanges).
+Both windowed strategies use `max_items` (default 200): `trim_recent` selects a
+recent window without a model call, while `compaction` uses it as a trigger
+to summarize older history. The count includes an existing summary as one item.
+Neither limit splits complete exchanges, so neither is a hard request-size cap.
+For compaction configurations, rename `trigger_items` to `max_items`; the
+old key is rejected. Token triggers and recent-exchange retention are unchanged.
+
 All retain the original SQLite history. Local compaction uses ordinary inference
 with the same model/provider/effort as the PI, including OpenRouter Argon; it does
 not require a provider compaction endpoint.
@@ -82,7 +89,7 @@ not require a provider compaction endpoint.
 ```toml
 [context]
 type = "compaction"
-trigger_items = 200
+max_items = 200
 context_window_tokens = 128000
 # trigger_tokens = 90000  # optional earlier token trigger
 keep_recent_items = 20

@@ -109,7 +109,7 @@ def test_compaction_keeps_sqlite_history_and_resumes_checkpoint(tmp_path):
 
     :param tmp_path: Isolated temporary directory.
     """
-    strategy = local_strategy(trigger_items=4, keep_recent_items=2)
+    strategy = local_strategy(max_items=4, keep_recent_items=2)
     ctx = compaction_context(tmp_path)
     history = [user("old task"), {"role": "assistant", "content": "old answer"},
                user("new task"), {"role": "assistant", "content": "new answer"}, user("continue")]
@@ -136,10 +136,10 @@ def test_compaction_keeps_sqlite_history_and_resumes_checkpoint(tmp_path):
         assert await session.get_items() == history
         checkpoint = json.loads(next(ctx.state_dir.glob("compaction-*.json")).read_text())
         assert checkpoint["covered_items"] == 2 and checkpoint["summary"] == "A useful handoff."
-        assert await select(local_strategy(trigger_items=10), history, ctx, summarize) == selected
+        assert await select(local_strategy(max_items=10), history, ctx, summarize) == selected
         assert len(calls) == 1
         divergent = [user("replaced task"), *history[1:]]
-        assert await select(local_strategy(trigger_items=10), divergent, ctx, summarize) == divergent
+        assert await select(local_strategy(max_items=10), divergent, ctx, summarize) == divergent
     asyncio.run(run())
 
 
@@ -183,7 +183,7 @@ def test_compaction_never_splits_parallel_tool_exchanges(tmp_path):
         """
         assert items == history[:2]
         return "summary"
-    selected = asyncio.run(select(local_strategy(trigger_items=3, keep_recent_items=2), history, ctx, summarize))
+    selected = asyncio.run(select(local_strategy(max_items=3, keep_recent_items=2), history, ctx, summarize))
     assert selected[1:] == history[2:]
 
 
@@ -201,7 +201,7 @@ def test_failed_or_empty_summary_does_not_advance_checkpoint(tmp_path):
         """
         return "   "
     with pytest.raises(RuntimeError, match="empty summary"):
-        asyncio.run(select(local_strategy(trigger_items=3, keep_recent_items=1), history, ctx, empty))
+        asyncio.run(select(local_strategy(max_items=3, keep_recent_items=1), history, ctx, empty))
     assert not list(ctx.state_dir.glob("compaction-*.json"))
 
 
@@ -218,7 +218,7 @@ def test_compaction_does_not_checkpoint_delegates_or_incomplete_exchanges(tmp_pa
         """
         raise AssertionError("no complete prefix to summarize")
     history = [user("task"), {"type": "function_call", "call_id": "a"}]
-    strategy = local_strategy(trigger_items=1, keep_recent_items=1)
+    strategy = local_strategy(max_items=1, keep_recent_items=1)
     assert asyncio.run(select(strategy, history, ctx, unexpected)) == history
     history.append({"role": "assistant", "content": "answer"})
     assert asyncio.run(select(strategy, history, ctx, unexpected, session_id=None)) == history
@@ -264,7 +264,7 @@ def test_compaction_during_tool_continuations_refreshes_context_and_keeps_histor
     :param assemble: Scaffold assembly fixture.
     """
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
-         'orchestrator = "pm"\n\n[context]\ntype = "compaction"\ntrigger_items = 4\nkeep_recent_items = 2')
+         'orchestrator = "pm"\n\n[context]\ntype = "compaction"\nmax_items = 4\nkeep_recent_items = 2')
     edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',
          'context = ["workspace/AGENTS.md"]\nworkspace_context = ["REQUEST.md"]')
     pm = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "r1"),
@@ -346,7 +346,7 @@ def test_failed_recompaction_keeps_the_previous_checkpoint(tmp_path):
         :param items: Conversation items to summarize.
         """
         return "handoff"
-    strategy = local_strategy(trigger_items=3, keep_recent_items=1)
+    strategy = local_strategy(max_items=3, keep_recent_items=1)
     asyncio.run(select(strategy, history, ctx, summary))
     path = next(ctx.state_dir.glob("compaction-*.json"))
     before = path.read_bytes()
@@ -370,7 +370,7 @@ def test_compaction_refreshes_context_after_summary(tmp_path, model_name):
     :param tmp_path: Isolated workspace and checkpoint directory.
     :param model_name: Whether the agent needs lazy provider resolution.
     """
-    strategy = local_strategy(trigger_items=3, keep_recent_items=1)
+    strategy = local_strategy(max_items=3, keep_recent_items=1)
     ctx = compaction_context(tmp_path)
     context = {"instructions": "fixed", "research": "old", "resources": "old"}
     model = ScriptedModel(say("summary"))
@@ -385,3 +385,13 @@ def test_compaction_refreshes_context_after_summary(tmp_path, model_name):
     assert provider.get_model.call_count == int(model_name)
     if model_name:
         provider.get_model.assert_called_once_with("named-model")
+
+
+@pytest.mark.parametrize("kind", ["trim_recent", "compaction"])
+def test_item_limit_options_reject_legacy_trigger_items(kind):
+    """Reject the removed option for both windowed strategies.
+
+    :param kind: Registered strategy using the shared max_items option.
+    """
+    with pytest.raises(InvalidDropInError, match="Extra inputs are not permitted"):
+        CONTEXT_STRATEGIES.create("context", {"type": kind, "trigger_items": 3})
