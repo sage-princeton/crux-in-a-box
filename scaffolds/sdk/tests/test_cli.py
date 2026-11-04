@@ -174,10 +174,11 @@ def test_coding_probe_retries_temporary_directory_cleanup(monkeypatch):
     from crux_scaffold.usage import TokenUsage
 
     cleanup = cli.tempfile.TemporaryDirectory.cleanup
-    directories, attempts, delays = [], [], []
+    directories, attempts, delays, prompts = [], [], [], []
 
     async def answer(self, request, ctx):
         directories.append(ctx.workspace.root)
+        prompts.append(self.system_prompt)
         (ctx.state_dir / "plugins").mkdir(parents=True)
         return CodingResult(completed=True, final_response=request, usage=TokenUsage())
 
@@ -197,6 +198,7 @@ def test_coding_probe_retries_temporary_directory_cleanup(monkeypatch):
                                             cli.PROBE_MARKER)) == cli.PROBE_MARKER
     assert len(attempts) == 2
     assert delays == [0.1]
+    assert prompts == [cli.PROBE_INSTRUCTIONS]
     assert all(not directory.exists() for directory in directories)
 
 

@@ -236,19 +236,15 @@ What the PI is told, through `$feedback`, when a review gate stops before or aft
     worker = config["coding_agents"]["worker_a"]
     files = ", ".join(f"`{rel}`" for rel in worker["context"])
     dynamic = ", ".join(f"`{rel}`" for rel in worker.get("workspace_context", []))
-    own_copy = ("a user message with Codex's own copy of `workspace/AGENTS.md`, which it loads from the workspace by "
-                "itself, then " if worker.get("project_docs", True) else "a user message with ")
     doc.add("## 2. Research assistant and Codex workers")
     doc.file("personas/ra.md", "The research assistant's system instructions on every call. The three Codex workers "
-             "get the same text as part of their developer instructions"
-             + ("." if worker.get("system_prompt") else "; their system prompt is Codex's own."))
-    if worker.get("system_prompt"):
-        doc.file(worker["system_prompt"], "The Codex workers' system prompt on every call, in place of Codex's "
-                 "built-in one, which is written for an interactive coding session with a person. The rest of each "
-                 f"worker request, in order: a developer message with the scaffold's developer instructions ({files}), "
-                 f"then Codex's list of its bundled skills and a note on its sandbox permissions; {own_copy}a block "
-                 "describing the environment (working directory, shell, date and timezone); and a user message with "
-                 f"the research context (workflow state and {dynamic}), then \"# Current task\" and the PI's brief.")
+             "get the same text as part of their developer instructions.")
+    doc.file(worker["system_prompt"], "The Codex workers' system prompt on every call, in place of Codex's built-in "
+             "one, which is written for an interactive coding session with a person. The rest of each worker request, "
+             f"in order: a developer message with the scaffold's developer instructions ({files}), then Codex's list "
+             "of its bundled skills and a note on its sandbox permissions; a user message with a block describing the "
+             "environment (working directory, shell, date and timezone); and a user message with the research context "
+             f"(workflow state and {dynamic}), then \"# Current task\" and the PI's brief.")
 
     doc.add("## 3. Reviewer")
     doc.file("prompts/review.md", "The reviewer's system instructions, for both the research and the final review. Its "

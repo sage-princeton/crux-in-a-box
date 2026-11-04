@@ -7,7 +7,10 @@ background workers, isolated PDF judging and durable Slack steering. The PI and
 assistants have shell access; Codex uses full access. No token, turn, iteration,
 delegation-depth or concurrency limit is configured. The three named background
 Codex entry points each hold one outstanding brief; SDK assistant calls and native
-Codex fan-out have no configured concurrency/depth cap.
+Codex fan-out have no configured concurrency/depth cap. The Codex workers use
+`prompts/codex-worker.md` in place of Codex's built-in system prompt, which is
+written for an interactive session with a person, and read `AGENTS.md` once, from
+their standing context.
 
 Research advances after an Accept (Overall 5/6 or 6/6). The loop also moves to
 finalization at one hour remaining, $180 model spend, or $90 RunPod spend. These

@@ -84,6 +84,7 @@ max_turns = "unlimited"
 
 [coding_agents.worker_a]
 type = "codex"
+system_prompt = "prompts/codex-worker.md"
 description = "Implement, experiment or write within the assigned scope and verify the result."
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
@@ -91,6 +92,7 @@ sandbox = "full-access"
 
 [coding_agents.worker_b]
 type = "codex"
+system_prompt = "prompts/codex-worker.md"
 description = "Independent research worker with the same capabilities as worker_a."
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
@@ -98,6 +100,7 @@ sandbox = "full-access"
 
 [coding_agents.worker_c]
 type = "codex"
+system_prompt = "prompts/codex-worker.md"
 description = "Independent research worker with the same capabilities as worker_a."
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]

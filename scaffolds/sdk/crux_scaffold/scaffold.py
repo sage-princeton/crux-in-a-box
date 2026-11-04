@@ -72,7 +72,8 @@ class Scaffold:
         for name, table in self.drop_in.config.coding_agents.items():
             cls, options = CODING_AGENTS.resolve(name, table)
             agents[name] = cls(name, options, developer_instructions=self.drop_in.standing_context(options),
-                               research_context=partial(self._research_context, name))
+                               research_context=partial(self._research_context, name),
+                               system_prompt=self.drop_in.prompt(options.system_prompt) if options.system_prompt else "")
         return agents
 
     def _instructions(self, name: str) -> str:

@@ -23,6 +23,7 @@ from crux_scaffold.usage import Budget, UsageLedger
 from crux_scaffold.workspace import RunContext, Sleep, Workspace
 
 PROBE_MARKER = "SCAFFOLD-PROBE"
+PROBE_INSTRUCTIONS = "Reply with exactly the text you are asked for."
 EXIT_OK, EXIT_PROBE_FAILED, EXIT_CONFIG, EXIT_STOPPED = 0, 1, 2, 3
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
 
@@ -137,8 +138,10 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
 
 
 async def probe_coding_agent(type_name: str, env: Mapping[str, str], telemetry: Telemetry, request: str) -> str:
-    cls, options = CODING_AGENTS.resolve("probe", {"type": type_name, "description": "provisioning probe"})
-    agent = cls("probe", options)
+    # The probe has no drop-in to read a prompt file from: it names one for the options and passes the text itself.
+    cls, options = CODING_AGENTS.resolve("probe", {"type": type_name, "description": "provisioning probe",
+                                                   "system_prompt": "probe"})
+    agent = cls("probe", options, system_prompt=PROBE_INSTRUCTIONS)
     directory = tempfile.TemporaryDirectory()
     try:
         root = Path(directory.name)
