@@ -352,7 +352,7 @@ def test_compaction_uses_ordinary_inference_and_preserves_cache_boundaries(
     """
     path = drop_in_dir / "scaffold.toml"
     path.write_text(path.read_text().replace('api = "responses"', f'api = "{api}"')
-                    + '\n[context]\ntype = "compaction"\ntrigger_items = 4\nkeep_recent_items = 2\n')
+                    + '\n[context]\ntype = "compaction"\nmax_items = 4\nkeep_recent_items = 2\n')
     requests, pending, _ = router
     for output in [call("read_file", {"path": "AGENTS.md"}, "first"),
                    call("read_file", {"path": "AGENTS.md"}, "second"), say("Keep the task and conclusions."),

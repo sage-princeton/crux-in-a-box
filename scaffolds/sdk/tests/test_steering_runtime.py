@@ -384,7 +384,7 @@ def test_compaction_checkpoint_survives_steering_inserted_during_turn(drop_in_di
     """
     env = configured(drop_in_dir, tmp_path)
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
-         'orchestrator = "pm"\n[context]\ntype = "compaction"\ntrigger_items = 4\nkeep_recent_items = 2')
+         'orchestrator = "pm"\n[context]\ntype = "compaction"\nmax_items = 4\nkeep_recent_items = 2')
     inbox(tmp_path / "inbox.csv", ("2.000000", "Use the restored dataset"))
     pm = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "one"),
                        call("read_file", {"path": "AGENTS.md"}, "two"), say("handoff includes operator request"),
@@ -404,7 +404,7 @@ def test_compaction_checkpoint_survives_steering_inserted_during_turn(drop_in_di
     assert "Use the restored dataset" in str(pm.inputs[2])
     checkpoint = json.loads(next(scaffold.context.state_dir.glob("compaction-*.json")).read_text())
     assert checkpoint["covered_items"] == 4
-    edit(drop_in_dir, "scaffold.toml", "trigger_items = 4", "trigger_items = 1000")
+    edit(drop_in_dir, "scaffold.toml", "max_items = 4", "max_items = 1000")
     resumed = ScriptedModel(say("recalled"))
     second = assemble(drop_in_dir, {"pm": resumed}, env=env)
     async def restart():

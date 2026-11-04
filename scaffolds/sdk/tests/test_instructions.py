@@ -211,9 +211,9 @@ type = "runpod"
 
 
 @pytest.mark.parametrize("strategy,expected", [("persistent", "all history"), ("trim_recent", "max_items 17"),
-                                               ("compaction", "trigger_items 19")])
+                                               ("compaction", "max_items 19")])
 def test_context_guidance_follows_strategy_and_declared_sources(drop_in_dir, assemble, strategy, expected):
-    options = {"persistent": "", "trim_recent": "max_items = 17", "compaction": "trigger_items = 19"}
+    options = {"persistent": "", "trim_recent": "max_items = 17", "compaction": "max_items = 19"}
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
          f'orchestrator = "pm"\n[context]\ntype = "{strategy}"\n{options[strategy]}')
     edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',

@@ -116,12 +116,12 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 class CompactionOptions(Options):
     """Configure PI summary triggers and complete-exchange retention.
 
-    :ivar trigger_items: Soft item threshold, including an existing summary.
+    :ivar max_items: Soft item threshold, including an existing summary.
     :ivar context_window_tokens: Configured model window, reserving 10% headroom.
     :ivar trigger_tokens: Optional earlier estimated-token threshold.
     :ivar keep_recent_items: Soft target for unsummarized recent exchanges.
     """
-    trigger_items: int = Field(200, ge=1, strict=True)
+    max_items: int = Field(200, ge=1, strict=True)
     context_window_tokens: int = Field(128000, ge=1, strict=True)
     trigger_tokens: int | None = Field(None, ge=1, strict=True)
     keep_recent_items: int = Field(20, ge=1, strict=True)
@@ -292,7 +292,7 @@ class Compaction(ContextStrategy):
         :param request_context: Stable instructions/tools and fresh dynamic context.
         :returns: Whether either configured trigger has been reached.
         """
-        return (len(selected) >= self.options.trigger_items or
+        return (len(selected) >= self.options.max_items or
                 estimate_tokens([request_context, selected]) >= self._token_limit())
 
     def _retention_boundary(self, items: list[Any], covered: int) -> int | None:
