@@ -14,7 +14,7 @@ the configured SDK delegation policy imposes no depth or concurrency limits.
 
 Keep PLAN.md concise and current: hypothesis, alternatives, milestone schedule,
 resource allocations, work in flight, latest evidence, decisions and next action.
-Refresh it before yielding and after consequential results.
+Refresh it before yielding and after consequential results or operator steering.
 Read the append-only LOG.md when historical context matters. Automatic context
 compaction and the generated scaffold instructions handle runtime mechanics.
 
@@ -25,6 +25,10 @@ be quiescent: collect workers before asking for review. Budget-aware thinking
 includes the cost of reading, delegating, reviewing and compacting.
 
 Record concise progress in LOG.md at launch, major milestones and completion.
-Diagnose external blockers in PLAN.md and continue independent work. Keep total
+Send progress to the configured Slack channel at launch, major milestones,
+roughly hourly, and completion. Use escalate for a diagnosed external blocker or
+imminent resource breach; continue independent work. Operator messages arrive
+automatically. Do not ask routine research questions of the operator.
+Diagnose external blockers in PLAN.md. Keep total
 inference spend within $100 across all agents and reviews, regardless of the
 provider key's higher limit. Check resource measurements before allocating work.
