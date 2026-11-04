@@ -33,6 +33,11 @@ iteration limit. Existing numeric defaults remain unchanged. The built-in phased
 loop checks budgets between iterations; unlimited turns alone do not enforce
 spending or deadlines within an iteration.
 
+A model call that fails for a transient reason (a 5xx or 429 response, a
+network error or a provider's content-filter cutoff) is retried inside the
+turn, up to 8 times, backing off from 2 to 60 seconds. A failure that outlasts
+the retries ends the iteration and cancels its running coding agents.
+
 Each agent and coding agent declares its existing context sources in `scaffold.toml`:
 
 ```toml

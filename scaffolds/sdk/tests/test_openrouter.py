@@ -179,13 +179,17 @@ def test_invalid_provider_settings_are_rejected(router, drop_in_dir, assemble, o
         assemble(drop_in_dir, env=ENV)
 
 
-def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble):
+def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble, monkeypatch):
     requests, pending, _ = router
-    # An API error must not trigger a direct-provider or alternate-provider retry.
-    pending.append({"error": {"message": "No eligible Vertex endpoint", "code": "provider_unavailable"}})
+    # An API error is retried on the same Vertex-only route, never through a direct or alternate provider.
+    monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.MODEL_RETRIES", 1)
+    monkeypatch.setattr("agents.run_internal.model_retry._sleep_for_retry", lambda delay: asyncio.sleep(0))
+    pending.extend([{"error": {"message": "No eligible Vertex endpoint", "code": "provider_unavailable"}}] * 2)
     with pytest.raises(APIStatusError, match="No eligible Vertex endpoint"):
         asyncio.run(assemble(drop_in_dir, env=ENV).run())
-    assert len(requests) == 1 and requests[0]["provider"]["allow_fallbacks"] is False
+    assert len(requests) == 2
+    assert all(request["provider"]["only"] == ["google-vertex"] and request["provider"]["allow_fallbacks"] is False
+               for request in requests)
 
 
 def test_openrouter_generations_reach_langfuse_with_model_reasoning_and_usage(router, drop_in_dir, assemble):
