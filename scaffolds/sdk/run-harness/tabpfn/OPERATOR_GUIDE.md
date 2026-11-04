@@ -1,6 +1,8 @@
 # TabPFN SDK research run
 
-This drop-in reproduces the PFN harmful-shift research task with a six-hour,
+This drop-in uses `google/gemini-4-argon` at high reasoning effort through
+OpenRouter for the PI, assistants, judges and Codex workers. It reproduces the
+PFN harmful-shift research task with a six-hour,
 $200 model / $100 RunPod envelope. It replaces OpenClaw heartbeats, CLI review
 scripts and file-based operator polling with SDK context/resource injection,
 background workers, isolated PDF judging and durable Slack steering. The PI and
@@ -70,15 +72,17 @@ Codex SDK. Provisioning probes that configuration; do not assume model access.
 
 ## Provision the workspace
 
-In `devops/ec2-workspaces`, prepare the ignored `placeholders-base.txt` using the
-existing fleet/key-pair settings. Set at least:
+Copy `placeholders.txt.example` and `secrets.json.example` to `placeholders.txt`
+and `secrets.json` beside this guide, fill their values, and keep both mode 600.
+These operator files are gitignored. Use the existing fleet/key-pair settings;
+the supplied model settings are:
 
 ```ini
 AWS_PROFILE=crux-2-acct-admin-access
 AWS_REGION=us-east-1
 AGENT_PLATFORM=openai-agents
 MODEL_PROVIDER=openrouter
-OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/<your-vertex-only-preset>
+OPENAI_AGENTS_MODEL=google/gemini-4-argon
 OPENAI_AGENTS_REASONING_EFFORT=high
 DROP_IN_PATH=scaffolds/sdk/run-harness/tabpfn
 INSTANCE_TYPE=m7i.2xlarge
@@ -87,28 +91,32 @@ ROOT_DISK_GB=100
 
 Use an existing `KEY_NAME`; remove an inherited `ELASTIC_IP_ADDRESS` unless that
 specific address belongs to this run. SDK runs need no AgentRQ/control box setup.
-Create an OpenRouter preset with `provider.only=["google-vertex"]` and
-`provider.allow_fallbacks=false`, matching this drop-in's routing rules. Configure
-the intended Vertex BYOK integration with shared-capacity fallback disabled.
-The model's preset suffix routes Codex workers too: Codex cannot send the SDK's
-`extra_body`. Provisioning validates the suffix, not the account-side preset
-contents; verify them and the returned usage/provider before treating a run as
-GCP-billed. The example uses `trim_recent` context because OpenAI compaction does
-not support Argon. Commit the drop-in and SDK changes before provisioning;
+Model and effort are run environment settings: provisioning maps
+`OPENAI_AGENTS_MODEL` and `OPENAI_AGENTS_REASONING_EFFORT` to `CRUX_MODEL` and
+`CRUX_REASONING_EFFORT` for every agent and reviewer. `scaffold.toml` selects the
+OpenRouter Responses endpoint and `OPENROUTER_API_KEY` for the SDK and Codex.
+No provider-specific route or preset is required; OpenRouter account settings
+control routing. Check the actual route and pricing in usage records. The
+example uses `trim_recent` context. Commit changes before provisioning;
 uncommitted changes are not staged on the box.
 
-Create a private mode-600 `run-secrets-base.json` with **only** `OPENROUTER_API_KEY`,
+Fill `secrets.json` with **only** `OPENROUTER_API_KEY`,
 `SLACK_BOT_TOKEN`, `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` and `RUNPOD_API_KEY`.
 Other non-provider base secrets are inherited by provisioning, so do not reuse a
 bundle containing the omitted services. Langfuse keys come from fleet SSM.
 
-For direct OpenAI instead, remove `[runtime.model_provider]` and its `extra_body`
-table, set `MODEL_PROVIDER=direct` and an OpenAI model, and supply `OPENAI_API_KEY`.
+For direct OpenAI instead, remove `[runtime.model_provider]`, set
+`MODEL_PROVIDER=direct` and an OpenAI model, and supply `OPENAI_API_KEY`.
+
+From the repository root, choose a unique run slug and run:
 
 ```bash
-./make-new-workspace.sh tabpfn-sdk-<unique-suffix> --dry-run
-./make-new-workspace.sh tabpfn-sdk-<unique-suffix>
+./devops/ec2-workspaces/make-new-workspace.sh tabpfn-sdk-<unique-suffix> \
+  --base-config scaffolds/sdk/run-harness/tabpfn/placeholders.txt \
+  --base-secrets scaffolds/sdk/run-harness/tabpfn/secrets.json --dry-run
 ```
+
+Repeat without `--dry-run` to provision.
 
 `provision.json` installs LaTeX/latexmk, PDF extraction/rendering, venv and transfer
 utilities. The service's software checks run at provisioning and every start.
