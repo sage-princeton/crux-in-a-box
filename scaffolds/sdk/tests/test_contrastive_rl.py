@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import importlib.util
 import json
 import shutil
 import sys
@@ -9,12 +10,14 @@ from types import SimpleNamespace
 import pytest
 
 from crux_scaffold.drop_in import DropInDirectory
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.resources import ResourceMetric, ResourceSnapshot
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 
 PILOT = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl"
 ENV = {"CRUX_MODEL": "google/gemini-4-argon", "OPENROUTER_API_KEY": "test",
+       "SLACK_BOT_TOKEN": "test",
        "RUN_SLUG": "contrastive-test", "RUNPOD_API_KEY": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test"}
 
@@ -29,7 +32,40 @@ def pilot_dir(tmp_path):
 
 @pytest.fixture
 def scaffold(tmp_path, pilot_dir):
+    prepare(pilot_dir, "CTEST", "UTEST", "1.000000")
     return Scaffold(DropInDirectory.load(pilot_dir), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
+
+
+def prepare(root, channel, operator, after_ts):
+    spec = importlib.util.spec_from_file_location("contrastive_prepare", PILOT / "prepare.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.prepare(root, channel, operator, after_ts)
+
+
+def test_preparation_resolves_steering_and_preserves_existing_run(pilot_dir):
+    with pytest.raises(InvalidDropInError, match="unresolved placeholders"):
+        DropInDirectory.load(pilot_dir)
+    prepare(pilot_dir, "CTEST", "UTEST", "1.000000")
+    config = DropInDirectory.load(pilot_dir).config
+    assert config.runtime["steering"]["channel_id"] == "CTEST"
+    assert config.runtime["steering"]["operator_ids"] == ["UTEST"]
+    assert config.runtime["steering"]["after_ts"] == "1.000000"
+    assert config.mcp_servers["slack"].env["SLACK_MCP_ADD_MESSAGE_TOOL"] == "CTEST"
+    original = (pilot_dir / "scaffold.toml").read_bytes()
+    with pytest.raises(ValueError, match="already resolved"):
+        prepare(pilot_dir, "COTHER", "UOTHER", "2.000000")
+    assert (pilot_dir / "scaffold.toml").read_bytes() == original
+
+
+@pytest.mark.parametrize("channel,operator,after_ts", [
+    ("bad-channel", "UTEST", "0"), ("CTEST", "bad-operator", "0"), ("CTEST", "UTEST", "yesterday"),
+])
+def test_preparation_rejects_invalid_steering_without_changing_config(pilot_dir, channel, operator, after_ts):
+    original = (pilot_dir / "scaffold.toml").read_bytes()
+    with pytest.raises(ValueError, match="Invalid"):
+        prepare(pilot_dir, channel, operator, after_ts)
+    assert (pilot_dir / "scaffold.toml").read_bytes() == original
 
 
 def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffold):
@@ -40,11 +76,11 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert scaffold.loop.type_name == "tabpfn_research"
     assert str(scaffold.runtime.options.model_provider.base_url) == "https://openrouter.ai/api/v1"
     assert not scaffold.runtime.options.model_provider.extra_body
-    assert scaffold.strategy.type_name == "trim_recent"
+    assert scaffold.strategy.type_name == "compaction"
     assert len(scaffold.coding_agents) == 3
-    assert scaffold.runtime.options.steering is None
-    assert not config.mcp_servers
-    assert "escalate" not in config.agents["pi"].tools
+    assert scaffold.context.steering is not None
+    assert "escalate" in config.agents["pi"].tools
+    assert config.agents["pi"].mcp_servers == ["slack"]
     assert scaffold.context.model == "google/gemini-4-argon"
 
 
