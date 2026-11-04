@@ -192,24 +192,34 @@ def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble, mon
                for request in requests)
 
 
-def test_openrouter_generations_reach_langfuse_with_model_reasoning_and_usage(router, drop_in_dir, assemble):
+@pytest.mark.parametrize("reasoning_field", ["summary", "content", "encrypted_only"])
+def test_openrouter_generations_reach_langfuse_with_model_reasoning_and_usage(
+    router, drop_in_dir, assemble, reasoning_field,
+):
     _, pending, _ = router
     exporter = InMemorySpanExporter()
-    env = {**ENV, "RUN_SLUG": "Google-Argon-Smoke-Test", "LANGFUSE_PUBLIC_KEY": "pk-or-test",
+    env = {**ENV, "RUN_SLUG": "Google-Argon-Smoke-Test", "LANGFUSE_PUBLIC_KEY": f"pk-or-test-{reasoning_field}",
            "LANGFUSE_SECRET_KEY": "sk-or-test", "LANGFUSE_BASE_URL": "http://127.0.0.1:9"}
     telemetry = telemetry_from_env(env, RunIdentity.from_env(env), span_exporter=exporter)
-    pending.append(response({"type": "reasoning", "id": "rs-test", "summary": [
-        {"type": "summary_text", "text": "Compared the alternatives"}]}, say("done")))
-    asyncio.run(assemble(drop_in_dir, env=env, telemetry=telemetry).run())
+    reasoning = {"type": "reasoning", "id": "rs-test", "summary": [], "encrypted_content": "opaque-fixture"}
+    if reasoning_field != "encrypted_only":
+        reasoning[reasoning_field] = [{"type": "summary_text" if reasoning_field == "summary" else "reasoning_text",
+                                      "text": "Compared the alternatives"}]
+    pending.append(response(reasoning, say("done")))
+    scaffold = assemble(drop_in_dir, env=env, telemetry=telemetry)
+    asyncio.run(scaffold.run())
     spans = exporter.get_finished_spans()
     generations = [span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]
     assert generations and len({span.context.trace_id for span in spans}) == 1
     generation = generations[0]
     assert generation.attributes["llm.model_name"] == ENV["CRUX_MODEL"]
-    assert "Compared the alternatives" in generation.attributes["output.value"]
+    assert ("Compared the alternatives" in generation.attributes["output.value"]) == (
+        reasoning_field != "encrypted_only")
     assert generation.attributes["session.id"] == "Google-Argon-Smoke-Test"
     assert generation.attributes["llm.token_count.prompt"] == 100
     assert generation.attributes["llm.token_count.completion"] == 30
+    usage = scaffold.context.usage.by_source["pm"]
+    assert (usage.total_tokens, usage.cached_input_tokens, usage.reasoning_output_tokens) == (130, 25, 20)
 
 
 def test_a_chat_completions_provider_uses_the_sdk_adapter(router, drop_in_dir, assemble):

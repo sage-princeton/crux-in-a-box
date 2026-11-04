@@ -29,12 +29,13 @@ class UsageLedger(BaseModel):
     started_at: AwareDatetime | None = None
 
     def add(self, source: str, input_tokens: int, output_tokens: int, *, cached_input_tokens: int = 0,
-            reasoning_output_tokens: int = 0) -> None:
+            cache_write_input_tokens: int = 0, reasoning_output_tokens: int = 0) -> None:
         usage = self.by_source.setdefault(source, TokenUsage())
         usage.requests += 1
         usage.input_tokens += input_tokens
         usage.output_tokens += output_tokens
         usage.cached_input_tokens += cached_input_tokens
+        usage.cache_write_input_tokens += cache_write_input_tokens
         usage.reasoning_output_tokens += reasoning_output_tokens
 
     @property

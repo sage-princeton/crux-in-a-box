@@ -74,7 +74,10 @@ class CodingAgent(Component):
         with ctx.telemetry.generation(self.name, ctx.model, request) as outcome:
             result = await self.execute(brief, ctx)
             outcome.output, outcome.usage = result.final_response, result.usage
-        ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens)
+        ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens,
+                      cached_input_tokens=result.usage.cached_input_tokens,
+                      cache_write_input_tokens=result.usage.cache_write_input_tokens,
+                      reasoning_output_tokens=result.usage.reasoning_output_tokens)
         return result
 
     @abstractmethod
@@ -161,6 +164,11 @@ class CodexCodingAgent(CodingAgent):
                                            cached_input_tokens=total.cached_input_tokens,
                                            cache_write_input_tokens=total.cache_write_input_tokens or 0,
                                            reasoning_output_tokens=total.reasoning_output_tokens)
+                        # Progress snapshots are not extra generations or additions to the usage ledger.
+                        ctx.telemetry.record("codex:usage", "span",
+                                             {"thread_id": payload.thread_id, "turn_id": payload.turn_id},
+                                             {"last": payload.token_usage.last.model_dump(mode="json", by_alias=True),
+                                              "total": total.model_dump(mode="json", by_alias=True)})
                     elif isinstance(payload, TurnCompletedNotification):
                         ended = payload.turn
         completed = ended is not None and ended.status == TurnStatus.completed
@@ -177,7 +185,8 @@ def record_item(ctx: RunContext, item: Any) -> str | None:
     if item.type == "userMessage":
         return None
     if item.type == "reasoning":
-        ctx.telemetry.record("codex:reasoning", "span", None, {"summary": item.summary or []})
+        ctx.telemetry.record("codex:reasoning", "span", None,
+                             {"id": item.id, "summary": item.summary or [], "content": item.content or []})
         return None
     ctx.telemetry.record(f"codex:{item.type}", "tool" if item.type in CODEX_TOOL_ITEMS else "span", None,
                          item.model_dump(mode="json", by_alias=True, exclude_none=True, warnings=False))
