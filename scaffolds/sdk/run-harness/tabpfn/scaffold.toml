@@ -12,10 +12,6 @@ api = "responses"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 
-[runtime.model_provider.extra_body.provider]
-only = ["google-vertex"]
-allow_fallbacks = false
-
 [runtime.steering]
 server = "slack"
 channel_id = "{{SLACK_CHANNEL_ID}}"
@@ -24,8 +20,11 @@ after_ts = "{{SLACK_AFTER_TS}}"
 poll_interval_seconds = 30
 
 [context]
-type = "trim_recent"
+type = "compaction"
 max_items = 200
+context_window_tokens = 1048576
+trigger_tokens = 512000
+keep_recent_items = 20
 
 [budget]
 max_wall_seconds = 21600

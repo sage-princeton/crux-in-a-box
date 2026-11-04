@@ -1,0 +1,22 @@
+display_information:
+  name: CRUX Contrastive RL
+  description: Research progress, operator steering and escalations for a contrastive RL CRUX run.
+features:
+  bot_user:
+    display_name: crux-contrastive-rl
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      - channels:history
+      - channels:read
+      - groups:history
+      - groups:read
+      - im:read
+      - mpim:read
+      - chat:write
+      - users:read
+settings:
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false
