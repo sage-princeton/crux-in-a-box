@@ -335,3 +335,87 @@ def test_explicit_extension_breakpoints_take_precedence(router, drop_in_dir, ass
         for index in range(4)]}]
     asyncio.run(scaffold.run())
     assert str(requests[0]).count("prompt_cache_breakpoint") == 4
+
+
+@pytest.mark.parametrize("api", ["responses", "chat-completions"])
+@pytest.mark.parametrize("model", [ENV["CRUX_MODEL"], "anthropic/claude-fable-5.1"])
+def test_compaction_uses_ordinary_inference_and_preserves_cache_boundaries(
+    router, drop_in_dir, assemble, api, model,
+):
+    """Verify compaction uses ordinary inference and preserves cache boundaries.
+
+    :param router: Scripted HTTP provider fixture.
+    :param drop_in_dir: Minimal temporary drop-in.
+    :param assemble: Scaffold assembly fixture.
+    :param api: Provider API adapter under test.
+    :param model: Provider model identifier.
+    """
+    path = drop_in_dir / "scaffold.toml"
+    path.write_text(path.read_text().replace('api = "responses"', f'api = "{api}"')
+                    + '\n[context]\ntype = "compaction"\ntrigger_items = 4\nkeep_recent_items = 2\n')
+    requests, pending, _ = router
+    for output in [call("read_file", {"path": "AGENTS.md"}, "first"),
+                   call("read_file", {"path": "AGENTS.md"}, "second"), say("Keep the task and conclusions."),
+                   say("done"), say("Updated handoff."), say("recalled")]:
+        if api == "responses":
+            pending.append(response(output))
+        else:
+            message = ({"role": "assistant", "content": None, "tool_calls": [
+                {"id": output["call_id"], "type": "function", "function": {
+                    "name": output["name"], "arguments": output["arguments"]}}]}
+                if output["type"] == "function_call" else {"role": "assistant", "content": output["content"][0]["text"]})
+            pending.append({"id": "chat-test", "object": "chat.completion", "created": 1,
+                            "model": ENV["CRUX_MODEL"], "choices": [{"index": 0,
+                                "finish_reason": "tool_calls" if "tool_calls" in message else "stop",
+                                "message": message}], "usage": {"prompt_tokens": 100, "completion_tokens": 30,
+                                                                    "total_tokens": 130}})
+    exporter = InMemorySpanExporter()
+    env = {**ENV, "CRUX_MODEL": model, "RUN_SLUG": "Compaction-Wire-Test", "LANGFUSE_PUBLIC_KEY": f"pk-compaction-{api}-{model}",
+           "LANGFUSE_SECRET_KEY": "sk-test", "LANGFUSE_BASE_URL": "http://127.0.0.1:9"}
+    telemetry = telemetry_from_env(env, RunIdentity.from_env(env), span_exporter=exporter)
+    async def run(prompt):
+        """Exercise the test conversation and inspect durable state.
+
+        :param prompt: User task for the test turn.
+        """
+        scaffold = assemble(drop_in_dir, env=env, telemetry=telemetry)
+        async with scaffold.runtime as runtime:
+            with telemetry.trace("compaction-wire"):
+                await runtime.run(prompt, workflow="main")
+            return scaffold, await runtime.session.get_items()
+    scaffold, stored = asyncio.run(run("Read twice"))
+    assert len(stored) == 6
+    assert "Keep the task" not in str(stored) and "<resource_status>" not in str(stored)
+    assert scaffold.context.usage.by_source["compaction:pm"].total_tokens == 130
+    scaffold, stored = asyncio.run(run("Recall"))
+    assert len(stored) == 8 and "Updated handoff" not in str(stored)
+    telemetry.flush()
+    wire = [request["input" if api == "responses" else "messages"] for request in requests]
+    assert all(request["model"] == model for request in requests)
+    assert all(request["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False} for request in requests)
+    for index in (2, 4):
+        assert "CONTEXT CHECKPOINT COMPACTION" in str(wire[index][-1])
+        assert "<resource_status>" not in str(wire[index])
+        assert not requests[index].get("tools")
+        assert not requests[index].get("previous_response_id")
+        assert requests[index].get("reasoning_effort", requests[index].get("reasoning", {}).get("effort")) == "low"
+    assert "Keep the task" in str(wire[3]) and "first" not in str(wire[3])
+    assert "Updated handoff" in str(wire[5])
+    assert "prompt_cache_breakpoint" not in str(stored)
+    if model.startswith("anthropic/"):
+        assert all(items[0] == wire[0][0] for items in wire)
+        assert all("prompt_cache_breakpoint" in str(items[0]) for items in wire)
+        for index in (3, 5):
+            marked = [item for item in wire[index] if "prompt_cache_breakpoint" in str(item)]
+            assert len(marked) == 2
+            assert "<resource_status>" not in str(marked)
+            assert "prompt_cache_breakpoint" not in str(wire[index][-1])
+    else:
+        if api == "responses":
+            assert all(request["instructions"] == requests[0]["instructions"] for request in requests)
+        else:
+            assert all(messages[0] == wire[0][0] for messages in wire)
+        assert "prompt_cache_breakpoint" not in str(requests)
+    spans = exporter.get_finished_spans()
+    assert len([span for span in spans if span.name == "compaction:pm"]) == 2
+    assert len([span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]) == 4

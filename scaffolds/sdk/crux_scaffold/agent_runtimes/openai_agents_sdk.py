@@ -418,9 +418,28 @@ class OpenAIAgentsRuntime(AgentRuntime):
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
         history = [item for item in data.model_data.input if not is_standing_context(item)]
-        prompt = history[-1]["content"] if history and history[-1].get("role") == "user" else None
+        prompt_item = history[-1] if history and history[-1].get("role") == "user" else None
+        prompt = prompt_item["content"] if prompt_item is not None else None
+        if data.agent.name == self.assembly.drop_in.config.orchestrator and self._steering_items:
+            stored = [item for item in await self.session.get_items() if not is_standing_context(item)]
+            for index, item in enumerate(stored):
+                if item in self._steering_items and item not in history:
+                    history.insert(index, item)
         strategy = self.assembly.context_strategy
-        items = list(strategy.select(list(history)))
+        ctx = self.assembly.context
+        research = self.assembly.research_context(data.agent.name)
+        status = await ctx.budget_status()
+        request_context = {
+            "instructions": data.model_data.instructions, "research": research, "resources": status,
+            "tools": [{"name": tool.name, "description": tool.description, "parameters": tool.params_json_schema}
+                      for tool in data.agent.tools if isinstance(tool, FunctionTool)],
+        }
+        items = list(await strategy.select_for_call(
+            list(history), ctx=ctx,
+            session_id=data.agent.name if data.agent.name == self.assembly.drop_in.config.orchestrator else None,
+            request_context=request_context, agent=data.agent, model_provider=self.run_config.model_provider,
+            prepare_input=self._cache_input, research_context=lambda: self.assembly.research_context(data.agent.name),
+        ))
         positions = {id(item): index for index, item in enumerate(history)}
         retained = [positions.get(id(item)) for item in items]
         self.assembly.context.telemetry.record(
@@ -430,17 +449,18 @@ class OpenAIAgentsRuntime(AgentRuntime):
             {"items_selected": len(items), "items_dropped": len(history) - len(set(retained) - {None}),
              "retained_positions": retained},
         )
-        if prompt is not None and items and items[-1] == history[-1]:
-            items.pop()
+        if prompt_item is not None:
+            for index in range(len(items) - 1, -1, -1):
+                if items[index] == prompt_item:
+                    items.pop(index)
+                    break
 
         if steering and data.agent.name == self.assembly.drop_in.config.orchestrator:
             # Filter additions are not persisted by Runner. Keep newly stored messages in this run's input
             # until its next run reloads the durable session, even when a strategy trims older conversation.
             items.extend(item for item in self._steering_items if item not in items)
-        research = self.assembly.research_context(data.agent.name)
-        annotations.insert(0, f"<research_context>\n{research}\n</research_context>")
-        status = await self.assembly.context.budget_status()
-        annotations.append(f"<resource_status>\n{status}\n</resource_status>")
+        annotations.insert(0, f"<research_context>\n{request_context['research']}\n</research_context>")
+        annotations.append(f"<resource_status>\n{request_context['resources']}\n</resource_status>")
         result = self._cache_input(ModelInputData(input=items, instructions=data.model_data.instructions))
         if prompt is not None:
             annotations.append(f"# Current task\n\n{prompt}")

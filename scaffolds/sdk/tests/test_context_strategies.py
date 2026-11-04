@@ -1,14 +1,13 @@
 import asyncio
-from contextlib import contextmanager
+import json
+from unittest.mock import Mock
 
 import pytest
-from agents.memory import OpenAIResponsesCompactionSession
-from openai._models import construct_type
-from openai.types.responses import CompactedResponse
+from agents import Agent, RunConfig, SQLiteSession
 
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, STANDING_CONTEXT_HEADER
 from crux_scaffold.errors import InvalidDropInError
-from crux_scaffold.telemetry import GenerationOutcome, NullTelemetry
+from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.usage import Budget, UsageLedger
 from crux_scaffold.workspace import RunContext, Workspace
 
@@ -67,82 +66,171 @@ def test_trim_recent_limits_what_the_model_sees_but_not_the_stored_history(drop_
     assert len(stored) == 4
 
 
-class RecordingTelemetry(NullTelemetry):
-    def __init__(self):
-        self.generations = []
-
-    @contextmanager
-    def generation(self, name, model, input):
-        outcome = GenerationOutcome()
-        yield outcome
-        self.generations.append((name, model, input, outcome.output, outcome.usage))
+def compaction_context(tmp_path):
+    return RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "argon"},
+                      UsageLedger(), Budget(), NullTelemetry())
 
 
-class FakeCompactClient:
-    """Stands in for AsyncOpenAI's `responses.compact`."""
+def local_strategy(**options):
+    """Construct the compaction strategy with caller-selected test options.
 
-    def __init__(self, output=None):
-        self.calls = []
-        self.responses = self
-        self.output = output or []
-
-    async def compact(self, **kwargs):
-        self.calls.append(kwargs)
-        self.response = construct_type(type_=CompactedResponse, value={
-            "id": "cmp-response", "created_at": 1, "object": "response.compaction", "output": self.output,
-            "usage": {"input_tokens": 1000, "output_tokens": 200, "total_tokens": 1200,
-                      "input_tokens_details": {"cached_tokens": 600, "cache_write_tokens": 0},
-                      "output_tokens_details": {"reasoning_tokens": 50}}})
-        return self.response
+    :param options: Strategy option overrides.
+    """
+    return CONTEXT_STRATEGIES.create("context", {"type": "compaction", **options})
 
 
-def compaction_context(tmp_path, env, telemetry=None):
-    return RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(),
-                      telemetry or NullTelemetry())
+async def select(strategy, items, ctx, summarize, request_context="", session_id="pm"):
+    """Exercise asynchronous selection with a scripted summary and isolated run state.
+
+    :param strategy: Context strategy under test.
+    :param items: Conversation items to summarize.
+    :param ctx: Run context for the test.
+    :param summarize: Scripted handoff callback.
+    :param request_context: Synthetic fixed request content.
+    :param session_id: PI session identifier, or None for delegates.
+    """
+    async def summary(items, **kwargs):
+        """Return the supplied scripted handoff without a provider call.
+
+        :param items: Conversation items to summarize.
+        :param kwargs: Forwarded model-call keyword arguments.
+        """
+        return await summarize(items)
+    strategy._summarize = summary
+    context = {"instructions": request_context, "research": "", "resources": ""}
+    return await strategy.select_for_call(items, ctx=ctx, session_id=session_id,
+        request_context=context, agent=Agent(name="pm", model=ScriptedModel()),
+        model_provider=RunConfig().model_provider,
+        prepare_input=lambda data: data, research_context=lambda: "fresh research")
 
 
-def test_openai_compaction_wraps_the_durable_session_with_the_run_model(tmp_path):
-    strategy = CONTEXT_STRATEGIES.create("context", {"type": "openai_compaction", "trigger_items": 50})
-    session = strategy.session("pm", compaction_context(tmp_path, {"CRUX_MODEL": "gpt-test"}))
-    assert isinstance(session, OpenAIResponsesCompactionSession)
-    assert session.model == "gpt-test"
-    assert session.should_trigger_compaction({"compaction_candidate_items": [{}] * 50})
-    assert not session.should_trigger_compaction({"compaction_candidate_items": [{}] * 49})
+def test_compaction_keeps_sqlite_history_and_resumes_checkpoint(tmp_path):
+    """Verify compaction keeps sqlite history and resumes checkpoint.
+
+    :param tmp_path: Isolated temporary directory.
+    """
+    strategy = local_strategy(trigger_items=4, keep_recent_items=2)
+    ctx = compaction_context(tmp_path)
+    history = [user("old task"), {"role": "assistant", "content": "old answer"},
+               user("new task"), {"role": "assistant", "content": "new answer"}, user("continue")]
+    calls = []
+    async def summarize(items):
+        """Inspect the selected prefix and return a deterministic handoff.
+
+        :param items: Conversation items to summarize.
+        """
+        calls.append(items)
+        return "A useful handoff."
+
+    async def run():
+        """Exercise the test conversation and inspect durable state.
+
+        :returns: None; assertions verify the scenario.
+        """
+        session = strategy.session("pm", ctx)
+        assert isinstance(session, SQLiteSession)
+        await session.add_items(history)
+        selected = await select(strategy, history, ctx, summarize)
+        assert selected[1:] == history[2:]
+        assert "A useful handoff." in selected[0]["content"]
+        assert await session.get_items() == history
+        checkpoint = json.loads(next(ctx.state_dir.glob("compaction-*.json")).read_text())
+        assert checkpoint["covered_items"] == 2 and checkpoint["summary"] == "A useful handoff."
+        assert await select(local_strategy(trigger_items=10), history, ctx, summarize) == selected
+        assert len(calls) == 1
+        divergent = [user("replaced task"), *history[1:]]
+        assert await select(local_strategy(trigger_items=10), divergent, ctx, summarize) == divergent
+    asyncio.run(run())
 
 
-def test_openai_compaction_has_no_model_option(tmp_path):
+def test_token_trigger_includes_request_context_without_using_item_limit(tmp_path):
+    """Verify token trigger includes request context without using item limit.
+
+    :param tmp_path: Isolated temporary directory.
+    """
+    ctx = compaction_context(tmp_path)
+    history = [user("old"), {"role": "assistant", "content": "answer"}, user("now")]
+    calls = []
+    async def summarize(items):
+        """Inspect the selected prefix and return a deterministic handoff.
+
+        :param items: Conversation items to summarize.
+        """
+        calls.append(items)
+        return "summary"
+    strategy = local_strategy(context_window_tokens=1000, trigger_tokens=2000, keep_recent_items=1)
+    assert asyncio.run(select(strategy, history, ctx, summarize)) == history
+    selected = asyncio.run(select(strategy, history, ctx, summarize, request_context="x" * 3600))
+    assert calls == [history[:2]] and selected[1:] == history[2:]
+
+
+def test_compaction_never_splits_parallel_tool_exchanges(tmp_path):
+    """Verify compaction never splits parallel tool exchanges.
+
+    :param tmp_path: Isolated temporary directory.
+    """
+    ctx = compaction_context(tmp_path)
+    history = [user("task"), {"role": "assistant", "content": "old"}, user("new task"),
+               {"type": "reasoning", "id": "reasoning"},
+               {"role": "assistant", "content": "I will read both files"},
+               {"type": "function_call", "call_id": "a"}, {"type": "function_call", "call_id": "b"},
+               {"type": "function_call_output", "call_id": "a", "output": "one"},
+               {"type": "function_call_output", "call_id": "b", "output": "two"}]
+    async def summarize(items):
+        """Inspect the selected prefix and return a deterministic handoff.
+
+        :param items: Conversation items to summarize.
+        """
+        assert items == history[:2]
+        return "summary"
+    selected = asyncio.run(select(local_strategy(trigger_items=3, keep_recent_items=2), history, ctx, summarize))
+    assert selected[1:] == history[2:]
+
+
+def test_failed_or_empty_summary_does_not_advance_checkpoint(tmp_path):
+    """Verify failed or empty summary does not advance checkpoint.
+
+    :param tmp_path: Isolated temporary directory.
+    """
+    ctx = compaction_context(tmp_path)
+    history = [user("old"), {"role": "assistant", "content": "answer"}, user("now")]
+    async def empty(items):
+        """Simulate a provider returning a blank handoff.
+
+        :param items: Conversation items to summarize.
+        """
+        return "   "
+    with pytest.raises(RuntimeError, match="empty summary"):
+        asyncio.run(select(local_strategy(trigger_items=3, keep_recent_items=1), history, ctx, empty))
+    assert not list(ctx.state_dir.glob("compaction-*.json"))
+
+
+def test_compaction_does_not_checkpoint_delegates_or_incomplete_exchanges(tmp_path):
+    """Verify compaction does not checkpoint delegates or incomplete exchanges.
+
+    :param tmp_path: Isolated temporary directory.
+    """
+    ctx = compaction_context(tmp_path)
+    async def unexpected(items):
+        """Reject summarization when no complete prefix is eligible.
+
+        :param items: Conversation items to summarize.
+        """
+        raise AssertionError("no complete prefix to summarize")
+    history = [user("task"), {"type": "function_call", "call_id": "a"}]
+    strategy = local_strategy(trigger_items=1, keep_recent_items=1)
+    assert asyncio.run(select(strategy, history, ctx, unexpected)) == history
+    history.append({"role": "assistant", "content": "answer"})
+    assert asyncio.run(select(strategy, history, ctx, unexpected, session_id=None)) == history
+
+
+def test_compaction_has_no_model_option():
+    """Verify compaction has no model option.
+
+    :returns: None; assertions verify the scenario.
+    """
     with pytest.raises(InvalidDropInError, match="Extra inputs are not permitted"):
-        CONTEXT_STRATEGIES.create("context", {"type": "openai_compaction", "model": "gpt-4.1"})
-
-
-def test_openai_compaction_needs_an_openai_run_model(tmp_path):
-    strategy = CONTEXT_STRATEGIES.create("context", {"type": "openai_compaction"})
-    with pytest.raises(InvalidDropInError, match="openai_compaction.*claude-test"):
-        strategy.session("pm", compaction_context(tmp_path, {"CRUX_MODEL": "claude-test"}))
-
-
-def test_openai_compaction_calls_count_toward_the_budget_and_reach_telemetry(tmp_path):
-    client = FakeCompactClient([{"type": "compaction", "id": "cmp_1", "encrypted_content": "opaque"}])
-    telemetry = RecordingTelemetry()
-    ctx = compaction_context(tmp_path, {"CRUX_MODEL": "gpt-test"}, telemetry)
-    strategy = CONTEXT_STRATEGIES.create("context", {"type": "openai_compaction"}, client=client)
-    session = strategy.session("pm", ctx)
-    async def compact():
-        await session.add_items([user("Keep this task"), {"role": "assistant", "content": "Keep this result"},
-                                 {"role": "developer", "content": STANDING_CONTEXT_HEADER + "STALE"}])
-        await session.run_compaction({"force": True})
-
-    asyncio.run(compact())
-    assert client.calls[0]["model"] == "gpt-test"
-    usage = ctx.usage.by_source["compaction:pm"]
-    assert (usage.requests, usage.input_tokens, usage.output_tokens) == (1, 1000, 200)
-    [(name, model, traced_input, traced_output, traced)] = telemetry.generations
-    assert (name, model) == ("compaction:pm", "gpt-test")
-    assert traced_input == client.calls[0]
-    assert "Keep this task" in str(traced_input) and "Keep this result" in str(traced_input)
-    assert "STALE" not in str(traced_input)
-    assert traced_output == client.response.model_dump(mode="json")
-    assert (traced.cached_input_tokens, traced.reasoning_output_tokens, traced.total_tokens) == (600, 50, 1200)
+        local_strategy(model="gpt-test")
 
 
 def test_strategies_only_select_conversation_history():
@@ -169,41 +257,40 @@ def test_restart_reassembles_instructions_without_historical_snapshots(drop_in_d
     assert "standing context." not in str(stored)
 
 
-@pytest.mark.parametrize("retain_snapshot", [False, True])
-def test_compaction_refreshes_context_on_the_next_turn(drop_in_dir, assemble, retain_snapshot):
+def test_compaction_during_tool_continuations_refreshes_context_and_keeps_history(drop_in_dir, assemble):
+    """Verify compaction during tool continuations refreshes context and keeps history.
+
+    :param drop_in_dir: Minimal temporary drop-in.
+    :param assemble: Scaffold assembly fixture.
+    """
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
-         'orchestrator = "pm"\n\n[context]\ntype = "openai_compaction"\ntrigger_items = 100')
+         'orchestrator = "pm"\n\n[context]\ntype = "compaction"\ntrigger_items = 4\nkeep_recent_items = 2')
     edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',
          'context = ["workspace/AGENTS.md"]\nworkspace_context = ["REQUEST.md"]')
-    pm = ScriptedModel(say("first"), say("second"), say("third"))
-    scaffold = assemble(drop_in_dir, {"pm": pm}, env={"CRUX_MODEL": "gpt-test"})
-    scaffold.strategy.client = FakeCompactClient(
-        [{"type": "compaction", "id": "cmp_1", "encrypted_content": "opaque"}])
-
+    pm = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "r1"),
+                       call("read_file", {"path": "AGENTS.md"}, "r2"), say("handoff one"),
+                       call("read_file", {"path": "AGENTS.md"}, "r3"), say("handoff two"), say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm})
     async def run():
+        """Exercise the test conversation and inspect durable state.
+
+        :returns: None; assertions verify the scenario.
+        """
         async with scaffold.runtime as runtime:
             await runtime.session.add_items([{"role": "developer", "content": STANDING_CONTEXT_HEADER + "OLD"}])
-            await runtime.run("hello", workflow="main")
-            if retain_snapshot:
-                scaffold.strategy.client.output.insert(0, {"role": "developer", "content": [
-                    {"type": "input_text", "text": STANDING_CONTEXT_HEADER + "STALE"}]})
             (drop_in_dir / "workspace/REQUEST.md").write_text("Current request.")
-            await runtime.session.run_compaction({"force": True})
-            compact_input = scaffold.strategy.client.calls[0]
-            assert "previous_response_id" not in compact_input
-            assert "<resource_status>" not in str(compact_input["input"])
-            assert "OLD" not in str(compact_input["input"])
-            await runtime.run("after compaction", workflow="main")
-            await runtime.run("continue", workflow="main")
-            assert "<resource_status>" not in str(await runtime.session.get_items())
-
+            await runtime.run("task", workflow="main")
+            history = await runtime.session.get_items()
+            assert len(history) == 9 and "handoff" not in str(history)
+            assert "<resource_status>" not in str(history)
     asyncio.run(run())
-    assert "Not created yet" in str(pm.inputs[0])
-    assert "STALE" not in str(pm.inputs) and "OLD" not in str(pm.inputs)
-    assert str(pm.inputs[1]).count("Current request.") == 1
-    assert str(pm.inputs[2]).count("Current request.") == 1
-    assert all(str(items).count("<resource_status>") == 1 for items in pm.inputs)
-    assert all("<resource_status>" in items[-1]["content"] for items in pm.inputs)
+    assert "OLD" not in str(pm.inputs)
+    for index in (0, 1, 3, 5):
+        assert str(pm.inputs[index]).count("Current request.") == 1
+        assert str(pm.inputs[index]).count("<resource_status>") == 1
+    assert "handoff one" in str(pm.inputs[3]) and "r1" not in str(pm.inputs[3])
+    assert "handoff two" in str(pm.inputs[5]) and "r2" not in str(pm.inputs[5])
+    assert scaffold.context.usage.by_source["compaction:pm"].requests == 2
 
 
 def test_trim_recent_keeps_standing_context_during_tool_calls(drop_in_dir, assemble):
@@ -222,3 +309,79 @@ def test_trim_recent_keeps_standing_context_during_tool_calls(drop_in_dir, assem
     assert all("Standing context: workspace/AGENTS.md" in text for text in pm.instructions)
     assert pm.instructions[0] == pm.instructions[-1]
     assert "Updated context." not in str(pm.inputs[-1])
+
+
+def test_context_selection_refreshes_resources_once_without_compaction(drop_in_dir, assemble):
+    """Verify context selection refreshes resources once without compaction.
+
+    :param drop_in_dir: Minimal temporary drop-in.
+    :param assemble: Scaffold assembly fixture.
+    """
+    pm = ScriptedModel(say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm})
+    status = scaffold.context.budget_status
+    refreshes = []
+    async def counted():
+        """Count resource refreshes while preserving their normal behavior.
+
+        :returns: None; assertions verify the scenario.
+        """
+        refreshes.append(True)
+        return await status()
+    scaffold.context.budget_status = counted
+    asyncio.run(turns(scaffold, "task"))
+    assert refreshes == [True]
+
+
+def test_failed_recompaction_keeps_the_previous_checkpoint(tmp_path):
+    """Verify failed recompaction keeps the previous checkpoint.
+
+    :param tmp_path: Isolated temporary directory.
+    """
+    ctx = compaction_context(tmp_path)
+    history = [user("old"), {"role": "assistant", "content": "answer"}, user("recent")]
+    async def summary(items):
+        """Return the supplied scripted handoff without a provider call.
+
+        :param items: Conversation items to summarize.
+        """
+        return "handoff"
+    strategy = local_strategy(trigger_items=3, keep_recent_items=1)
+    asyncio.run(select(strategy, history, ctx, summary))
+    path = next(ctx.state_dir.glob("compaction-*.json"))
+    before = path.read_bytes()
+    async def failed(items):
+        """Simulate a provider failure after verifying the prior summary.
+
+        :param items: Conversation items to summarize.
+        """
+        assert "handoff" in str(items)
+        raise RuntimeError("provider failed")
+    history.extend([{"role": "assistant", "content": "recent answer"}, user("continue")])
+    with pytest.raises(RuntimeError, match="provider failed"):
+        asyncio.run(select(strategy, history, ctx, failed))
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("model_name", [False, True])
+def test_compaction_refreshes_context_after_summary(tmp_path, model_name):
+    """Verify the strategy owns post-summary resource and research refreshes.
+
+    :param tmp_path: Isolated workspace and checkpoint directory.
+    :param model_name: Whether the agent needs lazy provider resolution.
+    """
+    strategy = local_strategy(trigger_items=3, keep_recent_items=1)
+    ctx = compaction_context(tmp_path)
+    context = {"instructions": "fixed", "research": "old", "resources": "old"}
+    model = ScriptedModel(say("summary"))
+    provider = Mock(get_model=Mock(return_value=model))
+    items = [user("old"), {"role": "assistant", "content": "answer"}, user("now")]
+    asyncio.run(strategy.select_for_call(items, ctx=ctx, session_id="pm", request_context=context,
+        agent=Agent(name="pm", model="named-model" if model_name else model), model_provider=provider,
+        prepare_input=lambda data: data,
+        research_context=lambda: "new plan"))
+    assert context["research"] == "new plan" and context["resources"] != "old"
+    assert "compaction:pm" in ctx.usage.by_source
+    assert provider.get_model.call_count == int(model_name)
+    if model_name:
+        provider.get_model.assert_called_once_with("named-model")

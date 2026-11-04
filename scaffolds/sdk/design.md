@@ -34,7 +34,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 |---|---|---|
 | Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents`; OpenAI and compatible Responses/Chat Completions providers |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` |
-| Conversation retention and compaction | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `openai_compaction` |
+| Conversation retention and compaction | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; `escalate` outbox |
@@ -104,7 +104,7 @@ Langfuse v4 never updates an observation once it has stored it, so each observat
 - **Generations stay small.** Langfuse reads an Agents SDK generation's input and output from `input.value` and `output.value`, so the SDK's per-message attributes (`llm.input_messages.*`) are not recorded. They grow with the conversation, and past OpenTelemetry's 128-attribute limit they would evict the span's session, tags, model and usage.
 - **A stopped scaffold flushes.** SIGTERM or SIGINT ends every open observation with level `WARNING` and a `stopped` status message before the process exits. A SIGKILL, such as from the OOM killer, still loses the open iteration's root and anything not yet flushed. Langfuse's flush interval is 5 seconds.
 - **Model inputs are inspectable.** SDK generations use the existing OpenInference exporter: Input contains the ordered model messages, and Responses instructions are in Model Parameters (`instructions`) and the complete response output. Chat Completions includes instructions in its message list; Claude/OpenRouter uses the first developer message with a cache marker. Fresh state is labeled `<research_context>` and `<resource_status>`; a new task follows `# Current task` in the trailing user message. On tool continuations, the raw task remains in history and the tail refreshes state only. Earlier user messages are conversation history, not additional newly submitted tasks.
-- **Compaction is inspectable too.** `compaction:<agent>` generations record the actual filtered request arguments and complete compacted response, including retained messages, encrypted compaction items and usage. Encrypted content remains opaque; previous observations remain available. Coding generations record their developer instructions and actual prefixed brief; inner Codex requests remain owned by its harness.
+- **Compaction is inspectable too.** `compaction:<agent>` generations record the ordinary inference input, returned handoff summary and usage. The PI uses the same provider/model/effort as its other calls, with no tools or recursive input filter. A separate checkpoint selects summary plus recent complete exchanges; SQLite retains the original conversation. Fixed instructions and fresh research/resource context remain independent of compaction. Coding generations record their developer instructions and actual prefixed brief; inner Codex requests remain owned by its harness.
 
 
 ```mermaid

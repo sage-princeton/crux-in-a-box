@@ -299,8 +299,8 @@ For an SDK box:
   keeps direct OpenAI. `MODEL_PROVIDER=openrouter` is accepted when the table
   points to OpenRouter; leaving the legacy setting at `direct` also honors the
   drop-in. A mismatched OpenRouter setting fails preflight before EC2 creation.
-  Compatible endpoints require HTTPS and `persistent` or `trim_recent` context;
-  `openai_compaction` calls direct OpenAI and is rejected for these runs.
+  Compatible endpoints require HTTPS. `compaction` uses the same configured
+  provider and ordinary inference API as the PI; it needs no separate endpoint or credential.
 - **Base secrets:** the selected provider credential (`OPENAI_API_KEY` by
   default, or the drop-in's `api_key_env`, such as `OPENROUTER_API_KEY`), plus any keys the drop-in's MCP servers
   read, such as `SLACK_BOT_TOKEN`. Like every non-provider key in the base

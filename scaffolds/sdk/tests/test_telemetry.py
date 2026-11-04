@@ -5,11 +5,11 @@ import signal
 import pytest
 from agents import Runner, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
+from agents.usage import Usage
 from openai.types.responses import ResponseReasoningItem
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from test_blind_review import configure_blind
 from test_coding_agents import ANSWER, FakeCodex, completed, item, usage
-from test_context_strategies import FakeCompactClient
 
 from crux_scaffold import cli
 from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
@@ -250,7 +250,7 @@ def test_codex_reasoning_fields_and_usage_snapshots_reach_langfuse_without_doubl
         item({"type": "reasoning", "id": "r1", "summary": summary, "content": content}),
         first, second, second, item(ANSWER), completed(),
     ])
-    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x"},
+    agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x", "system_prompt": "prompts/worker.md"},
                                  client_factory=lambda ctx: fake)
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", ENV, UsageLedger(), Budget(), telemetry)
     with telemetry.trace("coding test"):
@@ -277,21 +277,42 @@ def test_codex_reasoning_fields_and_usage_snapshots_reach_langfuse_without_doubl
                                    cache_write_input_tokens=10, reasoning_output_tokens=50)
 
 
-def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_ledger(langfuse, tmp_path):
+def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_ledger(
+    langfuse, drop_in_dir, assemble,
+):
     telemetry, exporter = langfuse
     exporter.clear()
-    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", ENV, UsageLedger(), Budget(), telemetry)
-    strategy = CONTEXT_STRATEGIES.create("context", {"type": "openai_compaction"}, client=FakeCompactClient())
+    model = ScriptedModel(say("handoff"))
+    get_response = model.get_response
+    async def metered(*args, **kwargs):
+        """Return deterministic cache, reasoning and total-token usage.
+
+        :param args: Forwarded model-call arguments.
+        :param kwargs: Forwarded model-call keyword arguments.
+        """
+        assert kwargs["tracing"].is_disabled() and not kwargs["tools"]
+        response = await get_response(*args, **kwargs)
+        response.usage = Usage(requests=1, input_tokens=1000, output_tokens=200, total_tokens=1200,
+                               input_tokens_details={"cached_tokens": 600, "cache_write_tokens": 20},
+                               output_tokens_details={"reasoning_tokens": 50})
+        return response
+    model.get_response = metered
+    scaffold = assemble(drop_in_dir, {"pm": model}, env=ENV, telemetry=telemetry)
+    scaffold.runtime.build()
     with telemetry.trace("compaction test"):
-        asyncio.run(strategy.session("pm", ctx).run_compaction({"force": True}))
+        asyncio.run(CONTEXT_STRATEGIES.create("context", {"type": "compaction"})._summarize(
+            [], ctx=scaffold.context, agent=scaffold.runtime.agents["pm"],
+            model_provider=scaffold.runtime.run_config.model_provider,
+            instructions="fixed", prepare_input=scaffold.runtime._cache_input))
     telemetry.flush()
     generations = [span for span in exporter.get_finished_spans() if span.name == "compaction:pm"]
     assert len(generations) == 1
     assert json.loads(generations[0].attributes["langfuse.observation.usage_details"]) == {
-        "input": 400, "input_cached_tokens": 600, "output": 150, "output_reasoning_tokens": 50}
-    persisted = UsageLedger.model_validate_json(ctx.usage.model_dump_json()).by_source["compaction:pm"]
+        "input": 380, "input_cached_tokens": 600, "input_cache_creation": 20,
+        "output": 150, "output_reasoning_tokens": 50}
+    persisted = UsageLedger.model_validate_json(scaffold.context.usage.model_dump_json()).by_source["compaction:pm"]
     assert persisted == TokenUsage(requests=1, input_tokens=1000, output_tokens=200, cached_input_tokens=600,
-                                   reasoning_output_tokens=50)
+                                   cache_write_input_tokens=20, reasoning_output_tokens=50)
 
 
 def test_the_probe_traces_its_agent_sdk_call_under_the_probe_trace(langfuse, monkeypatch):
