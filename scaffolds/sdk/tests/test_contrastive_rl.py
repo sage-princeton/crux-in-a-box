@@ -76,7 +76,7 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert scaffold.loop.type_name == "tabpfn_research"
     assert str(scaffold.runtime.options.model_provider.base_url) == "https://openrouter.ai/api/v1"
     assert not scaffold.runtime.options.model_provider.extra_body
-    assert scaffold.strategy.type_name == "trim_recent"
+    assert scaffold.strategy.type_name == "compaction"
     assert len(scaffold.coding_agents) == 3
     assert scaffold.context.steering is not None
     assert "escalate" in config.agents["pi"].tools
