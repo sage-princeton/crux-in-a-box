@@ -186,7 +186,7 @@ class CodexCodingAgent(CodingAgent):
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
         (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
-        codex, turn = self.client_factory(ctx), None
+        codex, turn, streaming = self.client_factory(ctx), None, None
         try:
             await codex.__aenter__()  # Inside the try: closing after a failed start is safe.
             if ctx.env.get("OPENAI_API_KEY") and not ctx.env.get("CRUX_CODEX_BASE_URL"):
@@ -203,32 +203,37 @@ class CodexCodingAgent(CodingAgent):
             while True:
                 turn, ended, retrying = await thread.turn(message, effort=ctx.reasoning_effort), None, None
                 self.last_activity, attempts = ctx.now(), attempts + 1
-                async with aclosing(turn.stream()) as events:
-                    async for event in events:
-                        self.last_activity = ctx.now()
-                        payload = event.payload
-                        if isinstance(payload, ItemCompletedNotification):
-                            final_response = record_item(ctx, payload.item.root) or final_response
-                        elif isinstance(payload, ErrorNotification) and payload.will_retry:
-                            retrying = payload.error  # Codex is retrying a request or stream itself.
-                        elif isinstance(payload, ThreadTokenUsageUpdatedNotification):
-                            # The thread's total spans all its turns, so the latest one covers the whole brief.
-                            total = payload.token_usage.total
-                            usage = TokenUsage(requests=1, input_tokens=total.input_tokens,
-                                               output_tokens=total.output_tokens,
-                                               cached_input_tokens=total.cached_input_tokens,
-                                               cache_write_input_tokens=total.cache_write_input_tokens or 0,
-                                               reasoning_output_tokens=total.reasoning_output_tokens)
-                            self.report_usage(usage, ctx, request={"thread_id": payload.thread_id,
-                                                                  "turn_id": payload.turn_id})
-                            usage = self.usage_so_far
-                            # Keep raw snapshots for inspection; only new increments carry priced usage.
-                            ctx.telemetry.record(
-                                "codex:usage", "span", {"thread_id": payload.thread_id, "turn_id": payload.turn_id},
-                                {"last": payload.token_usage.last.model_dump(mode="json", by_alias=True),
-                                 "total": total.model_dump(mode="json", by_alias=True)})
-                        elif isinstance(payload, TurnCompletedNotification):
-                            ended = payload.turn
+                async def read_turn(active_turn=turn):
+                    nonlocal final_response, usage, retrying, ended
+                    async with aclosing(active_turn.stream()) as events:
+                        async for event in events:
+                            self.last_activity = ctx.now()
+                            payload = event.payload
+                            if isinstance(payload, ItemCompletedNotification):
+                                final_response = record_item(ctx, payload.item.root) or final_response
+                            elif isinstance(payload, ErrorNotification) and payload.will_retry:
+                                retrying = payload.error  # Codex is retrying a request or stream itself.
+                            elif isinstance(payload, ThreadTokenUsageUpdatedNotification):
+                                # The thread's total spans all its turns, so the latest one covers the whole brief.
+                                total = payload.token_usage.total
+                                usage = TokenUsage(requests=1, input_tokens=total.input_tokens,
+                                                   output_tokens=total.output_tokens,
+                                                   cached_input_tokens=total.cached_input_tokens,
+                                                   cache_write_input_tokens=total.cache_write_input_tokens or 0,
+                                                   reasoning_output_tokens=total.reasoning_output_tokens)
+                                self.report_usage(usage, ctx, request={"thread_id": payload.thread_id,
+                                                                      "turn_id": payload.turn_id})
+                                usage = self.usage_so_far
+                                # Keep raw snapshots for inspection; only new increments carry priced usage.
+                                ctx.telemetry.record(
+                                    "codex:usage", "span", {"thread_id": payload.thread_id, "turn_id": payload.turn_id},
+                                    {"last": payload.token_usage.last.model_dump(mode="json", by_alias=True),
+                                     "total": total.model_dump(mode="json", by_alias=True)})
+                            elif isinstance(payload, TurnCompletedNotification):
+                                ended = payload.turn
+
+                streaming = asyncio.create_task(read_turn())
+                await asyncio.shield(streaming)
                 failed = ended is not None and ended.status == TurnStatus.failed
                 error = ended.error.message if failed and ended.error else "none reported"
                 label, transient = classify(ended.error, retrying) if failed else ("", False)
@@ -246,12 +251,21 @@ class CodexCodingAgent(CodingAgent):
             # Ask the app-server to stop the turn before closing it.
             if turn is not None:
                 with suppress(Exception):
-                    # A repeated cancel must not drop the stop request before the app-server receives it.
-                    await uninterrupted(asyncio.wait_for(turn.interrupt(), INTERRUPT_SECONDS))
+                    async def stop_turn():
+                        await turn.interrupt()
+                        # The acknowledgement precedes process cleanup. Keep consuming until the turn stops.
+                        await streaming
+
+                    await uninterrupted(asyncio.wait_for(stop_turn(), INTERRUPT_SECONDS))
             raise
         finally:
-            # A second cancellation must not abandon the close, or the app-server keeps running the turn.
-            await uninterrupted(codex.__aexit__(None, None, None))
+            try:
+                if streaming is not None and not streaming.done():
+                    streaming.cancel()
+                    await uninterrupted(asyncio.gather(streaming, return_exceptions=True))
+            finally:
+                # A second cancellation must not abandon the close.
+                await uninterrupted(codex.__aexit__(None, None, None))
         completed = ended is not None and ended.status == TurnStatus.completed
         if failed:
             # Name the error, so a provider outage is not mistaken for a problem with the code or the task.
