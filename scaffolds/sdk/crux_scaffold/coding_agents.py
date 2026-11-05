@@ -74,9 +74,13 @@ class CodingAgent(Component):
         return self.options.description
 
     async def run(self, brief: str, ctx: RunContext) -> CodingResult:
-        context = self._research_context()
-        if context:
-            brief = f"<research_context>\n{context}\n</research_context>\n\n# Current task\n\n{brief}"
+        # A coding agent has no per-call resource status or budget_status tool, so its brief carries the status
+        # as of dispatch.
+        blocks = [f"<{tag}>\n{text}\n</{tag}>" for tag, text in
+                  (("research_context", self._research_context()), ("resource_status", await ctx.budget_status()))
+                  if text]
+        if blocks:
+            brief = "\n\n".join([*blocks, f"# Current task\n\n{brief}"])
         request = {"instructions": self.developer_instructions, "messages": [{"role": "user", "content": brief}]}
         self.last_activity, self.usage_so_far, result = ctx.now(), TokenUsage(), None
         self._reported_usage = TokenUsage()
