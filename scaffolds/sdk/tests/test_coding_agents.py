@@ -170,6 +170,72 @@ def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):
     assert result.as_tool_output() == "[coding agent did not complete]\nsandbox denied"
 
 
+def test_a_cancelled_codex_brief_interrupts_its_turn_closes_despite_a_second_cancel_and_books_usage(tmp_path):
+    events, telemetry = [], RecordingTelemetry([])
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
+                     telemetry)
+
+    async def run():
+        streaming, closing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class StalledTurn:
+            async def stream(self):
+                yield SimpleNamespace(payload=usage(1200, 300))
+                streaming.set()
+                await asyncio.Event().wait()
+
+            async def interrupt(self):
+                events.append("interrupt")
+
+        class SlowClose(FakeCodex):
+            async def __aexit__(self, *exc_info):
+                closing.set()
+                await release.wait()
+                events.append("closed")
+
+        fake = SlowClose([])
+
+        async def turn(brief, **kwargs):
+            return StalledTurn()
+
+        fake.thread.turn = turn
+        agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
+        task = asyncio.create_task(agent.run("TASK", ctx))
+        await streaming.wait()
+        task.cancel()
+        await closing.wait()
+        task.cancel()
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(run())
+    assert events == ["interrupt", "closed"]
+    assert ctx.usage.by_source["engineer"].total_tokens == 1500
+    assert [(name, tokens) for name, _, _, _, tokens in telemetry.generations] == [("engineer", 1500)]
+
+
+def test_a_failed_codex_brief_books_the_usage_it_reported(tmp_path):
+    class FailingTurn:
+        async def stream(self):
+            yield SimpleNamespace(payload=usage(1200, 300))
+            raise RuntimeError("stream lost")
+
+    async def turn(brief, **kwargs):
+        return FailingTurn()
+
+    fake = FakeCodex([])
+    fake.thread.turn = turn
+    agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
+                     NullTelemetry())
+    with pytest.raises(RuntimeError, match="stream lost"):
+        asyncio.run(agent.run("TASK", ctx))
+    assert ctx.usage.by_source["engineer"].total_tokens == 1500
+
+
 def test_codex_loads_current_instructions_for_each_fresh_brief(tmp_path):
     fake = FakeCodex([completed()])
     source = tmp_path / "REQUEST.md"

@@ -4,10 +4,12 @@ replace its system prompt."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 from abc import abstractmethod
-from collections.abc import Callable
-from contextlib import aclosing
+from collections.abc import Awaitable, Callable
+from contextlib import aclosing, suppress
+from datetime import datetime
 from typing import Any, Literal
 
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
@@ -56,6 +58,9 @@ class CodingAgent(Component):
         self._developer_instructions = developer_instructions
         self._research_context = research_context
         self.system_prompt = system_prompt
+        # The latest brief's progress: when it last showed activity and the cumulative usage it last reported.
+        self.last_activity: datetime | None = None
+        self.usage_so_far = TokenUsage()
 
     @property
     def developer_instructions(self) -> str:
@@ -71,13 +76,20 @@ class CodingAgent(Component):
         if context:
             brief = f"<research_context>\n{context}\n</research_context>\n\n# Current task\n\n{brief}"
         request = {"instructions": self.developer_instructions, "messages": [{"role": "user", "content": brief}]}
+        self.last_activity, self.usage_so_far, result = ctx.now(), TokenUsage(), None
         with ctx.telemetry.generation(self.name, ctx.model, request) as outcome:
-            result = await self.execute(brief, ctx)
-            outcome.output, outcome.usage = result.final_response, result.usage
-        ctx.usage.add(self.name, result.usage.input_tokens, result.usage.output_tokens,
-                      cached_input_tokens=result.usage.cached_input_tokens,
-                      cache_write_input_tokens=result.usage.cache_write_input_tokens,
-                      reasoning_output_tokens=result.usage.reasoning_output_tokens)
+            try:
+                result = await self.execute(brief, ctx)
+                outcome.output = result.final_response
+            finally:
+                # A cancelled or failed brief still spent tokens: book the latest cumulative total it reported.
+                usage = result.usage if result else self.usage_so_far
+                if result or usage.total_tokens:
+                    outcome.usage = usage
+                    ctx.usage.add(self.name, usage.input_tokens, usage.output_tokens,
+                                  cached_input_tokens=usage.cached_input_tokens,
+                                  cache_write_input_tokens=usage.cache_write_input_tokens,
+                                  reasoning_output_tokens=usage.reasoning_output_tokens)
         return result
 
     @abstractmethod
@@ -97,6 +109,7 @@ class CodexOptions(CodingAgentOptions):
 
 ClientFactory = Callable[[RunContext], AsyncCodex]
 CONTEXT_WINDOW_TOKENS = 1_000_000
+INTERRUPT_SECONDS = 5
 
 
 def codex_client(ctx: RunContext) -> AsyncCodex:
@@ -139,7 +152,9 @@ class CodexCodingAgent(CodingAgent):
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
         (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
-        async with self.client_factory(ctx) as codex:
+        codex, turn = self.client_factory(ctx), None
+        try:
+            await codex.__aenter__()  # Inside the try: closing after a failed start is safe.
             if ctx.env.get("OPENAI_API_KEY") and not ctx.env.get("CRUX_CODEX_BASE_URL"):
                 await codex.login_api_key(ctx.env["OPENAI_API_KEY"])
             thread = await codex.thread_start(
@@ -154,6 +169,7 @@ class CodexCodingAgent(CodingAgent):
             final_response, usage, ended = "", TokenUsage(requests=1), None
             async with aclosing(turn.stream()) as events:
                 async for event in events:
+                    self.last_activity = ctx.now()
                     payload = event.payload
                     if isinstance(payload, ItemCompletedNotification):
                         final_response = record_item(ctx, payload.item.root) or final_response
@@ -164,6 +180,7 @@ class CodexCodingAgent(CodingAgent):
                                            cached_input_tokens=total.cached_input_tokens,
                                            cache_write_input_tokens=total.cache_write_input_tokens or 0,
                                            reasoning_output_tokens=total.reasoning_output_tokens)
+                        self.usage_so_far = usage
                         # Progress snapshots are not extra generations or additions to the usage ledger.
                         ctx.telemetry.record("codex:usage", "span",
                                              {"thread_id": payload.thread_id, "turn_id": payload.turn_id},
@@ -171,9 +188,32 @@ class CodexCodingAgent(CodingAgent):
                                               "total": total.model_dump(mode="json", by_alias=True)})
                     elif isinstance(payload, TurnCompletedNotification):
                         ended = payload.turn
+        except asyncio.CancelledError:
+            # Ask the app-server to stop the turn before closing it.
+            if turn is not None:
+                with suppress(Exception):
+                    await asyncio.wait_for(turn.interrupt(), INTERRUPT_SECONDS)
+            raise
+        finally:
+            # A second cancellation must not abandon the close, or the app-server keeps running the turn.
+            await uninterrupted(codex.__aexit__(None, None, None))
         completed = ended is not None and ended.status == TurnStatus.completed
         error = ended.error.message if ended is not None and ended.error else ""
         return CodingResult(completed=completed, final_response=final_response or error, usage=usage)
+
+
+async def uninterrupted(awaitable: Awaitable[Any]) -> None:
+    """Await `awaitable` to the end even if this task is cancelled meanwhile, then re-raise the cancellation."""
+    task = asyncio.ensure_future(awaitable)
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.wait([task])
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
+    task.result()
 
 
 CODEX_TOOL_ITEMS = {"commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall",

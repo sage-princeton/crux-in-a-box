@@ -263,6 +263,8 @@ class Scaffold:
             tool = self.assembly.tools[tool_name]
             if isinstance(tool, Rest):
                 parts.append(f"`{tool_name}`: {max(0, tool.options.total_seconds - tool.used_seconds):g}s remaining.")
+        if name == self.drop_in.config.orchestrator:
+            parts.append(self.runtime.coding_status())
         parts.append(self.drop_in.research_context(spec))
         return "\n\n".join(filter(None, parts))
 
