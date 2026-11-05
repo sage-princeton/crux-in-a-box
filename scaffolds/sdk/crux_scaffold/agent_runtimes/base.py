@@ -153,6 +153,11 @@ class AgentRuntime(Component):
     def describe(self) -> list[str]:
         """One line per agent: its tools, delegates and MCP servers."""
 
+    def coding_status(self) -> str:
+        """One line on background coding briefs that are running, finished but uncollected, or cancelled and not yet
+        reported, for the orchestrator's research context; empty when there are none."""
+        return ""
+
     @classmethod
     @abstractmethod
     async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry, *,
