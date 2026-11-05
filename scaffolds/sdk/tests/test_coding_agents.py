@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import pytest
 from openai_codex import ApprovalMode, Sandbox
 from openai_codex.generated.v2_all import (
+    ErrorNotification,
     ItemCompletedNotification,
     ThreadTokenUsageUpdatedNotification,
     TurnCompletedNotification,
@@ -37,6 +38,21 @@ def completed(status="completed", error=None):
         {"threadId": "t1", "turn": {"id": "turn1", "items": [], "status": status, "error": error}})
 
 
+def failed(message, info=None):
+    return completed("failed", {"message": message, "codexErrorInfo": info})
+
+
+def reconnecting(status=None):
+    """Codex's notice that it is retrying a dropped stream itself."""
+    return ErrorNotification.model_validate(
+        {"threadId": "t1", "turnId": "turn1", "willRetry": True, "error": {
+            "message": "Reconnecting... 5/5", "codexErrorInfo": {"responseStreamDisconnected": {"httpStatusCode": status}}}})
+
+
+SSE_IDLE = "stream disconnected before completion: idle timeout waiting for SSE"
+RATE_LIMITED = "exceeded retry limit, last status: 429 Too Many Requests"
+
+
 COMMAND = {"type": "commandExecution", "id": "c1", "command": "python3 -m unittest", "commandActions": [],
            "cwd": "/w", "status": "completed", "exitCode": 0, "aggregatedOutput": "OK"}
 ANSWER = {"type": "agentMessage", "id": "m1", "text": "Added location; 6 tests pass.", "phase": "final_answer"}
@@ -51,22 +67,26 @@ class FakeTurn:
             self.log.append(f"stream:{type(payload).__name__}")
             yield SimpleNamespace(payload=payload)
 
+    async def interrupt(self):
+        self.log.append("interrupt")
+
 
 class FakeThread:
-    def __init__(self, events, log):
-        self.events, self.log = events, log
+    def __init__(self, scripts, log):
+        self.scripts, self.log = scripts, log
         self.turns = []
 
     async def turn(self, brief, **kwargs):
         self.turns.append((brief, kwargs))
-        return FakeTurn(self.events, self.log)
+        return FakeTurn(self.scripts[min(len(self.turns), len(self.scripts)) - 1], self.log)
 
 
 class FakeCodex:
-    """Stands in for openai_codex.AsyncCodex."""
+    """Stands in for openai_codex.AsyncCodex. `events` script the first turn; each of `later` scripts a later turn on
+    the same thread, and the last script repeats."""
 
-    def __init__(self, events, log=None):
-        self.thread = FakeThread(events, log if log is not None else [])
+    def __init__(self, events, log=None, *, later=()):
+        self.thread = FakeThread([events, *later], log if log is not None else [])
         self.logins, self.starts = [], []
 
     async def __aenter__(self):
@@ -167,7 +187,99 @@ def test_a_failed_codex_turn_is_reported_as_not_completed(tmp_path):
                      NullTelemetry())
     result = asyncio.run(agent.run("TASK", ctx))
     assert fake.logins == []
-    assert result.as_tool_output() == "[coding agent did not complete]\nsandbox denied"
+    assert result.as_tool_output() == ("[coding agent did not complete]\nCodex stopped on a non-transient error (other) "
+                                       "after 1 turn attempt. Last error: sandbox denied")
+
+
+def retry_context(tmp_path, sleeps, telemetry=None):
+    async def sleep(seconds):
+        sleeps.append(seconds)
+
+    return RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(), Budget(),
+                      telemetry or NullTelemetry(), sleep=sleep)
+
+
+def test_a_transient_turn_failure_continues_on_the_same_thread_and_books_the_latest_total(tmp_path):
+    sleeps, telemetry = [], RecordingTelemetry([])
+    # Codex reports its own exhausted stream retries as "other"; its retry notices say what it was retrying.
+    fake = FakeCodex([usage(1000, 100), reconnecting(502), item(COMMAND), failed(SSE_IDLE, "other")],
+                     later=[[usage(3000, 400), item(ANSWER), completed()]])
+    agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
+    ctx = retry_context(tmp_path, sleeps, telemetry)
+    result = asyncio.run(agent.run("TASK", ctx))
+    assert len(fake.starts) == 1
+    assert [brief for brief, _ in fake.thread.turns] == [
+        "TASK", ("The previous turn stopped on a provider error (responseStreamDisconnected, HTTP 502). "
+                 "Continue the task from where it stopped.")]
+    assert sleeps == [60]
+    assert (result.completed, result.final_response) == (True, ANSWER["text"])
+    assert ctx.usage.by_source["engineer"].total_tokens == 3400
+    assert [tokens for *_, tokens in telemetry.generations] == [3400]
+    assert [output for name, _, _, output in telemetry.records if name == "codex:turn_retry"] == [
+        {"attempt": 2, "backoff_seconds": 60}]
+
+
+@pytest.mark.parametrize("events, label", [
+    ([failed("context too long", "contextWindowExceeded")], "contextWindowExceeded"),
+    ([failed("usage limit reached", "usageLimitExceeded")], "usageLimitExceeded"),
+    ([failed("401 Unauthorized", {"httpConnectionFailed": {"httpStatusCode": 401}})], "httpConnectionFailed, HTTP 401"),
+    ([failed("fatal", "other")], "other"),
+    ([reconnecting(502), failed("context too long", "contextWindowExceeded")], "contextWindowExceeded"),
+])
+def test_a_non_transient_codex_failure_is_not_retried(tmp_path, events, label):
+    sleeps = []
+    fake = FakeCodex(events, later=[[item(ANSWER), completed()]])
+    agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
+    result = asyncio.run(agent.run("TASK", retry_context(tmp_path, sleeps)))
+    assert (len(fake.thread.turns), sleeps, result.completed) == (1, [], False)
+    assert result.final_response.startswith(f"Codex stopped on a non-transient error ({label}) after 1 turn attempt.")
+
+
+@pytest.mark.parametrize("options, sleeps", [
+    ({}, [60, 300]), ({"turn_retries": 3, "turn_retry_backoff_seconds": [5]}, [5, 5, 5]), ({"turn_retries": 0}, [])])
+def test_exhausted_turn_retries_report_the_error_class_attempts_and_last_error(tmp_path, options, sleeps):
+    progress = item({"type": "agentMessage", "id": "m0", "text": "Training started.", "phase": "commentary"})
+    fake = FakeCodex([progress, failed(RATE_LIMITED, {"responseTooManyFailedAttempts": {"httpStatusCode": 429}})])
+    agent = CODING_AGENTS.create("engineer", {**CODEX, **options}, client_factory=lambda ctx: fake)
+    slept = []
+    result = asyncio.run(agent.run("TASK", retry_context(tmp_path, slept)))
+    attempts = len(sleeps) + 1
+    assert (len(fake.thread.turns), slept) == (attempts, sleeps)
+    assert result.as_tool_output() == (
+        "[coding agent did not complete]\nCodex stopped on a transient provider error (responseTooManyFailedAttempts, "
+        f"HTTP 429) after {attempts} turn attempt{'s' if attempts > 1 else ''}. Last error: {RATE_LIMITED}\n\n"
+        "Last Codex message:\nTraining started.")
+
+
+def test_a_cancel_during_the_retry_backoff_closes_the_client_without_another_turn(tmp_path):
+    log = []
+
+    class Closing(FakeCodex):
+        async def __aexit__(self, *exc_info):
+            log.append("closed")
+
+    fake = Closing([usage(1200, 300), failed(SSE_IDLE, {"responseStreamDisconnected": {"httpStatusCode": None}})], log)
+    agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
+
+    async def run():
+        backing_off = asyncio.Event()
+
+        async def sleep(seconds):
+            backing_off.set()
+            await asyncio.Event().wait()
+
+        ctx = RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "gpt-test"}, UsageLedger(),
+                         Budget(), NullTelemetry(), sleep=sleep)
+        task = asyncio.create_task(agent.run("TASK", ctx))
+        await backing_off.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return ctx
+
+    ctx = asyncio.run(run())
+    assert (len(fake.thread.turns), log[-1], "interrupt" in log) == (1, "closed", False)
+    assert ctx.usage.by_source["engineer"].total_tokens == 1500
 
 
 def test_a_cancelled_codex_brief_interrupts_its_turn_closes_despite_a_second_cancel_and_books_usage(tmp_path):
@@ -296,6 +408,22 @@ def test_codex_client_uses_the_run_environment_and_provider(tmp_path, monkeypatc
         assert "fixture-router" not in str(overrides)
     else:
         assert overrides == {}
+
+
+@pytest.mark.parametrize("settings", [
+    {}, {"request_max_retries": 10, "stream_max_retries": 10}, {"stream_idle_timeout_ms": 600_000}])
+def test_codex_retry_settings_reach_the_compatible_provider_only_when_set(tmp_path, monkeypatch, settings):
+    env = {"CRUX_CODEX_BASE_URL": "https://openrouter.ai/api/v1", "CRUX_CODEX_API_KEY_ENV": "OPENROUTER_API_KEY",
+           "OPENROUTER_API_KEY": "fixture-router"}
+    seen = []
+    monkeypatch.setattr("crux_scaffold.coding_agents.AsyncCodex", lambda config: seen.append(config))
+    agent = CODING_AGENTS.create("engineer", {**CODEX, **settings})
+    agent.client_factory(RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(),
+                                    NullTelemetry()))
+    prefix = "model_providers.crux-compatible."
+    overrides = dict(part.split("=", 1) for part in seen[0].config_overrides)
+    assert {key.removeprefix(prefix): json.loads(value) for key, value in overrides.items()
+            if key.endswith(("_retries", "_timeout_ms"))} == settings
 
 
 def test_compatible_codex_does_not_log_in_to_openai(tmp_path):

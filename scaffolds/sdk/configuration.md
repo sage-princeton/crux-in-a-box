@@ -38,6 +38,29 @@ network error or a provider's content-filter cutoff) is retried inside the
 turn, up to 8 times, backing off from 2 to 60 seconds. A failure that outlasts
 the retries ends the iteration and cancels its running coding agents.
 
+Codex workers retry provider failures at two levels:
+
+```toml
+[coding_agents.worker]
+type = "codex"
+request_max_retries = 10                # Codex's retries inside a turn (default 4)
+stream_max_retries = 10                 # default 5
+# stream_idle_timeout_ms = 300000       # default; keep it above the slowest first token
+turn_retries = 2                        # further turns after a transient failure (default)
+turn_retry_backoff_seconds = [60, 300]  # wait before each; the last repeats (default)
+```
+
+The first three are Codex's own settings for the compatible provider
+(`CRUX_CODEX_BASE_URL`); unset, they keep Codex's defaults, which the direct
+OpenAI provider always uses. When a turn still fails on a transient provider
+error (a rate limit, overload, 5xx, connection or stream failure, as Codex
+reports it), the scaffold waits and continues the brief on the same thread with
+a short factual message. Auth, context-window and usage-limit errors are not
+retried. A brief that still fails reports the error kind, its turn attempts and
+the last error, so the caller can tell an outage from a code failure. Successful
+pilot requests took up to 246 s to their first token, so do not lower
+`stream_idle_timeout_ms` below Codex's 300 s default.
+
 Each agent and coding agent declares its existing context sources in `scaffold.toml`:
 
 ```toml
