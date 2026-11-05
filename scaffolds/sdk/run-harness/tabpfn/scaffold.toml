@@ -93,6 +93,11 @@ workspace_context = ["PLAN.md"]
 tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
 max_turns = "unlimited"
 
+# Codex's own retries inside a turn; its defaults are 4 request and 5 stream retries. In the pilots they ran out on a
+# 4 s burst of 429s and on 502s that each hung for the 300 s stream idle timeout. With 10 retries, whose waits double
+# from about 0.2 s, Codex rides out about 3.4 minutes of 429s or 50 minutes of hung streams before the scaffold
+# retries the turn (`turn_retries`). The idle timeout stays at Codex's 300 s: successful pilot requests took up to
+# 246 s to the first token. Every worker below uses the same values.
 [coding_agents.worker_a]
 type = "codex"
 description = "Full Codex research assistant: investigate, implement, experiment, or write within the brief's file scope. May use native subagents."
@@ -100,6 +105,8 @@ system_prompt = "prompts/codex-worker.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
 sandbox = "full-access"
+request_max_retries = 10
+stream_max_retries = 10
 
 [coding_agents.worker_b]
 type = "codex"
@@ -108,6 +115,8 @@ system_prompt = "prompts/codex-worker.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
 sandbox = "full-access"
+request_max_retries = 10
+stream_max_retries = 10
 
 [coding_agents.worker_c]
 type = "codex"
@@ -116,6 +125,8 @@ system_prompt = "prompts/codex-worker.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
 sandbox = "full-access"
+request_max_retries = 10
+stream_max_retries = 10
 
 [tools.run_shell]
 timeout_seconds = 600
