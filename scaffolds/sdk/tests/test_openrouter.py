@@ -11,6 +11,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
+from crux_scaffold.context_strategies import estimate_tokens
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.telemetry import NullTelemetry, RunIdentity, telemetry_from_env
@@ -419,3 +420,40 @@ def test_compaction_uses_ordinary_inference_and_preserves_cache_boundaries(
     spans = exporter.get_finished_spans()
     assert len([span for span in spans if span.name == "compaction:pm"]) == 2
     assert len([span for span in spans if span.attributes.get("openinference.span.kind") == "LLM"]) == 4
+
+
+def test_compaction_fits_the_rendered_request_after_a_large_tool_result(router, drop_in_dir, assemble):
+    """Compact through the latest tool batch and check what actually reaches the adapter.
+
+    :param router: Scripted HTTP provider fixture.
+    :param drop_in_dir: Minimal temporary drop-in.
+    :param assemble: Scaffold assembly fixture.
+    """
+    with (drop_in_dir / 'scaffold.toml').open('a') as config:
+        config.write('\n[context]\ntype = "compaction"\ntrigger_tokens = 6000\nkeep_recent_items = 20\n')
+    (drop_in_dir / 'workspace' / 'large.txt').write_text('evidence ' * 10000)
+    requests, pending, _ = router
+    pending.extend([response(call('read_file', {'path': 'large.txt'})), response(say('Evidence reviewed. Finish.')),
+                    response(say('done')), response(say('recalled'))])
+    scaffold = assemble(drop_in_dir, env=ENV)
+
+    async def run():
+        """Continue after compaction and inspect the unchanged durable tool result.
+
+        :returns: None; assertions check both inference and storage.
+        """
+        async with scaffold.runtime as runtime:
+            await runtime.run('Read large.txt, then finish.', workflow='main')
+            await runtime.run('Recall the findings.', workflow='main')
+            stored = await runtime.session.get_items()
+            assert any(item.get('type') == 'function_call_output' and len(item['output']) >= 20000 for item in stored)
+
+    asyncio.run(run())
+    assert len(requests) == 4
+    assert 'CONTEXT CHECKPOINT COMPACTION' in str(requests[1]['input'][-1])
+    assert not requests[1].get('tools')
+    for request in (requests[2], requests[3]):
+        assert 'Evidence reviewed.' in str(request['input'])
+        assert '<resource_status>' in str(request['input'][-1])
+        assert estimate_tokens([request.get('instructions'), request['input'], request['tools']]) < 6000
+    assert scaffold.context.usage.by_source['compaction:pm'].requests == 1

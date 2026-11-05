@@ -21,6 +21,10 @@ from crux_scaffold.workspace import RunContext
 
 STANDING_CONTEXT_HEADER = "# CRUX standing context\n\n"
 
+# Leave headroom for a 1600px square read_pdf render: about 3000 tokens on GPT-5.4-mini
+# (auto detail) or 3364 on high-resolution Claude. Override for the selected model.
+DEFAULT_IMAGE_TOKENS = 4096
+
 
 def is_standing_context(item: Any) -> bool:
     if not isinstance(item, dict) or item.get("role") != "developer":
@@ -43,6 +47,7 @@ class ContextStrategy(Component, ABC):
         self, items: list[Any], *, ctx: RunContext, session_id: str | None,
         request_context: dict[str, Any], agent: Agent, model_provider: ModelProvider,
         prepare_input: Callable[[ModelInputData], ModelInputData], research_context: Callable[[], str],
+        prepare_request: Callable[[list[Any]], ModelInputData] | None = None,
     ) -> list[Any]:
         """Select history before inference without changing the durable store.
 
@@ -54,6 +59,7 @@ class ContextStrategy(Component, ABC):
         :param model_provider: Runtime provider for resolving model names if needed.
         :param prepare_input: Runtime cache-boundary formatting callback.
         :param research_context: Callback reading current workspace context.
+        :param prepare_request: Render selected history as the complete ordinary model input.
         :returns: Selected history; synchronous strategies delegate to select.
         """
         return self.select(items)
@@ -120,11 +126,13 @@ class CompactionOptions(Options):
     :ivar context_window_tokens: Configured model window, reserving 10% headroom.
     :ivar trigger_tokens: Optional earlier estimated-token threshold.
     :ivar keep_recent_items: Soft target for unsummarized recent exchanges.
+    :ivar image_tokens: Estimated tokens per image, independent of encoded payload size.
     """
     max_items: int = Field(200, ge=1, strict=True)
     context_window_tokens: int = Field(128000, ge=1, strict=True)
     trigger_tokens: int | None = Field(None, ge=1, strict=True)
     keep_recent_items: int = Field(20, ge=1, strict=True)
+    image_tokens: int = Field(DEFAULT_IMAGE_TOKENS, ge=1, strict=True)
 
 
 class CompactionCheckpoint(Options):
@@ -173,13 +181,31 @@ def _serialized(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
-def estimate_tokens(value: Any) -> int:
-    """Estimate text tokens independently of any provider tokenizer.
+def _estimated_bytes(value: Any, image_tokens: int) -> int:
+    """Measure JSON text with a separate allowance for typed image inputs.
+
+    :param value: JSON-compatible request content, left unchanged.
+    :param image_tokens: Allowance for each image, including URL and file references.
+    :returns: Text bytes plus four bytes per estimated image token.
+    """
+    if isinstance(value, dict):
+        if value.get("type") in ("input_image", "image_url"):
+            return image_tokens * 4
+        return 2 + max(0, len(value) - 1) + sum(
+            len(_serialized(key)) + 1 + _estimated_bytes(item, image_tokens) for key, item in value.items())
+    if isinstance(value, list):
+        return 2 + max(0, len(value) - 1) + sum(_estimated_bytes(item, image_tokens) for item in value)
+    return len(_serialized(value))
+
+
+def estimate_tokens(value: Any, *, image_tokens: int = DEFAULT_IMAGE_TOKENS) -> int:
+    """Estimate request tokens without counting image transport bytes as text.
 
     :param value: JSON-compatible request content.
-    :returns: Serialized UTF-8 byte length divided by four, rounded up.
+    :param image_tokens: Configurable per-image allowance; actual costs depend on the model.
+    :returns: Text UTF-8 bytes divided by four, rounded up, plus image allowances.
     """
-    return (len(_serialized(value)) + 3) // 4
+    return (_estimated_bytes(value, image_tokens) + 3) // 4
 
 
 def _exchange_boundaries(items: list[Any]) -> list[int]:
@@ -226,6 +252,7 @@ class Compaction(ContextStrategy):
         self, items: list[Any], *, ctx: RunContext, session_id: str | None,
         request_context: dict[str, Any], agent: Agent, model_provider: ModelProvider,
         prepare_input: Callable[[ModelInputData], ModelInputData], research_context: Callable[[], str],
+        prepare_request: Callable[[list[Any]], ModelInputData] | None = None,
     ) -> list[Any]:
         """Reuse a valid handoff or summarize the next completed history prefix.
 
@@ -237,8 +264,9 @@ class Compaction(ContextStrategy):
         :param model_provider: Runtime provider for resolving model names if needed.
         :param prepare_input: Callback applying the runtime's cache boundaries.
         :param research_context: Callback reading current research files after compaction.
+        :param prepare_request: Render the request, including refreshed context and pinned steering.
         :returns: A summary plus recent exchanges, or unchanged history.
-        :raises RuntimeError: The returned summary is empty or exceeds the token trigger.
+        :raises RuntimeError: An empty summary or a request that cannot fit the token trigger.
         """
         if session_id is None:
             return items
@@ -247,25 +275,40 @@ class Compaction(ContextStrategy):
         covered = checkpoint.covered_items if checkpoint else 0
         prefix = [checkpoint.item()] if checkpoint else []
         selected = prefix + items[covered:]
-        if not self._should_compact(selected, request_context):
+
+        def fits(candidate: list[Any]) -> bool:
+            """Estimate a candidate using the current, possibly refreshed request context.
+
+            :param candidate: Handoff and retained history to render.
+            :returns: Whether the complete request is below the token trigger.
+            """
+            return self._request_fits(candidate, request_context, prepare_request)
+
+        if len(selected) < self.options.max_items and fits(selected):
             return selected
-        cut = self._retention_boundary(items, covered)
-        if cut is None:
-            return selected
-        summary = (await self._summarize(
-            prefix + items[covered:cut], ctx=ctx, agent=agent, model_provider=model_provider,
-            instructions=request_context["instructions"], prepare_input=prepare_input,
-        )).strip()
-        if not summary:
-            raise RuntimeError("compaction returned an empty summary; history is unchanged")
-        if estimate_tokens(summary) >= self._token_limit():
-            raise RuntimeError("compaction summary exceeds the token threshold; history is unchanged")
-        checkpoint = CompactionCheckpoint(covered_items=cut, summary=summary,
-                                          prefix_sha256=_history_digest(items[:cut]))
-        checkpoint.save(path)
-        request_context["resources"] = await ctx.budget_status()
-        request_context["research"] = research_context()
-        return [checkpoint.item(), *items[cut:]]
+        while True:
+            cut = self._retention_boundary(items, covered, prefix, fits)
+            if cut is None:
+                if fits(selected):
+                    return selected
+                raise RuntimeError("compaction cannot fit the request below the token threshold; "
+                                   "history and checkpoint are unchanged")
+            summary = (await self._summarize(
+                prefix + items[covered:cut], ctx=ctx, agent=agent, model_provider=model_provider,
+                instructions=request_context["instructions"], prepare_input=prepare_input,
+            )).strip()
+            if not summary:
+                raise RuntimeError("compaction returned an empty summary; history is unchanged")
+            request_context["resources"] = await ctx.budget_status()
+            request_context["research"] = research_context()
+            checkpoint = CompactionCheckpoint(covered_items=cut, summary=summary,
+                                              prefix_sha256=_history_digest(items[:cut]))
+            prefix = [checkpoint.item()]
+            covered = cut
+            selected = prefix + items[covered:]
+            if fits(selected):
+                checkpoint.save(path)
+                return selected
 
     def _load_checkpoint(self, path: Path, items: list[Any]) -> CompactionCheckpoint | None:
         """Load a checkpoint only when its covered history still matches.
@@ -285,26 +328,44 @@ class Compaction(ContextStrategy):
         ceiling = max(1, self.options.context_window_tokens * 9 // 10)
         return min(self.options.trigger_tokens or ceiling, ceiling)
 
-    def _should_compact(self, selected: list[Any], request_context: dict[str, Any]) -> bool:
-        """Check both item and estimated-token triggers.
+    def _request_fits(
+        self, selected: list[Any], request_context: dict[str, Any],
+        prepare_request: Callable[[list[Any]], ModelInputData] | None,
+    ) -> bool:
+        """Check the combined request against the configured token trigger.
 
-        :param selected: Current handoff plus uncovered history.
-        :param request_context: Stable instructions/tools and fresh dynamic context.
-        :returns: Whether either configured trigger has been reached.
+        :param selected: Handoff and retained conversation items.
+        :param request_context: Instructions, tools and current dynamic context.
+        :param prepare_request: Runtime renderer; absent callers supply all context directly.
+        :returns: Whether the complete estimate is strictly below the trigger.
         """
-        return (len(selected) >= self.options.max_items or
-                estimate_tokens([request_context, selected]) >= self._token_limit())
+        content = [request_context, selected]
+        if prepare_request is not None:
+            request = prepare_request(selected)
+            content = [request.instructions, request.input, request_context.get("tools", [])]
+        return estimate_tokens(content, image_tokens=self.options.image_tokens) < self._token_limit()
 
-    def _retention_boundary(self, items: list[Any], covered: int) -> int | None:
-        """Choose a new complete prefix while retaining recent exchanges.
+    def _retention_boundary(
+        self, items: list[Any], covered: int, prefix: list[Any], fits: Callable[[list[Any]], bool],
+    ) -> int | None:
+        """Retain preferred recent exchanges only when they leave room for a handoff.
 
         :param items: Original conversation history.
         :param covered: Number of original items already summarized.
-        :returns: Exclusive prefix offset, or None when no new complete cut exists.
+        :param prefix: Existing handoff, used to reserve its estimated size.
+        :param fits: Check the complete rendered request for each retained suffix.
+        :returns: A strictly advancing complete cut, or None if no candidate fits.
         """
-        boundaries = [index for index in _exchange_boundaries(items) if covered < index < len(items)]
+        boundaries = [index for index in _exchange_boundaries(items) if covered < index]
+        if not boundaries:
+            return None
+        recent = [index for index in boundaries if index < len(items)]
+        if not recent and fits(prefix + items[covered:]):
+            return None
         target = len(items) - self.options.keep_recent_items
-        return max((index for index in boundaries if index <= target), default=boundaries[0]) if boundaries else None
+        preferred = max((index for index in recent if index <= target), default=(recent or boundaries)[0])
+        return next((index for index in boundaries if index >= preferred and
+                     fits(prefix + items[index:])), None)
 
     async def _summarize(
         self, items: list[Any], *, ctx: RunContext, agent: Agent, model_provider: ModelProvider,
