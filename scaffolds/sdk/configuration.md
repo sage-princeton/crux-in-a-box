@@ -195,7 +195,7 @@ Gates, context strategies, coding agents, loops and runtimes extend the same way
 
 A CRUX with different needs changes declarations, not code. The same drop-in could, for example:
 
-- **Let an agent choose shell commands.** Add `run_shell` to its tools and optionally set a timeout (default 600 seconds). Commands run through Bash from the workspace root and return the exit code and combined output.
+- **Let an agent choose shell commands.** Add `run_shell` to its tools and optionally set a timeout (default 600 seconds). Commands run through Bash from the workspace root and return the exit code and combined output; a command killed at the timeout returns the output it printed so far. The tool's description tells the agent the timeout. For longer jobs the agent passes `background = true`: the command starts detached, outlives the call and the timeout, and returns its PID and a log file under `.jobs/` in the workspace.
   ```toml
   [agents.product_manager]
   tools = ["read_file", "run_shell"]

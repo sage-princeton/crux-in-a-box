@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.steering import Escalation
-from crux_scaffold.workspace import MAX_OUTPUT_CHARS, RunContext
+from crux_scaffold.workspace import JOBS_DIR, MAX_OUTPUT_CHARS, RunContext
 
 
 @dataclass(frozen=True)
@@ -126,6 +126,9 @@ def validate_review_tools(tools: list[Tool]) -> None:
 
 class ShellArguments(Arguments):
     command: str = Field(description="A bash command line, run from the workspace root.")
+    background: bool = Field(False, description=(
+        "Start the command as a detached job and return at once with its PID and log file instead of waiting. "
+        "Use it for anything that may outlast the timeout, such as training or a benchmark."))
 
 
 class ShellOptions(Options):
@@ -135,11 +138,18 @@ class ShellOptions(Options):
 @TOOLS.register
 class RunShell(Tool):
     type_name = "run_shell"
-    description = "Run a bash command in the workspace root. Returns the exit code and combined output."
     Arguments = ShellArguments
     Options = ShellOptions
 
+    @property
+    def description(self) -> str:  # type: ignore[override]
+        return ("Run a bash command in the workspace root. Returns the exit code and combined output. A command "
+                f"still running after {self.options.timeout_seconds:g}s is killed and returns its output so far; "
+                f"set background=true to run longer jobs detached, logging to a file under {JOBS_DIR}/.")
+
     async def invoke(self, ctx: RunContext, args: ShellArguments) -> str:
+        if args.background:
+            return ctx.workspace.run_background(args.command)
         return await ctx.workspace.run_shell_async(args.command, self.options.timeout_seconds)
 
 

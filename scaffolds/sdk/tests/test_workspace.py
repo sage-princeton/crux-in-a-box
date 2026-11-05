@@ -44,9 +44,10 @@ def test_run_shell_runs_in_the_workspace_and_reports_the_exit_code(ws):
     assert Path(rest.strip()).resolve() == ws.root.resolve()
 
 
-def test_run_shell_kills_the_whole_command_on_timeout(ws):
+def test_run_shell_kills_the_whole_command_on_timeout_and_keeps_its_output(ws):
     started = time.monotonic()
-    assert ws.run_shell("sleep 5; echo late", 1) == "exit_code=timeout after 1s"
+    out = ws.run_shell("echo early; sleep 5; echo late", 1)
+    assert out == "exit_code=timeout after 1s\nearly\nkilled at the 1s timeout"
     assert time.monotonic() - started < 3
 
 

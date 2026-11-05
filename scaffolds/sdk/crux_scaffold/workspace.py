@@ -5,6 +5,7 @@ import os
 import signal
 import stat
 import subprocess
+import threading
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
@@ -24,6 +25,7 @@ if TYPE_CHECKING:
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv"}
 MAX_LISTED = 500
 MAX_OUTPUT_CHARS = 20_000
+JOBS_DIR = ".jobs"
 
 Sleep = Callable[[float], Awaitable[None]]
 Clock = Callable[[], datetime]
@@ -31,6 +33,20 @@ Clock = Callable[[], datetime]
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def shell_result(status: int | str, output: str) -> str:
+    """The shell tools' text: the exit status line, then the last MAX_OUTPUT_CHARS of the combined output."""
+    if len(output) > MAX_OUTPUT_CHARS:
+        output = f"... {len(output) - MAX_OUTPUT_CHARS} earlier characters omitted\n" + output[-MAX_OUTPUT_CHARS:]
+    return f"exit_code={status}\n{output}"
+
+
+def timed_out(timeout_seconds: float, output: str) -> str:
+    """The status line leads, so prefix checks fail, and closes the output read before the kill, so tails show it."""
+    newline = "\n" if output and not output.endswith("\n") else ""
+    return (shell_result(f"timeout after {timeout_seconds:g}s", output)
+            + f"{newline}killed at the {timeout_seconds:g}s timeout")
 
 
 # TODO: add runtime monitoring guardrails, especially for write_file and run_shell.
@@ -88,30 +104,50 @@ class Workspace:
             output, _ = process.communicate(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
-            process.communicate()
-            return f"exit_code=timeout after {timeout_seconds:g}s"
-        if len(output) > MAX_OUTPUT_CHARS:
-            omitted = len(output) - MAX_OUTPUT_CHARS
-            output = f"... {omitted} earlier characters omitted\n" + output[-MAX_OUTPUT_CHARS:]
-        return f"exit_code={process.returncode}\n{output}"
+            output, _ = process.communicate()  # a retried communicate keeps what was read before the timeout
+            return timed_out(timeout_seconds, output)
+        return shell_result(process.returncode, output)
 
     async def run_shell_async(self, command: str, timeout_seconds: float) -> str:
         process = await asyncio.create_subprocess_exec(
             "bash", "-c", command, cwd=self.root, stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT, start_new_session=True)
+        output = bytearray()
+
+        async def collect() -> None:  # reads into output as it arrives, so a timeout keeps what was read
+            while chunk := await process.stdout.read(65536):
+                output.extend(chunk)
+            await process.wait()
+
         try:
-            output, _ = await asyncio.wait_for(process.communicate(), timeout=timeout_seconds)
+            await asyncio.wait_for(collect(), timeout=timeout_seconds)
         except (TimeoutError, asyncio.CancelledError) as exc:
             with suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-            await process.communicate()
+            output.extend((await process.communicate())[0])
             if isinstance(exc, asyncio.CancelledError):
                 raise
-            return f"exit_code=timeout after {timeout_seconds:g}s"
-        text = output.decode(errors="replace")
-        if len(text) > MAX_OUTPUT_CHARS:
-            text = f"... {len(text) - MAX_OUTPUT_CHARS} earlier characters omitted\n" + text[-MAX_OUTPUT_CHARS:]
-        return f"exit_code={process.returncode}\n{text}"
+            return timed_out(timeout_seconds, output.decode(errors="replace"))
+        return shell_result(process.returncode, output.decode(errors="replace"))
+
+    def run_background(self, command: str) -> str:
+        """Start a detached job that outlives the call and any timeout; its output and exit code go to a log."""
+        jobs = self.resolve(JOBS_DIR)
+        jobs.mkdir(exist_ok=True)
+        (jobs / ".gitignore").write_text("*\n")
+        name = f"{utc_now():%Y%m%dT%H%M%S.%fZ}.log"
+        log = f"{JOBS_DIR}/{name}"
+        with (jobs / name).open("ab") as stream:
+            stream.write(f"$ {command}\n".encode())
+            stream.flush()
+            process = subprocess.Popen(["bash", "-c", 'bash -c "$1"; echo "exit_code=$?"', "bash", command],
+                                       cwd=self.root, stdin=subprocess.DEVNULL, stdout=stream,
+                                       stderr=subprocess.STDOUT, start_new_session=True)
+        threading.Thread(target=process.wait, daemon=True).start()  # reap it, so kill -0 fails once it ends
+        return (f"started background job pid={process.pid} log={log}\n"
+                f"running? kill -0 {process.pid} (succeeds while it runs)\n"
+                f"output: tail -n 50 {log} (ends with exit_code=<n> when it finishes)\n"
+                f"stop: kill -- -{process.pid}")
 
 
 class ReviewWorkspace(Workspace):
@@ -178,6 +214,9 @@ class ReviewWorkspace(Workspace):
         raise ToolError("review workspace is read-only")
 
     async def run_shell_async(self, command: str, timeout_seconds: float) -> str:
+        raise ToolError("review workspace is read-only")
+
+    def run_background(self, command: str) -> str:
         raise ToolError("review workspace is read-only")
 
 
