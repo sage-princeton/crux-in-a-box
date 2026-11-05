@@ -121,6 +121,7 @@ class UsageHooks(RunHooks):
             usage.input_tokens,
             usage.output_tokens,
             cached_input_tokens=usage.input_tokens_details.cached_tokens,
+            cache_write_input_tokens=usage.input_tokens_details.cache_write_tokens,
             reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens,
         )
 

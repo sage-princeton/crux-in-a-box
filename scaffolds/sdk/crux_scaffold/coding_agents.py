@@ -246,7 +246,8 @@ class CodexCodingAgent(CodingAgent):
             # Ask the app-server to stop the turn before closing it.
             if turn is not None:
                 with suppress(Exception):
-                    await asyncio.wait_for(turn.interrupt(), INTERRUPT_SECONDS)
+                    # A repeated cancel must not drop the stop request before the app-server receives it.
+                    await uninterrupted(asyncio.wait_for(turn.interrupt(), INTERRUPT_SECONDS))
             raise
         finally:
             # A second cancellation must not abandon the close, or the app-server keeps running the turn.

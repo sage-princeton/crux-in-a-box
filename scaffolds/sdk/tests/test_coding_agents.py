@@ -333,6 +333,49 @@ def test_a_cancelled_codex_brief_interrupts_its_turn_closes_despite_a_second_can
         ("engineer:usage", 1500), ("engineer", 0)]
 
 
+def test_a_second_cancel_does_not_abandon_the_turn_interrupt(tmp_path):
+    events = []
+
+    async def run():
+        streaming, interrupting, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
+
+        class StalledTurn:
+            async def stream(self):
+                streaming.set()
+                await asyncio.Event().wait()
+                yield
+
+            async def interrupt(self):
+                interrupting.set()
+                await release.wait()
+                events.append('interrupted')
+
+        class Closing(FakeCodex):
+            async def __aexit__(self, *args):
+                events.append('closed')
+
+        fake = Closing([])
+
+        async def turn(*args, **kwargs):
+            return StalledTurn()
+
+        fake.thread.turn = turn
+        agent = CODING_AGENTS.create('engineer', CODEX, client_factory=lambda ctx: fake)
+        task = asyncio.create_task(agent.run('TASK', retry_context(tmp_path, [])))
+        try:
+            await asyncio.wait_for(streaming.wait(), 1)
+            task.cancel()
+            await asyncio.wait_for(interrupting.wait(), 1)
+            task.cancel()
+            await asyncio.sleep(0.01)
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
+    assert events == ['interrupted', 'closed']
+
+
 def test_a_failed_codex_brief_books_the_usage_it_reported(tmp_path):
     class FailingTurn:
         async def stream(self):

@@ -140,8 +140,11 @@ def test_sdk_roles_export_each_model_call_before_their_task_finishes(langfuse, d
             assert finished[0].attributes["llm.token_count.prompt"] == 10
             source = "judge:revision_7" if role == "judge" else role
             assert scaffold.context.usage.by_source[source].total_tokens == 15
+            assert scaffold.context.usage.by_source[source].cache_write_input_tokens == 4
             observed.append(role)
-        return await respond(*args, **kwargs)
+        result = await respond(*args, **kwargs)
+        result.usage.input_tokens_details.cache_write_tokens = 4
+        return result
 
     target.get_response = response
     assert asyncio.run(scaffold.run()).status == "completed"
