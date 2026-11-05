@@ -369,7 +369,8 @@ def test_codex_stream_delivers_progress_during_rest_and_final_result_to_pi(drop_
     assert "running" in tool_outputs(pm.inputs[-1])[2].lower()
     assert tool_outputs(pm.inputs[-1])[-1] == "[coding agent completed]\nAdded location; 6 tests pass."
     assert scaffold.context.usage.by_source["engineer"].total_tokens == 1500
-    assert len(telemetry.generations) == 1
+    assert [(name, tokens) for name, *_, tokens in telemetry.generations] == [
+        ("engineer:usage", 1500), ("engineer", 0)]
     assert len(fake.starts) == 1
 
 

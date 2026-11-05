@@ -14,7 +14,7 @@ from openai_codex.generated.v2_all import (
 from crux_scaffold.coding_agents import CODING_AGENTS, codex_client
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.telemetry import GenerationOutcome, NullTelemetry
-from crux_scaffold.usage import Budget, UsageLedger
+from crux_scaffold.usage import Budget, TokenUsage, UsageLedger
 from crux_scaffold.workspace import RunContext, Workspace
 
 from drop_ins import edit, write_tree
@@ -156,10 +156,12 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
     assert ctx.usage.by_source["engineer"].total_tokens == 1500
     assert (result.usage.cached_input_tokens, result.usage.cache_write_input_tokens,
             result.usage.reasoning_output_tokens) == (900, 200, 40)
-    assert telemetry.generations == [("engineer", "gpt-codex-test",
+    assert telemetry.generations[-1] == ("engineer", "gpt-codex-test",
                                       {"instructions": "# Standing context", "messages": [
                                           {"role": "user", "content": "TASK: add location"}]},
-                                      "Added location; 6 tests pass.", 1500)]
+                                      "Added location; 6 tests pass.", 0)
+    assert [(name, tokens) for name, *_, tokens in telemetry.generations] == [
+        ("engineer:usage", 1500), ("engineer", 0)]
 
 
 def test_codex_reasoning_summary_is_sent_to_telemetry(tmp_path):
@@ -214,7 +216,8 @@ def test_a_transient_turn_failure_continues_on_the_same_thread_and_books_the_lat
     assert sleeps == [60]
     assert (result.completed, result.final_response) == (True, ANSWER["text"])
     assert ctx.usage.by_source["engineer"].total_tokens == 3400
-    assert [tokens for *_, tokens in telemetry.generations] == [3400]
+    assert [tokens for *_, tokens in telemetry.generations] == [1100, 2300, 0]
+    assert ctx.usage.by_source["engineer"].requests == 2
     assert [output for name, _, _, output in telemetry.records if name == "codex:turn_retry"] == [
         {"attempt": 2, "backoff_seconds": 60}]
 
@@ -326,7 +329,8 @@ def test_a_cancelled_codex_brief_interrupts_its_turn_closes_despite_a_second_can
     asyncio.run(run())
     assert events == ["interrupt", "closed"]
     assert ctx.usage.by_source["engineer"].total_tokens == 1500
-    assert [(name, tokens) for name, _, _, _, tokens in telemetry.generations] == [("engineer", 1500)]
+    assert [(name, tokens) for name, _, _, _, tokens in telemetry.generations] == [
+        ("engineer:usage", 1500), ("engineer", 0)]
 
 
 def test_a_failed_codex_brief_books_the_usage_it_reported(tmp_path):
@@ -346,6 +350,31 @@ def test_a_failed_codex_brief_books_the_usage_it_reported(tmp_path):
     with pytest.raises(RuntimeError, match="stream lost"):
         asyncio.run(agent.run("TASK", ctx))
     assert ctx.usage.by_source["engineer"].total_tokens == 1500
+
+
+def test_each_new_worker_brief_starts_its_cumulative_usage_at_zero(tmp_path):
+    fake = FakeCodex([usage(100, 30), completed()])
+    telemetry = RecordingTelemetry([])
+    agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
+    ctx = retry_context(tmp_path, [], telemetry)
+    asyncio.run(agent.run("first", ctx))
+    asyncio.run(agent.run("second", ctx))
+    assert ctx.usage.by_source["engineer"] == TokenUsage(requests=2, input_tokens=200, output_tokens=60)
+    assert [tokens for *_, tokens in telemetry.generations] == [130, 0, 130, 0]
+
+
+def test_an_extension_that_only_sets_partial_usage_still_books_it_on_failure(drop_in_dir, assemble):
+    scaffold = assemble(drop_in_dir)
+    agent = scaffold.coding_agents["engineer"]
+
+    async def execute(brief, ctx):
+        agent.usage_so_far = TokenUsage(requests=1, input_tokens=100, output_tokens=30)
+        raise RuntimeError("provider failed")
+
+    agent.execute = execute
+    with pytest.raises(RuntimeError, match="provider failed"):
+        asyncio.run(agent.run("TASK", scaffold.context))
+    assert scaffold.context.usage.by_source["engineer"].total_tokens == 130
 
 
 def test_codex_loads_current_instructions_for_each_fresh_brief(tmp_path):

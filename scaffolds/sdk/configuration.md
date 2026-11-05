@@ -180,7 +180,7 @@ With the settings above, a request for 1 second grants 10 seconds, and a request
 
 Rest allowance belongs to the declared tool instance, shared by every agent using that name, and resets when the scaffold is assembled again. Use sequential rest calls as in this example: concurrent calls to the same instance can overcommit its remaining allowance because usage is recorded after each sleep completes.
 
-Each declared coding delegate has one outstanding task shared by its callers. Collect its result before starting another brief. Tasks live within the current runtime call: before returning to the loop's gates and state save, the runtime awaits outstanding work, appends any uncollected results to the turn output, and records them in the PI's existing session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Errors or cancellation cancel and await running tasks; finished results stay collectable. A cancelled Codex brief asks the app-server to interrupt its turn and then closes it, and the close completes even if the cancellation repeats. The runtime remembers each cancelled brief: its result tool then reports when the brief started, when it was cancelled, and that partial changes may be in the workspace. A cancelled or failed brief's usage, up to its latest token report, is booked in the usage ledger and its telemetry generation. While briefs are running, finished but uncollected, or cancelled and unreported, one line in the PI's research context lists them on every model call. Pending tasks are not restored after restart; ordinary SDK delegates retain their blocking behavior. The [delegation limits](#delegation-limits) also cover background workers. Configure [operator steering](#reliable-operator-steering-and-escalations) separately.
+Each declared coding delegate has one outstanding task shared by its callers. Collect its result before starting another brief. Tasks live within the current runtime call: before returning to the loop's gates and state save, the runtime awaits outstanding work, appends any uncollected results to the turn output, and records them in the PI's existing session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Errors or cancellation cancel and await running tasks; finished results stay collectable. A cancelled Codex brief asks the app-server to interrupt its turn and then closes it, and the close completes even if the cancellation repeats. The runtime remembers each cancelled brief: its result tool then reports when the brief started, when it was cancelled, and that partial changes may be in the workspace. Worker usage is booked incrementally in the ledger and priced child generations as token reports arrive; cancellation or failure retains those increments, and the brief's final summary adds no duplicate usage. While briefs are running, finished but uncollected, or cancelled and unreported, one line in the PI's research context lists them on every model call. Pending tasks are not restored after restart; ordinary SDK delegates retain their blocking behavior. The [delegation limits](#delegation-limits) also cover background workers. Configure [operator steering](#reliable-operator-steering-and-escalations) separately.
 
 ## Delegation limits
 
@@ -357,8 +357,10 @@ python -m crux_scaffold probe --drop-in DIR           # probe the drop-in's conf
 Every orchestrator and delegated SDK model call receives a fresh resource-status
 block after context selection. It includes tokens, elapsed time, model spend,
 remaining configured budgets, and each declared external resource. The block is
-ephemeral: it does not accumulate in the conversation history. Codex usage is
-included when its turn finishes; its internal model calls are owned by Codex.
+ephemeral: it does not accumulate in the conversation history. Every SDK role,
+including coding workers, reports usage as model calls finish. Codex cumulative
+usage updates contribute only new increments to Langfuse and the local ledger,
+without waiting for the brief to end. Its internal model calls are owned by Codex.
 The `budget_status` tool forces an on-demand refresh through the same providers.
 
 ```toml

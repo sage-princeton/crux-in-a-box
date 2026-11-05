@@ -20,6 +20,11 @@ selected Run's operator guide. [design.md](design.md) explains composition;
 [docs/extending.md](docs/extending.md) defines extension contracts. The optional
 [Docker demo](docker/README.md) has its own dependencies and commands.
 
+All SDK roles report completed model usage incrementally, including coding
+workers in both blocking and background mode. Worker usage reaches Langfuse and
+the local ledger while a brief runs; its final summary adds no duplicate usage.
+Tracing requires the Langfuse settings in the configuration reference.
+
 ## Development
 
 After the setup above, run from this directory:

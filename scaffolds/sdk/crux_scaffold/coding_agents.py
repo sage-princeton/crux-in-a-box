@@ -61,6 +61,7 @@ class CodingAgent(Component):
         # The latest brief's progress: when it last showed activity and the cumulative usage it last reported.
         self.last_activity: datetime | None = None
         self.usage_so_far = TokenUsage()
+        self._reported_usage = TokenUsage()
 
     @property
     def developer_instructions(self) -> str:
@@ -77,20 +78,39 @@ class CodingAgent(Component):
             brief = f"<research_context>\n{context}\n</research_context>\n\n# Current task\n\n{brief}"
         request = {"instructions": self.developer_instructions, "messages": [{"role": "user", "content": brief}]}
         self.last_activity, self.usage_so_far, result = ctx.now(), TokenUsage(), None
+        self._reported_usage = TokenUsage()
         with ctx.telemetry.generation(self.name, ctx.model, request) as outcome:
+            # The brief is a summary container. Its completed usage increments are priced as children.
+            outcome.usage = TokenUsage()
             try:
                 result = await self.execute(brief, ctx)
                 outcome.output = result.final_response
             finally:
-                # A cancelled or failed brief still spent tokens: book the latest cumulative total it reported.
-                usage = result.usage if result else self.usage_so_far
-                if result or usage.total_tokens:
-                    outcome.usage = usage
-                    ctx.usage.add(self.name, usage.input_tokens, usage.output_tokens,
-                                  cached_input_tokens=usage.cached_input_tokens,
-                                  cache_write_input_tokens=usage.cache_write_input_tokens,
-                                  reasoning_output_tokens=usage.reasoning_output_tokens)
+                # Final-only implementations still account for their call; streamed totals are already booked.
+                self.report_usage(result.usage if result else self.usage_so_far, ctx)
         return result
+
+    def report_usage(self, total: TokenUsage, ctx: RunContext, *, request: Any = None) -> None:
+        """Export and book the new part of a brief's cumulative usage as soon as a model call finishes.
+
+        Repeated or stale snapshots add nothing. Counts are inclusive, as in TokenUsage; telemetry splits the
+        increment into exclusive buckets. Request counts track accepted usage increments, not whole briefs.
+        """
+        delta = TokenUsage(requests=1, **{
+            key: count - getattr(self._reported_usage, key)
+            for key, count in total.model_dump(exclude={"requests"}).items()
+        })
+        if any(count < 0 for count in delta.model_dump().values()) or not delta.total_tokens:
+            return
+        self._reported_usage = total.model_copy(update={"requests": self._reported_usage.requests + 1})
+        self.usage_so_far = self._reported_usage.model_copy()
+        ctx.usage.add(self.name, delta.input_tokens, delta.output_tokens,
+                      cached_input_tokens=delta.cached_input_tokens,
+                      cache_write_input_tokens=delta.cache_write_input_tokens,
+                      reasoning_output_tokens=delta.reasoning_output_tokens)
+        with ctx.telemetry.generation(f"{self.name}:usage", ctx.model, request) as outcome:
+            outcome.usage = delta
+            outcome.output = {"cumulative_usage": self.usage_so_far.model_dump()}
 
     @abstractmethod
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
@@ -199,8 +219,10 @@ class CodexCodingAgent(CodingAgent):
                                                cached_input_tokens=total.cached_input_tokens,
                                                cache_write_input_tokens=total.cache_write_input_tokens or 0,
                                                reasoning_output_tokens=total.reasoning_output_tokens)
-                            self.usage_so_far = usage
-                            # Progress snapshots are not extra generations or additions to the usage ledger.
+                            self.report_usage(usage, ctx, request={"thread_id": payload.thread_id,
+                                                                  "turn_id": payload.turn_id})
+                            usage = self.usage_so_far
+                            # Keep raw snapshots for inspection; only new increments carry priced usage.
                             ctx.telemetry.record(
                                 "codex:usage", "span", {"thread_id": payload.thread_id, "turn_id": payload.turn_id},
                                 {"last": payload.token_usage.last.model_dump(mode="json", by_alias=True),
