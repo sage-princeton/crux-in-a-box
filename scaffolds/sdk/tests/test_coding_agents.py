@@ -519,6 +519,10 @@ def test_codex_client_uses_the_run_environment_and_provider(tmp_path, monkeypatc
     codex_client(ctx)
     assert seen[0].env == {**env, "CODEX_HOME": str(tmp_path / "state/codex")}
     overrides = dict(part.split("=", 1) for part in seen[0].config_overrides)
+    provider = "crux-compatible" if compatible else "crux-openai"
+    retry_settings = {f"model_providers.{provider}.{name}": "10"
+                      for name in ("request_max_retries", "stream_max_retries")}
+    assert all(overrides.get(key) == value for key, value in retry_settings.items())
     if compatible:
         assert json.loads(overrides["model_provider"]) == "crux-compatible"
         assert json.loads(overrides["model_providers.crux-compatible.base_url"]) == env["CRUX_CODEX_BASE_URL"]
@@ -526,12 +530,12 @@ def test_codex_client_uses_the_run_environment_and_provider(tmp_path, monkeypatc
         assert json.loads(overrides["model_providers.crux-compatible.wire_api"]) == "responses"
         assert "fixture-router" not in str(overrides)
     else:
-        assert overrides == {}
+        assert json.loads(overrides["model_provider"]) == "crux-openai"
+        assert json.loads(overrides["model_providers.crux-openai.requires_openai_auth"]) is True
 
 
-@pytest.mark.parametrize("settings", [
-    {}, {"request_max_retries": 10, "stream_max_retries": 10}, {"stream_idle_timeout_ms": 600_000}])
-def test_codex_retry_settings_reach_the_compatible_provider_only_when_set(tmp_path, monkeypatch, settings):
+@pytest.mark.parametrize("settings", [{}, {"stream_idle_timeout_ms": 600_000}])
+def test_codex_retry_limits_are_fixed_while_stream_timeout_is_configurable(tmp_path, monkeypatch, settings):
     env = {"CRUX_CODEX_BASE_URL": "https://openrouter.ai/api/v1", "CRUX_CODEX_API_KEY_ENV": "OPENROUTER_API_KEY",
            "OPENROUTER_API_KEY": "fixture-router"}
     seen = []
@@ -542,7 +546,8 @@ def test_codex_retry_settings_reach_the_compatible_provider_only_when_set(tmp_pa
     prefix = "model_providers.crux-compatible."
     overrides = dict(part.split("=", 1) for part in seen[0].config_overrides)
     assert {key.removeprefix(prefix): json.loads(value) for key, value in overrides.items()
-            if key.endswith(("_retries", "_timeout_ms"))} == settings
+            if key.endswith(("_retries", "_timeout_ms"))} == {
+                "request_max_retries": 10, "stream_max_retries": 10, **settings}
 
 
 def test_compatible_codex_does_not_log_in_to_openai(tmp_path):

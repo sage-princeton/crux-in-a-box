@@ -125,9 +125,7 @@ class CodexOptions(CodingAgentOptions):
     system_prompt: str
     sandbox: Literal["read-only", "workspace-write", "full-access"] = "workspace-write"
     approval_mode: Literal["deny_all", "auto_review"] = "deny_all"
-    # Codex's own retries within a turn, for the compatible provider. None keeps Codex's defaults: 4, 5 and 300 000.
-    request_max_retries: int | None = Field(None, ge=0, le=100)
-    stream_max_retries: int | None = Field(None, ge=0, le=100)
+    # Optional compatible-provider idle timeout; None keeps Codex's 300 000 ms default.
     stream_idle_timeout_ms: int | None = Field(None, gt=0)
     # Further turns on the same thread after a turn fails on a transient provider error, and the wait before each.
     turn_retries: int = Field(2, ge=0)
@@ -137,32 +135,36 @@ class CodexOptions(CodingAgentOptions):
 ClientFactory = Callable[[RunContext], AsyncCodex]
 CONTEXT_WINDOW_TOKENS = 1_000_000
 INTERRUPT_SECONDS = 5
-PROVIDER_RETRY_SETTINGS = ("request_max_retries", "stream_max_retries", "stream_idle_timeout_ms")
 CONTINUE_AFTER_PROVIDER_ERROR = ("The previous turn stopped on a provider error ({}). "
                                  "Continue the task from where it stopped.")
 
 
 def codex_client(ctx: RunContext, options: CodexOptions | None = None) -> AsyncCodex:
-    overrides: tuple[str, ...] = ()
     base_url = ctx.env.get("CRUX_CODEX_BASE_URL")
+    # Built-in provider IDs cannot be overridden, so direct OpenAI also needs our own provider entry.
+    provider = "crux-compatible" if base_url else "crux-openai"
+    settings = {
+        "model_provider": provider,
+        f"model_providers.{provider}.name": "CRUX compatible provider" if base_url else "CRUX OpenAI provider",
+        f"model_providers.{provider}.wire_api": "responses",
+        f"model_providers.{provider}.request_max_retries": 10,
+        f"model_providers.{provider}.stream_max_retries": 10,
+    }
     if base_url:
         key = ctx.env.get("CRUX_CODEX_API_KEY_ENV", "OPENAI_API_KEY")
         if not ctx.env.get(key):
             raise InvalidDropInError(f"Codex provider requires {key} in the run environment")
-        settings = {
-            "model_provider": "crux-compatible",
-            "model_providers.crux-compatible.name": "CRUX compatible provider",
+        settings.update({
             "model_providers.crux-compatible.base_url": base_url,
-            "model_providers.crux-compatible.wire_api": "responses",
             "model_providers.crux-compatible.supports_websockets": False,
             "model_providers.crux-compatible.auth.command": "printenv",
             "model_providers.crux-compatible.auth.args": [key],
-        }
-        for name in PROVIDER_RETRY_SETTINGS:
-            value = getattr(options, name, None)
-            if value is not None:
-                settings[f"model_providers.crux-compatible.{name}"] = value
-        overrides = tuple(f"{name}={json.dumps(value)}" for name, value in settings.items())
+        })
+        if options is not None and options.stream_idle_timeout_ms is not None:
+            settings["model_providers.crux-compatible.stream_idle_timeout_ms"] = options.stream_idle_timeout_ms
+    else:
+        settings["model_providers.crux-openai.requires_openai_auth"] = True
+    overrides = tuple(f"{name}={json.dumps(value)}" for name, value in settings.items())
     return AsyncCodex(CodexConfig(
         cwd=str(ctx.workspace.root), config_overrides=overrides,
         env={**ctx.env, "CODEX_HOME": str(ctx.state_dir / "codex")},

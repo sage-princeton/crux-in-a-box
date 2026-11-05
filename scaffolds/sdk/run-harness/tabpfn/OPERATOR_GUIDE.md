@@ -13,8 +13,7 @@ Codex fan-out have no configured concurrency/depth cap. The Codex workers use
 `prompts/codex-worker.md` in place of Codex's built-in system prompt, which is
 written for an interactive session with a person, and read `AGENTS.md` once, from
 their standing context.
-Codex retries provider failures 10 times inside a turn (`request_max_retries`,
-`stream_max_retries`). A turn that still fails on a transient provider error
+The SDK fixes Codex request and stream retry limits at 10 for every worker. A turn that still fails on a transient provider error
 continues on the same thread after 60 s and then 300 s; a brief that still fails
 reports the error kind, turn attempts and last error to the PI.
 
