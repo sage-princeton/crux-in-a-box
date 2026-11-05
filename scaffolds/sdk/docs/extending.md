@@ -52,7 +52,7 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 
 | Field | Use |
 |---|---|
-| `workspace` | `read_file`, `read_bytes`, `write_file` and `list_files` are confined to the workspace and raise `ToolError` outside it. `run_shell(command, timeout)` starts in the workspace but is not sandboxed. Its output is capped and prefixed with `exit_code=`. |
+| `workspace` | `read_file`, `read_bytes`, `write_file` and `list_files` are confined to the workspace and raise `ToolError` outside it. `run_shell(command, timeout)` starts in the workspace but is not sandboxed. Its output is capped and prefixed with `exit_code=`. `run_background(command)` starts a detached job and returns its PID and log path at once. |
 | `state_dir` | The run's own state, from `--state-dir`. It sits outside the workspace and persists across restarts. Each component creates what it writes there. |
 | `model`, `reasoning_effort` | The run's model and effort, for every agent and coding agent. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` are the only place they are set; `model` raises `InvalidDropInError` when `CRUX_MODEL` is unset. |
 | `env` | The scaffold's environment. Read configuration from here, not from `os.environ`, so tests can inject it. |
@@ -66,18 +66,29 @@ Tools, gates and coding agents receive the run's `RunContext` (`workspace.py`):
 
 `workspace.run_shell_async(command, timeout)` is the cancellable counterpart to
 `run_shell`. It yields during process execution and kills/reaps the shell process
-group on timeout or cancellation. Both return the same bounded text format;
-`ReviewWorkspace` rejects both. Explicitly detached child sessions are outside
-that process group and need run-owned cleanup.
+group on timeout or cancellation. Both return the same bounded text format; on
+timeout the output read so far follows `exit_code=timeout after <seconds>s` and a
+`killed at the <seconds>s timeout` line closes it, so a check of the prefix and a
+tail of the text both see the timeout. `ReviewWorkspace` rejects both, and
+`run_background` too. Explicitly detached child sessions, including
+`run_background` jobs, are outside that process group and need run-owned cleanup.
 
 ## Tools (`Tool`)
 
 `tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate`.
 
-`run_shell(command)` lets the agent supply a Bash command. Its `timeout_seconds` option defaults to 600.
+`run_shell(command, background)` lets the agent supply a Bash command. Its `timeout_seconds` option defaults to 600,
+and its description states the configured value.
 It delegates to `ctx.workspace.run_shell_async`, starting in the workspace root without an additional sandbox.
 The result contains the exit code and combined stdout/stderr, retaining the last 20,000 output characters.
-On timeout, the workspace kills the process group and returns `exit_code=timeout after <seconds>s`.
+On timeout, the workspace kills the process group and returns `exit_code=timeout after <seconds>s`, the output read so
+far (bounded the same way) and a closing `killed at the <seconds>s timeout` line.
+With `background` true it calls `ctx.workspace.run_background` instead: the command starts in its own session with
+stdin closed and returns at once with its PID, its log path and the commands to check or stop it. Stdout and stderr
+are appended to `.jobs/<UTC timestamp>.log` in the workspace, which starts with `$ <command>` and ends with
+`exit_code=<n>` when the job finishes. `.jobs/` holds a `.gitignore` of `*`, so logs stay out of the run's git
+history. The timeout does not apply and the job outlives the call and the scaffold process. The scaffold reaps the job
+when it ends, so `kill -0 <pid>` stops succeeding. Nothing stops a background job but the agent or the operator.
 The existing `command` tool instead runs a fixed command declared by the drop-in.
 
 `read_pdf(path, page)` reads one 1-based PDF page from `ctx.workspace.read_bytes`. It returns the page count,

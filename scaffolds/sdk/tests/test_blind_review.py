@@ -190,6 +190,8 @@ def test_snapshot_survives_source_changes_and_returns_only_generic_errors(drop_i
     with pytest.raises(ValueError, match="read-only"):
         workspace.run_shell("pwd", 1)
     with pytest.raises(ValueError, match="read-only"):
+        workspace.run_background("pwd")
+    with pytest.raises(ValueError, match="read-only"):
         workspace.write_file("data.csv", "x")
 
 

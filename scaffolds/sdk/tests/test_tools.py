@@ -1,5 +1,8 @@
 import asyncio
 import os
+import re
+import signal
+import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -64,7 +67,58 @@ def test_run_shell_runs_the_agents_command_with_the_declared_timeout(tmp_path):
     tool = TOOLS.create("run_shell", {"timeout_seconds": 1})
     ctx = context(tmp_path, [])
     assert asyncio.run(tool.invoke(ctx, tool.Arguments(command="echo hi"))) == "exit_code=0\nhi\n"
-    assert asyncio.run(tool.invoke(ctx, tool.Arguments(command="sleep 5"))) == "exit_code=timeout after 1s"
+    timed_out = asyncio.run(tool.invoke(ctx, tool.Arguments(command="echo early; sleep 5")))
+    assert timed_out == "exit_code=timeout after 1s\nearly\nkilled at the 1s timeout"
+
+
+def test_run_shell_timeout_keeps_the_bounded_tail_of_its_output(tmp_path):
+    tool = TOOLS.create("run_shell", {"timeout_seconds": 0.5})
+    command = "head -c 30000 /dev/zero | tr '\\0' x; echo END; sleep 5"
+    out = asyncio.run(tool.invoke(context(tmp_path, []), tool.Arguments(command=command)))
+    assert out.startswith("exit_code=timeout after 0.5s\n... 10004 earlier characters omitted\nxxx")
+    assert out.endswith("xEND\nkilled at the 0.5s timeout")
+
+
+def test_run_shell_description_states_the_configured_timeout_and_background_option():
+    assert "600s" in TOOLS.create("run_shell", {}).description
+    description = TOOLS.create("run_shell", {"timeout_seconds": 17}).description
+    assert "17s" in description and "600" not in description
+    assert "background" in description
+
+
+def test_background_shell_job_returns_at_once_outlives_the_timeout_and_logs_its_exit_code(tmp_path):
+    tool = TOOLS.create("run_shell", {"timeout_seconds": 0.2})
+    ctx = context(tmp_path, [])
+    command = "echo started; sleep 1.5; echo done; exit 3"
+    started = time.monotonic()
+    reply = asyncio.run(tool.invoke(ctx, tool.Arguments(command=command, background=True)))
+    elapsed = time.monotonic() - started
+    pid, log = int(re.search(r"pid=(\d+)", reply)[1]), re.search(r"log=(\S+)", reply)[1]
+    path = ctx.workspace.root / log
+    try:
+        assert elapsed < 0.5
+        assert log.startswith(".jobs/") and log.endswith(".log")
+        assert f"kill -0 {pid}" in reply and f"tail -n 50 {log}" in reply
+        assert (ctx.workspace.root / ".jobs/.gitignore").read_text() == "*\n"
+        time.sleep(0.5)
+        os.kill(pid, 0)
+        assert path.read_text() == f"$ {command}\nstarted\n"
+        deadline = time.monotonic() + 5
+        while "exit_code=" not in path.read_text() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert path.read_text() == f"$ {command}\nstarted\ndone\nexit_code=3\n"
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("the finished job was not reaped, so kill -0 would still report it running")
+    finally:
+        if "exit_code=" not in path.read_text():
+            with suppress(ProcessLookupError):
+                os.killpg(pid, signal.SIGKILL)
 
 
 def test_shell_yields_and_cancellation_reaps_its_process(tmp_path):
