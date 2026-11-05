@@ -10,6 +10,8 @@ expert human as an Accept or Strong Accept; if the reviewer is indicating that t
 paper is a Reject or clearly a Borderline result, you should probably assume that
 means you should make more systematic overhauls.
 
+Before revising, compare the draft's structure with your exemplar papers and keep it unless a review gives a reason to change it. After a substantial revision, request a new review rather than polishing toward a perfect draft.
+
 An unchanged PDF reuses its existing verdict. Submit a changed complete draft with
 an updated SHA-256 request. If no complete draft is ready, continue useful work and
 update PLAN.md.

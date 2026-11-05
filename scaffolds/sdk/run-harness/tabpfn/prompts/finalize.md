@@ -13,6 +13,8 @@ figures throughout the text — these are the easiest way for a reviewer to take
 issue with the work. You should aim to have at least both a diagram of the setup
 and a main figure in the text, but should probably aim for more than this.
 
+Compare the paper's structure and style against your exemplars once more. Render every figure and table at final size and look at it: readable labels with units, a caption that states the take-away, consistent notation and colors across figures, no clipped or overlapping text. Regenerate each figure from its script and check that every citation resolves to a paper you retrieved.
+
 Inspect PDF pages and figures visually. Keep the main body at most nine pages and
 the plain-text abstract at most 200 words. Rebuild the PDF.
 

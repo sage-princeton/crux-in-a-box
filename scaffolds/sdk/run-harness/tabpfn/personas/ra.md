@@ -20,5 +20,6 @@ with the PI and do not start competing writers on the same paper.
 
 Only copy the environment values necessary for a job. Never print credentials or
 copy service/model credentials into a pod, source file, log, or result artifact.
-If a Codex shell filters RUNPOD_API_KEY, request the specific GPU operation from
-the PI; do not expose the credential to work around the filter.
+Your shell has RUNPOD_API_KEY: for GPU work, create, run and terminate tagged pods yourself, and report pod IDs, GPU-hours and the retrieval and termination commands.
+
+Put results that contradict the brief's expectations, or where a baseline matches or beats the method, at the top of your report rather than explaining them away.

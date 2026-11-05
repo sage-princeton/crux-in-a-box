@@ -1,9 +1,11 @@
 import asyncio
 import hashlib
 import importlib.util
+import io
 import json
 import shutil
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -36,11 +38,23 @@ def scaffold(tmp_path, pilot_dir):
     return Scaffold(DropInDirectory.load(pilot_dir), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
 
 
-def prepare(root, channel, operator, after_ts):
+def style_archive(style=b"% test venue style\n"):
+    """A stand-in for the pinned NeurIPS archive; prepare() is told to trust its digest."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(zipfile.ZipInfo("Styles/neurips_2025.sty", date_time=(2025, 1, 1, 0, 0, 0)), style)
+    return buffer.getvalue()
+
+
+ARCHIVE = style_archive()
+
+
+def prepare(root, channel, operator, after_ts, archive=ARCHIVE):
     spec = importlib.util.spec_from_file_location("contrastive_prepare", PILOT / "prepare.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.prepare(root, channel, operator, after_ts)
+    module.TEMPLATE_SHA256 = hashlib.sha256(ARCHIVE).hexdigest()
+    module.prepare(root, channel, operator, after_ts, archive)
 
 
 def test_preparation_resolves_steering_and_preserves_existing_run(pilot_dir):
@@ -52,6 +66,9 @@ def test_preparation_resolves_steering_and_preserves_existing_run(pilot_dir):
     assert config.runtime["steering"]["operator_ids"] == ["UTEST"]
     assert config.runtime["steering"]["after_ts"] == "1.000000"
     assert config.mcp_servers["slack"].env["SLACK_MCP_ADD_MESSAGE_TOOL"] == "CTEST"
+    assert (pilot_dir / "workspace/paper/neurips_2025.sty").read_bytes() == b"% test venue style\n"
+    assert (pilot_dir / "workspace/templates/paper_template.zip").read_bytes() == ARCHIVE
+    assert "\\usepackage{neurips_2025}" in (pilot_dir / "workspace/paper/paper.tex").read_text()
     original = (pilot_dir / "scaffold.toml").read_bytes()
     with pytest.raises(ValueError, match="already resolved"):
         prepare(pilot_dir, "COTHER", "UOTHER", "2.000000")
@@ -66,6 +83,15 @@ def test_preparation_rejects_invalid_steering_without_changing_config(pilot_dir,
     with pytest.raises(ValueError, match="Invalid"):
         prepare(pilot_dir, channel, operator, after_ts)
     assert (pilot_dir / "scaffold.toml").read_bytes() == original
+
+
+def test_preparation_rejects_an_unpinned_venue_template_without_changing_anything(pilot_dir):
+    original = (pilot_dir / "scaffold.toml").read_bytes()
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        prepare(pilot_dir, "CTEST", "UTEST", "1.000000", archive=style_archive(b"% altered\n"))
+    assert (pilot_dir / "scaffold.toml").read_bytes() == original
+    assert not (pilot_dir / "workspace/paper/neurips_2025.sty").exists()
+    assert not (pilot_dir / "workspace/templates").exists()
 
 
 def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffold):

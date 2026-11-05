@@ -20,9 +20,9 @@
 - Resource caps: 21600 seconds, $100 total agent/delegate/review inference, $30
   RunPod. Last-hour/10% reserves; AWS infrastructure separate.
 - Changes from the SDK example: task/context, model/routing, spend allowances,
-  CRTR source staging, domain-specific reviewer questions, plain article skeleton,
-  unattended operation and bundled research inputs. Agent/delegate topology, loop,
-  review gate implementation and cleanup implementation are reused.
+  CRTR source staging, unattended operation and bundled research inputs.
+  Agent/delegate topology, loop, reviewer rubric, venue template, review gate
+  implementation and cleanup implementation are reused.
 - No incoming paper or additional repository URL is required.
 
 Tests cover assembly without a channel, every bundled source file's checksum,

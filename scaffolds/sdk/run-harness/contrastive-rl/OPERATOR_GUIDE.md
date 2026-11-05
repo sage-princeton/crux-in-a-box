@@ -86,16 +86,20 @@ operator and starting timestamp, then validate the staged example:
       /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold check \
       --drop-in /srv/crux-run/run-harness --state-dir /srv/crux-run/state
 
-Replace both Slack IDs. `prepare.py` refuses to rewrite an already-resolved run;
-use a fresh staged copy for a new run. Post steering as new top-level messages
+Replace both Slack IDs. `prepare.py` fetches the official
+[NeurIPS 2025 template](https://media.neurips.cc/Conferences/NeurIPS2025/Styles.zip),
+checks its pinned SHA-256, saves `workspace/templates/paper_template.zip` and
+installs the style beside the included anonymous paper skeleton. `--template PATH`
+uses a previously downloaded archive with the same checksum. It refuses to rewrite
+an already-resolved run; use a fresh staged copy for a new run. Post steering as new top-level messages
 after the starting timestamp. Only the configured operator's messages are
 delivered automatically; edits and thread replies are not new channel steering.
 The PI posts launch, milestone, roughly hourly and completion updates to that
 channel and escalates diagnosed blockers while continuing independent work.
 
 Check the configured model is Argon and the probe traces have token usage and
-prices in this run's Langfuse environment. Record prelaunch inference spending in
-workspace/PLAN.md so it stays within the $100 total. Then start:
+prices in this run's Langfuse environment. The model budget is measured from
+launch, so probe spending before launch is not counted against the $100. Then start:
 
     sudo systemctl start crux-sdk-run
     journalctl -u crux-sdk-run -f
@@ -107,13 +111,21 @@ and state/tabpfn paths remain unchanged.
 
 ## Evidence and shutdown
 
-Progress and blockers go to PLAN.md, LOG.md and COMPLETION_REPORT.md. Preserve
+Progress and blockers go to Slack, PLAN.md, LOG.md and COMPLETION_REPORT.md. Preserve
 workspace artifacts and the state directory together on the box, including
 `steering.json` and the conversation SQLite store so replies are not redelivered
 on resume. Stop with `sudo systemctl stop crux-sdk-run`; restart the same unit
 without rerunning `prepare.py`. The loop requests
 deletion only of RunPod pods marked with this run's exact RUN_SLUG. Retrieve
 results before exit and inspect CLEANUP_STATUS.json and the provider console.
+
+`RUN_OUTCOME.json` distinguishes acceptance from a completed package at the resource
+reserve. A rejected paper can be packaged honestly once the reserve is reached.
+Hard exhaustion exits 3 with incomplete work preserved and no fabricated completion.
+The final gate actually runs `bash reproduce.sh`, records its output in
+`REPRODUCTION_STATUS.json`, requires exit 0, and rechecks evidence hashes and the
+reviewed PDF afterward. It uses the remaining wall-clock budget; a timed-out
+reproduction is unfinished work, not a passing package.
 
 The model allowance uses Langfuse-reported dollars. Before treating it as a
 provider-dollar cap, verify that the cost tracker's prices match the actual route
