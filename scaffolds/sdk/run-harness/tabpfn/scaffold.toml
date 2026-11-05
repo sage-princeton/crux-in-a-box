@@ -25,6 +25,7 @@ max_items = 200
 context_window_tokens = 1048576
 trigger_tokens = 512000
 keep_recent_items = 20
+image_tokens = 1120  # Gemini 4 Argon default for image inputs.
 
 [budget]
 max_wall_seconds = 21600
