@@ -20,6 +20,9 @@ from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
 STANDING_CONTEXT_HEADER = "# CRUX standing context\n\n"
+
+# Leave headroom for a 1600px square read_pdf render: about 3000 tokens on GPT-5.4-mini
+# (auto detail) or 3364 on high-resolution Claude. Override for the selected model.
 DEFAULT_IMAGE_TOKENS = 4096
 
 
