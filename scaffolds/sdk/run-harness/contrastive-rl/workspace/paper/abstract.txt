@@ -1,2 +1,3 @@
-This pilot investigates directed representations for reasoning tasks using the
-supplied CRTR implementation. Replace this scaffold text with supported findings.
+This scaffold will become a paper on directed representations for reasoning
+tasks using the supplied CRTR implementation. No empirical or theoretical result
+is claimed at launch.

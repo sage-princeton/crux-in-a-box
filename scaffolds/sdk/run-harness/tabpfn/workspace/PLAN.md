@@ -4,6 +4,9 @@
 At launch: verify resources, paper build and public white-box model access.
 Write the actual schedule and allocations here; the resource block is authoritative.
 
+## Exemplars
+Write the path and the outline for the exemplar papers from the literature review process whose structure you are following.
+
 ## Research direction and alternatives
 Record candidates, evidence, and decisions.
 
@@ -18,7 +21,7 @@ Cite REVIEW_STATUS.json and the archived review for full feedback.
 This is where you track the current projections and usage for all of your
 resources; fill these in early but update them regularly after committing. This
 should include your own API usage, your time, and any experimental resource
-utilization. Bucket these by intuitive categories of your research process.
+utilization, like your GPU-hours and dollars. Bucket these by intuitive categories of your research process.
 
 ## Work in flight
 Track owner, scope, artifact paths, process/pod IDs, expected completion and cleanup.

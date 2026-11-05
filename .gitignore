@@ -69,5 +69,4 @@ docs/superpowers/
 # Generated research reports and plans stay local.
 /reports/
 /docs/plans/
-**/workspace/PLAN.md
 .worktrees

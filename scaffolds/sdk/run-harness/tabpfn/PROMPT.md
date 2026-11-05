@@ -1,11 +1,9 @@
 Start the six-hour PFN research run described in your standing context. Verify the
 paper build, public model weights and white-box access, RunPod, Slack, and resource
-measurements immediately. Initialize local git history and PLAN.md. Explore distinct
-candidate mechanisms in parallel, then concentrate the remaining research budget on
-the strongest defensible contribution. Keep a compiling paper from the start.
+measurements immediately. Initialize local git history and PLAN.md. Record each check and its result in PLAN.md, and fix or escalate anything broken before relying on it. Begin by closely reading all of the related literature, identify multiple distinct novel and creative research directions, and scale them in parallel. Keep a compiling paper from the start.
 
 Use the scaffold's delegate tools for substantial work. Request a blind review of
-each complete draft by writing REVIEW_REQUEST.json with the compiled PDF's SHA-256,
+the first completed draft and then following any substantial revision by writing REVIEW_REQUEST.json with the compiled PDF's SHA-256,
 then finish this iteration. The gate runs an independent, tool-using reviewer.
 An Accept advances to finalization; a rejection returns evidence to work on.
 
