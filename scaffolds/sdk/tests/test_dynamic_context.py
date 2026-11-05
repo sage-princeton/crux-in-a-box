@@ -1,12 +1,16 @@
 import asyncio
+import json
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
 from crux_scaffold.context_strategies import STANDING_CONTEXT_HEADER
-from crux_scaffold.loop import IterationRecord
+from crux_scaffold.loop import IterationRecord, StateFile
 
 from drop_ins import edit
 from scripted import ScriptedModel, call, say
+
+START = datetime(2026, 11, 4, 6, 29, 2, tzinfo=UTC)
 
 
 @pytest.mark.parametrize("strategy", ['type = "persistent"', 'type = "trim_recent"\nmax_items = 1'])
@@ -72,6 +76,29 @@ def test_workflow_and_rest_changes_do_not_change_instructions(drop_in_dir, assem
     state = scaffold._research_context("pm")
     assert "iteration 4" in state and "60s remaining" in state
     assert "iteration 3" in state
+
+
+def test_every_call_states_the_process_start_and_restarts(drop_in_dir, assemble, tmp_path):
+    pm = ScriptedModel(say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm})
+    assert "Scaffold process started" not in scaffold._research_context("pm")
+    scaffold.context.now = lambda: START
+    asyncio.run(scaffold.run())
+    assert "Scaffold process started 2026-11-04T06:29:02Z; restarts this run: 0." in pm.inputs[0][-1]["content"]
+    saved = StateFile(tmp_path / "state").load()
+    assert (saved.process_started_at, saved.restarts) == (START, 0)
+
+    # A state file written before these fields existed, with a recorded run start: the next launch is a restart.
+    old = json.loads((tmp_path / "state/state.json").read_text())
+    del old["process_started_at"], old["restarts"]
+    (tmp_path / "state/state.json").write_text(json.dumps({**old, "phase_index": 0}))
+    pm = ScriptedModel(say("done"))
+    resumed = assemble(drop_in_dir, {"pm": pm})
+    resumed.context.now = lambda: START + timedelta(hours=1)
+    asyncio.run(resumed.run())
+    assert "Scaffold process started 2026-11-04T07:29:02Z; restarts this run: 1." in pm.inputs[0][-1]["content"]
+    saved = StateFile(tmp_path / "state").load()
+    assert (saved.usage.started_at, saved.process_started_at, saved.restarts) == (START, START + timedelta(hours=1), 1)
 
 
 def test_coding_context_is_refreshed_in_the_brief_not_developer_instructions(drop_in_dir, assemble):

@@ -380,6 +380,10 @@ an orderly interruption. Restarts keep elapsed time, including downtime. Use a
 new state directory for a new run. When resuming state created before timestamps
 were recorded, the first upgraded launch establishes the start; migrate
 `usage.started_at` to the actual UTC start if earlier spend/time should be included.
+Each launch also records `process_started_at`, and a launch that resumes a saved
+`usage.started_at` increments `restarts`; the phased loop's workflow state shows both
+on every model call, so agents need not infer restarts. Older state files load with
+no process start and 0 restarts.
 Without configured providers, local tokens and elapsed time still appear and
 external usage is explicitly unavailable. `check` validates configuration without
 querying providers or starting the clock.

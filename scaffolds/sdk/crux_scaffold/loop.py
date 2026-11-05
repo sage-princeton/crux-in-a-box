@@ -9,7 +9,7 @@ from pathlib import Path
 from string import Template
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, Field
 
 from crux_scaffold.agent_runtimes.base import AgentRuntime
 from crux_scaffold.components import Component, Options, Registry
@@ -36,6 +36,8 @@ class RunState(BaseModel):
     next_prompt: str | None = None
     history: list[IterationRecord] = []
     usage: UsageLedger = UsageLedger()
+    process_started_at: AwareDatetime | None = None
+    restarts: int = 0  # process starts that resumed a saved run start
 
 
 class StateFile:
