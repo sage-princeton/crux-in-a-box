@@ -9,8 +9,7 @@ The Codex workers use `prompts/codex-worker.md`, the TabPFN drop-in's worker
 prompt, in place of Codex's built-in system prompt, which is written for an
 interactive session with a person.
 
-The PI uses provider-independent `compaction`: at 200 selected history items or
-512,000 estimated tokens, it summarizes older exchanges and keeps roughly 20
+The PI uses provider-independent `compaction`: at 512,000 estimated tokens, it summarizes older exchanges and keeps roughly 20
 recent items, preserving complete tool exchanges and the full SQLite history.
 `context_window_tokens = 1048576` records Argon's supported window; the earlier
 token trigger leaves room for MCP schemas, provider encoding, reasoning/output

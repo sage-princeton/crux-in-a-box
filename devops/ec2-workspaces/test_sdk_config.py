@@ -85,7 +85,7 @@ class SDKConfigTests(unittest.TestCase):
 
         :returns: None; assertions verify the scenario.
         """
-        context = '\n[context]\ntype = "compaction"\nmax_items = 200\n'
+        context = '\n[context]\ntype = "compaction"\ntrigger_tokens = 512000\n'
         self.assertEqual(self.inspect(COMPATIBLE + context)["api_key_env"], "OPENROUTER_API_KEY")
         chat = COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"')
         self.assertEqual(self.inspect(chat + context)["api_key_env"], "OPENROUTER_API_KEY")

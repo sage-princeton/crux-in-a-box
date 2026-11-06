@@ -79,6 +79,26 @@ def local_strategy(**options):
     return CONTEXT_STRATEGIES.create("context", {"type": "compaction", **options})
 
 
+def test_compaction_rejects_max_items():
+    """Reject the removed compaction option instead of silently ignoring it."""
+    with pytest.raises(InvalidDropInError, match="max_items"):
+        local_strategy(max_items=200)
+
+
+def test_compaction_retains_many_small_exchanges_below_token_limit(tmp_path):
+    """Keep more than 200 items when the request fits without summarization.
+
+    :param tmp_path: Isolated workspace and checkpoint directory.
+    """
+    history = [item for _ in range(150) for item in (user("task"), {"role": "assistant", "content": "done"})]
+    summarize = AsyncMock(return_value="summary")
+    strategy = local_strategy(trigger_tokens=10000)
+    ctx = compaction_context(tmp_path)
+    assert asyncio.run(select(strategy, history, ctx, summarize)) == history
+    summarize.assert_not_awaited()
+    assert not list(ctx.state_dir.glob("compaction-*.json"))
+
+
 async def select(strategy, items, ctx, summarize, request_context="", session_id="pm"):
     """Exercise asynchronous selection with a scripted summary and isolated run state.
 
@@ -109,9 +129,9 @@ def test_compaction_keeps_sqlite_history_and_resumes_checkpoint(tmp_path):
 
     :param tmp_path: Isolated temporary directory.
     """
-    strategy = local_strategy(max_items=4, keep_recent_items=2)
+    strategy = local_strategy(trigger_tokens=1500, keep_recent_items=2)
     ctx = compaction_context(tmp_path)
-    history = [user("old task"), {"role": "assistant", "content": "old answer"},
+    history = [user("old task " * 1000), {"role": "assistant", "content": "old answer"},
                user("new task"), {"role": "assistant", "content": "new answer"}, user("continue")]
     calls = []
     async def summarize(items):
@@ -136,10 +156,10 @@ def test_compaction_keeps_sqlite_history_and_resumes_checkpoint(tmp_path):
         assert await session.get_items() == history
         checkpoint = json.loads(next(ctx.state_dir.glob("compaction-*.json")).read_text())
         assert checkpoint["covered_items"] == 2 and checkpoint["summary"] == "A useful handoff."
-        assert await select(local_strategy(max_items=10), history, ctx, summarize) == selected
+        assert await select(local_strategy(), history, ctx, summarize) == selected
         assert len(calls) == 1
         divergent = [user("replaced task"), *history[1:]]
-        assert await select(local_strategy(max_items=10), divergent, ctx, summarize) == divergent
+        assert await select(local_strategy(), divergent, ctx, summarize) == divergent
     asyncio.run(run())
 
 
@@ -171,7 +191,7 @@ def test_compaction_never_splits_parallel_tool_exchanges(tmp_path):
     :param tmp_path: Isolated temporary directory.
     """
     ctx = compaction_context(tmp_path)
-    history = [user("task"), {"role": "assistant", "content": "old"}, user("new task"),
+    history = [user("task " * 2000), {"role": "assistant", "content": "old"}, user("new task"),
                {"type": "reasoning", "id": "reasoning"},
                {"role": "assistant", "content": "I will read both files"},
                {"type": "function_call", "call_id": "a"}, {"type": "function_call", "call_id": "b"},
@@ -184,7 +204,7 @@ def test_compaction_never_splits_parallel_tool_exchanges(tmp_path):
         """
         assert items == history[:2]
         return "summary"
-    selected = asyncio.run(select(local_strategy(max_items=3, keep_recent_items=2), history, ctx, summarize))
+    selected = asyncio.run(select(local_strategy(trigger_tokens=1500, keep_recent_items=2), history, ctx, summarize))
     assert selected[1:] == history[2:]
 
 
@@ -194,7 +214,7 @@ def test_failed_or_empty_summary_does_not_advance_checkpoint(tmp_path):
     :param tmp_path: Isolated temporary directory.
     """
     ctx = compaction_context(tmp_path)
-    history = [user("old"), {"role": "assistant", "content": "answer"}, user("now")]
+    history = [user("old " * 2000), {"role": "assistant", "content": "answer"}, user("now")]
     async def empty(items):
         """Simulate a provider returning a blank handoff.
 
@@ -202,7 +222,7 @@ def test_failed_or_empty_summary_does_not_advance_checkpoint(tmp_path):
         """
         return "   "
     with pytest.raises(RuntimeError, match="empty summary"):
-        asyncio.run(select(local_strategy(max_items=3, keep_recent_items=1), history, ctx, empty))
+        asyncio.run(select(local_strategy(trigger_tokens=1500, keep_recent_items=1), history, ctx, empty))
     assert not list(ctx.state_dir.glob("compaction-*.json"))
 
 
@@ -219,8 +239,11 @@ def test_compaction_does_not_checkpoint_delegates_or_incomplete_exchanges(tmp_pa
         """
         raise AssertionError("no complete prefix to summarize")
     history = [user("task"), {"type": "function_call", "call_id": "a"}]
-    strategy = local_strategy(max_items=1, keep_recent_items=1)
+    strategy = local_strategy(trigger_tokens=1500, keep_recent_items=1)
     assert asyncio.run(select(strategy, history, ctx, unexpected)) == history
+    history[0] = user("task " * 2000)
+    with pytest.raises(RuntimeError, match="cannot fit"):
+        asyncio.run(select(strategy, history, ctx, unexpected))
     history.append({"role": "assistant", "content": "answer"})
     assert asyncio.run(select(strategy, history, ctx, unexpected, session_id=None)) == history
 
@@ -265,12 +288,13 @@ def test_compaction_during_tool_continuations_refreshes_context_and_keeps_histor
     :param assemble: Scaffold assembly fixture.
     """
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
-         'orchestrator = "pm"\n\n[context]\ntype = "compaction"\nmax_items = 4\nkeep_recent_items = 2')
+         'orchestrator = "pm"\n\n[context]\ntype = "compaction"\ntrigger_tokens = 10000\nkeep_recent_items = 2')
     edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',
          'context = ["workspace/AGENTS.md"]\nworkspace_context = ["REQUEST.md"]')
-    pm = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "r1"),
-                       call("read_file", {"path": "AGENTS.md"}, "r2"), say("handoff one"),
-                       call("read_file", {"path": "AGENTS.md"}, "r3"), say("handoff two"), say("done"))
+    (drop_in_dir / "workspace/bulk.txt").write_text("evidence " * 2200)
+    pm = ScriptedModel(call("read_file", {"path": "bulk.txt"}, "r1"),
+                       call("read_file", {"path": "bulk.txt"}, "r2"), say("handoff one"),
+                       call("read_file", {"path": "bulk.txt"}, "r3"), say("handoff two"), say("done"))
     scaffold = assemble(drop_in_dir, {"pm": pm})
     async def run():
         """Exercise the test conversation and inspect durable state.
@@ -340,14 +364,14 @@ def test_failed_recompaction_keeps_the_previous_checkpoint(tmp_path):
     :param tmp_path: Isolated temporary directory.
     """
     ctx = compaction_context(tmp_path)
-    history = [user("old"), {"role": "assistant", "content": "answer"}, user("recent")]
+    history = [user("old " * 2000), {"role": "assistant", "content": "answer"}, user("recent")]
     async def summary(items):
         """Return the supplied scripted handoff without a provider call.
 
         :param items: Conversation items to summarize.
         """
         return "handoff"
-    strategy = local_strategy(max_items=3, keep_recent_items=1)
+    strategy = local_strategy(trigger_tokens=1500, keep_recent_items=1)
     asyncio.run(select(strategy, history, ctx, summary))
     path = next(ctx.state_dir.glob("compaction-*.json"))
     before = path.read_bytes()
@@ -358,7 +382,7 @@ def test_failed_recompaction_keeps_the_previous_checkpoint(tmp_path):
         """
         assert "handoff" in str(items)
         raise RuntimeError("provider failed")
-    history.extend([{"role": "assistant", "content": "recent answer"}, user("continue")])
+    history.extend([{"role": "assistant", "content": "recent answer " * 1000}, user("continue")])
     with pytest.raises(RuntimeError, match="provider failed"):
         asyncio.run(select(strategy, history, ctx, failed))
     assert path.read_bytes() == before
@@ -371,12 +395,12 @@ def test_compaction_refreshes_context_after_summary(tmp_path, model_name):
     :param tmp_path: Isolated workspace and checkpoint directory.
     :param model_name: Whether the agent needs lazy provider resolution.
     """
-    strategy = local_strategy(max_items=3, keep_recent_items=1)
+    strategy = local_strategy(trigger_tokens=1500, keep_recent_items=1)
     ctx = compaction_context(tmp_path)
     context = {"instructions": "fixed", "research": "old", "resources": "old"}
     model = ScriptedModel(say("summary"))
     provider = Mock(get_model=Mock(return_value=model))
-    items = [user("old"), {"role": "assistant", "content": "answer"}, user("now")]
+    items = [user("old " * 2000), {"role": "assistant", "content": "answer"}, user("now")]
     asyncio.run(strategy.select_for_call(items, ctx=ctx, session_id="pm", request_context=context,
         agent=Agent(name="pm", model="named-model" if model_name else model), model_provider=provider,
         prepare_input=lambda data: data,
@@ -392,7 +416,7 @@ def test_compaction_refreshes_context_after_summary(tmp_path, model_name):
 def test_item_limit_options_reject_legacy_trigger_items(kind):
     """Reject the removed option for both windowed strategies.
 
-    :param kind: Registered strategy using the shared max_items option.
+    :param kind: Registered context strategy.
     """
     with pytest.raises(InvalidDropInError, match="Extra inputs are not permitted"):
         CONTEXT_STRATEGIES.create("context", {"type": kind, "trigger_items": 3})
@@ -433,10 +457,10 @@ def test_pdf_images_do_not_retrigger_compaction_after_checkpoint(tmp_path):
 
     :param tmp_path: Isolated workspace and checkpoint directory.
     """
-    strategy = local_strategy(max_items=6, trigger_tokens=12000, image_tokens=4096, keep_recent_items=2)
+    strategy = local_strategy(trigger_tokens=12000, image_tokens=4096, keep_recent_items=2)
     ctx = compaction_context(tmp_path)
     image = {'type': 'input_image', 'image_url': 'data:image/png;base64,' + 'A' * 3_000_000}
-    history = [user('old task'), {'role': 'assistant', 'content': 'old answer'}, user('Read the PDF'),
+    history = [user('old task ' * 6000), {'role': 'assistant', 'content': 'old answer'}, user('Read the PDF'),
                {'type': 'function_call', 'call_id': 'pdf', 'name': 'read_pdf', 'arguments': '{}'},
                {'type': 'function_call_output', 'call_id': 'pdf', 'output': [image]}, user('Continue')]
     calls = []
@@ -492,9 +516,9 @@ def test_compaction_rechecks_complete_request_before_saving(tmp_path, overflow):
     :param tmp_path: Isolated workspace and checkpoint directory.
     :param overflow: Which post-summary input makes the preferred retained suffix too large.
     """
-    strategy = local_strategy(max_items=5, trigger_tokens=1500, keep_recent_items=3)
+    strategy = local_strategy(trigger_tokens=1500, keep_recent_items=3)
     ctx = compaction_context(tmp_path)
-    history = [user('old'), {'role': 'assistant', 'content': 'answer'}, user('recent ' * 600),
+    history = [user('old ' * 2000), {'role': 'assistant', 'content': 'answer'}, user('recent ' * 600),
                {'role': 'assistant', 'content': 'recent answer'}, user('Current task')]
     context = {'instructions': 'fixed', 'research': '', 'resources': ''}
     model = ScriptedModel(say('summary ' * 240 if overflow == 'summary' else 'short summary'), say('shorter handoff'))
@@ -517,9 +541,9 @@ def test_unfittable_request_preserves_checkpoint_and_history(tmp_path, overflow)
     :param tmp_path: Isolated workspace and checkpoint directory.
     :param overflow: Irreducible part of the request exceeding the token threshold.
     """
-    strategy = local_strategy(max_items=3, trigger_tokens=1500, keep_recent_items=1)
+    strategy = local_strategy(trigger_tokens=1500, keep_recent_items=1)
     ctx = compaction_context(tmp_path)
-    history = [user('old'), {'role': 'assistant', 'content': 'answer'}, user('recent')]
+    history = [user('old ' * 2000), {'role': 'assistant', 'content': 'answer'}, user('recent')]
     model = ScriptedModel(say('handoff'), say('x' * 6000 if overflow == 'summary' else 'new handoff'))
     context = {'instructions': '', 'research': '', 'resources': ''}
 
@@ -534,7 +558,7 @@ def test_unfittable_request_preserves_checkpoint_and_history(tmp_path, overflow)
         await strategy.select_for_call(history, **args)
         path = next(ctx.state_dir.glob('compaction-*.json'))
         before = path.read_bytes()
-        history.extend([{'role': 'assistant', 'content': 'answer'},
+        history.extend([{'role': 'assistant', 'content': 'answer ' * 1000},
                         user('x' * 6000 if overflow == 'current_task' else 'current task')])
         session = strategy.session('pm', ctx)
         await session.add_items(history)
