@@ -14,7 +14,7 @@
   loop/review/resource/cleanup implementation, not a claimed exact repeat of Max's
   unidentified pilot. Baseline extension SHA-256:
   `48caa0383bd7033bce04370bb86cb8719a1a0a06125512b09a5efdb0c086c7d8`.
-- Model: `google/gemini-4-argon`, high effort, normal OpenRouter
+- Model: `google/gemini-4-argon@preset/ai-studio-only`, high effort, Google AI Studio through OpenRouter
   routing. No private preset/BYOK settings. Listed in the provider catalog on
   2026-10-29; no inference probe has been performed for this pilot.
 - Resource caps: 21600 seconds, $100 total agent/delegate/review inference, $30

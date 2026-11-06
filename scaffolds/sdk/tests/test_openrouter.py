@@ -16,6 +16,8 @@ from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.telemetry import NullTelemetry, RunIdentity, telemetry_from_env
 
+from drop_ins import edit
+
 ENV = {"CRUX_MODEL": "google/gemini-4-argon", "CRUX_REASONING_EFFORT": "low",
        "OPENROUTER_API_KEY": "test-key"}
 PROVIDER_CONFIG = '''
@@ -180,16 +182,18 @@ def test_invalid_provider_settings_are_rejected(router, drop_in_dir, assemble, o
         assemble(drop_in_dir, env=ENV)
 
 
-def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble, monkeypatch):
+@pytest.mark.parametrize("provider", ["google-vertex", "google-ai-studio"])
+def test_a_pinned_route_never_falls_back(router, drop_in_dir, assemble, monkeypatch, provider):
     requests, pending, _ = router
-    # An API error is retried on the same Vertex-only route, never through a direct or alternate provider.
+    edit(drop_in_dir, "scaffold.toml", 'only = ["google-vertex"]', f'only = ["{provider}"]')
+    # An API error is retried on the pinned route, never through a direct or alternate provider.
     monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.MODEL_RETRIES", 1)
     monkeypatch.setattr("agents.run_internal.model_retry._sleep_for_retry", lambda delay: asyncio.sleep(0))
-    pending.extend([{"error": {"message": "No eligible Vertex endpoint", "code": "provider_unavailable"}}] * 2)
-    with pytest.raises(APIStatusError, match="No eligible Vertex endpoint"):
+    pending.extend([{"error": {"message": "No eligible provider endpoint", "code": "provider_unavailable"}}] * 2)
+    with pytest.raises(APIStatusError, match="No eligible provider endpoint"):
         asyncio.run(assemble(drop_in_dir, env=ENV).run())
     assert len(requests) == 2
-    assert all(request["provider"]["only"] == ["google-vertex"] and request["provider"]["allow_fallbacks"] is False
+    assert all(request["provider"]["only"] == [provider] and request["provider"]["allow_fallbacks"] is False
                for request in requests)
 
 

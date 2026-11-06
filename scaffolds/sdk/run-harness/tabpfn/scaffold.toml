@@ -12,6 +12,10 @@ api = "responses"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 
+[runtime.model_provider.extra_body.provider]
+only = ["google-ai-studio"]
+allow_fallbacks = false
+
 [runtime.steering]
 server = "slack"
 channel_id = "{{SLACK_CHANNEL_ID}}"

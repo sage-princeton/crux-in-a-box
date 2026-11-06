@@ -60,7 +60,7 @@ CLAUDE_ACP_VERSION=0.77.0
 # credential name. MODEL_PROVIDER=openrouter is also accepted when that table
 # points to OpenRouter. It needs no AgentRQ workspace, control box settings or
 # CLI/ACP pins. For OpenRouter + Codex workers with routing overrides, use
-# google/gemini-4-argon@preset/<your-preset> and set matching Vertex-only routing
+# google/gemini-4-argon@preset/<your-preset> and set matching Google AI Studio-only routing
 # in the preset. Compatible providers use persistent or trim_recent context.
 
 # The drop-in directory staged at /srv/crux-run/run-harness, as a repo-relative

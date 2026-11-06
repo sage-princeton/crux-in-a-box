@@ -68,14 +68,14 @@ class SDKConfigTests(unittest.TestCase):
 
     def test_codex_inherits_responses_endpoint_and_requires_presets_for_routing(self):
         worker = '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
-        routing = '\n[runtime.model_provider.extra_body.provider]\nonly = ["google-vertex"]\nallow_fallbacks = false\n'
+        routing = '\n[runtime.model_provider.extra_body.provider]\nonly = ["google-ai-studio"]\nallow_fallbacks = false\n'
         self.assertEqual(self.inspect(COMPATIBLE + worker), {
             "api_key_env": "OPENROUTER_API_KEY", "coding_agent": "codex",
             "codex_base_url": "https://openrouter.ai/api/v1", "codex_api_key_env": "OPENROUTER_API_KEY",
         })
         config = COMPATIBLE + routing + worker
         self.assertIn("preset", self.inspect(config, success=False))
-        self.assertEqual(self.inspect(config, model="google/gemini-4-argon@preset/vertex-only")["coding_agent"], "codex")
+        self.assertEqual(self.inspect(config, model="google/gemini-4-argon@preset/ai-studio-only")["coding_agent"], "codex")
         self.assertIn("Responses", self.inspect(config.replace('api = "responses"', 'api = "chat-completions"'),
                                                success=False))
         self.assertIsNone(self.inspect(COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"'))["coding_agent"])

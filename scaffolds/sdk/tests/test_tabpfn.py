@@ -23,7 +23,7 @@ from crux_scaffold.telemetry import NullTelemetry
 from scripted import ScriptedModel, call, say
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "run-harness/tabpfn"
-ENV = {"CRUX_MODEL": "google/gemini-4-argon", "CRUX_REASONING_EFFORT": "high", "OPENROUTER_API_KEY": "test",
+ENV = {"CRUX_MODEL": "google/gemini-4-argon@preset/ai-studio-only", "CRUX_REASONING_EFFORT": "high", "OPENROUTER_API_KEY": "test",
        "RUN_SLUG": "tabpfn-test", "SLACK_BOT_TOKEN": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test", "RUNPOD_API_KEY": "test"}
 
@@ -73,15 +73,22 @@ def test_argon_provider_and_context_build_without_openai_credentials(scaffold):
     assert scaffold.strategy.type_name == "compaction"
     assert scaffold.runtime.provider is not None
     assert set(scaffold.coding_agents) == {"worker_a", "worker_b", "worker_c"}
-    assert scaffold.context.model == "google/gemini-4-argon"
+    assert scaffold.context.model == ENV["CRUX_MODEL"]
+    assert scaffold.runtime.options.model_provider.extra_body == {
+        "provider": {"only": ["google-ai-studio"], "allow_fallbacks": False}}
     assert scaffold.context.reasoning_effort == "high"
 
 
-def test_argon_provisioning_accepts_plain_model_for_codex():
+@pytest.mark.parametrize("model", ["google/gemini-4-argon", ENV["CRUX_MODEL"]])
+def test_argon_provisioning_requires_preset_for_codex_routing(model):
     script = EXAMPLE.parents[3] / "devops/ec2-workspaces/sdk_config.py"
     result = subprocess.run([sys.executable, str(script), "--model-provider", "openrouter",
-                             "--model", ENV["CRUX_MODEL"]],
+                             "--model", model],
                             input=(EXAMPLE / "scaffold.toml").read_text(), text=True, capture_output=True, check=False)
+    if "@preset/" not in model:
+        assert result.returncode != 0
+        assert "preset" in result.stderr
+        return
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {
         "api_key_env": "OPENROUTER_API_KEY", "coding_agent": "codex",

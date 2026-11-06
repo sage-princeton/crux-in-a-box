@@ -194,13 +194,13 @@ with either agent. Set `CODEX_MODEL` or `CLAUDE_MODEL` to its full OpenRouter
 model ID, and put `OPENROUTER_API_KEY` in the base secrets JSON. Omitting
 `MODEL_PROVIDER` keeps direct OpenAI/Anthropic billing.
 
-OpenRouter access alone does not establish Google Cloud billing. That requires
-a configured Vertex AI BYOK account and a model served by Vertex. To require
-that billing path, restrict routing to Vertex and disable shared-capacity
-fallback in OpenRouter; verify the actual provider and BYOK usage before a run.
-An OpenRouter preset can enforce `provider.only=["google-vertex"]` and
-`allow_fallbacks=false`; select it with `google/gemini-3.5-flash@preset/<slug>`
-as the model. The BYOK key's shared-capacity fallback setting is still required.
+For Google models, pin Google AI Studio with an OpenRouter preset containing
+`provider.only=["google-ai-studio"]` and `allow_fallbacks=false`; select it with
+`google/gemini-4-argon@preset/ai-studio-only` as the model. Create and verify the
+preset before provisioning. Vertex uses a separate `google-vertex` slug, displayed
+as `Google` in OpenRouter. Routing alone does not establish BYOK billing; verify
+the actual provider and `is_byok` in receipts. Configure the intended AI Studio
+BYOK key separately when that billing path is required.
 
 Boxes keep Ubuntu's daily unattended security upgrades, and needrestart still
 restarts the services they touch, except the run services `crux-acp-gateway`
@@ -311,9 +311,9 @@ For an SDK box:
   selected credential. Chat Completions works for SDK-only drop-ins. Codex cannot
   send the SDK's `extra_body`; when an OpenRouter drop-in declares routing rules
   and Codex workers, use `OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/<name>`
-  and create a preset with the same rules (e.g. Vertex only, fallback disabled).
+  and create a preset with the same rules (Google AI Studio only, fallback disabled).
   Provisioning checks the preset suffix, not the account-side preset contents;
-  verify those and the Vertex BYOK settings before launch. Other endpoints with
+  verify those and any intended Google AI Studio BYOK settings before launch. Other endpoints with
   Codex workers must omit `extra_body` and enforce routing at their endpoint.
 - **Sandbox prerequisites:** the SDK installer adds system `bubblewrap` and
   loads Ubuntu's `bwrap-userns-restrict` AppArmor profile when required. Existing

@@ -20,6 +20,10 @@ selected Run's operator guide. [design.md](design.md) explains composition;
 [docs/extending.md](docs/extending.md) defines extension contracts. The optional
 [Docker demo](docker/README.md) has its own dependencies and commands.
 
+The Google research examples pin AI Studio and require an OpenRouter
+`ai-studio-only` preset plus matching Langfuse pricing; their operator guides
+describe setup and verification.
+
 All SDK roles report completed model usage incrementally, including coding
 workers in both blocking and background mode. Worker usage reaches Langfuse and
 the local ledger while a brief runs; its final summary adds no duplicate usage.

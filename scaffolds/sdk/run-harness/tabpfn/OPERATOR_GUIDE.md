@@ -85,7 +85,7 @@ AWS_PROFILE=crux-2-acct-admin-access
 AWS_REGION=us-east-1
 AGENT_PLATFORM=openai-agents
 MODEL_PROVIDER=openrouter
-OPENAI_AGENTS_MODEL=google/gemini-4-argon
+OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/ai-studio-only
 OPENAI_AGENTS_REASONING_EFFORT=high
 DROP_IN_PATH=scaffolds/sdk/run-harness/tabpfn
 INSTANCE_TYPE=m7i.2xlarge
@@ -98,8 +98,15 @@ Model and effort are run environment settings: provisioning maps
 `OPENAI_AGENTS_MODEL` and `OPENAI_AGENTS_REASONING_EFFORT` to `CRUX_MODEL` and
 `CRUX_REASONING_EFFORT` for every agent and reviewer. `scaffold.toml` selects the
 OpenRouter Responses endpoint and `OPENROUTER_API_KEY` for the SDK and Codex.
-No provider-specific route or preset is required; OpenRouter account settings
-control routing. Check the actual route and pricing in usage records.
+Before provisioning, create an OpenRouter preset named `ai-studio-only` with
+`provider.only = ["google-ai-studio"]` and `provider.allow_fallbacks = false`.
+The example model `google/gemini-4-argon@preset/ai-studio-only` applies it to Codex
+workers, which cannot forward the SDK's `extra_body`. The SDK also sends those
+same routing fields explicitly. Provisioning checks the preset suffix, not its
+account-side contents. Confirm receipts identify `Google AI Studio`; OpenRouter's
+provider display name `Google` means Vertex. Verify BYOK separately when intended.
+Before launch, ensure Langfuse pricing also matches the preset-suffixed model ID;
+a base-model-only matcher leaves those generations unpriced.
 Commit changes before provisioning;
 uncommitted changes are not staged on the box.
 

@@ -24,6 +24,16 @@ so they do not validate this larger threshold. Compare full-request estimates wi
 provider usage as history grows; the estimate is not a provider-token fit guarantee.
 Codex workers manage their own context separately.
 
+Before provisioning, create an OpenRouter preset named `ai-studio-only` with
+`provider.only = ["google-ai-studio"]` and `provider.allow_fallbacks = false`.
+The example model `google/gemini-4-argon@preset/ai-studio-only` applies it to Codex
+workers, which cannot forward the SDK's `extra_body`. The SDK also sends those
+same routing fields explicitly. Provisioning checks the preset suffix, not its
+account-side contents. Confirm receipts identify `Google AI Studio`; OpenRouter's
+provider display name `Google` means Vertex. Verify BYOK separately when intended.
+Before launch, ensure Langfuse pricing also matches the preset-suffixed model ID;
+a base-model-only matcher leaves those generations unpriced.
+
 ## Operator files
 
 placeholders.txt and secrets.json beside this guide are the operator inputs.

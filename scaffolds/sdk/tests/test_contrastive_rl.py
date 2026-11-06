@@ -18,7 +18,7 @@ from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 
 PILOT = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl"
-ENV = {"CRUX_MODEL": "google/gemini-4-argon", "OPENROUTER_API_KEY": "test",
+ENV = {"CRUX_MODEL": "google/gemini-4-argon@preset/ai-studio-only", "OPENROUTER_API_KEY": "test",
        "SLACK_BOT_TOKEN": "test",
        "RUN_SLUG": "contrastive-test", "RUNPOD_API_KEY": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test"}
@@ -101,13 +101,14 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert config.resources["gpu"]["limits"] == {"cost_usd": 30}
     assert scaffold.loop.type_name == "tabpfn_research"
     assert str(scaffold.runtime.options.model_provider.base_url) == "https://openrouter.ai/api/v1"
-    assert not scaffold.runtime.options.model_provider.extra_body
+    assert scaffold.runtime.options.model_provider.extra_body == {
+        "provider": {"only": ["google-ai-studio"], "allow_fallbacks": False}}
     assert scaffold.strategy.type_name == "compaction"
     assert len(scaffold.coding_agents) == 3
     assert scaffold.context.steering is not None
     assert "escalate" in config.agents["pi"].tools
     assert config.agents["pi"].mcp_servers == ["slack"]
-    assert scaffold.context.model == "google/gemini-4-argon"
+    assert scaffold.context.model == ENV["CRUX_MODEL"]
 
 
 def test_pilot_bundles_complete_pinned_source_without_archive_preparation():
