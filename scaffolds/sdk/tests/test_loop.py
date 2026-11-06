@@ -139,6 +139,14 @@ def test_every_phase_names_its_continue_prompt():
         LOOPS.create("loop", {"type": "phased", "phases": [{"name": "a", "prompt": "P.md"}]}, gates={})
 
 
+def test_a_state_file_from_before_restart_tracking_loads(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({"phase_index": 1, "iteration": 2, "next_prompt": None,
+                                                     "history": [], "usage": {"started_at": "2026-11-04T06:29:05Z"}}))
+    state = StateFile(tmp_path).load()
+    assert (state.phase_index, state.process_started_at, state.restarts) == (1, None, 0)
+    assert state.usage.started_at is not None
+
+
 def test_the_state_file_creates_its_directory_when_it_first_saves(tmp_path):
     StateFile(tmp_path / "new/state").save(RunState(phase_index=1))
     assert StateFile(tmp_path / "new/state").load().phase_index == 1

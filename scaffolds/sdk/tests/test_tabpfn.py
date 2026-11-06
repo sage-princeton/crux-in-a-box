@@ -10,6 +10,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from agents import Agent
+from agents.run_config import CallModelData, ModelInputData
 from test_blind_review import submission_pdf
 
 from crux_scaffold.agent_runtimes.base import TurnOutcome, Verdict
@@ -119,6 +121,76 @@ def test_review_is_blind_archived_cached_and_bound_to_pdf(scaffold):
     assert (scaffold.context.workspace.root / "reviews" / archived[0].name).read_text() == archived[0].read_text()
     scaffold.context.workspace.write_file("REVIEW_REQUEST.json", json.dumps({"paper_sha256": "old"}))
     assert not asyncio.run(gate.check(gate_context(scaffold))).passed
+
+
+@pytest.mark.parametrize("harness", ["tabpfn", "contrastive-rl"])
+@pytest.mark.parametrize("formatting", ["inline", "multiline", "table", "bold_values"])
+def test_latest_review_survives_compaction(tmp_path, harness, formatting):
+    root = tmp_path / harness
+    shutil.copytree(EXAMPLE.parent / harness, root)
+    config = root / "scaffold.toml"
+    config.write_text(config.read_text().replace("{{SLACK_CHANNEL_ID}}", "CTEST")
+                      .replace("{{SLACK_OPERATOR_ID}}", "UTEST").replace("{{SLACK_AFTER_TS}}", "0"))
+    scaffold = Scaffold(DropInDirectory.load(root), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
+    submit(scaffold)
+    scores = {"Quality": "2", "Clarity": "2", "Significance": "2", "Originality": "3",
+              "Overall": "2", "Confidence": "5", "Recommendation": "Reject"}
+    separator = "  " if formatting == "inline" else "\n\n"
+    ratings = separator.join(f"**{name}:** {value}" for name, value in scores.items())
+    if formatting == "table":
+        ratings = "| Criterion | Rating |\n| --- | --- |\n" + "\n".join(
+            f"| {name} | {value} |" for name, value in scores.items())
+    elif formatting == "bold_values":
+        ratings = separator.join(f"**{name}:** **{value}**" for name, value in scores.items())
+    feedback = separator.join([
+        "**Summary:** " + "Full reviewer discussion. " * 1000,
+        "**Strengths:** (1) *Useful problem:* Context for the review.",
+        "**Weaknesses:**",
+        "1. *Confounded baselines:* Detailed reviewer evidence.",
+        "2. **Missing ablation:** More detailed evidence.",
+        "(3) *Binomial noise:* More detailed evidence.",
+        ratings,
+    ])
+    verdict = Verdict(passed=False, feedback=feedback, next_prompt=None)
+
+    async def judge(*args, **kwargs):
+        return verdict
+
+    scaffold.runtime.judge = judge
+    gate = scaffold.loop.gates["research_review"]
+    assert not asyncio.run(gate.check(gate_context(scaffold))).passed
+    workspace = scaffold.context.workspace
+    status = json.loads(workspace.read_file("REVIEW_STATUS.json"))
+    assert status["verdict"] == verdict.model_dump()
+    assert json.loads(workspace.read_file(status["review_path"]))["verdict"] == verdict.model_dump()
+    workspace.write_file("PLAN.md", "Old plan. " * 10000)
+    research = scaffold.assembly.research_context("pi")
+    assert json.dumps(status, indent=2) in research
+    assert "truncated" in research
+
+    assert not asyncio.run(gate.check(gate_context(scaffold))).passed
+    assert json.loads(workspace.read_file("REVIEW_STATUS.json")) == status
+    (root / "prompts/review.md").write_text("Updated review rubric")
+    verdict = Verdict(passed=True, feedback="Overall (1-6): 5\nRecommendation: Accept\n### Remaining limitation",
+                      next_prompt=None)
+    assert asyncio.run(gate.check(gate_context(scaffold))).passed
+    latest = json.loads(workspace.read_file("REVIEW_STATUS.json"))
+    assert latest["review_path"] != status["review_path"]
+    assert latest["verdict"] == verdict.model_dump()
+
+    scaffold.context.resources = scaffold.context.steering = None
+    scaffold.strategy.options = scaffold.strategy.options.model_copy(update={"trigger_tokens": 50000,
+                                                                            "keep_recent_items": 1})
+    summary = ScriptedModel(say("The review was lost from this handoff."))
+    history = [{"role": "user", "content": feedback * 10}, {"role": "assistant", "content": "Old review received."},
+               {"role": "user", "content": "Finalize"}]
+    selected = asyncio.run(scaffold.runtime._select_input(CallModelData(
+        model_data=ModelInputData(input=history, instructions=""), agent=Agent(name="pi", model=summary), context=None)))
+    assert "compaction:pi" in scaffold.context.usage.by_source
+    tail = selected.input[-1]["content"]
+    assert json.dumps(latest, indent=2) in tail
+    assert "Confounded baselines" not in str(selected.input)
+    assert "<research_context>" not in str(history)
 
 
 def test_finalization_reserve_does_not_claim_acceptance(scaffold):

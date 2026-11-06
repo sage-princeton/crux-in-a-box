@@ -216,6 +216,8 @@ def package_problem(workspace, digest, review_path):
     return None
 
 
+# TODO(AE-317): Move shared PaperReview logic into the research-gates library.
+# https://linear.app/agent-evals/issue/AE-317
 @GATES.register
 class PaperReview(LlmJudgeGate):
     type_name = "tabpfn_review"
