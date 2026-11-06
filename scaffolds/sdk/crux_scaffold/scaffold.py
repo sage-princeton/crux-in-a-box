@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from datetime import UTC
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -251,6 +252,9 @@ class Scaffold:
             current = (f"Current phase: `{phases[self.state.phase_index].name}`; "
                        f"iteration {max(1, self.state.iteration)}."
                        if self.state.phase_index < len(phases) else "All phases are complete.")
+            if started := self.state.process_started_at:
+                current += (f"\nScaffold process started {started.astimezone(UTC):%Y-%m-%dT%H:%M:%SZ}; "
+                            f"restarts this run: {self.state.restarts}.")
             parts.append("# Workflow state (scaffold RunState; persisted in state.json)\n\n" + current)
             for record in self.state.history[-3:]:
                 gates = "; ".join(f"{gate.gate}: {'passed' if gate.passed else 'failed'}; "
@@ -299,8 +303,12 @@ class Scaffold:
         return lines
 
     async def run(self) -> LoopOutcome:
+        now = self.context.now()
         if self.state.usage.started_at is None:
-            self.state.usage.started_at = self.context.now()
+            self.state.usage.started_at = now
+        else:
+            self.state.restarts += 1
+        self.state.process_started_at = now
         self.store.save(self.state)
         try:
             async with self.runtime:
