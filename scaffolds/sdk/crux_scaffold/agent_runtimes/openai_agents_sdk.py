@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime
 from functools import partial
@@ -47,6 +49,8 @@ from crux_scaffold.coding_agents import CodingAgent, CodingResult
 from crux_scaffold.components import CountLimit, Options, count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.context_strategies import is_standing_context
+from crux_scaffold.delegate_mailboxes import DelegateMailboxes
+from crux_scaffold.delegate_tasks import DelegateTasks
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
@@ -97,6 +101,7 @@ class OpenAIAgentsOptions(Options):
     max_turns: CountLimit = 50
     model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
     background_coding: bool = False
+    interactive_delegates: bool = False
     coding_result_wait_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["unlimited"] = 1800
     steering: SteeringOptions | None = None
 
@@ -107,6 +112,24 @@ class BriefArguments(Arguments):
 
 class CodingResultArguments(Arguments):
     wait: bool = Field(description="Whether to await completion; false returns immediately if still running.")
+
+
+class TaskArguments(Arguments):
+    task_id: str
+
+
+class SendArguments(TaskArguments):
+    message: str
+    reply_to: str | None = None
+    interrupt: bool = False
+
+
+class MessageArguments(Arguments):
+    message: str
+
+
+class InboxArguments(Arguments):
+    wait_seconds: float = Field(0, ge=0, le=60)
 
 
 class UsageHooks(RunHooks):
@@ -151,6 +174,11 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self._coding_cancelled: dict[str, tuple[datetime, datetime]] = {}  # started, cancelled; not yet reported
         self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
+        self.delegates: DelegateTasks | None = None
+        self._delegate_context: ContextVar[tuple[str, list[dict]] | None] = ContextVar('delegate_context', default=None)
+        if options.interactive_delegates:
+            self.delegates = DelegateTasks(DelegateMailboxes(assembly.context.state_dir / 'delegates.sqlite'),
+                                           self._run_delegate, assembly.context.telemetry)
 
     def build(self) -> None:
         if self.agents:
@@ -161,7 +189,9 @@ class OpenAIAgentsRuntime(AgentRuntime):
             self.provider = OpenAIProvider(
                 openai_client=self.client, use_responses=self.options.model_provider.api == "responses"
             )
-        if self.options.background_coding:
+        if self.delegates and any(spec.delegates for name, spec in config.agents.items() if name != config.orchestrator):
+            raise InvalidDropInError('interactive_delegates supports direct PI delegates only')
+        if self.options.background_coding or self.delegates:
             declared = set(self.assembly.tools) | set(config.agents) | set(config.coding_agents)
             self._check_result_names(declared)
         used = {server for agent in config.agents.values() for server in agent.mcp_servers}
@@ -179,6 +209,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
                     for delegate in spec.delegates
                     if delegate in self.assembly.coding_agents
                 ]
+            if self.delegates:
+                tools += self._communication_tools(name)
             self.agents[name] = Agent(
                 name=name,
                 instructions=self._instructions,
@@ -193,12 +225,14 @@ class OpenAIAgentsRuntime(AgentRuntime):
         trace_agents_sdk(self.assembly.context.telemetry)
         self.build()
         steering = self.assembly.context.steering
+        if self.delegates:
+            self.delegates.mailboxes.recover()
         try:
             if self.client:
                 await self._stack.enter_async_context(self.client)
             for server in self.servers.values():
                 await self._stack.enter_async_context(server)
-                if self.options.background_coding:
+                if self.options.background_coding or self.delegates:
                     self._check_result_names({tool.name for tool in await server.list_tools()})
             if steering:
                 steering.transport = self.servers[steering.options.server]
@@ -228,6 +262,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     async def __aexit__(self, *exc_info: object) -> None:
         try:
+            if self.delegates:
+                await self.delegates.close()
             await self._cancel_coding()
         finally:
             await self._stack.aclose()
@@ -257,8 +293,16 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 )
                 await self.session.add_items([{"role": "user", "content": report}])
             outcome.final_output = "\n\n".join(part for part in [outcome.final_output, *remaining] if part)
+            if self.delegates:
+                outstanding = [task for task in self.delegates.status() if not task['collected']]
+                if outstanding:
+                    outcome = TurnOutcome(completed=False, final_output=(
+                        'Delegate work is outstanding. Read delegate_inbox, answer questions, and collect results '
+                        'before finishing. Interrupt work explicitly if it should stop.\n' + json.dumps(outstanding)))
             return outcome
         except BaseException:
+            if self.delegates:
+                await self.delegates.close()
             await self._cancel_coding()
             raise
 
@@ -270,6 +314,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
             for delegate in agent.delegates
             if delegate in self.assembly.coding_agents
         }
+        if self.delegates:
+            generated |= {'send_message', 'interrupt_delegate', 'request_progress', 'delegate_inbox',
+                          'ask_pi', 'report_progress'}
+            generated |= {f'{name}_result' for name in config.agents if name != config.orchestrator}
         if collisions := sorted(generated & names):
             raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
 
@@ -432,6 +480,28 @@ class OpenAIAgentsRuntime(AgentRuntime):
         is_orchestrator = data.agent.name == self.assembly.drop_in.config.orchestrator
         steering = self.assembly.context.steering
         annotations = []
+        delegate_context = self._delegate_context.get()
+        session_id = data.agent.name if is_orchestrator else None
+        pinned_mail = []
+        if self.delegates:
+            boxes = self.delegates.mailboxes
+            if is_orchestrator:
+                messages = boxes.pending('pi')
+                annotations.append('<delegate_status>\n' + json.dumps(self.delegates.status()) + '\n</delegate_status>')
+                if messages:
+                    annotations.append('<delegate_messages>\n' + json.dumps(messages) + '\n</delegate_messages>')
+                    await self.session.add_items([{'role': 'user', 'content': annotations[-1]}])
+                    boxes.delivered([m['id'] for m in messages])
+            elif delegate_context and boxes.get(delegate_context[0])['name'] == data.agent.name:
+                session_id, pinned_mail = delegate_context
+                messages = boxes.pending('delegate', session_id)
+                if messages:
+                    envelope = {'role': 'user', 'content': '<pi_messages>\n' + json.dumps(messages) + '\n</pi_messages>'}
+                    session = self.assembly.context_strategy.session(session_id, self.assembly.context)
+                    await session.add_items([envelope])
+                    pinned_mail.append(envelope)
+                    boxes.delivered([m['id'] for m in messages])
+            self.delegates.flush_events()
         if steering and is_orchestrator:
             await steering.poll()
             pending = steering.pending()
@@ -457,6 +527,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
         history = [item for item in data.model_data.input if not is_standing_context(item)]
+        history.extend(item for item in pinned_mail if item not in history)
         prompt_item = history[-1] if history and history[-1].get("role") == "user" else None
         if is_orchestrator and self._steering_items:
             stored = [item for item in await self.session.get_items() if not is_standing_context(item)]
@@ -477,11 +548,11 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
         prepare_request = partial(
             self._prepare_request, request_context=request_context, prompt_item=prompt_item,
-            annotations=annotations, pinned_steering=self._steering_items if steering and is_orchestrator else [],
+            annotations=annotations, pinned_steering=(self._steering_items if steering and is_orchestrator else []) + pinned_mail,
         )
         items = list(await strategy.select_for_call(
             list(history), ctx=ctx,
-            session_id=data.agent.name if is_orchestrator else None,
+            session_id=session_id,
             request_context=request_context, agent=data.agent, model_provider=self.run_config.model_provider,
             prepare_input=self._cache_input, research_context=lambda: self.assembly.research_context(data.agent.name),
             prepare_request=prepare_request,
@@ -595,6 +666,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     def _delegate(self, name: str) -> FunctionTool:
         config = self.assembly.drop_in.config
+        if self.delegates and name in config.agents:
+            return self._interactive_tool(name)
         if name not in config.agents:
             return self._coding_tool(self.assembly.coding_agents[name])
         spec = config.agents[name]
@@ -615,6 +688,83 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
         tool.on_invoke_tool = invoke
         return tool
+
+    def _json_tool(self, name: str, description: str, arguments: type[Arguments], callback) -> FunctionTool:
+        async def invoke(_: ToolContext[Any], raw: str) -> str:
+            try:
+                return json.dumps(await callback(arguments.model_validate_json(raw)))
+            except (ValueError, ValidationError) as exc:
+                return json.dumps({'error': str(exc)})
+        return FunctionTool(name=name, description=description, on_invoke_tool=invoke,
+                            params_json_schema=ensure_strict_json_schema(arguments.model_json_schema()))
+
+    def _interactive_tool(self, name: str) -> FunctionTool:
+        async def start(args):
+            return self.delegates.start(name, args.brief)
+        return self._json_tool(name, self.assembly.drop_in.config.agents[name].description +
+                               f' Starts in the background; collect with {name}_result.', BriefArguments, start)
+
+    def _communication_tools(self, name: str) -> list[FunctionTool]:
+        config = self.assembly.drop_in.config
+        if name != config.orchestrator:
+            async def report(args, *, question):
+                active = self._delegate_context.get()
+                if not active:
+                    raise ValueError('No active delegate conversation')
+                mailbox = self.delegates.mailboxes.delegate(active[0])
+                receipt = mailbox.ask_pi(args.message) if question else mailbox.report_progress(args.message)
+                self.delegates.flush_events()
+                return receipt
+            return [self._json_tool('ask_pi', 'Ask the PI a question without interrupting it. Continue independent work.',
+                                    MessageArguments, partial(report, question=True)),
+                    self._json_tool('report_progress', 'Report completed work, evidence, blockers and next step to the PI.',
+                                    MessageArguments, partial(report, question=False))]
+
+        async def send(args):
+            return await self.delegates.send(**args.model_dump())
+
+        async def stop(args):
+            return await self.delegates.stop(args.task_id)
+
+        async def progress(args):
+            return self.delegates.request_progress(args.task_id)
+
+        async def inbox(args):
+            return await self.delegates.inbox(args.wait_seconds)
+
+        async def result(args, *, delegate):
+            limit = self.options.coding_result_wait_seconds
+            return await self.delegates.result(delegate, wait=args.wait, timeout=None if limit == 'unlimited' else limit)
+
+        tools = [self._json_tool('send_message', 'Steer or answer a delegate. Resumes ended conversations; interrupt=true '
+                                'stops active work before resuming. Use task IDs from dispatch/inbox.', SendArguments, send),
+                 self._json_tool('interrupt_delegate', 'Stop a delegate and await cleanup. Does not resume it.',
+                                 TaskArguments, stop),
+                 self._json_tool('request_progress', 'Ask an active delegate for a fresh progress report; returns a receipt, '
+                                 'not the report. Read delegate_inbox for the response.', TaskArguments, progress),
+                 self._json_tool('delegate_inbox', 'Inspect delegate status, questions and progress. Optionally wait for mail.',
+                                 InboxArguments, inbox)]
+        for delegate in config.agents[name].delegates:
+            if delegate in config.agents:
+                tools.append(self._json_tool(f'{delegate}_result', 'Collect the result; waiting returns early for a question.',
+                                              CodingResultArguments, partial(result, delegate=delegate)))
+        return tools
+
+    async def _run_delegate(self, task: dict, prompt: str) -> str:
+        ctx = self.assembly.context
+        name = task['name']
+        session = self.assembly.context_strategy.session(task['id'], ctx)
+        if prompt != task['brief'] and not await session.get_items():
+            prompt = task['brief'] + '\n\n' + prompt
+        token = self._delegate_context.set((task['id'], []))
+        try:
+            async with self.delegation_slot(background=True):
+                result = await Runner.run(self.agents[name], prompt, context=ctx, session=session, hooks=self.hooks,
+                                          max_turns=count_limit(self.assembly.drop_in.config.agents[name].max_turns),
+                                          run_config=replace(self.run_config, workflow_name=f"delegate:{name}:{task['id']}"))
+                return str(result.final_output)
+        finally:
+            self._delegate_context.reset(token)
 
     def _coding_tool(self, agent: CodingAgent) -> FunctionTool:
         ctx = self.assembly.context
