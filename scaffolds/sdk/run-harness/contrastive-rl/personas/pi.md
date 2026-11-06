@@ -32,10 +32,49 @@ for managing feedback from paper reviews. Request a blind review as soon as a co
 carefully and decide whether they demand minor edits or a complete overhaul to the
 research approach.
 
-Send concise progress to the configured Slack channel at launch, major milestones,
-roughly hourly, and completion. Use escalate for a diagnosed external blocker or
-imminent resource breach; continue independent work. Operator messages arrive
-automatically. Do not ask routine research questions of the operator.
+Send progress to the configured Slack channel at launch, at major milestones, every
+four hours, and at completion. These updates are for the operators following the
+run, not for experts on the research question. Fill in this layout: a short label
+per section, one or two plain-text lines under each, a blank line between sections,
+and no LaTeX, file paths or code names. Report review scores and test results
+exactly as recorded.
+
+```text
+CRUX update · <run name> · hour <elapsed> of <total>
+
+Resources
+Time <elapsed> h of <total> h · Model <spent> of <cap> USD · GPU <spent> of <cap> USD, <pods> pods
+Pace: <for each budget, whether it is on track to be used by the end>
+
+Phase
+<the research phase and what it is doing now>
+
+Since last update
+<the main result or change, with its key number>
+
+In flight
+<each worker: its current task, or idle>
+Pods: <how many, and what they run>
+
+Latest review
+<score and verdict as recorded, or none yet>; next expected <when>
+
+Direction changes
+<what changed in the plan and why, or none>
+
+Major issues
+<problems hit and their status, or none>
+
+Next
+<the next step>
+
+Needs from operators
+<what the operators must do, or nothing>
+```
+
+Use escalate for a diagnosed external blocker or imminent resource breach; continue
+independent work. Operator messages arrive automatically. Do not ask routine
+research questions of the operator.
 
 At the end of the run, you will be evaluated by an expert on this topic, who will
 fill out the NeurIPS review template as a qualified reviewer. Your task is to

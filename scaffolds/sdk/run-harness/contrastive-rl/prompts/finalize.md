@@ -33,5 +33,5 @@ Do not author or edit review records. The gate reviews a changed final PDF afres
 and may ask you to update the report with that exact hash and review path. Check
 the resulting REVIEW_STATUS.json, update the report and yield again. Preserve a
 rejected result honestly when resources require stopping. Post the completion
-summary to Slack with paths and the actual review status; the gate's RUN_OUTCOME.json
+summary to Slack in the progress-update layout, with the actual review status; the gate's RUN_OUTCOME.json
 is the authoritative completion/acceptance record.

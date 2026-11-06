@@ -112,10 +112,12 @@ def check_gate_messages():
 
 
 def unwrap(text):
-    """Join hard-wrapped lines into paragraphs; structural lines keep their own lines."""
-    lines = []
+    """Join hard-wrapped lines into paragraphs; structural lines, and every line inside a fence, keep their own."""
+    lines, fenced = [], False
     for line in text.rstrip("\n").split("\n"):
-        if lines and line.strip() and lines[-1].strip() and not STRUCTURAL.match(line) \
+        if line.startswith("```"):
+            fenced = not fenced
+        if not fenced and lines and line.strip() and lines[-1].strip() and not STRUCTURAL.match(line) \
                 and not STRUCTURAL.match(lines[-1]):
             lines[-1] += " " + line.strip()
         else:
@@ -161,12 +163,13 @@ class Document:
         self.parts.append(text.strip("\n") + "\n")
 
     def block(self, heading, who, body, keep=None):
-        if "```" in body:
-            raise ValueError(f"{heading} contains a code fence; render it another way")
+        if "````" in body:
+            raise ValueError(f"{heading} contains a four-backtick fence; render it another way")
+        fence = "````" if "```" in body else "```"  # a longer outer fence keeps a prompt's own fence intact
         self.add(f"### {heading}\n\n{who}")
         if keep:
             self.add(f"Keep: {keep}")
-        self.parts.append(f"```text\n{body}\n```\n")
+        self.parts.append(f"{fence}text\n{body}\n{fence}\n")
 
     def file(self, rel, who, keep=None, *, wrap=True):
         body = (HERE / rel).read_text()

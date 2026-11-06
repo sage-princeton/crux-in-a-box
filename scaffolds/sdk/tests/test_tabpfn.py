@@ -253,4 +253,9 @@ def test_render_prompts_still_renders_the_drop_in():
     spec = importlib.util.spec_from_file_location("tabpfn_render_prompts", EXAMPLE / "render_prompts.py")
     render_prompts = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(render_prompts)
-    assert render_prompts.render().startswith("# TabPFN run: prompts")
+    rendered = render_prompts.render()
+    assert rendered.startswith("# TabPFN run: prompts")
+    # A fenced template inside a prompt keeps its line breaks, and the file's block uses a longer fence around it.
+    assert "\nResources\nTime <elapsed> h of <total> h" in rendered
+    assert "````text\n" in rendered
+    assert render_prompts.unwrap("a\nb\n```text\nc\nd\n```\ne\nf") == "a b\n```text\nc\nd\n```\ne f"
