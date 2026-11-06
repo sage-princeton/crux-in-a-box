@@ -489,3 +489,15 @@ calling the model and retain pending delivery for restart. Steering telemetry us
 ordinary `span` records, with names `steering:received`, `steering:delivered`,
 `steering:delivery_failed`, `steering:read_failed`, `steering:startup_failed`,
 `steering:escalation` and `steering:escalation_outcome`.
+
+### Delegate mailbox state
+
+`DelegateMailboxes` is internal runtime bookkeeping, not a configurable component or a new extension point.
+It stores task identities, native conversation references, usage checkpoints, messages, delivery receipts and
+trace events in `state/delegates.sqlite`. Only the runtime owns lifecycle updates and PI-to-delegate routing.
+A task-bound `DelegateMailbox` exposes `ask_pi`, `report_progress` and incoming mail; neither method schedules
+or interrupts the PI. Reply IDs must belong to a question in the same task. Delivery acknowledges handoff to
+model input, not that the model understood or acted on the message. Unanswered questions and latest progress
+remain available after history compaction. Restart recovery marks in-flight tasks interrupted for explicit
+resumption, preserving their conversation references and mail. Keep this database with the rest of run state.
+This capability boundary governs scaffold tools; it is not an OS sandbox against a full-access coding agent.

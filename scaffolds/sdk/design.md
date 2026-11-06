@@ -116,3 +116,9 @@ flowchart LR
     Runtime --> Tools[Tools and coding delegates]
     Runtime --> Telemetry[Usage and telemetry]
 ```
+
+Delegate communication state belongs to the runtime. Its internal `DelegateMailboxes` store gives each brief
+a stable identity and separates PI control from delegate questions/progress. Durable messages and receipts
+live outside the agent workspace in `delegates.sqlite`; they do not themselves schedule model calls. This
+keeps transport and agent-SDK details out of routing, reply correlation and restart recovery. Runtime and
+Codex adapters integrate this store separately.
