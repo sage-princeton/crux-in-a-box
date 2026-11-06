@@ -21,7 +21,6 @@ poll_interval_seconds = 30
 
 [context]
 type = "compaction"
-max_items = 200
 context_window_tokens = 1048576
 trigger_tokens = 512000
 keep_recent_items = 20

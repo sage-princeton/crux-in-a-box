@@ -120,15 +120,13 @@ Be concise, structured, and focused on helping the next LLM seamlessly continue 
 
 
 class CompactionOptions(Options):
-    """Configure PI summary triggers and complete-exchange retention.
+    """Configure token-triggered PI summaries and complete-exchange retention.
 
-    :ivar max_items: Soft item threshold, including an existing summary.
     :ivar context_window_tokens: Configured model window, reserving 10% headroom.
     :ivar trigger_tokens: Optional earlier estimated-token threshold.
     :ivar keep_recent_items: Soft target for unsummarized recent exchanges.
     :ivar image_tokens: Estimated tokens per image, independent of encoded payload size.
     """
-    max_items: int = Field(200, ge=1, strict=True)
     context_window_tokens: int = Field(128000, ge=1, strict=True)
     trigger_tokens: int | None = Field(None, ge=1, strict=True)
     keep_recent_items: int = Field(20, ge=1, strict=True)
@@ -284,7 +282,7 @@ class Compaction(ContextStrategy):
             """
             return self._request_fits(candidate, request_context, prepare_request)
 
-        if len(selected) < self.options.max_items and fits(selected):
+        if fits(selected):
             return selected
         while True:
             cut = self._retention_boundary(items, covered, prefix, fits)

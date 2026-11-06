@@ -100,8 +100,7 @@ control routing. Check the actual route and pricing in usage records.
 Commit changes before provisioning;
 uncommitted changes are not staged on the box.
 
-The PI uses provider-independent `compaction`: at 200 selected history items or
-512,000 estimated tokens, it summarizes older exchanges and keeps roughly 20
+The PI uses provider-independent `compaction`: at 512,000 estimated tokens, it summarizes older exchanges and keeps roughly 20
 recent items, preserving complete tool exchanges and the full SQLite history.
 `context_window_tokens = 1048576` records Argon's supported window; the earlier
 token trigger leaves room for MCP schemas, provider encoding, reasoning/output

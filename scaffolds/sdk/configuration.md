@@ -75,12 +75,11 @@ Cache hits require an unchanged prefix, the model's minimum token count and an u
 
 `[context]` selects `persistent` (all history), `trim_recent` (a recent window),
 or `compaction` (a PI handoff summary plus recent complete exchanges).
-Both windowed strategies use `max_items` (default 200): `trim_recent` selects a
-recent window without a model call, while `compaction` uses it as a trigger
-to summarize older history. The count includes an existing summary as one item.
-Neither limit splits complete exchanges, so neither is a hard request-size cap.
-For compaction configurations, rename `trigger_items` to `max_items`; the
-old key is rejected.
+`trim_recent` uses `max_items` (default 200) to select a recent window without a
+model call. It preserves complete exchanges, so this is not a hard request-size cap.
+`compaction` summarizes older history only when the estimated token threshold is
+reached, regardless of item count. Remove `max_items` or the older `trigger_items`
+from compaction configurations; both keys are rejected.
 
 All retain the original SQLite history. Local compaction uses ordinary inference
 with the same model/provider/effort as the PI, including OpenRouter Argon; it does
@@ -89,15 +88,14 @@ not require a provider compaction endpoint.
 ```toml
 [context]
 type = "compaction"
-max_items = 200
 context_window_tokens = 128000
 # trigger_tokens = 90000  # optional earlier token trigger
 keep_recent_items = 20
 image_tokens = 4096      # estimated allowance per image; tune for the selected model
 ```
 
-Before every PI call, including tool continuations, compaction checks both the
-item count and an approximate token count of the selected conversation, fixed
+Before every PI call, including tool continuations, compaction checks an
+approximate token count of the selected conversation, fixed
 instructions, function/MCP tool schemas and fresh context. The token trigger
 is 90% of `context_window_tokens`, or the lower explicit `trigger_tokens`. The
 128,000-token default is a configurable conservative window, not model metadata;
