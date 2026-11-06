@@ -54,9 +54,6 @@ from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
-# Runner.run reads max_turns=None as no limit, but Agent.as_tool reads it as the SDK's DEFAULT_MAX_TURNS (10), so an
-# unlimited delegate gets a limit no run reaches instead.
-UNLIMITED_DELEGATE_TURNS = sys.maxsize
 
 
 class ModelProviderOptions(Options):
@@ -565,10 +562,12 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if name not in config.agents:
             return self._coding_tool(self.assembly.coding_agents[name])
         spec = config.agents[name]
+        max_turns = sys.maxsize if spec.max_turns == "unlimited" else spec.max_turns
         tool = self.agents[name].as_tool(
             tool_name=name,
             tool_description=spec.description,
-            max_turns=count_limit(spec.max_turns) or UNLIMITED_DELEGATE_TURNS,
+            # Agent.as_tool treats None as the SDK's default 10 turns.
+            max_turns=max_turns,
             hooks=self.hooks,
             run_config=self.run_config,
         )

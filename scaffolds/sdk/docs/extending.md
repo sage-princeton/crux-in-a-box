@@ -201,10 +201,10 @@ A drop-in always declares its `[loop]`; there is no default. Every phase names i
 `AgentConfig.max_turns` (default 30), `OpenAIAgentsOptions.max_turns` (default 50),
 and `JudgeOptions.max_turns` (default 20) accept the same `CountLimit` type.
 `count_limit` maps `"unlimited"` to `None` for the SDK's native unbounded runner.
-`Agent.as_tool` reads `None` as the SDK's default of 10 turns, so the runtime passes
-`UNLIMITED_DELEGATE_TURNS` (`sys.maxsize`) for an unlimited delegate. Existing
-numeric defaults are preserved. These settings do not disable budget checks or
-delegation policies. A resource-driven drop-in must additionally monitor
+`Agent.as_tool` treats `None` as its default 10 turns, so unlimited delegates receive
+`sys.maxsize` instead.
+Existing numeric defaults are preserved. These settings do not disable budget
+checks or delegation policies. A resource-driven drop-in must additionally monitor
 in-flight work if it disables turn limits; `phased` only checks between iterations.
 
 - It is constructed with the declared `gates` as a dependency. `run(runtime, drop_in, ctx, state, store) -> LoopOutcome` drives `runtime.run(prompt, workflow=…)` until it is done.
