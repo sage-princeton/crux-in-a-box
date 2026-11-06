@@ -38,6 +38,29 @@ network error or a provider's content-filter cutoff) is retried inside the
 turn, up to 8 times, backing off from 2 to 60 seconds. A failure that outlasts
 the retries ends the iteration and cancels its running coding agents.
 
+Codex workers retry provider failures at two levels:
+
+```toml
+[coding_agents.worker]
+type = "codex"
+# TODO(AE-319): move idle-timeout, turn-retry and backoff settings into scaffold defaults.
+# stream_idle_timeout_ms = 300000       # default; keep it above the slowest first token
+turn_retries = 2                        # further turns after a transient failure (default)
+turn_retry_backoff_seconds = [60, 300]  # wait before each; the last repeats (default)
+```
+
+The SDK hardcodes `request_max_retries = 10` and `stream_max_retries = 10`
+for both direct OpenAI and compatible Codex providers; these are not drop-in
+options. `stream_idle_timeout_ms` optionally overrides the compatible provider
+(`CRUX_CODEX_BASE_URL`) idle timeout; unset, it keeps Codex's 300 s default.
+When a turn still fails on a transient provider error (a rate limit, overload, 5xx, connection or stream failure, as Codex
+reports it), the scaffold waits and continues the brief on the same thread with
+a short factual message. Auth, context-window and usage-limit errors are not
+retried. A brief that still fails reports the error kind, its turn attempts and
+the last error, so the caller can tell an outage from a code failure. Successful
+pilot requests took up to 246 s to their first token, so do not lower
+`stream_idle_timeout_ms` below Codex's 300 s default.
+
 Each agent and coding agent declares its existing context sources in `scaffold.toml`:
 
 ```toml
@@ -151,13 +174,13 @@ The PI's persona can instruct it to estimate task duration from the brief and pr
 2. Call `engineer_result(wait=false)`. If it is still running, revise the estimate and request `rest(seconds=90, reason="Allow more time for verification")`, then check again.
 3. After collecting that result, start a larger task and choose `rest(seconds=600, reason="Allow time for the broader implementation and test suite")` before checking its result.
 
-The worker continues during each rest. The PI chooses the estimates; the scaffold does not calculate them. A rest requires no repeated PI model calls, and does not wake early when the worker finishes. Configured automatic operator steering can wake rest early. The generated result tool returns immediately with status or a completed result when `wait=false`; `wait=true` waits for completion without polling or further PI model calls. Use that native wait when the explicit rest allowance is exhausted. It does not consume rest allowance or impose a coding-task wall-time limit.
+The worker continues during each rest. The PI chooses the estimates; the scaffold does not calculate them. A rest requires no repeated PI model calls, and does not wake early when the worker finishes. Configured automatic operator steering can wake rest early. The generated result tool returns immediately with status or a completed result when `wait=false`; `wait=true` waits for completion without polling or further PI model calls, for at most `[runtime] coding_result_wait_seconds` (default 1800; `"unlimited"` removes the bound). When the bound elapses, the tool returns a running status with the brief's start time, age and seconds since its last activity, and the brief keeps running. Use that native wait when the explicit rest allowance is exhausted. It does not consume rest allowance or impose a coding-task wall-time limit, and ending or cancelling a wait never cancels the brief.
 
 With the settings above, a request for 1 second grants 10 seconds, and a request for 1200 grants 900. Each grant is also capped by the remaining allowance, even when fewer than 10 seconds remain. At zero allowance, `rest` returns an exhaustion message without sleeping. Tool inputs show the request; the response reports the granted duration and remaining allowance. The defaults are 10 seconds minimum, 300 maximum and 3600 cumulative; increasing `max_seconds` enables longer waits.
 
 Rest allowance belongs to the declared tool instance, shared by every agent using that name, and resets when the scaffold is assembled again. Use sequential rest calls as in this example: concurrent calls to the same instance can overcommit its remaining allowance because usage is recorded after each sleep completes.
 
-Each declared coding delegate has one outstanding task shared by its callers. Collect its result before starting another brief. Tasks live within the current runtime call: before returning to the loop's gates and state save, the runtime awaits outstanding work, appends any uncollected results to the turn output, and records them in the PI's existing session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Errors or cancellation cancel and await remaining tasks. Pending tasks are not restored after restart; ordinary SDK delegates retain their blocking behavior. The [delegation limits](#delegation-limits) also cover background workers. Configure [operator steering](#reliable-operator-steering-and-escalations) separately.
+Each declared coding delegate has one outstanding task shared by its callers. Collect its result before starting another brief. Tasks live within the current runtime call: before returning to the loop's gates and state save, the runtime awaits outstanding work, appends any uncollected results to the turn output, and records them in the PI's existing session with the prefix `Scaffold coding completion report`, preserving completed results for the next iteration or restart. Errors or cancellation cancel and await running tasks; finished results stay collectable. A cancelled Codex brief asks the app-server to interrupt its turn and then closes it, and both the bounded interrupt request and the close complete even if cancellation repeats. The runtime remembers each cancelled brief: its result tool then reports when the brief started, when it was cancelled, and that partial changes may be in the workspace. Worker usage is booked incrementally in the ledger and priced child generations as token reports arrive; cancellation or failure retains those increments, and the brief's final summary adds no duplicate usage. While briefs are running, finished but uncollected, or cancelled and unreported, one line in the PI's research context lists them on every model call. Pending tasks are not restored after restart; ordinary SDK delegates retain their blocking behavior. The [delegation limits](#delegation-limits) also cover background workers. Configure [operator steering](#reliable-operator-steering-and-escalations) separately.
 
 ## Delegation limits
 
@@ -334,8 +357,10 @@ python -m crux_scaffold probe --drop-in DIR           # probe the drop-in's conf
 Every orchestrator and delegated SDK model call receives a fresh resource-status
 block after context selection. It includes tokens, elapsed time, model spend,
 remaining configured budgets, and each declared external resource. The block is
-ephemeral: it does not accumulate in the conversation history. Codex usage is
-included when its turn finishes; its internal model calls are owned by Codex.
+ephemeral: it does not accumulate in the conversation history. Every SDK role,
+including coding workers, reports usage as model calls finish. Codex cumulative
+usage updates contribute only new increments to Langfuse and the local ledger,
+without waiting for the brief to end. Its internal model calls are owned by Codex.
 The `budget_status` tool forces an on-demand refresh through the same providers.
 
 ```toml

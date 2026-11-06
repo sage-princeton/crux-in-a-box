@@ -1,6 +1,7 @@
 import asyncio
 import json
 import signal
+from types import SimpleNamespace
 
 import pytest
 from agents import Runner, set_tracing_disabled
@@ -112,6 +113,44 @@ def test_blind_review_traces_every_call_and_the_reviewer_authored_verdict(langfu
     assert scaffold.context.usage.by_source["judge:revision_7"].requests == 2
 
 
+@pytest.mark.parametrize("role", ["pm", "reviewer", "judge"])
+def test_sdk_roles_export_each_model_call_before_their_task_finishes(langfuse, drop_in_dir, assemble, role):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    path = "AGENTS.md"
+    finish = "done"
+    if role == "judge":
+        configure_blind(drop_in_dir)
+        path, finish = "data.csv", '{"passed":true,"feedback":"verified","next_prompt":null}'
+    target = ScriptedModel(call("read_file", {"path": path}, "incremental-read"), say(finish))
+    models = {role: target}
+    if role != "pm":
+        models["pm"] = (ScriptedModel(call("reviewer", {"input": "review"}, "delegate"), say("done"))
+                        if role == "reviewer" else ScriptedModel(say("author")))
+    scaffold = assemble(drop_in_dir, models, env=ENV, telemetry=telemetry)
+    respond, observed = target.get_response, []
+
+    async def response(*args, **kwargs):
+        if len(target.inputs) == 1:
+            telemetry.flush()
+            finished = [span for span in exporter.get_finished_spans()
+                        if span.attributes.get("openinference.span.kind") == "LLM"
+                        and "incremental-read" in span.attributes.get("output.value", "")]
+            assert len(finished) == 1
+            assert finished[0].attributes["llm.token_count.prompt"] == 10
+            source = "judge:revision_7" if role == "judge" else role
+            assert scaffold.context.usage.by_source[source].total_tokens == 15
+            assert scaffold.context.usage.by_source[source].cache_write_input_tokens == 4
+            observed.append(role)
+        result = await respond(*args, **kwargs)
+        result.usage.input_tokens_details.cache_write_tokens = 4
+        return result
+
+    target.get_response = response
+    assert asyncio.run(scaffold.run()).status == "completed"
+    assert observed == [role]
+
+
 def test_a_stopped_scaffold_sends_what_finished_and_marks_what_did_not(langfuse):
     telemetry, exporter = langfuse
     exporter.clear()
@@ -143,6 +182,86 @@ def test_a_generation_carries_its_model_and_the_output_and_usage_set_inside_it(l
     assert engineer.attributes["langfuse.observation.output"] == "done"
     assert json.loads(engineer.attributes["langfuse.observation.usage_details"]) == {"input": 10, "output": 5}
     assert engineer.attributes["langfuse.observation.model.name"] == "gpt-codex-test"
+
+
+@pytest.mark.parametrize("ending", ["completed", "cancelled", "failed"])
+def test_worker_usage_is_exported_before_the_brief_ends_and_counted_once(langfuse, tmp_path, ending):
+    telemetry, exporter = langfuse
+    exporter.clear()
+    first = usage(100, 30, cached=25, cache_write=5, reasoning=20)
+    second = usage(250, 80, cached=75, cache_write=10, reasoning=50)
+    ctx = RunContext(Workspace(tmp_path), tmp_path / "state", ENV, UsageLedger(), Budget(), telemetry)
+
+    def charged():
+        telemetry.flush()
+        return [json.loads(span.attributes["langfuse.observation.usage_details"])
+                for span in exporter.get_finished_spans()
+                if "langfuse.observation.usage_details" in span.attributes
+                and any(json.loads(span.attributes["langfuse.observation.usage_details"]).values())]
+
+    async def run():
+        paused, resume = asyncio.Event(), asyncio.Event()
+
+        class PausedTurn:
+            async def stream(self):
+                yield SimpleNamespace(payload=first)
+                paused.set()
+                await resume.wait()
+                for snapshot in (second, second, first):  # Duplicate and stale cumulative snapshots add nothing.
+                    yield SimpleNamespace(payload=snapshot)
+                if ending == "failed":
+                    raise RuntimeError("stream lost")
+                if ending == "cancelled":
+                    raise asyncio.CancelledError
+                yield SimpleNamespace(payload=item(ANSWER))
+                yield SimpleNamespace(payload=completed())
+
+            async def interrupt(self):
+                pass
+
+        fake = FakeCodex([])
+
+        async def turn(*args, **kwargs):
+            return PausedTurn()
+
+        fake.thread.turn = turn
+        agent = CODING_AGENTS.create("engineer", {"type": "codex", "description": "x",
+                                                  "system_prompt": "prompts/worker.md"},
+                                     client_factory=lambda ctx: fake)
+        task = asyncio.create_task(agent.run("TASK", ctx))
+        try:
+            await asyncio.wait_for(paused.wait(), 2)
+            assert not task.done()
+            assert charged() == [{"input": 70, "input_cached_tokens": 25, "input_cache_creation": 5,
+                                  "output": 10, "output_reasoning_tokens": 20}]
+            assert ctx.usage.total_tokens == 130
+            assert not any(span.name == "engineer" for span in exporter.get_finished_spans())
+        finally:
+            resume.set()
+            # Always collect the worker, including when an assertion fails before it finishes.
+            result = await asyncio.gather(task, return_exceptions=True)
+        if ending == "completed":
+            assert result[0].completed
+        else:
+            assert isinstance(result[0], asyncio.CancelledError if ending == "cancelled" else RuntimeError)
+
+    with telemetry.trace("incremental worker"):
+        asyncio.run(run())
+    assert charged() == [
+        {"input": 70, "input_cached_tokens": 25, "input_cache_creation": 5,
+         "output": 10, "output_reasoning_tokens": 20},
+        {"input": 95, "input_cached_tokens": 50, "input_cache_creation": 5,
+         "output": 20, "output_reasoning_tokens": 30},
+    ]
+    persisted = UsageLedger.model_validate_json(ctx.usage.model_dump_json()).by_source["engineer"]
+    assert persisted == TokenUsage(requests=2, input_tokens=250, output_tokens=80, cached_input_tokens=75,
+                                   cache_write_input_tokens=10, reasoning_output_tokens=50)
+    spans = exporter.get_finished_spans()
+    worker = next(span for span in spans if span.name == "engineer")
+    increments = [span for span in spans if span.name == "engineer:usage"]
+    assert len(increments) == 2
+    assert all(span.parent.span_id == worker.context.span_id for span in increments)
+    assert all(span.attributes["session.id"] == ENV["RUN_SLUG"] for span in increments)
 
 
 def test_sigterm_mid_turn_sends_the_iteration_marked_as_stopped(langfuse, drop_in_dir, tmp_path):
@@ -269,11 +388,19 @@ def test_codex_reasoning_fields_and_usage_snapshots_reach_langfuse_without_doubl
     assert observed[1]["last"]["reasoningOutputTokens"] == 30
     assert all(span.parent.span_id == generation.context.span_id for span in [reasoning, *snapshots])
     assert all("langfuse.observation.usage_details" not in span.attributes for span in snapshots)
-    assert json.loads(generation.attributes["langfuse.observation.usage_details"]) == {
+    assert json.loads(generation.attributes["langfuse.observation.usage_details"]) == {"input": 0, "output": 0}
+    increments = [span for span in spans if span.name == "engineer:usage"]
+    assert len(increments) == 2
+    totals = {}
+    for span in increments:
+        assert span.parent.span_id == generation.context.span_id
+        for key, count in json.loads(span.attributes["langfuse.observation.usage_details"]).items():
+            totals[key] = totals.get(key, 0) + count
+    assert totals == {
         "input": 165, "input_cached_tokens": 75, "input_cache_creation": 10,
         "output": 30, "output_reasoning_tokens": 50}
     persisted = UsageLedger.model_validate_json(ctx.usage.model_dump_json()).by_source["engineer"]
-    assert persisted == TokenUsage(requests=1, input_tokens=250, output_tokens=80, cached_input_tokens=75,
+    assert persisted == TokenUsage(requests=2, input_tokens=250, output_tokens=80, cached_input_tokens=75,
                                    cache_write_input_tokens=10, reasoning_output_tokens=50)
 
 

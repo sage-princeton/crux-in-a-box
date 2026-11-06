@@ -12,8 +12,9 @@ import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import replace
+from datetime import datetime
 from functools import partial
-from typing import Any, Literal, Self
+from typing import Annotated, Any, Literal, Self
 
 from agents import (
     Agent,
@@ -96,6 +97,7 @@ class OpenAIAgentsOptions(Options):
     max_turns: CountLimit = 50
     model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
     background_coding: bool = False
+    coding_result_wait_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["unlimited"] = 1800
     steering: SteeringOptions | None = None
 
 
@@ -119,6 +121,7 @@ class UsageHooks(RunHooks):
             usage.input_tokens,
             usage.output_tokens,
             cached_input_tokens=usage.input_tokens_details.cached_tokens,
+            cache_write_input_tokens=usage.input_tokens_details.cache_write_tokens,
             reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens,
         )
 
@@ -142,7 +145,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self.servers: dict[str, MCPServerStdio] = {}
         self.client: AsyncOpenAI | None = None
         self.provider: OpenAIProvider | None = None
+        # TODO(AE-318): consolidate task handles, timestamps and cancellation state into coding-task objects.
         self._coding_tasks: dict[str, asyncio.Task[CodingResult]] = {}
+        self._coding_started: dict[str, datetime] = {}
+        self._coding_cancelled: dict[str, tuple[datetime, datetime]] = {}  # started, cancelled; not yet reported
         self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
 
@@ -268,34 +274,64 @@ class OpenAIAgentsRuntime(AgentRuntime):
             raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
 
     async def _cancel_coding(self) -> None:
-        tasks = list(self._coding_tasks.values())
-        for task in tasks:
-            task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-        self._coding_tasks.clear()
-
-    async def _coding_result(self, name: str, *, wait: bool) -> str:
-        task = self._coding_tasks.get(name)
-        if task is None:
-            return f"error: No uncollected coding task for '{name}'."
-        if not wait and not task.done():
-            return f"[coding agent running] {name}. Use rest before checking again, or call {name}_result(wait=true)."
-        try:
-            async with self.delegation_wait():
-                return (await task).as_tool_output()
-        except Exception as exc:  # noqa: BLE001 - Worker failures return to the PI; cancellation propagates.
-            return f"error: Coding agent '{name}' failed: {exc}"
-        finally:
-            if self._coding_tasks.get(name) is task:
+        """Cancel running briefs and remember them for their result tools; finished results stay collectable."""
+        tasks, now = list(self._coding_tasks.values()), self.assembly.context.now()
+        for name, task in list(self._coding_tasks.items()):
+            if not task.done():
+                task.cancel()
                 del self._coding_tasks[name]
+                self._coding_cancelled[name] = (self._coding_started[name], now)
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def coding_status(self) -> str:
+        now, entries = self.assembly.context.now(), []
+        for name, task in self._coding_tasks.items():
+            entries.append(f"`{name}` finished, result not collected" if task.done()
+                           else f"`{name}` {self._running(name, now)}")
+        entries += [f"`{name}` cancelled at {_stamp(stopped)} (started {_stamp(started)}), not yet reported"
+                    for name, (started, stopped) in self._coding_cancelled.items()]
+        return f"Coding briefs: {'; '.join(entries)}." if entries else ""
+
+    # TODO(AE-318): rename this formatter to _format_running_coding_task.
+    def _running(self, name: str, now: datetime) -> str:
+        started = self._coding_started[name]
+        last = max(started, self.assembly.coding_agents[name].last_activity or started)
+        return (f"running since {_stamp(started)} ({(now - started).total_seconds():.0f}s; "
+                f"last activity {(now - last).total_seconds():.0f}s ago)")
+
+    async def _coding_result(self, name: str, *, wait: bool, timeout: float | None = None) -> str:
+        # TODO(AE-318): move lifecycle decisions and status formatting into the coding-task abstraction.
+        task = self._coding_tasks.get(name)
+        if task is not None and wait and not task.done():
+            async with self.delegation_wait():
+                # Never `await task`: cancelling this call would then cancel the brief too.
+                await asyncio.wait([task], timeout=timeout)
+        if task is None or task.cancelled():
+            if name not in self._coding_cancelled:
+                return f"error: No uncollected coding task for '{name}'."
+            started, stopped = self._coding_cancelled.pop(name)
+            return (f"[coding agent cancelled] {name}: the scaffold cancelled the brief started {_stamp(started)} "
+                    f"at {_stamp(stopped)} and stopped the worker. Partial changes from it may be in the workspace.")
+        if not task.done():
+            waited = f" Waited {timeout:g}s; the brief continues." if wait and timeout is not None else ""
+            return (f"[coding agent running] {name}: {self._running(name, self.assembly.context.now())}.{waited} "
+                    f"Use rest before checking again, or call {name}_result(wait=true).")
+        if self._coding_tasks.get(name) is task:
+            del self._coding_tasks[name]
+        try:
+            return task.result().as_tool_output()
+        except Exception as exc:  # noqa: BLE001 - Worker failures return to the PI.
+            return f"error: Coding agent '{name}' failed: {exc}"
 
     def _coding_result_tool(self, name: str) -> FunctionTool:
+        limit = self.options.coding_result_wait_seconds
+
         async def invoke(_: ToolContext[Any], raw: str) -> str:
             try:
                 args = CodingResultArguments.model_validate_json(raw)
             except ValidationError as exc:
                 return f"error: {exc}"
-            return await self._coding_result(name, wait=args.wait)
+            return await self._coding_result(name, wait=args.wait, timeout=None if limit == "unlimited" else limit)
 
         return FunctionTool(
             name=f"{name}_result",
@@ -591,13 +627,21 @@ class OpenAIAgentsRuntime(AgentRuntime):
                     return await agent.run(brief, ctx)
 
             if self.options.background_coding:
-                if agent.name in self._coding_tasks:
-                    return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
+                if task := self._coding_tasks.get(agent.name):
+                    if task.done():
+                        return f"error: Collect {agent.name}_result before starting another brief for '{agent.name}'."
+                    return (f"error: '{agent.name}' is still {self._running(agent.name, ctx.now())}. Check it with "
+                            f"{agent.name}_result(wait=false) or collect it with {agent.name}_result(wait=true) "
+                            "before starting another brief.")
+                self._coding_started[agent.name] = ctx.now()
                 self._coding_tasks[agent.name] = asyncio.create_task(execute())
+                cancelled = self._coding_cancelled.pop(agent.name, None)
                 return (
                     f"[coding agent started] {agent.name}. Choose rest durations while it works; "
                     f"call {agent.name}_result(wait=false) to check or {agent.name}_result(wait=true) to await "
                     "and collect the result."
+                    + (f" Its previous brief was cancelled at {_stamp(cancelled[1])}; partial changes from it may be "
+                       "in the workspace." if cancelled else "")
                 )
             return (await execute()).as_tool_output()
 
@@ -610,6 +654,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
             on_invoke_tool=invoke,
             params_json_schema=ensure_strict_json_schema(BriefArguments.model_json_schema()),
         )
+
+
+def _stamp(moment: datetime) -> str:
+    return moment.isoformat(timespec="seconds")
 
 
 def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str]) -> MCPServerStdio:

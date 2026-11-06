@@ -94,6 +94,8 @@ workspace_context = ["PLAN.md"]
 tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
 max_turns = "unlimited"
 
+# The SDK fixes Codex's request and stream retry limits at 10 for every worker.
+# Keep the native 300 s idle timeout: successful pilot requests took up to 246 s to the first token.
 [coding_agents.worker_a]
 type = "codex"
 description = "Full Codex research assistant: investigate, implement, experiment, or write within the brief's file scope. May use native subagents."

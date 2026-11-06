@@ -1,5 +1,7 @@
 import asyncio
 import json
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from test_coding_agents import ANSWER, COMMAND, FakeCodex, RecordingTelemetry, completed, item, usage
@@ -213,6 +215,94 @@ def test_error_or_cancel_stops_worker_before_runtime_exits(drop_in_dir, assemble
     assert events == ["worker-stopped", "runtime-exited"]
 
 
+START = datetime(2026, 11, 4, 10, tzinfo=UTC)
+
+
+def test_a_bounded_result_wait_reports_the_running_brief_and_leaves_it_running(drop_in_dir, assemble):
+    background(drop_in_dir)
+    edit(drop_in_dir, "scaffold.toml", "background_coding = true",
+         "background_coding = true\ncoding_result_wait_seconds = 0.2")
+    pm = ScriptedModel(call("engineer", {"brief": "long"}, "start"),
+                       call("engineer_result", {"wait": True}, "bounded"),
+                       call("engineer_result", {"wait": True}, "collect"), say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm})
+    worker, respond, clock = scaffold.coding_agents["engineer"], pm.get_response, [START]
+    execute = worker.execute
+    scaffold.context.now = lambda: clock[0]
+
+    async def run():
+        release = asyncio.Event()
+
+        async def delayed(brief, ctx):
+            await release.wait()
+            return await execute(brief, ctx)
+
+        async def response(*args, **kwargs):
+            clock[0] += timedelta(seconds=60)
+            result = await respond(*args, **kwargs)
+            if result.output[0].type == "function_call" and result.output[0].call_id == "collect":
+                release.set()
+            return result
+
+        worker.execute, pm.get_response = delayed, response
+        return await asyncio.wait_for(scaffold.run(), 3)
+
+    assert asyncio.run(run()).final_output == "done"
+    running = "running since 2026-11-04T10:01:00+00:00 (60s; last activity 60s ago)"
+    outputs = tool_outputs(pm.inputs[-1])
+    assert outputs[1] == (f"[coding agent running] engineer: {running}. Waited 0.2s; the brief continues. "
+                          "Use rest before checking again, or call engineer_result(wait=true).")
+    assert outputs[2] == "[coding agent completed]\nwrote site/NOTE.md"
+    assert len(worker.briefs) == 1
+    assert f"Coding briefs: `engineer` {running}." in str(pm.inputs[2])
+    assert "Coding briefs" not in str(pm.inputs[0]) + str(pm.inputs[-1])
+
+
+def test_a_cancelled_brief_stops_once_and_is_reported_to_its_result_tool(drop_in_dir, assemble):
+    background(drop_in_dir)
+    pm = ScriptedModel(call("engineer", {"brief": "work"}, "start"),
+                       call("engineer_result", {"wait": True}, "wait"),
+                       call("engineer_result", {"wait": False}, "check"), say("finalized"))
+    scaffold = assemble(drop_in_dir, {"pm": pm})
+    scaffold.context.now = lambda: START
+    runtime, events = scaffold.runtime, []
+
+    async def run():
+        waiting, wait = asyncio.Event(), runtime.delegation_wait
+
+        @asynccontextmanager
+        async def delegation_wait():
+            waiting.set()
+            async with wait():
+                yield
+
+        async def worker(brief, ctx):
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                await asyncio.sleep(0.01)  # Stands in for the client close that a second cancellation would abandon.
+                events.append("stopped")
+                raise
+
+        scaffold.coding_agents["engineer"].execute, runtime.delegation_wait = worker, delegation_wait
+        async with runtime:
+            first = asyncio.create_task(runtime.run("start", workflow="work"))
+            await waiting.wait()
+            first.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await first
+            return await runtime.run("finalize", workflow="finalize")
+
+    assert asyncio.run(run()).final_output == "finalized"
+    assert events == ["stopped"]
+    stamp = "2026-11-04T10:00:00+00:00"
+    assert tool_outputs(pm.inputs[-1])[-1] == (
+        f"[coding agent cancelled] engineer: the scaffold cancelled the brief started {stamp} at {stamp} and "
+        "stopped the worker. Partial changes from it may be in the workspace.")
+    assert f"Coding briefs: `engineer` cancelled at {stamp} (started {stamp}), not yet reported." in str(pm.inputs[2])
+    assert "Coding briefs" not in str(pm.inputs[-1])
+
+
 def test_generated_result_tool_name_collisions_fail_before_model_calls(drop_in_dir, assemble):
     background(drop_in_dir)
     edit(drop_in_dir, "scaffold.toml", '"write_file", "rest"', '"write_file", "rest", "engineer_result"')
@@ -279,7 +369,8 @@ def test_codex_stream_delivers_progress_during_rest_and_final_result_to_pi(drop_
     assert "running" in tool_outputs(pm.inputs[-1])[2].lower()
     assert tool_outputs(pm.inputs[-1])[-1] == "[coding agent completed]\nAdded location; 6 tests pass."
     assert scaffold.context.usage.by_source["engineer"].total_tokens == 1500
-    assert len(telemetry.generations) == 1
+    assert [(name, tokens) for name, *_, tokens in telemetry.generations] == [
+        ("engineer:usage", 1500), ("engineer", 0)]
     assert len(fake.starts) == 1
 
 
