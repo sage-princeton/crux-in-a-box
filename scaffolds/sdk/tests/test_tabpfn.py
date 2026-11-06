@@ -179,9 +179,10 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     assert latest["verdict"] == verdict.model_dump()
 
     scaffold.context.resources = scaffold.context.steering = None
-    scaffold.strategy.options = scaffold.strategy.options.model_copy(update={"max_items": 3, "keep_recent_items": 1})
+    scaffold.strategy.options = scaffold.strategy.options.model_copy(update={"trigger_tokens": 50000,
+                                                                            "keep_recent_items": 1})
     summary = ScriptedModel(say("The review was lost from this handoff."))
-    history = [{"role": "user", "content": feedback}, {"role": "assistant", "content": "Old review received."},
+    history = [{"role": "user", "content": feedback * 10}, {"role": "assistant", "content": "Old review received."},
                {"role": "user", "content": "Finalize"}]
     selected = asyncio.run(scaffold.runtime._select_input(CallModelData(
         model_data=ModelInputData(input=history, instructions=""), agent=Agent(name="pi", model=summary), context=None)))
