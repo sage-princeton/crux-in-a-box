@@ -112,3 +112,18 @@ def test_coding_context_is_refreshed_in_the_brief_not_developer_instructions(dro
     assert worker.briefs[0].endswith("Implement follow-up")
     assert "Current experiment result." not in worker.instructions[0]
     assert "Engineering standing context." in worker.instructions[0]
+
+
+def test_coding_brief_carries_the_resource_status_at_dispatch(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/ENGINEERING.md"]',
+         'context = ["workspace/ENGINEERING.md"]\nworkspace_context = ["STATE.md"]')
+    scaffold = assemble(drop_in_dir)
+    worker = scaffold.coding_agents["engineer"]
+    (drop_in_dir / "workspace/STATE.md").write_text("Current experiment result.")
+    status = asyncio.run(scaffold.context.budget_status())
+    asyncio.run(worker.run("Implement follow-up", scaffold.context))
+    brief = worker.briefs[0]
+    assert f"<resource_status>\n{status}\n</resource_status>" in brief
+    assert brief.index("<research_context>") < brief.index("<resource_status>") < brief.index("# Current task")
+    assert brief.endswith("Implement follow-up")
+    assert "elapsed time:" not in worker.instructions[0]

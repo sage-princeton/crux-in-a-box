@@ -140,6 +140,8 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
     agent = cls("engineer", options, developer_instructions="# Standing context", client_factory=lambda ctx: fake)
     env = {"OPENAI_API_KEY": "sk-test", "CRUX_MODEL": "gpt-codex-test", "CRUX_REASONING_EFFORT": "high"}
     ctx = RunContext(Workspace(tmp_path), tmp_path / "state", env, UsageLedger(), Budget(), telemetry)
+    brief = (f"<resource_status>\n{asyncio.run(ctx.budget_status())}\n</resource_status>\n\n"
+             "# Current task\n\nTASK: add location")
     result = asyncio.run(agent.run("TASK: add location", ctx))
     assert fake.logins == ["sk-test"]
     assert fake.starts == [{"cwd": str(tmp_path), "model": "gpt-codex-test", "sandbox": Sandbox.workspace_write,
@@ -147,7 +149,7 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
                             "developer_instructions": "# Standing context",
                             "config": {"model_context_window": 1_000_000,
                                        "model_reasoning_summary": "auto", "project_doc_max_bytes": 0}}]
-    assert fake.thread.turns == [("TASK: add location", {"effort": "high"})]
+    assert fake.thread.turns == [(brief, {"effort": "high"})]
     assert log == ["stream:ItemCompletedNotification", "record:codex:commandExecution:tool",
                    "stream:ThreadTokenUsageUpdatedNotification", "record:codex:usage:span",
                    "stream:ItemCompletedNotification", "record:codex:agentMessage:span",
@@ -158,7 +160,7 @@ def test_codex_runs_one_fresh_thread_per_brief_and_sends_each_item_as_it_complet
             result.usage.reasoning_output_tokens) == (900, 200, 40)
     assert telemetry.generations[-1] == ("engineer", "gpt-codex-test",
                                       {"instructions": "# Standing context", "messages": [
-                                          {"role": "user", "content": "TASK: add location"}]},
+                                          {"role": "user", "content": brief}]},
                                       "Added location; 6 tests pass.", 0)
     assert [(name, tokens) for name, *_, tokens in telemetry.generations] == [
         ("engineer:usage", 1500), ("engineer", 0)]
@@ -208,11 +210,13 @@ def test_a_transient_turn_failure_continues_on_the_same_thread_and_books_the_lat
                      later=[[usage(3000, 400), item(ANSWER), completed()]])
     agent = CODING_AGENTS.create("engineer", CODEX, client_factory=lambda ctx: fake)
     ctx = retry_context(tmp_path, sleeps, telemetry)
+    status = asyncio.run(ctx.budget_status())
     result = asyncio.run(agent.run("TASK", ctx))
     assert len(fake.starts) == 1
     assert [brief for brief, _ in fake.thread.turns] == [
-        "TASK", ("The previous turn stopped on a provider error (responseStreamDisconnected, HTTP 502). "
-                 "Continue the task from where it stopped.")]
+        f"<resource_status>\n{status}\n</resource_status>\n\n# Current task\n\nTASK",
+        ("The previous turn stopped on a provider error (responseStreamDisconnected, HTTP 502). "
+         "Continue the task from where it stopped.")]
     assert sleeps == [60]
     assert (result.completed, result.final_response) == (True, ANSWER["text"])
     assert ctx.usage.by_source["engineer"].total_tokens == 3400
