@@ -562,11 +562,12 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if name not in config.agents:
             return self._coding_tool(self.assembly.coding_agents[name])
         spec = config.agents[name]
+        max_turns = sys.maxsize if spec.max_turns == "unlimited" else spec.max_turns
         tool = self.agents[name].as_tool(
             tool_name=name,
             tool_description=spec.description,
             # Agent.as_tool treats None as the SDK's default 10 turns.
-            max_turns=sys.maxsize if spec.max_turns == "unlimited" else spec.max_turns,
+            max_turns=max_turns,
             hooks=self.hooks,
             run_config=self.run_config,
         )
