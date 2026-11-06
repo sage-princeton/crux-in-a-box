@@ -502,7 +502,7 @@ remain available after history compaction. Restart recovery marks in-flight task
 resumption, preserving their conversation references and mail. Keep this database with the rest of run state.
 This capability boundary governs scaffold tools; it is not an OS sandbox against a full-access coding agent.
 
-`openai-agents` also accepts `interactive_delegates` (default false). In this mode, research-assistant tools
+`openai-agents` also accepts `interactive_delegates` (default false). In this mode, SDK and coding-delegate tools
 return persistent task IDs immediately. Internal `DelegateTasks` owns asyncio scheduling, cancellation,
 result collection and telemetry export; `DelegateMailboxes` owns persistence. The runtime supplies the SDK
 execution callback and a context-strategy session keyed by task ID. Only the orchestrator receives lifecycle
@@ -510,3 +510,12 @@ and steering tools. Its `request_progress` asks active work for a new report; de
 `ask_pi`/`report_progress`. SDK mail is injected at model boundaries and persisted in the session. Result waits
 release on unresolved questions so a PI can answer, without delegate-initiated PI turns. A runtime turn with
 outstanding uncollected work is incomplete; the phased loop skips gates until it finishes.
+
+`CodingAgent.run` accepts an optional task-bound `mailbox`. Implementations receive it as `self.mailbox`
+during `execute`; the base class restores/persists cumulative conversation usage for interactive follow-ups.
+An interactive coding implementation must retain its conversation, consume queued PI mail and report usage
+cumulatively across resumed turns. Codex stores its native thread ID, resumes that thread, and forwards mail
+through native steering. `codex_client` configures the task-bound stdio `crux_delegate` MCP server (no new
+service or dependency). The MCP module contains no agent SDK logic. Receipts are persisted only after native
+acceptance; a racing ended turn leaves mail queued for a follow-up. Existing noninteractive coding runs retain
+fresh-thread, per-brief usage behavior.

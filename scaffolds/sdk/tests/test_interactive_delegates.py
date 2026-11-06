@@ -130,7 +130,8 @@ def test_pending_pi_message_is_in_every_active_delegate_call(drop_in_dir, assemb
                          reply_to=None, interrupt=False)
             await runtime.delegates.tasks[task['id']]
             assert len(researcher.inputs) == 2
-            assert all('Prioritize evidence' in json.dumps(items) for items in researcher.inputs)
+            assert all(json.dumps(items).count('Prioritize evidence') == 1 for items in researcher.inputs)
+            assert json.dumps(researcher.inputs[-1]).index('Prioritize evidence') < json.dumps(researcher.inputs[-1]).index('PM standing context')
             assert not runtime.delegates.mailboxes.pending('delegate', task['id'])
     asyncio.run(run())
 
@@ -156,4 +157,21 @@ def test_mail_arriving_during_final_response_gets_a_followup_turn(drop_in_dir, a
             result = await invoke(runtime, 'reviewer_result', wait=False)
             assert result['result'] == 'updated result'
             assert 'Review the new evidence' in json.dumps(researcher.inputs[-1])
+    asyncio.run(run())
+
+
+def test_coding_interrupt_before_start_retains_the_original_brief(drop_in_dir, assemble):
+    interactive(drop_in_dir)
+    edit(drop_in_dir, 'scaffold.toml', 'delegates = ["reviewer"]', 'delegates = ["engineer"]')
+    scaffold = assemble(drop_in_dir)
+
+    async def run():
+        async with scaffold.runtime as runtime:
+            task = await invoke(runtime, 'engineer', brief='ORIGINAL assignment')
+            await invoke(runtime, 'interrupt_delegate', task_id=task['id'])
+            assert not scaffold.coding_agents['engineer'].briefs
+            await invoke(runtime, 'send_message', task_id=task['id'], message='Proceed now',
+                         reply_to=None, interrupt=False)
+            await asyncio.wait_for(runtime.delegates.tasks[task['id']], 1)
+            assert 'ORIGINAL assignment' in scaffold.coding_agents['engineer'].briefs[0]
     asyncio.run(run())

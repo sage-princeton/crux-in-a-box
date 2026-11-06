@@ -204,7 +204,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             spec = config.agents[name]
             tools = [self._function_tool(self.assembly.tools[tool]) for tool in spec.tools]
             tools += [self._delegate(delegate) for delegate in spec.delegates]
-            if self.options.background_coding:
+            if self.options.background_coding and not self.delegates:
                 tools += [
                     self._coding_result_tool(delegate)
                     for delegate in spec.delegates
@@ -529,8 +529,12 @@ class OpenAIAgentsRuntime(AgentRuntime):
             if steering.state["status"] != "ok":
                 annotations.append(f"Steering transport status: {steering.state['status']}")
         history = [item for item in data.model_data.input if not is_standing_context(item)]
-        history.extend(item for item in pinned_mail if item not in history)
         prompt_item = history[-1] if history and history[-1].get("role") == "user" else None
+        if pinned_mail:
+            session = self.assembly.context_strategy.session(session_id, self.assembly.context)
+            for index, item in enumerate(await session.get_items()):
+                if item in pinned_mail and item not in history:
+                    history.insert(index, item)
         if is_orchestrator and self._steering_items:
             stored = [item for item in await self.session.get_items() if not is_standing_context(item)]
             for index, item in enumerate(stored):
@@ -668,7 +672,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     def _delegate(self, name: str) -> FunctionTool:
         config = self.assembly.drop_in.config
-        if self.delegates and name in config.agents:
+        if self.delegates:
             return self._interactive_tool(name)
         if name not in config.agents:
             return self._coding_tool(self.assembly.coding_agents[name])
@@ -703,7 +707,9 @@ class OpenAIAgentsRuntime(AgentRuntime):
     def _interactive_tool(self, name: str) -> FunctionTool:
         async def start(args):
             return self.delegates.start(name, args.brief)
-        return self._json_tool(name, self.assembly.drop_in.config.agents[name].description +
+        config = self.assembly.drop_in.config
+        description = (config.agents[name].description if name in config.agents else self.assembly.coding_agents[name].description)
+        return self._json_tool(name, description +
                                f' Starts in the background; collect with {name}_result.', BriefArguments, start)
 
     # TODO(AE-329): Move communication tool construction into a dedicated class.
@@ -748,21 +754,31 @@ class OpenAIAgentsRuntime(AgentRuntime):
                  self._json_tool('delegate_inbox', 'Inspect delegate status, questions and progress. Optionally wait for mail.',
                                  InboxArguments, inbox)]
         for delegate in config.agents[name].delegates:
-            if delegate in config.agents:
-                tools.append(self._json_tool(f'{delegate}_result', 'Collect the result; waiting returns early for a question.',
-                                              CodingResultArguments, partial(result, delegate=delegate)))
+            tools.append(self._json_tool(f'{delegate}_result', 'Collect the result; waiting returns early for a question.',
+                                          CodingResultArguments, partial(result, delegate=delegate)))
         return tools
 
     async def _run_delegate(self, task: dict, prompt: str) -> str:
         ctx = self.assembly.context
         name = task['name']
+        if name in self.assembly.coding_agents:
+            if prompt != task['brief'] and not self.delegates.mailboxes.get(task['id'])['conversation_id']:
+                prompt = task['brief'] + '\n\n' + prompt
+            async with self.delegation_slot(background=True):
+                result = await self.assembly.coding_agents[name].run(
+                    prompt, ctx, mailbox=self.delegates.mailboxes.delegate(task['id']))
+                if not result.completed:
+                    raise RuntimeError(result.as_tool_output())
+                return result.as_tool_output()
         session = self.assembly.context_strategy.session(task['id'], ctx)
         if prompt != task['brief'] and not await session.get_items():
             prompt = task['brief'] + '\n\n' + prompt
+        # Persist the incoming turn before inference so injected mail retains its true chronological position.
+        await session.add_items([{'role': 'user', 'content': prompt}])
         token = self._delegate_context.set((task['id'], []))
         try:
             async with self.delegation_slot(background=True):
-                result = await Runner.run(self.agents[name], prompt, context=ctx, session=session, hooks=self.hooks,
+                result = await Runner.run(self.agents[name], [], context=ctx, session=session, hooks=self.hooks,
                                           max_turns=count_limit(self.assembly.drop_in.config.agents[name].max_turns),
                                           run_config=replace(self.run_config, workflow_name=f"delegate:{name}:{task['id']}"))
                 return str(result.final_output)

@@ -615,12 +615,14 @@ uv pip install --python .venv/bin/python -r requirements.txt -r ../../requiremen
 
 Contribution guidelines are in [AGENTS.md](AGENTS.md). Tests never call a model or the network. They use scripted models, a scripted coding agent, a fake runtime, a fake stdio Slack MCP server and an in-memory span exporter.
 
-### Interactive SDK delegates
+### Interactive delegates
 
-Set `runtime.interactive_delegates = true` to run research assistants asynchronously with persistent
+Set `runtime.interactive_delegates = true` to run research assistants and Codex workers asynchronously with persistent
 conversations. This mode supports direct PI delegates (no nested SDK delegation). This is opt-in; existing blocking SDK delegates and `background_coding` behavior remain the
 default. Each dispatch returns a task ID. The PI gets `send_message`, `interrupt_delegate`, `request_progress`,
-`delegate_inbox` and `<assistant>_result`; assistants get only `ask_pi` and `report_progress`.
+`delegate_inbox` and `<delegate>_result`; delegates get only `ask_pi` and `report_progress`.
+Each declared delegate name has one outstanding conversation. Collect its result before assigning a new
+brief; declare separate delegates for concurrent conversations. Existing global concurrency limits still apply.
 
 `send_message` queues steering or a reply (`reply_to` is the question's message ID). An ended task resumes the
 same conversation; `interrupt=true` stops active work before resuming it. `interrupt_delegate` stops without
@@ -633,3 +635,11 @@ State and mail live in `state/delegates.sqlite`, SDK conversations in `state/ses
 unfinished tasks are interrupted and require explicit PI resumption. Latest progress and unanswered questions
 are included independently of conversation history selection. Message/lifecycle events are exported as
 `delegate:*` telemetry spans with stable event and task IDs. Delivery means input handoff, not model compliance.
+
+Interactive mode takes precedence over `background_coding`. Codex upward mail uses a local stdio MCP server
+with a task-bound identity and only two tools; downward mail uses native `turn/steer`. Interruption uses native
+`turn/interrupt`, drains the turn and closes the app-server. Background jobs/pods launched by a worker are not
+implicitly terminated. Follow-up work resumes the stored native thread. Its cumulative token checkpoint
+prevents charging earlier turns again. Keep `state/codex/` alongside the mailbox and usage ledger on restart.
+The two local mailbox tools are explicitly approved even under `deny_all`; other worker permissions are
+unchanged. Missing mailbox tools fail the task before worker inference.

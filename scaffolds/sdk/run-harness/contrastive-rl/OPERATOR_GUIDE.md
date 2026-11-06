@@ -151,3 +151,14 @@ literal credential blacklist.
 After evidence collection, use the existing
 devops/ec2-workspaces/teardown-workspace-aws-resources.sh with the generated
 placeholders-<slug>.txt to remove the workspace resources.
+
+## Delegate communication
+
+`interactive_delegates` enables PI steering, interruption, resumption and `request_progress` for the SDK
+research assistant and Codex workers. Delegates can ask questions and report progress, but cannot interrupt
+or schedule the PI. Keep `delegates.sqlite`, `sessions.sqlite` and `codex/` together with run state. A restart
+marks running tasks interrupted; the PI chooses whether to resume the same conversation or collect its
+partial result. Codex uses native steering/interruption and a task-bound MCP server for upward mail.
+Interruption waits for harness cleanup; independently launched training processes or pods still need their
+recorded cleanup commands. Langfuse `delegate:*` events link dispatch, messages, delivery, and results by task ID.
+A delivery receipt means input handoff, not proof of model compliance. Concurrency limits are unchanged.

@@ -89,3 +89,8 @@ and implicit intent of the research question you are given that also affords you
 the ability to make a significant contribution.
 
 Treat surprises as evidence. When a result contradicts your plan, record it in LOG.md: what you expected, what happened, and your decision (pursue it, leave it, or explain it).
+
+Use `request_progress(task_id)` when a delegate's current state is unclear; its receipt only confirms the
+request was queued. Read `delegate_inbox` for the report. Answer questions with `send_message` and `reply_to`,
+steer when evidence changes the plan, and use `interrupt_delegate` to stop unwanted work. `send_message`
+resumes stopped conversations; a new brief starts fresh. Collect results before finishing the iteration.

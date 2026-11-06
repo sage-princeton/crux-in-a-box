@@ -1,4 +1,4 @@
-"""Coding agents: non-interactive coding-agent SDK sessions (Codex today, Claude Code later) that agents delegate
+"""Coding agents: native coding-agent SDK conversations (Codex today, Claude Code later) that agents delegate
 implementation to. The coding agent brings its own proprietary scaffold; the drop-in adds standing context and can
 replace its system prompt."""
 
@@ -6,19 +6,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing, suppress
 from datetime import datetime
+from functools import partial
+from pathlib import Path
 from typing import Any, Literal
 
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
-from openai_codex.generated.v2_all import ErrorNotification, ItemCompletedNotification, TurnError
+from openai_codex.generated.v2_all import (
+    ErrorNotification,
+    ItemCompletedNotification,
+    ListMcpServerStatusResponse,
+    TurnError,
+)
 from openai_codex.types import ThreadTokenUsageUpdatedNotification, TurnCompletedNotification, TurnStatus
 from pydantic import BaseModel, Field, NonNegativeFloat
 
 from crux_scaffold.components import Component, Registry
 from crux_scaffold.config import StandingContextOptions
+from crux_scaffold.delegate_mailboxes import DelegateMailbox
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
@@ -63,6 +72,7 @@ class CodingAgent(Component):
         # TODO(AE-320): make this cumulative usage state private and update internal references and test doubles.
         self.usage_so_far = TokenUsage()
         self._reported_usage = TokenUsage()
+        self.mailbox: DelegateMailbox | None = None
 
     @property
     def developer_instructions(self) -> str:
@@ -73,7 +83,7 @@ class CodingAgent(Component):
     def description(self) -> str:
         return self.options.description
 
-    async def run(self, brief: str, ctx: RunContext) -> CodingResult:
+    async def run(self, brief: str, ctx: RunContext, *, mailbox: DelegateMailbox | None = None) -> CodingResult:
         # A coding agent has no per-call resource status or budget_status tool, so its brief carries the status
         # as of dispatch.
         blocks = [f"<{tag}>\n{text}\n</{tag}>" for tag, text in
@@ -82,8 +92,9 @@ class CodingAgent(Component):
         if blocks:
             brief = "\n\n".join([*blocks, f"# Current task\n\n{brief}"])
         request = {"instructions": self.developer_instructions, "messages": [{"role": "user", "content": brief}]}
-        self.last_activity, self.usage_so_far, result = ctx.now(), TokenUsage(), None
-        self._reported_usage = TokenUsage()
+        self.mailbox = mailbox
+        self._reported_usage = TokenUsage.model_validate(mailbox.store.get(mailbox.task_id)['usage']) if mailbox else TokenUsage()
+        self.last_activity, self.usage_so_far, result = ctx.now(), self._reported_usage.model_copy(), None
         with ctx.telemetry.generation(self.name, ctx.model, request) as outcome:
             # The brief is a summary container. Its completed usage increments are priced as children.
             outcome.usage = TokenUsage()
@@ -92,7 +103,10 @@ class CodingAgent(Component):
                 outcome.output = result.final_response
             finally:
                 # Final-only implementations still account for their call; streamed totals are already booked.
-                self.report_usage(result.usage if result else self.usage_so_far, ctx)
+                try:
+                    self.report_usage(result.usage if result else self.usage_so_far, ctx)
+                finally:
+                    self.mailbox = None
         return result
 
     def report_usage(self, total: TokenUsage, ctx: RunContext, *, request: Any = None) -> None:
@@ -109,6 +123,8 @@ class CodingAgent(Component):
             return
         self._reported_usage = total.model_copy(update={"requests": self._reported_usage.requests + 1})
         self.usage_so_far = self._reported_usage.model_copy()
+        if self.mailbox:
+            self.mailbox.store.update(self.mailbox.task_id, usage=self.usage_so_far.model_dump())
         ctx.usage.add(self.name, delta.input_tokens, delta.output_tokens,
                       cached_input_tokens=delta.cached_input_tokens,
                       cache_write_input_tokens=delta.cache_write_input_tokens,
@@ -144,7 +160,8 @@ CONTINUE_AFTER_PROVIDER_ERROR = ("The previous turn stopped on a provider error 
                                  "Continue the task from where it stopped.")
 
 
-def codex_client(ctx: RunContext, options: CodexOptions | None = None) -> AsyncCodex:
+def codex_client(ctx: RunContext, options: CodexOptions | None = None, *,
+                 mailbox: DelegateMailbox | None = None) -> AsyncCodex:
     # TODO(AE-303): simplify provider selection and settings when OpenRouter is the only supported route.
     base_url = ctx.env.get("CRUX_CODEX_BASE_URL")
     # Built-in provider IDs cannot be overridden, so direct OpenAI also needs our own provider entry.
@@ -170,6 +187,14 @@ def codex_client(ctx: RunContext, options: CodexOptions | None = None) -> AsyncC
             settings["model_providers.crux-compatible.stream_idle_timeout_ms"] = options.stream_idle_timeout_ms
     else:
         settings["model_providers.crux-openai.requires_openai_auth"] = True
+    if mailbox:
+        settings['mcp_servers.crux_delegate.command'] = sys.executable
+        settings['mcp_servers.crux_delegate.env.PYTHONPATH'] = str(Path(__file__).resolve().parent.parent)
+        # These two local, task-bound writes are part of delegation, including under deny_all.
+        for tool in ('ask_pi', 'report_progress'):
+            settings[f'mcp_servers.crux_delegate.tools.{tool}.approval_mode'] = 'approve'
+        settings['mcp_servers.crux_delegate.args'] = [
+            '-m', 'crux_scaffold.delegate_mcp', str(mailbox.store.path), mailbox.task_id]
     overrides = tuple(f"{name}={json.dumps(value)}" for name, value in settings.items())
     return AsyncCodex(CodexConfig(
         cwd=str(ctx.workspace.root), config_overrides=overrides,
@@ -189,17 +214,20 @@ class CodexCodingAgent(CodingAgent):
                  client_factory: ClientFactory | None = None) -> None:
         super().__init__(name, options, developer_instructions=developer_instructions, research_context=research_context,
                          system_prompt=system_prompt)
-        self.client_factory = client_factory or (lambda ctx: codex_client(ctx, options))
+        self.client_factory = client_factory or (lambda ctx: codex_client(ctx, options, mailbox=self.mailbox))
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
         (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
-        codex, turn, streaming = self.client_factory(ctx), None, None
+        codex, turn, streaming, steering = self.client_factory(ctx), None, None, None
+        mailbox = self.mailbox
         try:
             await codex.__aenter__()  # Inside the try: closing after a failed start is safe.
             if ctx.env.get("OPENAI_API_KEY") and not ctx.env.get("CRUX_CODEX_BASE_URL"):
                 await codex.login_api_key(ctx.env["OPENAI_API_KEY"])
-            thread = await codex.thread_start(
+            conversation_id = mailbox.store.get(mailbox.task_id)['conversation_id'] if mailbox else None
+            start = partial(codex.thread_resume, conversation_id) if conversation_id else codex.thread_start
+            thread = await start(
                 cwd=str(ctx.workspace.root), model=ctx.model, sandbox=Sandbox(self.options.sandbox),
                 approval_mode=ApprovalMode(self.options.approval_mode),
                 base_instructions=self.system_prompt or None,
@@ -207,10 +235,20 @@ class CodexCodingAgent(CodingAgent):
                 # Standing context arrives through `context`, so Codex doesn't also load the workspace's AGENTS.md.
                 config={"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto",
                         "project_doc_max_bytes": 0})
-            final_response, usage, message, attempts = "", TokenUsage(requests=1), brief, 0
+            if mailbox:
+                await check_mailbox_tools(codex, thread.id)
+            final_response, usage, message, attempts = "", self.usage_so_far.model_copy(), brief, 0
             # TODO(AE-319): share retry policy and backoff with SDK model calls while preserving turn/accounting semantics.
             while True:
+                pending = mailbox.pending() if mailbox else []
+                if pending:
+                    message += '\n\n<pi_messages>\n' + json.dumps(pending) + '\n</pi_messages>'
                 turn, ended, retrying = await thread.turn(message, effort=ctx.reasoning_effort), None, None
+                if mailbox:
+                    # Only retain a native thread once it has accepted the brief.
+                    mailbox.store.update(mailbox.task_id, conversation_id=thread.id)
+                if pending:
+                    mailbox.store.delivered([m['id'] for m in pending])
                 self.last_activity, attempts = ctx.now(), attempts + 1
                 async def read_turn(active_turn=turn):
                     nonlocal final_response, usage, retrying, ended
@@ -242,7 +280,13 @@ class CodexCodingAgent(CodingAgent):
                                 ended = payload.turn
 
                 streaming = asyncio.create_task(read_turn())
+                if mailbox:
+                    steering = asyncio.create_task(steer_turn(turn, streaming, mailbox, ctx))
                 await asyncio.shield(streaming)
+                if steering:
+                    steering.cancel()
+                    await asyncio.gather(steering, return_exceptions=True)
+                    steering = None
                 failed = ended is not None and ended.status == TurnStatus.failed
                 error = ended.error.message if failed and ended.error else "none reported"
                 label, transient = classify(ended.error, retrying) if failed else ("", False)
@@ -269,6 +313,9 @@ class CodexCodingAgent(CodingAgent):
             raise
         finally:
             try:
+                if steering is not None:
+                    steering.cancel()
+                    await uninterrupted(asyncio.gather(steering, return_exceptions=True))
                 if streaming is not None and not streaming.done():
                     streaming.cancel()
                     await uninterrupted(asyncio.gather(streaming, return_exceptions=True))
@@ -283,6 +330,30 @@ class CodexCodingAgent(CodingAgent):
                       f"Last error: {error}")
             final_response = f"{report}\n\nLast Codex message:\n{final_response}" if final_response else report
         return CodingResult(completed=completed, final_response=final_response, usage=usage)
+
+
+async def check_mailbox_tools(codex: AsyncCodex, thread_id: str) -> None:
+    """Fail before inference if the native thread cannot connect to its required upward-mail transport."""
+    status = await asyncio.wait_for(codex._client.request(
+        'mcpServerStatus/list', {'threadId': thread_id, 'serverName': 'crux_delegate'},
+        response_model=ListMcpServerStatusResponse), timeout=30)
+    if not any(server.name == 'crux_delegate' and not server.tools_error and
+               {'ask_pi', 'report_progress'} <= server.tools.keys() for server in status.data):
+        raise RuntimeError('Codex delegate mailbox tools unavailable; check the scaffold Python path and MCP startup.')
+
+
+async def steer_turn(turn, streaming: asyncio.Task, mailbox: DelegateMailbox, ctx: RunContext) -> None:
+    """Hand pending PI mail to the active native turn; leave a receipt only after Codex accepts it."""
+    while not streaming.done():
+        for message in mailbox.pending():
+            try:
+                await turn.steer('<pi_message>\n' + json.dumps(message) + '\n</pi_message>')
+            except Exception:  # noqa: BLE001 - The turn may have ended between the check and native RPC.
+                ctx.telemetry.record('codex:steer_deferred', 'span', {'task_id': mailbox.task_id,
+                                     'message_id': message['id']}, {'status': 'queued for next turn'})
+                return  # The task runner starts a follow-up turn for undelivered mail.
+            mailbox.store.delivered([message['id']])
+        await asyncio.sleep(.1)
 
 
 # Codex error kinds a later turn may get past; an HTTP status they carry must also be 408, 409, 429 or 5xx. Auth,

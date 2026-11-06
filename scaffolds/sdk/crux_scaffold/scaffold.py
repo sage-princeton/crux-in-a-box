@@ -90,6 +90,7 @@ class Scaffold:
                      f"MCP servers: {', '.join(spec.mcp_servers) or 'none'}.\n"
                      + "\n".join(self._delegate_instructions(name) + self._context_instructions(name)))
             if getattr(self.runtime.options, 'interactive_delegates', False):
+                setup = setup.replace('Each invocation starts fresh', 'Each new brief starts fresh')
                 # TODO(AE-327): Generalize ask_pi and its guidance for non-PI orchestrators.
                 setup += ("\nUse ask_pi(message) for clarifying questions and report_progress(message) for meaningful "
                           "updates: work, evidence/artifacts, blockers, next step. Continue independent work while "
@@ -164,7 +165,7 @@ class Scaffold:
         coding = [name for name in names if name in self.coding_agents]
         if getattr(self.runtime.options, 'interactive_delegates', False):
             lines += [
-                ("Research assistants start in the background and keep a durable conversation per task ID. "
+                ("All delegates start in the background and keep a durable conversation per task ID. "
                 "Use `<name>_result(wait=true)` to collect; a pending question releases that wait."),
                 ("Use `send_message(task_id, message, reply_to, interrupt)` to steer or answer a question. "
                 "It resumes the same conversation if the delegate has stopped. Set interrupt=true to stop active "
@@ -177,7 +178,8 @@ class Scaffold:
                 "Tasks survive restarts as interrupted conversations; use send_message to resume deliberately. "
                 "New briefs start fresh conversations. Task IDs prevent steering a superseded brief."),
             ]
-        if coding and getattr(self.runtime.options, "background_coding", False):
+        if coding and getattr(self.runtime.options, "background_coding", False) and not getattr(
+                self.runtime.options, 'interactive_delegates', False):
             lines += ["Coding delegates start in the background with one outstanding task per name across callers."]
             for name in coding:
                 lines.append(f"Use `{name}_result(wait=false)` to check status or collect a completed result; "
@@ -186,7 +188,7 @@ class Scaffold:
                        "starting another brief for that worker. The runtime awaits outstanding coding work before "
                        "gates and saves uncollected completion reports in the conversation. Pending tasks are not "
                        "restored after restart. SDK-agent delegates remain blocking unless interactive_delegates is enabled.")]
-        elif coding:
+        elif coding and not getattr(self.runtime.options, 'interactive_delegates', False):
             lines.append("Coding delegate calls block until completion without repeated orchestrator model calls.")
         return lines
 
