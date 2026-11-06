@@ -8,7 +8,7 @@ from crux_scaffold.config import AgentConfig, PhaseConfig
 from crux_scaffold.gates import JudgeOptions
 
 from drop_ins import edit
-from scripted import ScriptedModel, call, say
+from scripted import ScriptedModel, call, say, tool_outputs
 
 
 @pytest.mark.parametrize("options,required,field", [
@@ -56,3 +56,13 @@ def test_unlimited_judge_uses_sdk_no_limit(drop_in_dir, assemble):
                                                  max_turns=None))
     assert verdict.passed
     assert scaffold.context.usage.by_source["judge:review"].requests == 26
+
+
+def test_unlimited_delegate_runs_past_the_sdk_tool_default(drop_in_dir, assemble):
+    edit(drop_in_dir, "scaffold.toml", "max_turns = 4", 'max_turns = "unlimited"')
+    reviewer = ScriptedModel(*[call("read_file", {"path": "AGENTS.md"}, f"r{i}") for i in range(15)], say("reviewed"))
+    pm = ScriptedModel(call("reviewer", {"input": "review"}, "p1"), say("done"))
+    scaffold = assemble(drop_in_dir, {"pm": pm, "reviewer": reviewer})
+    assert asyncio.run(scaffold.run()).final_output == "done"
+    assert tool_outputs(pm.inputs[-1]) == ["reviewed"]
+    assert scaffold.context.usage.by_source["reviewer"].requests == 16
