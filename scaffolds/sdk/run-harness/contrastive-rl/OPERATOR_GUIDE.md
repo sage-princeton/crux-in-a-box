@@ -110,10 +110,12 @@ The clock starts at research launch; downtime counts on resume. Source code live
 in workspace/crtr and SOURCE.json records its pin. The existing SDK research loop,
 review gates and cleanup come from the TabPFN example; their registered type names
 and state/tabpfn paths remain unchanged.
-The PI's refreshed research context includes the latest `REVIEW_STATUS.json`
-digest (scores, recommendation and issue headings) before PLAN.md, independent of
-conversation compaction. Full reviewer feedback remains in the referenced
-`reviews/` file; each new review replaces the digest.
+The PI's refreshed research context includes the complete latest
+`REVIEW_STATUS.json` verdict before PLAN.md, independent of conversation
+compaction. Each new review replaces the status; historical reviews remain in
+`reviews/`. The PI's 64,000-character workspace context budget allows roughly
+32,000 characters for the review before PLAN.md. Longer files carry the existing
+truncation notice; the archive retains the full feedback.
 
 ## Evidence and shutdown
 

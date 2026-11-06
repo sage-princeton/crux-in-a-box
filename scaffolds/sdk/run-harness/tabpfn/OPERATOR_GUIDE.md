@@ -178,13 +178,14 @@ reviewer has only built-in read/list/PDF tools, no author context, shell, MCP or
 previous reviews. Its exact structured result is saved under
 `/srv/crux-run/state/tabpfn/reviews/` and mirrored into `workspace/reviews/`.
 The PDF/rubric hash binds cached verdicts; unchanged papers cannot be rerolled.
-`REVIEW_STATUS.json` contains only the latest review's PDF hash, full-review path,
-pass/fail, numeric scores, recommendation and issue headings. The gate extracts
-these from the reviewer text, including single-line reviews; missing scores or
-recommendations remain absent/null rather than inferred. Scores precede headings
-so they survive the context character cap. The PI receives this digest before
-PLAN.md in its refreshed research context on every model call, independent of
-conversation compaction. Full feedback remains verbatim in `reviews/`.
+`REVIEW_STATUS.json` contains the latest review's PDF hash, archive path and
+complete verdict, including the original reviewer feedback. The PI receives this
+file before PLAN.md in its refreshed research context on every model call,
+independent of conversation compaction. Each new review replaces the status;
+historical reviews remain in `reviews/`. The PI's 64,000-character workspace
+context budget allows roughly 32,000 characters for the review before PLAN.md.
+Longer files carry the existing truncation notice; the archive retains the full
+feedback.
 The final gate checks required
 deliverables and evidence hashes and binds the completion report to the final PDF
 and review. Semantic evidence quality, page-layout correctness and accessibility

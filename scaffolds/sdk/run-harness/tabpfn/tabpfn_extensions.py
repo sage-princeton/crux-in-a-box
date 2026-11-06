@@ -251,23 +251,8 @@ class PaperReview(LlmJudgeGate):
                 save_json(canonical, record)
             review_path = f"reviews/{key}.json"
             workspace.write_file(review_path, canonical.read_text())
+            workspace.write_file("REVIEW_STATUS.json", json.dumps({**record, "review_path": review_path}, indent=2))
             verdict = record["verdict"]
-            feedback = verdict["feedback"]
-            scores = re.findall(
-                r"\b(Quality|Clarity|Significance|Originality|Overall|Confidence)"
-                r"(?:\s*\([^)]*\))?\s*[:*]*\s*(\d+(?:\s*/\s*\d+)?)\b", feedback, re.IGNORECASE)
-            recommendation = re.search(
-                r"\bRecommendation\s*[:*]*\s*((?:Strong\s+|Borderline\s+)?(?:Accept|Reject))\b",
-                feedback, re.IGNORECASE)
-            issues = re.split(r"\*{1,2}Weaknesses:?\*{1,2}:?", feedback, maxsplit=1, flags=re.IGNORECASE)[-1]
-            headings = re.findall(r"(?:\(?\d+[.)]|(?m:^[ \t]*[-+*]))[ \t]+\*{1,2}([^*\n]+)\*{1,2}", issues)
-            headings += re.findall(r"(?m)^#{1,6}\s+(.+)", feedback)
-            workspace.write_file("REVIEW_STATUS.json", json.dumps({
-                "paper_sha256": digest, "review_path": review_path, "passed": verdict["passed"],
-                "scores": {name.title(): value for name, value in scores},
-                "recommendation": recommendation[1] if recommendation else None,
-                "issue_headings": headings,
-            }, indent=2))
             if hashlib.sha256(workspace.read_bytes("paper/paper.pdf")).hexdigest() != digest:
                 return result(False, "The PDF changed during review; collect writers and submit the current PDF.")
             if not self.options.final:
