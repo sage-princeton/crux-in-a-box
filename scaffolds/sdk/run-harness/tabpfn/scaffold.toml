@@ -22,7 +22,7 @@ poll_interval_seconds = 30
 [context]
 type = "compaction"
 context_window_tokens = 1048576
-trigger_tokens = 512000
+trigger_tokens = 650000
 keep_recent_items = 20
 image_tokens = 1120  # Gemini 4 Argon default for image inputs.
 

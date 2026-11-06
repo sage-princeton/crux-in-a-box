@@ -100,15 +100,16 @@ control routing. Check the actual route and pricing in usage records.
 Commit changes before provisioning;
 uncommitted changes are not staged on the box.
 
-The PI uses provider-independent `compaction`: at 512,000 estimated tokens, it summarizes older exchanges and keeps roughly 20
-recent items, preserving complete tool exchanges and the full SQLite history.
-`context_window_tokens = 1048576` records Argon's supported window; the earlier
-token trigger leaves room for MCP schemas, provider encoding, reasoning/output
-and tool-result growth. The October TabPFN pilot peaked at 180,111 input tokens
-and included about 12.5 KB of Slack schemas omitted by the estimator. That pilot
-used GPT-6 Astra; the Argon RL pilot provides the tokenizer calibration, with
-sampled billed input up to 1.34 times a byte-based estimate without MCP schemas.
-Treat the trigger as a conservative estimate, not a hard request-size guarantee.
+The PI uses provider-independent `compaction`: at 650,000 estimated tokens, it
+summarizes older exchanges and keeps roughly 20 recent items, preserving complete
+tool exchanges and the full SQLite history. Item count does not trigger compaction.
+`context_window_tokens = 1048576` records Argon's supported window; `image_tokens = 1120`
+budgets each image separately from its encoded payload. The token trigger is an
+experimental calibration: the earlier Argon sample's 1.336x input-to-estimate ratio
+would imply about 868,000 input tokens, leaving roughly 180,000 for output and
+additional uncertainty. The v2 pilots peaked below 240,000 actual PI input tokens,
+so they do not validate this larger threshold. Compare full-request estimates with
+provider usage as history grows; the estimate is not a provider-token fit guarantee.
 Codex workers manage their own context separately.
 
 Fill `secrets.json` with **only** `OPENROUTER_API_KEY`,

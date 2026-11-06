@@ -9,14 +9,17 @@ The Codex workers use `prompts/codex-worker.md`, the TabPFN drop-in's worker
 prompt, in place of Codex's built-in system prompt, which is written for an
 interactive session with a person.
 
-The PI uses provider-independent `compaction`: at 512,000 estimated tokens, it summarizes older exchanges and keeps roughly 20
-recent items, preserving complete tool exchanges and the full SQLite history.
-`context_window_tokens = 1048576` records Argon's supported window; the earlier
-token trigger leaves room for MCP schemas, provider encoding, reasoning/output
-and tool-result growth. The October Argon pilot peaked at 243,530 input tokens;
-sampled billed input was up to 1.34 times a byte-based estimate without MCP
-schemas. Treat the trigger as a conservative estimate, not a hard request-size
-guarantee. Codex workers manage their own context separately.
+The PI uses provider-independent `compaction`: at 650,000 estimated tokens, it
+summarizes older exchanges and keeps roughly 20 recent items, preserving complete
+tool exchanges and the full SQLite history. Item count does not trigger compaction.
+`context_window_tokens = 1048576` records Argon's supported window; `image_tokens = 1120`
+budgets each image separately from its encoded payload. The token trigger is an
+experimental calibration: the earlier Argon sample's 1.336x input-to-estimate ratio
+would imply about 868,000 input tokens, leaving roughly 180,000 for output and
+additional uncertainty. The v2 pilots peaked below 240,000 actual PI input tokens,
+so they do not validate this larger threshold. Compare full-request estimates with
+provider usage as history grows; the estimate is not a provider-token fit guarantee.
+Codex workers manage their own context separately.
 
 ## Operator files
 
