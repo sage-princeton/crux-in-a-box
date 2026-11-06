@@ -145,6 +145,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self.servers: dict[str, MCPServerStdio] = {}
         self.client: AsyncOpenAI | None = None
         self.provider: OpenAIProvider | None = None
+        # TODO(AE-318): consolidate task handles, timestamps and cancellation state into coding-task objects.
         self._coding_tasks: dict[str, asyncio.Task[CodingResult]] = {}
         self._coding_started: dict[str, datetime] = {}
         self._coding_cancelled: dict[str, tuple[datetime, datetime]] = {}  # started, cancelled; not yet reported
@@ -291,6 +292,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                     for name, (started, stopped) in self._coding_cancelled.items()]
         return f"Coding briefs: {'; '.join(entries)}." if entries else ""
 
+    # TODO(AE-318): rename this formatter to _format_running_coding_task.
     def _running(self, name: str, now: datetime) -> str:
         started = self._coding_started[name]
         last = max(started, self.assembly.coding_agents[name].last_activity or started)
@@ -298,6 +300,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 f"last activity {(now - last).total_seconds():.0f}s ago)")
 
     async def _coding_result(self, name: str, *, wait: bool, timeout: float | None = None) -> str:
+        # TODO(AE-318): move lifecycle decisions and status formatting into the coding-task abstraction.
         task = self._coding_tasks.get(name)
         if task is not None and wait and not task.done():
             async with self.delegation_wait():

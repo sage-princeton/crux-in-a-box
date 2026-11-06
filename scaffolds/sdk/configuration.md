@@ -43,6 +43,7 @@ Codex workers retry provider failures at two levels:
 ```toml
 [coding_agents.worker]
 type = "codex"
+# TODO(AE-319): move idle-timeout, turn-retry and backoff settings into scaffold defaults.
 # stream_idle_timeout_ms = 300000       # default; keep it above the slowest first token
 turn_retries = 2                        # further turns after a transient failure (default)
 turn_retry_backoff_seconds = [60, 300]  # wait before each; the last repeats (default)

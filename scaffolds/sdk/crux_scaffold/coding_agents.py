@@ -60,6 +60,7 @@ class CodingAgent(Component):
         self.system_prompt = system_prompt
         # The latest brief's progress: when it last showed activity and the cumulative usage it last reported.
         self.last_activity: datetime | None = None
+        # TODO(AE-320): make this cumulative usage state private and update internal references and test doubles.
         self.usage_so_far = TokenUsage()
         self._reported_usage = TokenUsage()
 
@@ -140,6 +141,7 @@ CONTINUE_AFTER_PROVIDER_ERROR = ("The previous turn stopped on a provider error 
 
 
 def codex_client(ctx: RunContext, options: CodexOptions | None = None) -> AsyncCodex:
+    # TODO(AE-303): simplify provider selection and settings when OpenRouter is the only supported route.
     base_url = ctx.env.get("CRUX_CODEX_BASE_URL")
     # Built-in provider IDs cannot be overridden, so direct OpenAI also needs our own provider entry.
     provider = "crux-compatible" if base_url else "crux-openai"
@@ -202,6 +204,7 @@ class CodexCodingAgent(CodingAgent):
                 config={"model_context_window": CONTEXT_WINDOW_TOKENS, "model_reasoning_summary": "auto",
                         "project_doc_max_bytes": 0})
             final_response, usage, message, attempts = "", TokenUsage(requests=1), brief, 0
+            # TODO(AE-319): share retry policy and backoff with SDK model calls while preserving turn/accounting semantics.
             while True:
                 turn, ended, retrying = await thread.turn(message, effort=ctx.reasoning_effort), None, None
                 self.last_activity, attempts = ctx.now(), attempts + 1
