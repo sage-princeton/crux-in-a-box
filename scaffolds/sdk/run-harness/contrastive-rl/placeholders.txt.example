@@ -8,6 +8,6 @@ USE_ELASTIC_IP=false
 KEY_NAME=crux-acp
 AGENT_PLATFORM=openai-agents
 MODEL_PROVIDER=openrouter
-OPENAI_AGENTS_MODEL=google/gemini-4-argon
+OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/ai-studio-only
 OPENAI_AGENTS_REASONING_EFFORT=high
 DROP_IN_PATH=scaffolds/sdk/run-harness/contrastive-rl
