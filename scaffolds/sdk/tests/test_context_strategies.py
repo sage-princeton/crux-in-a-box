@@ -1,5 +1,7 @@
 import asyncio
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -69,6 +71,41 @@ def test_trim_recent_limits_what_the_model_sees_but_not_the_stored_history(drop_
 def compaction_context(tmp_path):
     return RunContext(Workspace(tmp_path), tmp_path / "state", {"CRUX_MODEL": "argon"},
                       UsageLedger(), Budget(), NullTelemetry())
+
+
+@pytest.mark.parametrize('kind', ['persistent', 'compaction'])
+def test_three_assistant_sessions_initialize_and_write_concurrently(tmp_path, kind):
+    """Exercise fresh shared SQLite initialization, isolated histories and resumption under contention."""
+    ctx = compaction_context(tmp_path)
+    strategy = CONTEXT_STRATEGIES.create('context', {'type': kind})
+    start = threading.Barrier(3)
+    task_ids = ['assistant-task-a', 'assistant-task-b', 'assistant-task-c']
+
+    def write_history(task_id):
+        start.wait(timeout=5)
+        session = strategy.session(task_id, ctx)
+        async def write():
+            for index in range(20):
+                await session.add_items([user(f'{task_id}:{index}')])
+        try:
+            asyncio.run(write())
+        finally:
+            session.close()
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        list(pool.map(write_history, task_ids))
+
+    async def resume():
+        for task_id in task_ids:
+            session = strategy.session(task_id, ctx)
+            try:
+                expected = [user(f'{task_id}:{index}') for index in range(20)]
+                assert await session.get_items() == expected
+                await session.add_items([user(f'{task_id}:resumed')])
+                assert await session.get_items() == [*expected, user(f'{task_id}:resumed')]
+            finally:
+                session.close()
+    asyncio.run(resume())
 
 
 def local_strategy(**options):

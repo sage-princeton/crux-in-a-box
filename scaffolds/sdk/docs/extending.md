@@ -510,6 +510,9 @@ and steering tools. Its `request_progress` asks active work for a new report; de
 `ask_pi`/`report_progress`. SDK mail is injected at model boundaries and persisted in the session. Result waits
 release on unresolved questions so a PI can answer, without delegate-initiated PI turns. A runtime turn with
 outstanding uncollected work is incomplete; the phased loop skips gates until it finishes.
+SDK assistants share `sessions.sqlite` within one runtime process. The pinned SDK's `SQLiteSession`
+serializes initialization and database operations with a per-file process lock; task IDs isolate histories.
+Compaction checkpoints are also keyed by task ID. They do not use native Codex state or its process lifecycle.
 
 `CodingAgent.run` accepts an optional task-bound `mailbox`. Implementations receive it as `self.mailbox`
 during `execute`; the base class restores/persists cumulative conversation usage for interactive follow-ups.
