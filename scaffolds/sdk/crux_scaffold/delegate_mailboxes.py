@@ -12,6 +12,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
+# TODO(AE-321): Document all classes and methods with reStructuredText, including raised exceptions.
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -42,6 +44,7 @@ class DelegateMailboxes:
         finally:
             db.close()
 
+    # TODO(AE-322): Define structured enums for permissible message and event kinds.
     def _event(self, db, kind: str, data: dict) -> None:
         db.execute('INSERT INTO events (id, kind, data) VALUES (?, ?, ?)',
                    (uuid4().hex, kind, json.dumps({**data, 'at': _now()})))
@@ -73,6 +76,7 @@ class DelegateMailboxes:
             row = db.execute('SELECT data FROM tasks WHERE name=? ORDER BY rowid DESC LIMIT 1', (name,)).fetchone()
         return json.loads(row['data']) if row else None
 
+    # TODO(AE-325): Separate lifecycle updates from conversation bookkeeping methods.
     def update(self, task_id: str, **changes) -> dict:
         """Update lifecycle or conversation bookkeeping atomically; emit lifecycle changes for tracing."""
         with self._connect() as db:
@@ -105,6 +109,7 @@ class DelegateMailboxes:
                 row = db.execute('SELECT data FROM messages WHERE id=? AND task_id=?', (reply_to, task_id)).fetchone()
                 if row is None or json.loads(row['data'])['kind'] != 'question':
                     raise ValueError('reply_to must identify a question from this task')
+            # TODO(AE-324): Use a message schema with constructors and get/set helpers.
             message = {'id': uuid4().hex, 'task_id': task_id, 'delegate': task['name'], 'recipient': recipient,
                            'kind': kind, 'text': text, 'reply_to': reply_to, 'created_at': _now()}
             db.execute('INSERT INTO messages VALUES (?, ?, ?, ?, NULL)',
@@ -161,6 +166,7 @@ class DelegateMailboxes:
 class DelegateMailbox:
     """Delegate-side capabilities only: questions, progress and incoming PI messages."""
 
+    # TODO(AE-323): Accept the orchestrator name instead of hard-coding PI routing.
     def __init__(self, store: DelegateMailboxes, task_id: str) -> None:
         self.store, self.task_id = store, task_id
 
