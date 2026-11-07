@@ -523,6 +523,7 @@ def test_codex_client_uses_the_run_environment_and_provider(tmp_path, monkeypatc
     codex_client(ctx)
     assert seen[0].env == {**env, "CODEX_HOME": str(tmp_path / "state/codex")}
     overrides = dict(part.split("=", 1) for part in seen[0].config_overrides)
+    assert json.loads(overrides["web_search"]) == "disabled"
     provider = "crux-compatible" if compatible else "crux-openai"
     retry_settings = {f"model_providers.{provider}.{name}": "10"
                       for name in ("request_max_retries", "stream_max_retries")}

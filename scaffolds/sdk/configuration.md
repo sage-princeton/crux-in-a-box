@@ -61,6 +61,11 @@ the last error, so the caller can tell an outage from a code failure. Successful
 pilot requests took up to 246 s to their first token, so do not lower
 `stream_idle_timeout_ms` below Codex's 300 s default.
 
+Codex workers and probes explicitly use `web_search = "disabled"` for both direct
+OpenAI and compatible providers. This prevents hosted search from being combined
+with function tools on endpoints that reject that combination, including Google
+AI Studio through OpenRouter. Codex's shell and other function tools remain available.
+
 Each agent and coding agent declares its existing context sources in `scaffold.toml`:
 
 ```toml

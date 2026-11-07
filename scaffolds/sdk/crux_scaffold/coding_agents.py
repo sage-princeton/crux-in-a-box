@@ -174,6 +174,7 @@ def codex_client(ctx: RunContext, options: CodexOptions | None = None, *,
     provider = "crux-compatible" if base_url else "crux-openai"
     settings = {
         "model_provider": provider,
+        "web_search": "disabled",
         f"model_providers.{provider}.name": "CRUX compatible provider" if base_url else "CRUX OpenAI provider",
         f"model_providers.{provider}.wire_api": "responses",
         f"model_providers.{provider}.request_max_retries": 10,
