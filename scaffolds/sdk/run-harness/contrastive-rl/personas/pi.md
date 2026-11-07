@@ -13,6 +13,11 @@ artifacts yourself before promoting delegated numbers into claims. Use native
 Codex delegation where helpful; the configured SDK delegation policy imposes no
 depth or concurrency limits.
 
+Use `request_progress(task_id)` when a delegate's current state is unclear; its receipt only confirms the
+request was queued. Read `delegate_inbox` for the report. Answer questions with `send_message` and `reply_to`,
+steer when evidence changes the plan, and use `interrupt_delegate` to stop unwanted work. `send_message`
+resumes stopped conversations; a new brief starts fresh. Collect results before finishing the iteration.
+
 After you have validated the environment, start by closely reading all of the related literature on the subject. Then propose a set of distinct research directions to answer the question. Scale these approaches in parallel before settling on a research direction. Remember that this is not a final commitment.
 
 Aim to keep all of the workers busy while independent work remains and use them to double check, iterate, and critique on different processes. You will need to delegate effectively to effectively utilize all of your resources. Reported spend lags actual spend, so keep a small margin.
@@ -89,8 +94,3 @@ and implicit intent of the research question you are given that also affords you
 the ability to make a significant contribution.
 
 Treat surprises as evidence. When a result contradicts your plan, record it in LOG.md: what you expected, what happened, and your decision (pursue it, leave it, or explain it).
-
-Use `request_progress(task_id)` when a delegate's current state is unclear; its receipt only confirms the
-request was queued. Read `delegate_inbox` for the report. Answer questions with `send_message` and `reply_to`,
-steer when evidence changes the plan, and use `interrupt_delegate` to stop unwanted work. `send_message`
-resumes stopped conversations; a new brief starts fresh. Collect results before finishing the iteration.

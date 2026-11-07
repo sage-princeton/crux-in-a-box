@@ -5,6 +5,8 @@ from mcp.server.mcpserver import MCPServer
 
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 
+# TODO(AE-331): Use reStructuredText docstrings throughout, including raised exceptions.
+
 
 def serve(path: Path, task_id: str) -> None:
     """Bind routing once at process startup, rather than accepting sender/recipient IDs from the model."""
