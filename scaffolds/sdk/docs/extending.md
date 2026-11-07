@@ -501,3 +501,12 @@ model input, not that the model understood or acted on the message. Unanswered q
 remain available after history compaction. Restart recovery marks in-flight tasks interrupted for explicit
 resumption, preserving their conversation references and mail. Keep this database with the rest of run state.
 This capability boundary governs scaffold tools; it is not an OS sandbox against a full-access coding agent.
+
+`openai-agents` also accepts `interactive_delegates` (default false). In this mode, research-assistant tools
+return persistent task IDs immediately. Internal `DelegateTasks` owns asyncio scheduling, cancellation,
+result collection and telemetry export; `DelegateMailboxes` owns persistence. The runtime supplies the SDK
+execution callback and a context-strategy session keyed by task ID. Only the orchestrator receives lifecycle
+and steering tools. Its `request_progress` asks active work for a new report; delegates receive only
+`ask_pi`/`report_progress`. SDK mail is injected at model boundaries and persisted in the session. Result waits
+release on unresolved questions so a PI can answer, without delegate-initiated PI turns. A runtime turn with
+outstanding uncollected work is incomplete; the phased loop skips gates until it finishes.

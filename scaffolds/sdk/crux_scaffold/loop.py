@@ -120,13 +120,13 @@ class PhasedLoop(Loop):
                     turn = await runtime.run(prompt, workflow=phase.name)
                     last_output = turn.final_output
                     gate_ctx = GateContext(ctx, drop_in, runtime, phase.name, state.iteration, last_output)
-                    results = [await self.gates[gate].check(gate_ctx) for gate in phase.gates]
+                    results = [await self.gates[gate].check(gate_ctx) for gate in phase.gates] if turn.completed else []
             except BaseException:
                 state.iteration -= 1
                 raise
             if not turn.completed:
                 results.insert(0, GateResult(gate="turn", passed=False,
-                                             feedback="Your previous turn ran out of turns before it finished."))
+                                             feedback=turn.final_output or "Your previous turn ran out of turns before it finished."))
             state.history.append(IterationRecord(phase=phase.name, iteration=state.iteration,
                                                  completed=turn.completed, gates=results))
             if all(result.passed for result in results):

@@ -122,3 +122,9 @@ a stable identity and separates PI control from delegate questions/progress. Dur
 live outside the agent workspace in `delegates.sqlite`; they do not themselves schedule model calls. This
 keeps transport and agent-SDK details out of routing, reply correlation and restart recovery. Runtime and
 Codex adapters integrate this store separately.
+
+With `runtime.interactive_delegates`, SDK delegates run asynchronously using a durable session per task ID.
+The PI owns interruption, steering, resumption and progress requests. Delegate questions/progress are queued
+for the PI's next normal model boundary or an explicitly requested inbox/result wait. They cannot interrupt
+or initiate a PI turn. Uncollected work keeps the orchestrator iteration incomplete and postpones gates;
+normal loop budgets still apply between iterations. Existing delegation concurrency limits are unchanged.

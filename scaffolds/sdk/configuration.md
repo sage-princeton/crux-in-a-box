@@ -614,3 +614,22 @@ uv pip install --python .venv/bin/python -r requirements.txt -r ../../requiremen
 ```
 
 Contribution guidelines are in [AGENTS.md](AGENTS.md). Tests never call a model or the network. They use scripted models, a scripted coding agent, a fake runtime, a fake stdio Slack MCP server and an in-memory span exporter.
+
+### Interactive SDK delegates
+
+Set `runtime.interactive_delegates = true` to run research assistants asynchronously with persistent
+conversations. This mode supports direct PI delegates (no nested SDK delegation). This is opt-in; existing blocking SDK delegates and `background_coding` behavior remain the
+default. Each dispatch returns a task ID. The PI gets `send_message`, `interrupt_delegate`, `request_progress`,
+`delegate_inbox` and `<assistant>_result`; assistants get only `ask_pi` and `report_progress`.
+
+`send_message` queues steering or a reply (`reply_to` is the question's message ID). An ended task resumes the
+same conversation; `interrupt=true` stops active work before resuming it. `interrupt_delegate` stops without
+resuming. `request_progress` solicits a report from active work and immediately returns a receipt; it does not
+claim the delegate has answered. `delegate_inbox(wait_seconds=0..60)` optionally waits for mail. Result waits
+use `coding_result_wait_seconds` and return early for unanswered questions. Neither kind of upward message
+interrupts a PI model/tool call. The PI must collect outstanding results before gates run.
+
+State and mail live in `state/delegates.sqlite`, SDK conversations in `state/sessions.sqlite`. After restart,
+unfinished tasks are interrupted and require explicit PI resumption. Latest progress and unanswered questions
+are included independently of conversation history selection. Message/lifecycle events are exported as
+`delegate:*` telemetry spans with stable event and task IDs. Delivery means input handoff, not model compliance.
