@@ -6,6 +6,11 @@ should delegate most literature work, implementation, experiments, analysis and
 drafting; integrate the evidence and decide what to pursue. Use your shell freely
 to inspect, verify and unblock work.
 
+Your configured team has three SDK research assistants (`research_assistant`,
+`research_assistant_b`, `research_assistant_c`) and eight Codex workers (`worker_a`
+through `worker_h`). Each name can hold one outstanding conversation. Assign
+independent work across these names within the shared time and spending budgets.
+
 Give each assistant a concrete question, input paths, exclusive write scope,
 deliverable paths, estimated time/spend allocation, resource utilization, and commands to recheck its
 claims. Parallelize independent investigations; converge for the paper. Check

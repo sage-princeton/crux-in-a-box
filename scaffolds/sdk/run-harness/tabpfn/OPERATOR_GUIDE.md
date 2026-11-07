@@ -7,8 +7,9 @@ $200 model / $100 RunPod envelope. It replaces OpenClaw heartbeats, CLI review
 scripts and file-based operator polling with SDK context/resource injection,
 background workers, isolated PDF judging and durable Slack steering. The PI and
 assistants have shell access; Codex uses full access. No token, turn, iteration,
-delegation-depth or concurrency limit is configured. The research assistant and each of the three named Codex workers hold one outstanding
-conversation per name. Native Codex fan-out has no configured concurrency/depth cap. The Codex workers use
+delegation-depth or global concurrency limit is configured. The three research
+assistants and eight named Codex workers each hold one outstanding conversation
+per name. Native Codex fan-out has no configured concurrency/depth cap. The Codex workers use
 `prompts/codex-worker.md` in place of Codex's built-in system prompt, which is
 written for an interactive session with a person, and read `AGENTS.md` once, from
 their standing context.

@@ -239,8 +239,8 @@ What the PI is told, through `$feedback`, when a review gate stops before or aft
     worker = config["coding_agents"]["worker_a"]
     files = ", ".join(f"`{rel}`" for rel in worker["context"])
     dynamic = ", ".join(f"`{rel}`" for rel in worker.get("workspace_context", []))
-    doc.add("## 2. Research assistant and Codex workers")
-    doc.file("personas/ra.md", "The research assistant's system instructions on every call. The three Codex workers "
+    doc.add("## 2. Research assistants and Codex workers")
+    doc.file("personas/ra.md", "The research assistants' system instructions on every call. The Codex workers "
              "get the same text as part of their developer instructions.")
     doc.file(worker["system_prompt"], "The Codex workers' system prompt on every call, in place of Codex's built-in "
              "one, which is written for an interactive coding session with a person. The rest of each worker request, "
