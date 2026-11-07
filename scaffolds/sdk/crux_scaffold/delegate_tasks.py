@@ -7,6 +7,8 @@ from collections.abc import Awaitable, Callable
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.telemetry import Telemetry
 
+# TODO(AE-330): Document all classes and methods with reStructuredText, including raised exceptions.
+
 
 class DelegateTasks:
     """Own running tasks; the mailbox store owns durable identity, results and messages."""

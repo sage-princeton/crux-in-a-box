@@ -101,6 +101,7 @@ class OpenAIAgentsOptions(Options):
     max_turns: CountLimit = 50
     model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
     background_coding: bool = False
+    # TODO(AE-326): Make interactive delegates the only mode and remove the opt-in flag.
     interactive_delegates: bool = False
     coding_result_wait_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["unlimited"] = 1800
     steering: SteeringOptions | None = None
@@ -483,6 +484,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         delegate_context = self._delegate_context.get()
         session_id = data.agent.name if is_orchestrator else None
         pinned_mail = []
+        # TODO(AE-328): Extract mailbox consumption into a separate class method.
         if self.delegates:
             boxes = self.delegates.mailboxes
             if is_orchestrator:
@@ -704,6 +706,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         return self._json_tool(name, self.assembly.drop_in.config.agents[name].description +
                                f' Starts in the background; collect with {name}_result.', BriefArguments, start)
 
+    # TODO(AE-329): Move communication tool construction into a dedicated class.
     def _communication_tools(self, name: str) -> list[FunctionTool]:
         config = self.assembly.drop_in.config
         if name != config.orchestrator:

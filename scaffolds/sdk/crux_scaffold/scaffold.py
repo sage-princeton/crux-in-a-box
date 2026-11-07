@@ -90,6 +90,7 @@ class Scaffold:
                      f"MCP servers: {', '.join(spec.mcp_servers) or 'none'}.\n"
                      + "\n".join(self._delegate_instructions(name) + self._context_instructions(name)))
             if getattr(self.runtime.options, 'interactive_delegates', False):
+                # TODO(AE-327): Generalize ask_pi and its guidance for non-PI orchestrators.
                 setup += ("\nUse ask_pi(message) for clarifying questions and report_progress(message) for meaningful "
                           "updates: work, evidence/artifacts, blockers, next step. Continue independent work while "
                           "awaiting replies. PI messages arrive between model calls. You cannot control or interrupt "
