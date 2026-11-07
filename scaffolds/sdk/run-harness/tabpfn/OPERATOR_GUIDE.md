@@ -7,9 +7,8 @@ $200 model / $100 RunPod envelope. It replaces OpenClaw heartbeats, CLI review
 scripts and file-based operator polling with SDK context/resource injection,
 background workers, isolated PDF judging and durable Slack steering. The PI and
 assistants have shell access; Codex uses full access. No token, turn, iteration,
-delegation-depth or concurrency limit is configured. The three named background
-Codex entry points each hold one outstanding brief; SDK assistant calls and native
-Codex fan-out have no configured concurrency/depth cap. The Codex workers use
+delegation-depth or concurrency limit is configured. The research assistant and each of the three named Codex workers hold one outstanding
+conversation per name. Native Codex fan-out has no configured concurrency/depth cap. The Codex workers use
 `prompts/codex-worker.md` in place of Codex's built-in system prompt, which is
 written for an interactive session with a person, and read `AGENTS.md` once, from
 their standing context.
@@ -21,7 +20,7 @@ Research advances after an Accept (Overall 5/6 or 6/6). The loop also moves to
 finalization at one hour remaining, $180 model spend, or $90 RunPod spend. These
 are reserves within the same envelope, not additional run caps. Reserve crossing
 cancels/checkpoints the in-flight iteration and starts the finalization prompt;
-pending worker sessions are not resumed. The six-hour deadline cancels unfinished
+interrupted delegate conversations remain available for explicit PI resumption. The six-hour deadline cancels unfinished
 work, including a judge or coding call. Reported spending is checked during work
 every 15 seconds, subject to provider caching/read time. Langfuse/RunPod ingestion
 lags can cause overshoot; this is not a provider billing guarantee. Use dedicated
@@ -226,3 +225,14 @@ The scaffold loads personas and `context` files once as stable instructions. It
 refreshes the bounded `PLAN.md` summary in a temporary user prefix on every model
 call, alongside scaffold workflow and resource state. Keep detailed logs, review
 verdicts and experiment outputs in their existing files; link them from PLAN.md.
+
+## Delegate communication
+
+`interactive_delegates` enables PI steering, interruption, resumption and `request_progress` for the SDK
+research assistant and Codex workers. Delegates can ask questions and report progress, but cannot interrupt
+or schedule the PI. Keep `delegates.sqlite`, `sessions.sqlite` and `codex/` together with run state. A restart
+marks running tasks interrupted; the PI chooses whether to resume the same conversation or collect its
+partial result. Codex uses native steering/interruption and a task-bound MCP server for upward mail.
+Interruption waits for harness cleanup; independently launched training processes or pods still need their
+recorded cleanup commands. Langfuse `delegate:*` events link dispatch, messages, delivery, and results by task ID.
+A delivery receipt means input handoff, not proof of model compliance. Concurrency limits are unchanged.

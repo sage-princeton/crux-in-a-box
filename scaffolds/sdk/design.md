@@ -127,4 +127,10 @@ With `runtime.interactive_delegates`, SDK delegates run asynchronously using a d
 The PI owns interruption, steering, resumption and progress requests. Delegate questions/progress are queued
 for the PI's next normal model boundary or an explicitly requested inbox/result wait. They cannot interrupt
 or initiate a PI turn. Uncollected work keeps the orchestrator iteration incomplete and postpones gates;
-normal loop budgets still apply between iterations. Existing delegation concurrency limits are unchanged.
+normal loop budgets still apply between iterations. Each named delegate has one outstanding conversation;
+existing global delegation concurrency limits still apply.
+
+Codex shares the same mailbox/lifecycle contract. Its adapter owns native thread resumption, `turn/steer`,
+interrupt/drain/close and cumulative-usage checkpoints. A minimal stdio MCP endpoint exposes only questions
+and progress reports, bound to the task when it starts. SDK-neutral task scheduling stays out of the Codex
+adapter, and SDK-specific execution stays out of mailbox storage. There is no new broker service.

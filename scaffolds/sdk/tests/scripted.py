@@ -100,12 +100,19 @@ class ScriptedCodingAgent(CodingAgent):
         self.instructions: list[str] = []
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
+        if self.mailbox:
+            messages = self.mailbox.pending()
+            if messages:
+                brief += '\n\n' + json.dumps(messages)
+                self.mailbox.store.delivered([message['id'] for message in messages])
         self.briefs.append(brief)
         self.instructions.append(self.developer_instructions)
         for rel, content in self.options.writes.items():
             ctx.workspace.write_file(rel, content)
+        previous = self.usage_so_far if self.mailbox else TokenUsage()
         return CodingResult(completed=True, final_response=self.options.response,
-                            usage=TokenUsage(requests=1, input_tokens=100, output_tokens=50))
+                            usage=TokenUsage(requests=1, input_tokens=previous.input_tokens + 100,
+                                             output_tokens=previous.output_tokens + 50))
 
 
 def tool_outputs(model_input) -> list[str]:

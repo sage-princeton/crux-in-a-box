@@ -4,7 +4,7 @@ extensions = ["research_extensions.py"]
 [runtime]
 type = "openai-agents"
 max_turns = "unlimited"
-background_coding = true
+interactive_delegates = true
 
 [runtime.model_provider]
 type = "openai-compatible"
@@ -88,7 +88,7 @@ max_turns = "unlimited"
 
 [agents.research_assistant]
 persona = "personas/ra.md"
-description = "Research assistant for a self-contained literature, theory, implementation, or analysis brief. Multiple independent calls may run concurrently."
+description = "Research assistant for a self-contained literature, theory, implementation, or analysis brief. One outstanding conversation; steer or resume it with send_message."
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
 workspace_context = ["PLAN.md"]
 tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
