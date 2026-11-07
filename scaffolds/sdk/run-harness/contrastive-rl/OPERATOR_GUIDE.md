@@ -5,6 +5,9 @@ has six hours, $100 total agent inference and $30 RunPod. Leave the OpenRouter
 key's provider limit unchanged. All agents receive the $100 instruction; the TOML
 also applies that budget and reserves the last hour/final 10% for finishing.
 
+The PI can manage three research assistants and eight Codex workers concurrently,
+with one outstanding conversation per name. All share the run's existing budgets.
+
 The Codex workers use `prompts/codex-worker.md`, the TabPFN drop-in's worker
 prompt, in place of Codex's built-in system prompt, which is written for an
 interactive session with a person.

@@ -103,7 +103,14 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert str(scaffold.runtime.options.model_provider.base_url) == "https://openrouter.ai/api/v1"
     assert not scaffold.runtime.options.model_provider.extra_body
     assert scaffold.strategy.type_name == "compaction"
-    assert len(scaffold.coding_agents) == 3
+    workers = {f"worker_{letter}" for letter in "abcdefgh"}
+    assistants = {"research_assistant", "research_assistant_b", "research_assistant_c"}
+    assert set(scaffold.coding_agents) == workers
+    assert set(config.agents) == {"pi"} | assistants
+    assert set(config.agents["pi"].delegates) == workers | assistants
+    scaffold.runtime.describe()
+    tools = {tool.name for tool in scaffold.runtime.agents["pi"].tools}
+    assert workers | assistants | {f"{name}_result" for name in workers | assistants} <= tools
     assert scaffold.context.steering is not None
     assert "escalate" in config.agents["pi"].tools
     assert config.agents["pi"].mcp_servers == ["slack"]

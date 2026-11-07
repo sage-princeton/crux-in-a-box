@@ -72,7 +72,13 @@ def test_argon_provider_and_context_build_without_openai_credentials(scaffold):
     assert description[0] == "model provider openai-compatible (responses)"
     assert scaffold.strategy.type_name == "compaction"
     assert scaffold.runtime.provider is not None
-    assert set(scaffold.coding_agents) == {"worker_a", "worker_b", "worker_c"}
+    workers = {f"worker_{letter}" for letter in "abcdefgh"}
+    assistants = {"research_assistant", "research_assistant_b", "research_assistant_c"}
+    assert set(scaffold.coding_agents) == workers
+    assert set(scaffold.drop_in.config.agents) == {"pi"} | assistants
+    assert set(scaffold.drop_in.config.agents["pi"].delegates) == workers | assistants
+    tools = {tool.name for tool in scaffold.runtime.agents["pi"].tools}
+    assert workers | assistants | {f"{name}_result" for name in workers | assistants} <= tools
     assert scaffold.context.model == "google/gemini-4-argon"
     assert scaffold.context.reasoning_effort == "high"
 
