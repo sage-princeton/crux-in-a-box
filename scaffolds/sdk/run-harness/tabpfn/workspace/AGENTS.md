@@ -73,5 +73,7 @@ logs and outputs. Preserve evidence and recoverable work; inspect existing servi
 configuration before changes. The run is autonomous; Slack carries operator
 steering and diagnosed external blockers, not routine requests for decisions.
 
+Keep every file write small enough to finish in a few minutes. A tool call's contents are sent only once the whole call is written, and the provider drops a response that sends nothing for five minutes. One call that writes more than about 30,000 characters, such as a whole paper or a long script, can therefore fail, and each retry rewrites it and fails the same way. Build long documents from smaller files, such as one \input file per paper section, and edit files in place rather than rewriting them whole.
+
 The harness switches to finalization when one hour, 10% of model spend, or 10% of
 the RunPod allowance remains. It may interrupt active work at that boundary.

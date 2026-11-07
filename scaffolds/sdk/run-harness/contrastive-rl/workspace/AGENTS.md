@@ -92,6 +92,8 @@ Record any operator interventions. Report setup friction and time to the first
 baseline/comparison in the completion report so the operator can assess
 environment readiness separately from scientific promise.
 
+Keep every file write small enough to finish in a few minutes. A tool call's contents are sent only once the whole call is written, and the provider drops a response that sends nothing for five minutes. One call that writes more than about 30,000 characters, such as a whole paper or a long script, can therefore fail, and each retry rewrites it and fails the same way. Build long documents from smaller files, such as one \input file per paper section, and edit files in place rather than rewriting them whole.
+
 The harness switches to finalization when one hour, 10% of model spend, or 10% of
 the RunPod allowance remains (at five hours, $90 inference or $27 RunPod).
 It may interrupt active work at that boundary.
