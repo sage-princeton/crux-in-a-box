@@ -641,5 +641,7 @@ with a task-bound identity and only two tools; downward mail uses native `turn/s
 `turn/interrupt`, drains the turn and closes the app-server. Background jobs/pods launched by a worker are not
 implicitly terminated. Follow-up work resumes the stored native thread. Its cumulative token checkpoint
 prevents charging earlier turns again. Keep `state/codex/` alongside the mailbox and usage ledger on restart.
+Each interactive task uses its own persistent `state/codex/<task_id>/` home, so concurrent workers do not
+initialize the same native SQLite databases. Resuming a task reuses that home and its native thread.
 The two local mailbox tools are explicitly approved even under `deny_all`; other worker permissions are
 unchanged. Missing mailbox tools fail the task before worker inference.

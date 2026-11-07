@@ -129,6 +129,21 @@ def test_native_mailbox_subprocess_receives_package_path(tmp_path, monkeypatch):
                          for tool in ('ask_pi', 'report_progress')}
 
 
+def test_parallel_worker_homes_are_distinct_and_stable_on_resume(tmp_path, monkeypatch):
+    from crux_scaffold.coding_agents import codex_client
+    seen = []
+    monkeypatch.setattr('crux_scaffold.coding_agents.AsyncCodex', lambda config: seen.append(config))
+    boxes = DelegateMailboxes(tmp_path / 'delegates.sqlite')
+    first, second = boxes.start('worker_a', 'Work'), boxes.start('worker_b', 'Work')
+    ctx = context(tmp_path)
+    for task in (first, second, first):
+        codex_client(ctx, mailbox=DelegateMailboxes(boxes.path).delegate(task['id']))
+    homes = [config.env['CODEX_HOME'] for config in seen]
+    assert homes[0] == homes[2] == str(ctx.state_dir / 'codex' / first['id'])
+    assert homes[1] == str(ctx.state_dir / 'codex' / second['id'])
+    assert homes[0] != homes[1]
+
+
 def test_broken_mailbox_fails_before_any_worker_inference(tmp_path):
     boxes = DelegateMailboxes(tmp_path / 'delegates.sqlite')
     task = boxes.start('worker', 'Work')

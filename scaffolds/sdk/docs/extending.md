@@ -515,7 +515,9 @@ outstanding uncollected work is incomplete; the phased loop skips gates until it
 during `execute`; the base class restores/persists cumulative conversation usage for interactive follow-ups.
 An interactive coding implementation must retain its conversation, consume queued PI mail and report usage
 cumulatively across resumed turns. Codex stores its native thread ID, resumes that thread, and forwards mail
-through native steering. `codex_client` configures the task-bound stdio `crux_delegate` MCP server (no new
+through native steering. Each interactive task has a persistent `state/codex/<task_id>/` home to isolate native
+SQLite initialization across concurrent workers; resumption keeps the same home. `codex_client` configures
+the task-bound stdio `crux_delegate` MCP server (no new
 service or dependency). The MCP module contains no agent SDK logic. Receipts are persisted only after native
 acceptance; a racing ended turn leaves mail queued for a follow-up. Existing noninteractive coding runs retain
 fresh-thread, per-brief usage behavior.

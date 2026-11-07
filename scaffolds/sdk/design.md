@@ -132,5 +132,6 @@ existing global delegation concurrency limits still apply.
 
 Codex shares the same mailbox/lifecycle contract. Its adapter owns native thread resumption, `turn/steer`,
 interrupt/drain/close and cumulative-usage checkpoints. A minimal stdio MCP endpoint exposes only questions
-and progress reports, bound to the task when it starts. SDK-neutral task scheduling stays out of the Codex
+and progress reports, bound to the task when it starts. Interactive tasks have separate persistent Codex homes,
+preventing concurrent startup from contending over native SQLite initialization. SDK-neutral task scheduling stays out of the Codex
 adapter, and SDK-specific execution stays out of mailbox storage. There is no new broker service.

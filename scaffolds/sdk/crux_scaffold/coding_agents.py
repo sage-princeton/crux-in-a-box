@@ -160,6 +160,12 @@ CONTINUE_AFTER_PROVIDER_ERROR = ("The previous turn stopped on a provider error 
                                  "Continue the task from where it stopped.")
 
 
+def codex_home(ctx: RunContext, mailbox: DelegateMailbox | None) -> Path:
+    """Isolate native SQLite state between interactive tasks while preserving each task's resumable home."""
+    root = ctx.state_dir / 'codex'
+    return root / mailbox.task_id if mailbox else root
+
+
 def codex_client(ctx: RunContext, options: CodexOptions | None = None, *,
                  mailbox: DelegateMailbox | None = None) -> AsyncCodex:
     # TODO(AE-303): simplify provider selection and settings when OpenRouter is the only supported route.
@@ -198,7 +204,7 @@ def codex_client(ctx: RunContext, options: CodexOptions | None = None, *,
     overrides = tuple(f"{name}={json.dumps(value)}" for name, value in settings.items())
     return AsyncCodex(CodexConfig(
         cwd=str(ctx.workspace.root), config_overrides=overrides,
-        env={**ctx.env, "CODEX_HOME": str(ctx.state_dir / "codex")},
+        env={**ctx.env, "CODEX_HOME": str(codex_home(ctx, mailbox))},
     ))
 
 
@@ -218,7 +224,7 @@ class CodexCodingAgent(CodingAgent):
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
-        (ctx.state_dir / "codex").mkdir(parents=True, exist_ok=True)
+        codex_home(ctx, self.mailbox).mkdir(parents=True, exist_ok=True)
         codex, turn, streaming, steering = self.client_factory(ctx), None, None, None
         mailbox = self.mailbox
         try:
