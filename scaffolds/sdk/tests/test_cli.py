@@ -232,3 +232,22 @@ def test_coding_probe_does_not_hide_cleanup_errors(monkeypatch, tmp_path, error,
         asyncio.run(cli.probe_coding_agent("codex", {"CRUX_MODEL": "test"}, NullTelemetry(), cli.PROBE_MARKER))
     assert exc.value.errno == error
     assert len(attempts) == expected_attempts
+
+
+def test_probe_also_checks_every_judge_panel_model(drop_in_dir, monkeypatch, probe_telemetry, capsys):
+    (drop_in_dir / "rubric.md").write_text("Review.")
+    with (drop_in_dir / "scaffold.toml").open("a") as config:
+        config.write('\n[gates.panel]\ntype = "llm_judge"\nrubric = "rubric.md"\nmodels = ["vendor/a", "vendor/b"]\n')
+    asked = []
+
+    async def answer(env, prompt, telemetry, *, options):
+        asked.append(env.get("CRUX_MODEL"))
+        if env.get("CRUX_MODEL") == "vendor/b":
+            raise RuntimeError("No endpoints found for vendor/b")
+        return cli.PROBE_MARKER
+
+    monkeypatch.setattr(RUNTIMES.get("openai-agents"), "probe", answer)
+    assert main(["probe", "--drop-in", str(drop_in_dir)], env={"CRUX_MODEL": "run/model"},
+                telemetry=probe_telemetry) == cli.EXIT_PROBE_FAILED
+    assert asked == ["run/model", "vendor/a", "vendor/b"]
+    assert "judge vendor/b did not answer SCAFFOLD-PROBE" in capsys.readouterr().err

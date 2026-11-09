@@ -1,8 +1,11 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from crux_scaffold.agent_runtimes.base import Verdict
 from crux_scaffold.drop_in import DropInDirectory
+from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, GateContext
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.usage import Budget, UsageLedger
@@ -56,7 +59,8 @@ def test_llm_judge_sees_the_rubric_output_and_inspected_files_only(drop_in_dir):
     gate = GATES.create("request_met", {"type": "llm_judge", "rubric": "rubric.md",
                                         "inspect": ["REQUEST.md", "missing.md"]})
     result = asyncio.run(gate.check(gate_context(drop_in_dir, runtime=runtime)))
-    rubric, evidence, tools, max_turns = runtime.judged[0]
+    rubric, evidence, tools, max_turns, model = runtime.judged[0]
+    assert model is None
     assert (tools, max_turns) == (["read_file", "list_files"], 20)
     assert rubric == "Pass if the spec is met."
     assert "iteration 2: the agent's final output\n\nI added the field." in evidence
@@ -72,8 +76,54 @@ def test_llm_judge_gets_the_tools_and_turns_the_drop_in_declares(drop_in_dir):
                                         "tools": ["read_file", "site_tests"], "max_turns": 8})
     assert gate.tools == ["read_file", "site_tests"]
     asyncio.run(gate.check(gate_context(drop_in_dir, runtime=runtime)))
-    assert runtime.judged[0][2:] == (["read_file", "site_tests"], 8)
+    assert runtime.judged[0][2:] == (["read_file", "site_tests"], 8, None)
 
 
 def test_a_command_gate_uses_no_tools():
     assert GATES.create("tests", {"type": "command", "command": "true"}).tools == []
+
+
+PANEL = ["google/gemini-4-argon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+
+
+def panel_gate(drop_in_dir, **options):
+    (drop_in_dir / "rubric.md").write_text("Review the work.")
+    return GATES.create("paper", {"type": "llm_judge", "rubric": "rubric.md", "models": PANEL, **options})
+
+
+def test_a_judge_panel_passes_on_a_majority_and_returns_every_review_anonymously(drop_in_dir):
+    runtime = FakeRuntime([], [Verdict(passed=True, feedback="Clear and solid.", next_prompt="ignored"),
+                               Verdict(passed=False, feedback="Tables are unreadable.", next_prompt=None),
+                               Verdict(passed=True, feedback="Convincing evidence.", next_prompt=None)])
+    result = asyncio.run(panel_gate(drop_in_dir).check(gate_context(drop_in_dir, runtime=runtime)))
+    assert [judged[4] for judged in runtime.judged] == PANEL
+    assert all(judged[:4] == runtime.judged[0][:4] for judged in runtime.judged)  # same rubric, evidence, tools
+    assert (result.passed, result.next_prompt) == (True, None)
+    assert result.feedback.startswith("Panel review: 2 of 3 reviewers recommend acceptance; 2 are needed.")
+    for number, text, stance in ((1, "Clear and solid.", "recommends acceptance"),
+                                 (2, "Tables are unreadable.", "does not recommend acceptance"),
+                                 (3, "Convincing evidence.", "recommends acceptance")):
+        assert f"## Reviewer {number} ({stance})\n\n{text}" in result.feedback
+    assert not any(name in result.feedback.lower() for name in ("argon", "claude", "opus", "astra", "gpt"))
+
+
+def test_a_panel_without_a_majority_fails_and_counts_a_reviewer_that_errored_against_it(drop_in_dir):
+    runtime = FakeRuntime([], [Verdict(passed=True, feedback="Accept.", next_prompt=None),
+                               RuntimeError("provider unavailable"),
+                               Verdict(passed=False, feedback="Reject.", next_prompt=None)])
+    result = asyncio.run(panel_gate(drop_in_dir).check(gate_context(drop_in_dir, runtime=runtime)))
+    assert not result.passed
+    assert result.feedback.startswith("Panel review: 1 of 3 reviewers recommend acceptance; 2 are needed.")
+    assert "## Reviewer 2 (did not complete: RuntimeError)" in result.feedback
+
+
+def test_a_panel_raises_when_no_reviewer_completes(drop_in_dir):
+    runtime = FakeRuntime([], [RuntimeError("down"), RuntimeError("down"), RuntimeError("down")])
+    with pytest.raises(RuntimeError, match="down"):
+        asyncio.run(panel_gate(drop_in_dir).check(gate_context(drop_in_dir, runtime=runtime)))
+
+
+@pytest.mark.parametrize("models", [[""], ["a", "a"]])
+def test_panel_models_must_be_distinct_names(models):
+    with pytest.raises(InvalidDropInError, match="models"):
+        GATES.create("paper", {"type": "llm_judge", "rubric": "rubric.md", "models": models})

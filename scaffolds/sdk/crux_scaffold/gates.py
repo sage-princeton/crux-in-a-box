@@ -3,6 +3,7 @@ prompt next. Deterministic gates run a command; judgment gates ask an isolated m
 
 from __future__ import annotations
 
+import asyncio
 import re
 from abc import abstractmethod
 from collections.abc import Mapping
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, StrictBool, model_validator
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
 from crux_scaffold.components import Component, CountLimit, Options, Registry, count_limit
 from crux_scaffold.errors import ToolError
@@ -97,6 +98,16 @@ class JudgeOptions(Options):
     max_turns: CountLimit = 20
     blind: StrictBool = False
     artifacts: dict[str, str] = Field(default_factory=dict)
+    # A judge panel: each model reviews independently through the run's provider and a majority must pass.
+    # Empty means one judge on the run's model.
+    models: list[str] = Field(default_factory=list)
+
+    @field_validator("models")
+    @classmethod
+    def distinct_models(cls, models: list[str]) -> list[str]:
+        if any(not model.strip() for model in models) or len(set(models)) != len(models):
+            raise ValueError("models must be distinct, non-empty model names")
+        return models
 
     @model_validator(mode="after")
     def evidence_policy(self):
@@ -136,13 +147,21 @@ class LlmJudgeGate(Gate):
                 workspace = ReviewWorkspace.snapshot(ctx.run.workspace, self.options.artifacts)
             except ToolError as exc:
                 return GateResult(gate=self.name, passed=False, feedback=str(exc))
-            verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx),
-                                              tools=self.tools, max_turns=count_limit(self.options.max_turns),
-                                              review_workspace=workspace)
-            return GateResult(gate=self.name, **verdict.model_dump())
-        verdict = await ctx.runtime.judge(self.name, ctx.drop_in.read(self.options.rubric), self.evidence(ctx),
-                                          tools=self.tools, max_turns=count_limit(self.options.max_turns))
-        return GateResult(gate=self.name, **verdict.model_dump())
+            verdict, _ = await self.review(ctx, ctx.drop_in.read(self.options.rubric), self.evidence(ctx), workspace)
+            return GateResult(gate=self.name, **verdict)
+        verdict, _ = await self.review(ctx, ctx.drop_in.read(self.options.rubric), self.evidence(ctx))
+        return GateResult(gate=self.name, **verdict)
+
+    async def review(self, ctx: GateContext, rubric: str, evidence: str,
+                     review_workspace: ReviewWorkspace | None = None) -> tuple[dict, list[dict]]:
+        """A verdict's fields (passed, feedback, next_prompt) from one judge on the run's model, or with `models` a
+        panel's combined verdict and one record per reviewer."""
+        options = {"tools": self.tools, "max_turns": count_limit(self.options.max_turns)}
+        if review_workspace is not None:
+            options["review_workspace"] = review_workspace
+        if not self.options.models:
+            return (await ctx.runtime.judge(self.name, rubric, evidence, **options)).model_dump(), []
+        return await judge_panel(ctx.runtime, self.name, rubric, evidence, self.options.models, **options)
 
     def evidence(self, ctx: GateContext) -> str:
         if self.options.blind:
@@ -156,3 +175,35 @@ class LlmJudgeGate(Gate):
                 content = "(missing)"
             parts.append(f"# Workspace file `{rel}`\n\n{content}")
         return "\n\n".join(parts)
+
+
+async def judge_panel(runtime: AgentRuntime, name: str, rubric: str, evidence: str, models: list[str],
+                      **options) -> tuple[dict, list[dict]]:
+    """Ask each model for an independent verdict on the same evidence; the panel passes when a majority passes.
+
+    The feedback carries every review in full, numbered rather than named, and states the count. A reviewer whose
+    call fails counts against acceptance; if every reviewer fails, the first error is raised, as for one judge.
+    Each record names its reviewer's model and whether it completed."""
+    results = await asyncio.gather(*(runtime.judge(name, rubric, evidence, model=model, **options) for model in models),
+                                   return_exceptions=True)
+    errors = [result for result in results if isinstance(result, BaseException)]
+    if any(not isinstance(error, Exception) for error in errors):
+        raise next(error for error in errors if not isinstance(error, Exception))  # cancellation is not a review
+    if len(errors) == len(models):
+        raise errors[0]
+    records, sections = [], []
+    for number, (model, result) in enumerate(zip(models, results, strict=True), 1):
+        if isinstance(result, Exception):
+            record = {"reviewer": number, "model": model, "completed": False, "passed": False}
+            stance, text = f"did not complete: {type(result).__name__}", "This reviewer failed before reaching a verdict."
+        else:
+            record = {"reviewer": number, "model": model, "completed": True, "passed": result.passed}
+            stance = "recommends acceptance" if result.passed else "does not recommend acceptance"
+            text = result.feedback
+        records.append(record)
+        sections.append(f"## Reviewer {number} ({stance})\n\n{text}")
+    passes, needed = sum(record["passed"] for record in records), len(models) // 2 + 1
+    feedback = (f"Panel review: {passes} of {len(models)} reviewers recommend acceptance; {needed} "
+                f"{'is' if needed == 1 else 'are'} needed. The reviewers worked independently on the same "
+                "submission; each review follows in full.\n\n" + "\n\n".join(sections))
+    return {"passed": passes >= needed, "feedback": feedback, "next_prompt": None}, records

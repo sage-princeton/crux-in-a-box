@@ -398,6 +398,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         tools: list[str],
         max_turns: int | None,
         review_workspace: ReviewWorkspace | None = None,
+        model: str | None = None,
     ) -> Verdict:
         ctx = self.assembly.context
         if review_workspace is not None:
@@ -407,7 +408,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             name=JUDGE if review_workspace is not None else f"{JUDGE}:{name}",
             instructions=rubric,
             output_type=Verdict,
-            model=self._model(JUDGE),
+            model=self._model(JUDGE, model),
             model_settings=self._settings(),
             tools=[self._function_tool(self.assembly.tools[tool], ctx) for tool in tools],
         )
@@ -464,11 +465,13 @@ class OpenAIAgentsRuntime(AgentRuntime):
             )
             return str((await Runner.run(agent, prompt, max_turns=1)).final_output)
 
-    def _model(self, agent: str) -> str | Model:
-        """The run's model; tests substitute scripted models per agent through `models`."""
-        if agent in self.models:
-            return self.models[agent]
-        model = self.assembly.context.model
+    def _model(self, agent: str, name: str | None = None) -> str | Model:
+        """The run's model, or a judge's named model; tests substitute scripted models per agent or per model name
+        through `models`."""
+        key = name or agent
+        if key in self.models:
+            return self.models[key]
+        model = name or self.assembly.context.model
         return self.provider.get_model(model) if self.provider else model
 
     def _settings(self) -> ModelSettings:

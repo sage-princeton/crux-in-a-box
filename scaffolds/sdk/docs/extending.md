@@ -162,6 +162,18 @@ Allowance is mutable state on the shared tool instance, not persisted run state.
 
 ### Blind `llm_judge` evidence policy
 
+### `llm_judge` panels
+
+`models` (default empty) turns one judge into a panel: `LlmJudgeGate.review` calls `judge(..., model=m)` once per
+listed model, concurrently and with identical rubric, evidence, tools and turn limit, through `judge_panel`. Names
+must be distinct and non-empty. The panel passes when a strict majority of reviewers pass (2 of 3). Its feedback
+states the count and then every review in full, numbered `Reviewer 1..n` in `models` order without model names; its
+`next_prompt` is always `None`. A reviewer whose call raises counts against acceptance and is reported as not
+completed; if every reviewer raises, the first error propagates as for one judge, and cancellation always
+propagates. `review` returns the verdict's fields and one record per reviewer (`reviewer`, `model`, `completed`,
+`passed`; empty for one judge), so a gate subclass can archive which model wrote which review. `crux_scaffold probe
+--drop-in` probes every panel model named in the drop-in's gates as well as the run model.
+
 Ordinary judging is unchanged: `rubric`, `inspect`, `tools` and `max_turns` work as before. `blind` defaults to
 false. With `blind = true`, `artifacts` must be a nonempty alias-to-workspace-path mapping and `inspect` must be
 empty. Artifact sources must be relative file paths without `..`; aliases must match
@@ -275,7 +287,7 @@ A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the 
 |---|---|
 | `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
 | `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
-| `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). `max_turns` is a positive integer or `None` for no turn limit. When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent. |
+| `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None, model=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). `max_turns` is a positive integer or `None` for no turn limit. When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent, unless `model` names another model for a judge panel; resolve that name through the run's provider and settings. |
 | `describe()` | Assembly details, including provider and one line per agent, printed by `check`. |
 | `coding_status()` (base implementation) | One factual line on background coding briefs that are running, finished but uncollected, or cancelled and not yet reported; empty (the default) when there are none. The composition root adds it to the orchestrator's research context on every call. |
 | `delegation_slot(*, background=False)` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |

@@ -106,27 +106,70 @@ def test_unrequested_or_invalid_paper_never_calls_reviewer(scaffold):
     assert "abstract" in asyncio.run(gate.check(gate_context(scaffold))).feedback.lower()
 
 
-def test_review_is_blind_archived_cached_and_bound_to_pdf(scaffold):
+PANEL = ["google/gemini-4-argon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+
+
+def script_panel(scaffold, *passed, rounds=1):
+    """One scripted judge per panel model: each reads page 1, then returns its verdict."""
+    judges = {}
+    for model, accept in zip(PANEL, passed, strict=True):
+        verdict = Verdict(passed=accept, feedback=f"Overall: {5 if accept else 2}", next_prompt=None)
+        turns = [call("read_pdf", {"path": "submission.pdf", "page": 1}, "pdf"), say(verdict.model_dump_json())]
+        judges[model] = ScriptedModel(*turns * rounds)
+    scaffold.runtime.models.update(judges)
+    return judges
+
+
+def test_both_review_gates_use_the_three_model_panel(scaffold):
+    for name in ("research_review", "final_review"):
+        assert scaffold.loop.gates[name].options.models == PANEL
+
+
+def test_review_is_a_blind_archived_cached_panel_bound_to_pdf(scaffold):
     digest = submit(scaffold)
-    verdict = Verdict(passed=True, feedback="Overall (1-6): 5\nRecommendation: Accept", next_prompt=None)
-    judge = ScriptedModel(call("read_pdf", {"path": "submission.pdf", "page": 1}, "pdf"),
-                          say(verdict.model_dump_json()))
-    scaffold.runtime.models["judge"] = judge
+    judges = script_panel(scaffold, True, False, True)
     gate = scaffold.loop.gates["research_review"]
     result = asyncio.run(gate.check(gate_context(scaffold)))
     assert result.passed
-    assert asyncio.run(gate.check(gate_context(scaffold))).passed
-    assert len(judge.inputs) == 2
-    assert "PRIVATE" not in str(judge.inputs)
-    assert "data:image/png;base64," in str(judge.inputs)
+    assert result.feedback.startswith("Panel review: 2 of 3 reviewers recommend acceptance; 2 are needed.")
+    assert asyncio.run(gate.check(gate_context(scaffold))).passed  # cached: no judge runs again
+    assert all(len(judge.inputs) == 2 for judge in judges.values())
+    received = str([judge.inputs for judge in judges.values()])
+    assert "PRIVATE" not in received and "data:image/png;base64," in received
     archived = list((scaffold.context.state_dir / "tabpfn/reviews").glob("*.json"))
     assert len(archived) == 1
     record = json.loads(archived[0].read_text())
     assert record["paper_sha256"] == digest
-    assert record["verdict"] == verdict.model_dump()
-    assert (scaffold.context.workspace.root / "reviews" / archived[0].name).read_text() == archived[0].read_text()
-    scaffold.context.workspace.write_file("REVIEW_REQUEST.json", json.dumps({"paper_sha256": "old"}))
+    assert record["panel"] == [{"reviewer": number, "model": model, "completed": True, "passed": accept}
+                               for number, (model, accept) in enumerate(zip(PANEL, (True, False, True)), 1)]
+    # The authors see every review; which model wrote which stays in the state directory.
+    workspace = scaffold.context.workspace
+    published = json.loads(workspace.read_file(f"reviews/{archived[0].name}"))
+    assert published == {"paper_sha256": digest, "verdict": record["verdict"]}
+    status = workspace.read_file("REVIEW_STATUS.json")
+    assert not any(model in status for model in PANEL) and "panel" not in json.loads(status)
+    workspace.write_file("REVIEW_REQUEST.json", json.dumps({"paper_sha256": "old"}))
     assert not asyncio.run(gate.check(gate_context(scaffold))).passed
+
+
+def test_a_panel_with_a_failed_reviewer_decides_but_is_reviewed_again(scaffold):
+    submit(scaffold)
+    judges = script_panel(scaffold, True, True, False, rounds=2)
+    judge = scaffold.runtime.judge
+
+    async def failing(*args, model=None, **kwargs):
+        if model == PANEL[1]:
+            raise RuntimeError("provider unavailable")
+        return await judge(*args, model=model, **kwargs)
+
+    scaffold.runtime.judge = failing
+    gate = scaffold.loop.gates["research_review"]
+    for _ in range(2):
+        result = asyncio.run(gate.check(gate_context(scaffold)))
+        assert not result.passed
+        assert "## Reviewer 2 (did not complete: RuntimeError)" in result.feedback
+    assert not list((scaffold.context.state_dir / "tabpfn/reviews").glob("*.json"))
+    assert len(judges[PANEL[0]].inputs) == len(judges[PANEL[2]].inputs) == 4
 
 
 @pytest.mark.parametrize("harness", ["tabpfn", "contrastive-rl"])
@@ -149,7 +192,8 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     elif formatting == "bold_values":
         ratings = separator.join(f"**{name}:** **{value}**" for name, value in scores.items())
     feedback = separator.join([
-        "**Summary:** " + "Full reviewer discussion. " * 1000,
+        # Longer than any real review (10.6k-14k characters); three must fit in the pinned review status.
+        "**Summary:** " + "Full reviewer discussion. " * 600,
         "**Strengths:** (1) *Useful problem:* Context for the review.",
         "**Weaknesses:**",
         "1. *Confounded baselines:* Detailed reviewer evidence.",
@@ -167,8 +211,8 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     assert not asyncio.run(gate.check(gate_context(scaffold))).passed
     workspace = scaffold.context.workspace
     status = json.loads(workspace.read_file("REVIEW_STATUS.json"))
-    assert status["verdict"] == verdict.model_dump()
-    assert json.loads(workspace.read_file(status["review_path"]))["verdict"] == verdict.model_dump()
+    assert status["verdict"]["passed"] is False and status["verdict"]["feedback"].count(feedback) == 3
+    assert json.loads(workspace.read_file(status["review_path"]))["verdict"] == status["verdict"]
     workspace.write_file("PLAN.md", "Old plan. " * 10000)
     research = scaffold.assembly.research_context("pi")
     assert json.dumps(status, indent=2) in research
@@ -182,7 +226,7 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     assert asyncio.run(gate.check(gate_context(scaffold))).passed
     latest = json.loads(workspace.read_file("REVIEW_STATUS.json"))
     assert latest["review_path"] != status["review_path"]
-    assert latest["verdict"] == verdict.model_dump()
+    assert latest["verdict"]["passed"] and latest["verdict"]["feedback"].count(verdict.feedback) == 3
 
     scaffold.context.resources = scaffold.context.steering = None
     scaffold.strategy.options = scaffold.strategy.options.model_copy(update={"trigger_tokens": 50000,

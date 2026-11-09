@@ -54,7 +54,7 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
     telemetry = telemetry or telemetry_from_env(env, RunIdentity.from_env(env))
     try:
         if args.command == "probe":
-            runtime, options = "openai-agents", None
+            runtime, options, judges = "openai-agents", None, []
             if args.drop_in:
                 # Provisioning precedes operator preparation. A model-only probe
                 # needs provider settings, not resolved prompts or Slack steering.
@@ -63,7 +63,9 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
                 spec = {key: value for key, value in drop_in.config.runtime.items() if key != "steering"}
                 cls, options = RUNTIMES.resolve("runtime", spec)
                 runtime = cls.type_name
-            return asyncio.run(run_probe(runtime, args.coding_agent, env, telemetry, options=options))
+                # Judge panel models run through the same provider: probe each so a wrong name fails before launch.
+                judges = sorted({model for gate in drop_in.config.gates.values() for model in gate.get("models", [])})
+            return asyncio.run(run_probe(runtime, args.coding_agent, env, telemetry, options=options, judges=judges))
         drop_in = DropInDirectory.load(args.drop_in)
         scaffold = Scaffold(drop_in, env, state_dir=args.state_dir, telemetry=telemetry,
                             sleep=sleep, runtime_overrides=runtime_overrides)
@@ -107,7 +109,7 @@ async def until_stopped[T](coro: Coroutine[Any, Any, T]) -> T:
 
 
 async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, str], telemetry: Telemetry, *,
-                    options: Options | None = None) -> int:
+                    options: Options | None = None, judges: Sequence[str] = ()) -> int:
     """The first two of the team's testing protocols: the agent can do anything at all, and tracing works."""
     if not isinstance(telemetry, LangfuseTelemetry):
         print("probe failed: LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY must be set", file=sys.stderr)
@@ -125,6 +127,12 @@ async def run_probe(runtime: str, coding_agent: str | None, env: Mapping[str, st
         with telemetry.trace("crux-probe"):
             kwargs = {"options": options} if options is not None else {}
             replies = {runtime: await RUNTIMES.get(runtime).probe(env, request, telemetry, **kwargs)}
+            for model in judges:
+                try:
+                    reply = await RUNTIMES.get(runtime).probe({**env, "CRUX_MODEL": model}, request, telemetry, **kwargs)
+                except Exception as exc:  # noqa: BLE001 - A judge model's failure is a failed probe, without details.
+                    reply = f"error: {type(exc).__name__}"
+                replies[f"judge {model}"] = reply
             if coding_agent:
                 replies[coding_agent] = await probe_coding_agent(coding_agent, env, telemetry, request)
     finally:

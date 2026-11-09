@@ -119,9 +119,13 @@ and state/tabpfn paths remain unchanged.
 The PI's refreshed research context includes the complete latest
 `REVIEW_STATUS.json` verdict before PLAN.md, independent of conversation
 compaction. Each new review replaces the status; historical reviews remain in
-`reviews/`. The PI's 64,000-character workspace context budget allows roughly
-32,000 characters for the review before PLAN.md. Longer files carry the existing
-truncation notice; the archive retains the full feedback.
+`reviews/`. The PI's 120,000-character workspace context budget allows roughly
+60,000 characters for the review status before PLAN.md: three reviews of the usual
+10,000–14,000 characters fit. Longer files carry the existing truncation notice;
+the archive retains the full feedback.
+Both review gates use the TabPFN drop-in's three-model panel (Argon, Opus 5.5 and
+Astra through OpenRouter; two of three must recommend acceptance); see its
+OPERATOR_GUIDE.md for the records and caching.
 
 ## Evidence and shutdown
 

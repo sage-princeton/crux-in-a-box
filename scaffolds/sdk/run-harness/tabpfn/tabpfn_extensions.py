@@ -15,7 +15,6 @@ from contextlib import suppress
 import pypdfium2 as pdfium
 from pydantic import Field, model_validator
 
-from crux_scaffold.components import count_limit
 from crux_scaffold.errors import InvalidDropInError, ToolError
 from crux_scaffold.gates import GATES, GateResult, JudgeOptions, LlmJudgeGate
 from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, PhasedOptions
@@ -239,19 +238,25 @@ class PaperReview(LlmJudgeGate):
             if problem := paper_problem(workspace, snapshot):
                 return result(False, problem)
             rubric = ctx.drop_in.read(self.options.rubric)
-            key = hashlib.sha256((digest + rubric).encode()).hexdigest()
+            # A panel's members are part of the review, so changing them doesn't reuse an earlier verdict.
+            panel_models = "".join(f"\n{model}" for model in self.options.models)
+            key = hashlib.sha256((digest + rubric + panel_models).encode()).hexdigest()
             canonical = ctx.run.state_dir / "tabpfn/reviews" / f"{key}.json"
             if canonical.exists():
                 record = json.loads(canonical.read_text())
             else:
-                verdict = await ctx.runtime.judge(self.name, rubric, self.evidence(ctx), tools=self.tools,
-                                                  max_turns=count_limit(self.options.max_turns),
-                                                  review_workspace=snapshot)
-                record = {"paper_sha256": digest, "verdict": verdict.model_dump()}
-                save_json(canonical, record)
+                verdict, panel = await self.review(ctx, rubric, self.evidence(ctx), snapshot)
+                record = {"paper_sha256": digest, "verdict": verdict}
+                if panel:
+                    record["panel"] = panel
+                # A panel missing a reviewer still decides, but the same PDF is reviewed again next time.
+                if all(reviewer["completed"] for reviewer in panel):
+                    save_json(canonical, record)
             review_path = f"reviews/{key}.json"
-            workspace.write_file(review_path, canonical.read_text())
-            workspace.write_file("REVIEW_STATUS.json", json.dumps({**record, "review_path": review_path}, indent=2))
+            # The authors see every review in the verdict; which model wrote which stays in the state directory.
+            published = {"paper_sha256": record["paper_sha256"], "verdict": record["verdict"]}
+            workspace.write_file(review_path, json.dumps(published, indent=2) + "\n")
+            workspace.write_file("REVIEW_STATUS.json", json.dumps({**published, "review_path": review_path}, indent=2))
             verdict = record["verdict"]
             if hashlib.sha256(workspace.read_bytes("paper/paper.pdf")).hexdigest() != digest:
                 return result(False, "The PDF changed during review; collect writers and submit the current PDF.")

@@ -40,9 +40,13 @@ from `scaffolds/sdk`:
 ## Dependencies and deployment
 
 Use a worktree containing this committed change: production stages its `HEAD`.
-The SDK shares one operator-selected model/effort across PI, assistants, judges
-and Codex. Select a Responses/compaction-capable model supported by the installed
-Codex SDK. Provisioning probes that configuration; do not assume model access.
+The SDK shares one operator-selected model/effort across PI, assistants and Codex.
+Select a Responses/compaction-capable model supported by the installed Codex SDK.
+Both review gates use a three-model panel through OpenRouter instead:
+`google/gemini-4-argon`, `anthropic/claude-opus-5.5` and `openai/gpt-6-astra`, at the
+run's effort. The OpenRouter key must reach all three; provisioning probes the run
+model and every panel model, so do not assume model access. A panel review costs
+roughly $5–10.
 
 1. Authenticate AWS explicitly:
    ```bash
@@ -177,16 +181,21 @@ are research outputs. No hosted Prior Labs prediction API is used.
 `workspace/PLAN.md` carries current scientific/budget state; `LOG.md` is historical.
 The review gate checks the abstract, main-body aux label and PDF readability, then
 snapshots only `paper/paper.pdf` under the neutral alias `submission.pdf`. The
-reviewer has only built-in read/list/PDF tools, no author context, shell, MCP or
-previous reviews. Its exact structured result is saved under
-`/srv/crux-run/state/tabpfn/reviews/` and mirrored into `workspace/reviews/`.
-The PDF/rubric hash binds cached verdicts; unchanged papers cannot be rerolled.
+reviewers have only built-in read/list/PDF tools, no author context, shell, MCP or
+previous reviews. Three models review independently and the paper passes when two
+recommend acceptance (Overall 5 or 6). The PI receives all three reviews in full,
+numbered Reviewer 1–3 without model names. The structured result, including which
+model wrote which review, is saved under `/srv/crux-run/state/tabpfn/reviews/`;
+`workspace/reviews/` mirrors it without the model names. The PDF, rubric and panel
+hash binds cached verdicts; unchanged papers cannot be rerolled. A panel in which a
+reviewer failed still decides but isn't cached, so the next request reviews again.
 `REVIEW_STATUS.json` contains the latest review's PDF hash, archive path and
 complete verdict, including the original reviewer feedback. The PI receives this
 file before PLAN.md in its refreshed research context on every model call,
 independent of conversation compaction. Each new review replaces the status;
-historical reviews remain in `reviews/`. The PI's 64,000-character workspace
-context budget allows roughly 32,000 characters for the review before PLAN.md.
+historical reviews remain in `reviews/`. The PI's 120,000-character workspace
+context budget allows roughly 60,000 characters for the review status before
+PLAN.md: three reviews of the usual 10,000–14,000 characters fit.
 Longer files carry the existing truncation notice; the archive retains the full
 feedback.
 The final gate checks required
