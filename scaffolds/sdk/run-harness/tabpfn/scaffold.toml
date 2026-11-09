@@ -11,6 +11,7 @@ type = "openai-compatible"
 api = "responses"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
+max_request_bytes = 20000000
 
 [runtime.steering]
 server = "slack"
