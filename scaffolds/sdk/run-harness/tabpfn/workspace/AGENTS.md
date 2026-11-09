@@ -65,6 +65,16 @@ Use checkpointed processes for long compute; record PIDs, pod IDs, logs and path
 Retrieve results and terminate owned pods promptly, including at finalization.
 Do not treat an old account-balance delta as run-specific billing.
 
+The host and Unix account are shared by the scaffold and other agents. Manage only
+jobs you started or whose management was explicitly handed to you. For example,
+keep track of the PID/session ID of jobs you own or have been handed to you, then
+before stopping a job, verify its identity and target its exact PID or a dedicated
+process group created for that job. Try graceful termination before SIGKILL. Never
+select termination targets through broad executable-name or workspace-path
+matching, or kill scaffold processes, agent runtimes or shared services unless
+you're certain you're solely responsible for managing those resources. Sharing a
+user account, workspace or run slug does not establish ownership.
+
 Check software and network behavior rather than trusting old environment facts.
 Use public arXiv, Crossref, OpenAlex and publisher sources for literature; back off
 on rate limits. Verify public model download and gradient/activation access early.
