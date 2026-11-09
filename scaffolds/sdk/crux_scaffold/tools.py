@@ -10,6 +10,7 @@ from io import BytesIO
 from typing import ClassVar
 
 import pypdfium2 as pdfium
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from crux_scaffold.components import Component, Options, Registry
@@ -111,7 +112,11 @@ class ReadPdf(Tool):
                         bitmap.to_pil() as image,
                     ):
                         buffer = BytesIO()
-                        image.save(buffer, format="PNG")
+                        # Page images accumulate in a conversation and providers cap request size (Google AI
+                        # Studio: 20 MB, about 26 RGB pages). A 256-colour palette keeps text sharp and figure
+                        # colours, at about a quarter of an RGB PNG's size.
+                        image.convert("RGB").quantize(colors=256, method=Image.Quantize.FASTOCTREE).save(
+                            buffer, format="PNG", optimize=True)
                     return [f"Page {args.page} of {len(document)}\n{text}", ToolImage(buffer.getvalue())]
         except (pdfium.PdfiumError, ValueError, OSError) as exc:
             if isinstance(exc, ToolError):

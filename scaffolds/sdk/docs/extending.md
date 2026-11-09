@@ -92,7 +92,9 @@ when it ends, so `kill -0 <pid>` stops succeeding. Nothing stops a background jo
 The existing `command` tool instead runs a fixed command declared by the drop-in.
 
 `read_pdf(path, page)` reads one 1-based PDF page from `ctx.workspace.read_bytes`. It returns the page count,
-extracted text (capped at 20,000 characters), and a PNG rendering (at most 1,600 pixels on its longest side).
+extracted text (capped at 20,000 characters), and a 256-colour palette PNG rendering (at most 1,600 pixels on its
+longest side), about a quarter of an RGB PNG's size, since page images accumulate in a conversation and providers
+cap request size.
 Figures reach the model as image content. It reads no PDF metadata or embedded attachments and runs no artifact
 code. Invalid PDFs and page numbers return `ToolError` with no source paths. PDFium and Pillow are pinned
 dependencies; there is no shell command or external converter.
