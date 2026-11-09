@@ -168,3 +168,7 @@ partial result. Codex uses native steering/interruption and a task-bound MCP ser
 Interruption waits for harness cleanup; independently launched training processes or pods still need their
 recorded cleanup commands. Langfuse `delegate:*` events link dispatch, messages, delivery, and results by task ID.
 A delivery receipt means input handoff, not proof of model compliance. Concurrency limits are unchanged.
+
+The shared operating context, role prompts and finalization instructions reinforce
+process ownership when stopping work. This is cooperative guidance for agents on
+the same host and Unix account, not OS-level process isolation.

@@ -22,6 +22,8 @@ with recorded IDs, logs and retrieval/termination commands. Inspect progress at
 meaningful intervals rather than with repeated model calls: use the rest tool if
 you have it, otherwise a blocking wait on the process. Coordinate file ownership
 with the PI and do not start competing writers on the same paper.
+Apply the same care to processes: manage your own or handed-over jobs, following
+AGENTS.md, and check with the PI if ownership is unclear while continuing independent work.
 
 Only copy the environment values necessary for a job. Never print credentials or
 copy service/model credentials into a pod, source file, log, or result artifact.

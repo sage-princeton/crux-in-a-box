@@ -2,8 +2,10 @@ Finalize the best supported result now. Read REVIEW_STATUS.json and, if present,
 FINALIZATION_REASON.json. A resource-reserve transition is not an acceptance.
 
 Harvest/checkpoint work in flight, retrieve results, and terminate this run's
-RunPod pods after copying their artifacts. Inspect running processes; stop only
-this run's experiments.
+RunPod pods after copying their artifacts. Inspect running processes and clean up
+experiments you own or whose management has been handed to you. Coordinate with
+delegates about their remaining jobs, taking care to preserve the scaffold and
+other agents as described in AGENTS.md's process-ownership guidance.
 
 This is a time to make sure that a human reviewer can clearly understand your
 paper. Ask a subagent to try to read the paper through with the explicit goal of

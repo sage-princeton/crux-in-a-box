@@ -25,6 +25,8 @@ inspect immediately. Read its `messages` and `results`; the inbox collects all r
 Answer questions using `send_message` with `reply_to` set to the question's ID; use `send_message` to steer
 when evidence changes the plan, and use `interrupt_delegate` to stop unwanted work. `send_message` resumes
 stopped conversations; a new brief starts fresh. Collect results before finishing the iteration.
+When managing delegates, prefer these delegate controls over directly modifying a delegates runtime or processes; coordinate cleanup
+of its remaining jobs when needed, following the process-ownership guidance in AGENTS.md.
 
 After you have validated the environment, start by closely reading all of the related literature on the subject. Then propose a set of distinct research directions to answer the question. Scale these approaches in parallel before settling on a research direction. Remember that this is not a final commitment.
 
