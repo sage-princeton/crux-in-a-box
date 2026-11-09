@@ -83,7 +83,7 @@ process group created for that job. Try graceful termination before SIGKILL. Nev
 select termination targets through broad executable-name or workspace-path
 matching, or kill scaffold processes, agent runtimes or shared services unless
 you're certain you're solely responsible for managing those resources. Sharing a
-user account, workspace or run slug does not establish ownership.
+user account, workspace or run slug does not establish you as the sole owner.
 
 Check software and network behavior rather than trusting old environment facts.
 Use public arXiv, Crossref, OpenAlex and publisher sources for literature; back off
