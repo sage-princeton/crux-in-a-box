@@ -39,4 +39,6 @@ Run in ciab-devenv and inspect its outputs and traces.
 
 Research runs can opt into `runtime.interactive_delegates` for background research assistants and Codex workers with durable
 mailboxes. The PI can steer, interrupt, resume, and request progress; assistants can ask questions and report
-progress without interrupting the PI. See [configuration.md](configuration.md#interactive-delegates).
+progress without interrupting active PI work. A single `delegate_inbox` tool waits for mail or any task finishing
+and collects every ready result; interactive mode has no per-worker result tools. See
+[configuration.md](configuration.md#interactive-delegates).

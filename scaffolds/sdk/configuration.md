@@ -625,16 +625,28 @@ Contribution guidelines are in [AGENTS.md](AGENTS.md). Tests never call a model 
 Set `runtime.interactive_delegates = true` to run research assistants and Codex workers asynchronously with persistent
 conversations. This mode supports direct PI delegates (no nested SDK delegation). This is opt-in; existing blocking SDK delegates and `background_coding` behavior remain the
 default. Each dispatch returns a task ID. The PI gets `send_message`, `interrupt_delegate`, `request_progress`,
-`delegate_inbox` and `<delegate>_result`; delegates get only `ask_pi` and `report_progress`.
+`delegate_inbox`; delegates get only `ask_pi` and `report_progress`. Interactive mode uses one inbox tool
+for status, waiting and result collection; it does not generate `<delegate>_result` tools.
 Each declared delegate name has one outstanding conversation. Collect its result before assigning a new
 brief; declare separate delegates for concurrent conversations. Existing global concurrency limits still apply.
 
 `send_message` queues steering or a reply (`reply_to` is the question's message ID). An ended task resumes the
 same conversation; `interrupt=true` stops active work before resuming it. `interrupt_delegate` stops without
 resuming. `request_progress` solicits a report from active work and immediately returns a receipt; it does not
-claim the delegate has answered. `delegate_inbox(wait_seconds=0..60)` optionally waits for mail. Result waits
-use `coding_result_wait_seconds` and return early for unanswered questions. Neither kind of upward message
-interrupts a PI model/tool call. The PI must collect outstanding results before gates run.
+claim the delegate has answered. `delegate_inbox(wait_seconds=0)` checks immediately; a positive, finite
+`wait_seconds` waits for any new delegate message or uncollected completed, failed or interrupted task.
+It returns immediately if no tasks are running. The existing `coding_result_wait_seconds` option caps each
+requested wait (default 1800 seconds; `"unlimited"` removes the cap). Timeout or cancellation leaves delegate
+work running, and waiting consumes no rest allowance. Use one inbox wait, rather than parallel waits for
+individual workers. Ordinary PI model/tool calls are not interrupted and mail does not schedule a PI turn.
+
+The response contains `tasks` (all current status, latest progress and unresolved questions), `messages`
+(pending upward mail), and `results` (all newly collected terminal results, including errors/partial results,
+with task IDs). Returned results are marked collected, retained in durable state, and not returned again;
+resuming the same task makes its next terminal result collectable again. Messages keep the normal
+model-boundary delivery contract. The PI must collect outstanding results before gates run. This is a tool
+migration for interactive-mode callers: replace `<delegate>_result(wait=...)` with `delegate_inbox` and read
+its `results` list. Noninteractive `background_coding` keeps its existing per-worker result tools.
 
 State and mail live in `state/delegates.sqlite`, SDK conversations in `state/sessions.sqlite`. After restart,
 unfinished tasks are interrupted and require explicit PI resumption. Latest progress and unanswered questions

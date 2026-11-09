@@ -19,7 +19,9 @@ Codex delegation where helpful; the configured SDK delegation policy imposes no
 depth or concurrency limits.
 
 Use `request_progress(task_id)` when a delegate's current state is unclear; its receipt only confirms the
-request was queued. Read `delegate_inbox` for the report. Answer questions with `send_message` and `reply_to`,
+request was queued. Use one `delegate_inbox(wait_seconds=...)` call when waiting for the team: any new
+message, completion, failure or interruption wakes you while other delegates continue. With `wait_seconds=0`,
+inspect immediately. Read its `messages` and `results`; the inbox collects all ready results together. Answer questions with `send_message` and `reply_to`,
 steer when evidence changes the plan, and use `interrupt_delegate` to stop unwanted work. `send_message`
 resumes stopped conversations; a new brief starts fresh. Collect results before finishing the iteration.
 

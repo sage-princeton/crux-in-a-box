@@ -95,33 +95,20 @@ class DelegateTasks:
         self.flush_events()
         return receipt
 
-    async def result(self, name: str, *, wait: bool, timeout: float | None) -> dict:
-        """Collect a finished result; a question releases a PI-selected wait so the PI can answer."""
-        task = self.mailboxes.latest(name)
-        if task is None:
-            raise ValueError(f'No task for {name}')
-        deadline = None if timeout is None else asyncio.get_running_loop().time() + timeout
-        while wait and task['status'] == 'running':
-            if any(t['id'] == task['id'] and t['questions'] for t in self.mailboxes.summary()):
-                break
-            if deadline is not None and asyncio.get_running_loop().time() >= deadline:
-                break
-            await asyncio.sleep(.1)
-            task = self.mailboxes.get(task['id'])
-        if task['status'] != 'running':
-            task = self.mailboxes.update(task['id'], collected=True)
-        self.flush_events()
-        return self._view(task)
-
     async def inbox(self, wait_seconds: float = 0) -> dict:
-        """Wait only when the PI requests it. No upward message otherwise schedules PI work."""
+        """Wait for any mail or terminal task, then collect every ready result without stopping other work."""
         deadline = asyncio.get_running_loop().time() + wait_seconds
-        while not self.mailboxes.pending('pi') and asyncio.get_running_loop().time() < deadline:
-            if not any(not task.done() for task in self.tasks.values()):
+        while True:
+            tasks = self.mailboxes.summary()
+            messages = self.mailboxes.pending('pi')
+            ready = [task for task in tasks if task['status'] != 'running' and not task['collected']]
+            remaining = deadline - asyncio.get_running_loop().time()
+            if messages or ready or remaining <= 0 or not any(task['status'] == 'running' for task in tasks):
                 break
-            await asyncio.sleep(.1)
+            await asyncio.sleep(min(.1, remaining))
+        results = [self._view(self.mailboxes.update(task['id'], collected=True)) for task in ready]
         self.flush_events()
-        return {'tasks': self.status(), 'messages': self.mailboxes.pending('pi')}
+        return {'tasks': self.status(), 'messages': messages, 'results': results}
 
     def status(self) -> list[dict]:
         """Small durable context: identity, lifecycle, progress and unanswered questions, not entire briefs."""

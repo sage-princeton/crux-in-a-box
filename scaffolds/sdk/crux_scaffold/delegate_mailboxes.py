@@ -171,7 +171,7 @@ class DelegateMailbox:
         self.store, self.task_id = store, task_id
 
     def ask_pi(self, question: str) -> dict:
-        """Queue a question without waking or interrupting the PI."""
+        """Queue a question for an inbox wait or normal PI boundary, without interrupting active work."""
         return self.store._send(self.task_id, 'pi', 'question', question)
 
     def report_progress(self, progress: str) -> dict:

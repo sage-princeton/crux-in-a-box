@@ -78,7 +78,8 @@ def test_argon_provider_and_context_build_without_openai_credentials(scaffold):
     assert set(scaffold.drop_in.config.agents) == {"pi"} | assistants
     assert set(scaffold.drop_in.config.agents["pi"].delegates) == workers | assistants
     tools = {tool.name for tool in scaffold.runtime.agents["pi"].tools}
-    assert workers | assistants | {f"{name}_result" for name in workers | assistants} <= tools
+    assert workers | assistants | {'delegate_inbox'} <= tools
+    assert not {f"{name}_result" for name in workers | assistants} & tools
     assert scaffold.context.model == "google/gemini-4-argon"
     assert scaffold.context.reasoning_effort == "high"
 
