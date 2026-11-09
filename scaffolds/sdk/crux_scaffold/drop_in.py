@@ -73,9 +73,13 @@ class DropInDirectory:
             label = f"{self.config.workspace}/{rel}" if dynamic else rel
             heading = f"# {'Research' if dynamic else 'Standing'} context: {label}"
             allowance = max(0, remaining // (len(files) - index) - len(heading) - 120)
+            truncated = False
             try:
                 with path.open() as stream:
-                    body = stream.read(allowance + 1).strip()
+                    body = stream.read(allowance + 1)
+                # Decide before stripping: a cut that lands on whitespace must still report truncation.
+                truncated = len(body) > allowance
+                body = body[:allowance].strip()
                 if dynamic:
                     modified = datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(timespec="seconds")
                     heading += f" (file modified {modified}; freshness of claims unverified)"
@@ -85,8 +89,8 @@ class DropInDirectory:
                 body = "[Not created yet; current state unknown.]"
             except (OSError, UnicodeError) as exc:
                 raise InvalidDropInError(f"cannot read context {label}: {type(exc).__name__}") from None
-            if len(body) > allowance:
-                body = body[:allowance] + "\n[Context truncated; read the source file for full details.]"
+            if truncated:
+                body += "\n[Context truncated; read the source file for full details.]"
             part = f"{heading}\n\n{body}"
             parts.append(part)
             remaining -= len(part) + 7
