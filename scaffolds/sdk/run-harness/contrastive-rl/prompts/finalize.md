@@ -13,6 +13,8 @@ figures throughout the text — these are the easiest way for a reviewer to take
 issue with the work. You should aim to have at least both a diagram of the setup
 and a main figure in the text, but should probably aim for more than this.
 
+Your overarching goal at this stage is to figure out what is essential for the main text, and move everything else to the appendices. The presentation of the main body must be perfect, and perfect does not mean that everything is included. Your goal is that a human with expertise on the subject should enjoy reading this paper.
+
 Compare the paper's structure and style against your exemplars once more. Render every figure and table at final size and look at it: readable labels with units, a caption that states the take-away, consistent notation and colors across figures, no clipped or overlapping text. Regenerate each figure from its script and check that every citation resolves to a paper you retrieved.
 
 Inspect PDF pages and figures visually. Keep the main body at most nine pages and
