@@ -21,9 +21,10 @@ depth or concurrency limits.
 Use `request_progress(task_id)` when a delegate's current state is unclear; its receipt only confirms the
 request was queued. Use one `delegate_inbox(wait_seconds=...)` call when waiting for the team: any new
 message, completion, failure or interruption wakes you while other delegates continue. With `wait_seconds=0`,
-inspect immediately. Read its `messages` and `results`; the inbox collects all ready results together. Answer questions with `send_message` and `reply_to`,
-steer when evidence changes the plan, and use `interrupt_delegate` to stop unwanted work. `send_message`
-resumes stopped conversations; a new brief starts fresh. Collect results before finishing the iteration.
+inspect immediately. Read its `messages` and `results`; the inbox collects all ready results together.
+Answer questions using `send_message` with `reply_to` set to the question's ID; use `send_message` to steer
+when evidence changes the plan, and use `interrupt_delegate` to stop unwanted work. `send_message` resumes
+stopped conversations; a new brief starts fresh. Collect results before finishing the iteration.
 
 After you have validated the environment, start by closely reading all of the related literature on the subject. Then propose a set of distinct research directions to answer the question. Scale these approaches in parallel before settling on a research direction. Remember that this is not a final commitment.
 

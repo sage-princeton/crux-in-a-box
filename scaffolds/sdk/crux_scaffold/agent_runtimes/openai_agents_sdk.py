@@ -752,7 +752,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
                  self._json_tool('delegate_inbox', 'Inspect all delegate status and messages and collect every ready result. '
                                  'wait_seconds=0 checks immediately; a positive wait wakes on any new message or task '
                                  'completion, failure or interruption, or returns when idle or timed out. Waiting never '
-                                 'stops delegate work. Use one inbox wait instead of waiting on individual workers.',
+                                 'stops delegate work.',
                                  InboxArguments, inbox)]
         return tools
 

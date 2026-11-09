@@ -637,8 +637,8 @@ claim the delegate has answered. `delegate_inbox(wait_seconds=0)` checks immedia
 `wait_seconds` waits for any new delegate message or uncollected completed, failed or interrupted task.
 It returns immediately if no tasks are running. The existing `coding_result_wait_seconds` option caps each
 requested wait (default 1800 seconds; `"unlimited"` removes the cap). Timeout or cancellation leaves delegate
-work running, and waiting consumes no rest allowance. Use one inbox wait, rather than parallel waits for
-individual workers. Ordinary PI model/tool calls are not interrupted and mail does not schedule a PI turn.
+work running, and waiting consumes no rest allowance. Ordinary PI model/tool calls are not interrupted
+and mail does not schedule a PI turn.
 
 The response contains `tasks` (all current status, latest progress and unresolved questions), `messages`
 (pending upward mail), and `results` (all newly collected terminal results, including errors/partial results,
