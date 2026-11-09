@@ -130,7 +130,7 @@ class MessageArguments(Arguments):
 
 
 class InboxArguments(Arguments):
-    wait_seconds: float = Field(0, ge=0, le=60)
+    wait_seconds: float = Field(0, ge=0, allow_inf_nan=False)
 
 
 class UsageHooks(RunHooks):
@@ -309,16 +309,16 @@ class OpenAIAgentsRuntime(AgentRuntime):
 
     def _check_result_names(self, names: set[str]) -> None:
         config = self.assembly.drop_in.config
-        generated = {
-            f"{delegate}_result"
-            for agent in config.agents.values()
-            for delegate in agent.delegates
-            if delegate in self.assembly.coding_agents
-        }
         if self.delegates:
-            generated |= {'send_message', 'interrupt_delegate', 'request_progress', 'delegate_inbox',
-                          'ask_pi', 'report_progress'}
-            generated |= {f'{name}_result' for name in config.agents if name != config.orchestrator}
+            generated = {'send_message', 'interrupt_delegate', 'request_progress', 'delegate_inbox',
+                         'ask_pi', 'report_progress'}
+        else:
+            generated = {
+                f"{delegate}_result"
+                for agent in config.agents.values()
+                for delegate in agent.delegates
+                if delegate in self.assembly.coding_agents
+            }
         if collisions := sorted(generated & names):
             raise InvalidDropInError(f"Background coding result tool name collision: {', '.join(collisions)}")
 
@@ -710,7 +710,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         config = self.assembly.drop_in.config
         description = (config.agents[name].description if name in config.agents else self.assembly.coding_agents[name].description)
         return self._json_tool(name, description +
-                               f' Starts in the background; collect with {name}_result.', BriefArguments, start)
+                               ' Starts in the background; collect results with delegate_inbox.', BriefArguments, start)
 
     # TODO(AE-329): Move communication tool construction into a dedicated class.
     def _communication_tools(self, name: str) -> list[FunctionTool]:
@@ -739,11 +739,9 @@ class OpenAIAgentsRuntime(AgentRuntime):
             return self.delegates.request_progress(args.task_id)
 
         async def inbox(args):
-            return await self.delegates.inbox(args.wait_seconds)
-
-        async def result(args, *, delegate):
             limit = self.options.coding_result_wait_seconds
-            return await self.delegates.result(delegate, wait=args.wait, timeout=None if limit == 'unlimited' else limit)
+            seconds = args.wait_seconds if limit == 'unlimited' else min(args.wait_seconds, limit)
+            return await self.delegates.inbox(seconds)
 
         tools = [self._json_tool('send_message', 'Steer or answer a delegate. Resumes ended conversations; interrupt=true '
                                 'stops active work before resuming. Use task IDs from dispatch/inbox.', SendArguments, send),
@@ -751,11 +749,11 @@ class OpenAIAgentsRuntime(AgentRuntime):
                                  TaskArguments, stop),
                  self._json_tool('request_progress', 'Ask an active delegate for a fresh progress report; returns a receipt, '
                                  'not the report. Read delegate_inbox for the response.', TaskArguments, progress),
-                 self._json_tool('delegate_inbox', 'Inspect delegate status, questions and progress. Optionally wait for mail.',
+                 self._json_tool('delegate_inbox', 'Inspect all delegate status and messages and collect every ready result. '
+                                 'wait_seconds=0 checks immediately; a positive wait wakes on any new message or task '
+                                 'completion, failure or interruption, or returns when idle or timed out. Waiting never '
+                                 'stops delegate work.',
                                  InboxArguments, inbox)]
-        for delegate in config.agents[name].delegates:
-            tools.append(self._json_tool(f'{delegate}_result', 'Collect the result; waiting returns early for a question.',
-                                          CodingResultArguments, partial(result, delegate=delegate)))
         return tools
 
     async def _run_delegate(self, task: dict, prompt: str) -> str:

@@ -508,9 +508,22 @@ return persistent task IDs immediately. Internal `DelegateTasks` owns asyncio sc
 result collection and telemetry export; `DelegateMailboxes` owns persistence. The runtime supplies the SDK
 execution callback and a context-strategy session keyed by task ID. Only the orchestrator receives lifecycle
 and steering tools. Its `request_progress` asks active work for a new report; delegates receive only
-`ask_pi`/`report_progress`. SDK mail is injected at model boundaries and persisted in the session. Result waits
-release on unresolved questions so a PI can answer, without delegate-initiated PI turns. A runtime turn with
-outstanding uncollected work is incomplete; the phased loop skips gates until it finishes.
+`ask_pi`/`report_progress`. SDK mail is injected at model boundaries and persisted in the session.
+Interactive mode exposes one `delegate_inbox(wait_seconds)` tool, not per-delegate result tools. Internally,
+`DelegateTasks.inbox` polls durable mail and task state across all delegates: any pending upward message or
+uncollected terminal task releases the wait, even while other tasks remain running. Zero seconds checks
+immediately; no running tasks returns immediately; the runtime caps positive requests with
+`coding_result_wait_seconds` unless it is `"unlimited"`. The poll reads SQLite so native MCP subprocess
+messages also release a wait. It does not start PI turns, interrupt active inference/tools or cancel work.
+
+The inbox returns `tasks`, `messages` and `results`. It collects every ready completed, failed or interrupted
+result in that response, including task IDs and output/error text, and marks only those results collected.
+Running tasks remain uncollected. Collected results stay in durable storage but no longer release waits;
+explicit resumption resets collection for the task's next terminal result. Mail delivery remains the ordinary
+model-input handoff. Only new pending mail releases waits; already delivered unresolved questions stay in
+status without causing repeated wakeups. Timeout/cancellation of an inbox wait does not cancel delegates.
+A runtime turn with outstanding uncollected work is incomplete; the phased loop skips gates until it finishes.
+The older noninteractive `background_coding` path retains its named result tools and behavior.
 SDK assistants share `sessions.sqlite` within one runtime process. The pinned SDK's `SQLiteSession`
 serializes initialization and database operations with a per-file process lock; task IDs isolate histories.
 Compaction checkpoints are also keyed by task ID. They do not use native Codex state or its process lifecycle.

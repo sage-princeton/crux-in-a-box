@@ -125,8 +125,10 @@ Codex adapters integrate this store separately.
 
 With `runtime.interactive_delegates`, SDK delegates run asynchronously using a durable session per task ID.
 The PI owns interruption, steering, resumption and progress requests. Delegate questions/progress are queued
-for the PI's next normal model boundary or an explicitly requested inbox/result wait. They cannot interrupt
-or initiate a PI turn. Uncollected work keeps the orchestrator iteration incomplete and postpones gates;
+for the PI's next normal model boundary or an explicitly requested inbox wait. The single `delegate_inbox`
+tool waits across all delegates and collects all ready terminal results; a message, completion, failure or
+interruption releases it while other delegates continue. Interactive mode has no per-worker result tools.
+Upward mail cannot interrupt active PI inference/tools or initiate a PI turn. Uncollected work keeps the orchestrator iteration incomplete and postpones gates;
 normal loop budgets still apply between iterations. Each named delegate has one outstanding conversation;
 existing global delegation concurrency limits still apply.
 

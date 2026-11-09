@@ -159,7 +159,10 @@ placeholders-<slug>.txt to remove the workspace resources.
 
 `interactive_delegates` enables PI steering, interruption, resumption and `request_progress` for the SDK
 research assistant and Codex workers. Delegates can ask questions and report progress, but cannot interrupt
-or schedule the PI. Keep `delegates.sqlite`, `sessions.sqlite` and `codex/` together with run state. A restart
+or schedule an active PI turn. The PI uses `delegate_inbox(wait_seconds)` for both waiting and collection;
+any new mail or uncollected completion/failure/interruption releases the wait. The response includes all ready
+results, and other delegates continue running. Interactive mode no longer exposes named `_result` tools.
+Keep `delegates.sqlite`, `sessions.sqlite` and `codex/` together with run state. A restart
 marks running tasks interrupted; the PI chooses whether to resume the same conversation or collect its
 partial result. Codex uses native steering/interruption and a task-bound MCP server for upward mail.
 Interruption waits for harness cleanup; independently launched training processes or pods still need their
