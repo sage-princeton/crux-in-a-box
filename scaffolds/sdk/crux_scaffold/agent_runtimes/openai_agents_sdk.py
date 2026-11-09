@@ -38,7 +38,7 @@ from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool import ToolOutputImage, ToolOutputText
 from agents.tool_context import ToolContext
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
@@ -51,7 +51,7 @@ from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.context_strategies import is_standing_context
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
-from crux_scaffold.errors import InvalidDropInError, ToolError
+from crux_scaffold.errors import InvalidDropInError, RequestSizeExceededError, ToolError
 from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
@@ -69,6 +69,7 @@ class ModelProviderOptions(Options):
     base_url: HttpUrl | None = None
     api_key_env: str = Field("OPENAI_API_KEY", pattern=r"^[A-Z_][A-Z0-9_]*$")
     extra_body: dict[str, Any] = Field(default_factory=dict)
+    max_request_bytes: int | None = Field(None, gt=0, strict=True)
 
     @model_validator(mode="after")
     def validate_provider(self) -> Self:
@@ -185,7 +186,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if self.agents:
             return
         config, ctx = self.assembly.drop_in.config, self.assembly.context
-        if self.options.model_provider.type == "openai-compatible":
+        if (self.options.model_provider.type == "openai-compatible"
+                or self.options.model_provider.max_request_bytes is not None):
             self.client = _validate_and_get_client(self.options.model_provider, ctx.env)
             self.provider = OpenAIProvider(
                 openai_client=self.client, use_responses=self.options.model_provider.api == "responses"
@@ -451,7 +453,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             raise InvalidDropInError("CRUX_MODEL is not set")
         provider_options = (options or OpenAIAgentsOptions()).model_provider
         async with AsyncExitStack() as stack:
-            if provider_options.type == "openai-compatible":
+            if provider_options.type == "openai-compatible" or provider_options.max_request_bytes is not None:
                 client = await stack.enter_async_context(_validate_and_get_client(provider_options, env))
                 model = OpenAIProvider(
                     openai_client=client, use_responses=provider_options.api == "responses"
@@ -843,7 +845,17 @@ def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, st
     api_key = env.get(options.api_key_env)
     if not api_key:
         raise InvalidDropInError(f"{options.api_key_env} is not set")
-    return AsyncOpenAI(api_key=api_key, base_url=str(options.base_url))
+    client_options = {}
+    if options.max_request_bytes is not None:
+        # TODO(AE-316): Look up this limit by provider/model instead of configuring it per drop-in.
+        # https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at
+        async def check_request_size(request) -> None:
+            size = len(request.content)
+            if size > options.max_request_bytes:
+                raise RequestSizeExceededError(size, options.max_request_bytes)
+
+        client_options['http_client'] = DefaultAsyncHttpxClient(event_hooks={'request': [check_request_size]})
+    return AsyncOpenAI(api_key=api_key, base_url=str(options.base_url) if options.base_url else None, **client_options)
 
 
 def _provider_ended_response(context: RetryPolicyContext) -> bool:

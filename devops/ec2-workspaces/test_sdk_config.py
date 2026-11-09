@@ -45,6 +45,21 @@ class SDKConfigTests(unittest.TestCase):
             with self.subTest(config=config):
                 self.assertIn("MODEL_PROVIDER=openrouter", self.inspect(config, "openrouter", success=False))
 
+    def test_request_byte_limit_preserves_provider_selection_and_codex_settings(self):
+        worker = '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
+        direct = DIRECT + '[runtime.model_provider]\ntype = "openai"\napi = "responses"\n'
+        for config in (direct, COMPATIBLE):
+            with self.subTest(config=config):
+                self.assertEqual(self.inspect(config + 'max_request_bytes = 20000000\n' + worker),
+                                 self.inspect(config + worker))
+
+    def test_invalid_request_byte_limits_fail_without_echoing_values(self):
+        for value in ('0', '-1', 'true', '1.5', '"fixture-private"'):
+            with self.subTest(value=value):
+                error = self.inspect(COMPATIBLE + f'max_request_bytes = {value}\n', success=False)
+                self.assertIn('max_request_bytes must be a positive integer', error)
+                self.assertNotIn('fixture-private', error)
+
     def test_invalid_provider_settings_fail_without_echoing_values(self):
         cases = [
             COMPATIBLE.replace('api = "responses"', 'api = "invalid"'),

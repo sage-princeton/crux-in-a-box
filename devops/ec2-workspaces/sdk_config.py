@@ -20,7 +20,7 @@ def requirements(config: dict, model_provider: str, model: str) -> dict:
     key, base_url, api, extra_body = "OPENAI_API_KEY", None, "responses", {}
     if provider is not None:
         if not isinstance(provider, dict) or provider.keys() - {
-            "type", "api", "base_url", "api_key_env", "extra_body"
+            "type", "api", "base_url", "api_key_env", "extra_body", "max_request_bytes"
         }:
             raise ConfigurationError("Invalid runtime.model_provider fields")
         kind, api = provider.get("type"), provider.get("api")
@@ -34,6 +34,9 @@ def requirements(config: dict, model_provider: str, model: str) -> dict:
         base_url, extra_body = provider.get("base_url"), provider.get("extra_body", {})
         if not isinstance(extra_body, dict):
             raise ConfigurationError("runtime.model_provider.extra_body must be a table")
+        limit = provider.get("max_request_bytes")
+        if limit is not None and (type(limit) is not int or limit <= 0):
+            raise ConfigurationError("runtime.model_provider.max_request_bytes must be a positive integer")
         if kind == "openai":
             if base_url or extra_body or api != "responses" or key != "OPENAI_API_KEY":
                 raise ConfigurationError("Custom provider settings require type=openai-compatible")

@@ -25,6 +25,12 @@ workers in both blocking and background mode. Worker usage reaches Langfuse and
 the local ledger while a brief runs; its final summary adds no duplicate usage.
 Tracing requires the Langfuse settings in the configuration reference.
 
+Set `runtime.model_provider.max_request_bytes` to reject oversized SDK requests
+before sending them. The PI receives delegate failures through the existing
+result tools; same-agent recovery is not implemented. See the
+[provider configuration](configuration.md#model-providers-and-gcp-hosted-argon)
+for scope and provider-route limits.
+
 ## Development
 
 After the setup above, run from this directory:

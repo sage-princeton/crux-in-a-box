@@ -306,12 +306,17 @@ The existing runtime's `model_provider` options configure the SDK's `OpenAIProvi
 | `[runtime.model_provider]` key | Contract |
 |---|---|
 | `type` | Required: `openai` or `openai-compatible`. OpenAI keeps the existing Responses behavior. |
-| `api` | Required: `responses` or `chat-completions`; custom settings require `openai-compatible`. |
+| `api` | Required: `responses` or `chat-completions`; direct `openai` requires `responses`. |
 | `base_url` | Required URL for a compatible provider. |
 | `api_key_env` | Credential variable name, default `OPENAI_API_KEY`. Resolve from `RunContext.env`, never embed the value in TOML. |
 | `extra_body` | Provider-specific request fields, such as OpenRouter's `provider.only` and `allow_fallbacks`. Cannot replace the run model, input, tools, reasoning, or session settings. Never put credentials here. |
+| `max_request_bytes` | Optional positive integer. Reject serialized HTTP bodies larger than this many bytes before transport; equality is allowed. Omitted means no byte limit. Available for both provider types. |
 
 All agents and judges share one configured provider/client, which closes when the runtime exits, including failed MCP startup. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` remain the sole model and effort settings. The compatible Responses path disables server storage, requests encrypted reasoning for local replay, and preserves raw usage. The Chat Completions adapter sends reasoning effort without Responses-only summary/include options. Coding-agent SDK configuration remains the coding agent's responsibility.
+
+When `max_request_bytes` is set, a request hook on the shared HTTP client measures the complete serialized body, including UTF-8 text, tool schemas/results, images, encrypted reasoning and `extra_body`. It covers PI, SDK delegates, judges, compaction and probes, independently of token-based context selection. A rejection raises `RequestSizeExceededError` with the actual and permitted byte counts, without request content or credentials. Neither the client nor the runner retries it. Background delegates use their existing failed-result reporting to the PI; a rejection in the PI, judge or compactor propagates through the existing error path. There is no same-agent recovery or automatic request rewrite. Native Codex requests use a separate client and are unaffected.
+
+The limit measures the body sent to the configured endpoint. A proxy such as OpenRouter can transform it before forwarding, so choose a conservative limit for the actual provider route; a downstream size rejection is still possible. Provider/model lookup will replace this temporary configuration under [AE-316](https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at).
 
 For an `openai-compatible` provider at `openrouter.ai` and an `anthropic/` model (also `~anthropic/` aliases and `@preset/...` suffixes), the runtime normalizes retained user/developer/system text and textual function results into content blocks and adds `prompt_cache_breakpoint = {mode = "explicit"}`. OpenRouter converts this to Anthropic's five-minute `cache_control` on both supported APIs. The fixed instructions move from the top-level string into one request-only developer message, which can carry a marker on both APIs. Up to two markers cover that instruction block (even with no retained history) and the latest retained text block. This gives a reusable instruction prefix and a boundary that advances with conversation history before the replaced research/resource-status tail. Cache hits still require stable prefixes, sufficient tokens and a live cache entry.
 
