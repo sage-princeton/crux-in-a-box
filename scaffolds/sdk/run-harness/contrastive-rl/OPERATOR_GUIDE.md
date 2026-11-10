@@ -72,23 +72,3 @@ journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 m
 ```
 
 You should see the agent report its initial milestone in the Slack channel within about ~20 minutes. You can also check OpenRouter for inference spending and Langfuse for streaming traces before then.
-
-## Carbon model settings
-
-Use `google/gemini-4-carbon` through OpenRouter for the PI, SDK assistants and Codex
-workers; both review panels also replace Argon with Carbon. High reasoning effort
-is retained for the research workload. Carbon supports low/medium/high; medium is
-Google's default and high can increase time to first token and total reasoning spend.
-The context window remains 1,048,576 tokens, with a 650,000-token PI compaction
-trigger and 1,120-token estimate per rendered image. Native Codex workers keep the
-scaffold's independent 1,000,000-token context setting. Image tokens estimate
-context occupancy, not a provider resolution override.
-
-Sources: [Google model limits](https://ai.google.dev/gemini-api/docs/models/gemini-4-carbon),
-[image tokens](https://ai.google.dev/gemini-api/docs/media-resolution),
-[migration and thinking](https://ai.google.dev/gemini-api/docs/whats-new-gemini-4-carbon).
-Verify Carbon pricing in the shared Langfuse project before launch, including cache
-reads and reasoning tokens. Introductory pricing ends November 30, 2026; refresh
-rates for later runs. OpenRouter route-specific pricing can differ from the base
-model rate. Existing private `placeholders.txt` files are not overwritten by this
-change: update their model value before provisioning.
