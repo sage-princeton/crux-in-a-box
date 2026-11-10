@@ -142,8 +142,6 @@ def test_reviewer_cannot_invent_citations_or_acquire_tools():
         body = json.loads(request.content)
         assert "tools" not in body
         assert body["provider"]["require_parameters"] is True
-        assert body["provider"]["only"] == ["anthropic"]
-        assert body["provider"]["allow_fallbacks"] is False
         return httpx.Response(
             200,
             json={

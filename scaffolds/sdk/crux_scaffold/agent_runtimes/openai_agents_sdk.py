@@ -52,7 +52,6 @@ from crux_scaffold.context_strategies import is_standing_context
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
 from crux_scaffold.errors import InvalidDropInError, RequestSizeExceededError, ToolError
-from crux_scaffold.openrouter import is_openrouter, routed_body
 from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
@@ -60,6 +59,7 @@ from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
+OPENROUTER_PROVIDER = "google-ai-studio"
 
 
 class ModelProviderOptions(Options):
@@ -894,10 +894,12 @@ def _model_settings(options: ModelProviderOptions, env: Mapping[str, str], *, mo
     if options.type == "openai-compatible":
         # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
         settings.preserve_raw_usage = True
-        extra_body = options.extra_body
-        if is_openrouter(str(options.base_url)):
-            extra_body = routed_body(model or env.get('CRUX_MODEL', ''), extra_body)
-        settings.extra_body = extra_body or None
+        settings.extra_body = options.extra_body or None
+        if options.base_url.host == "openrouter.ai":
+            provider = {**options.extra_body.get("provider", {}), "allow_fallbacks": False}
+            if (model or env.get("CRUX_MODEL", "")).removeprefix("~").startswith("google/"):
+                provider["only"] = [OPENROUTER_PROVIDER]
+            settings.extra_body = {**options.extra_body, "provider": provider}
         if options.api == "responses":
             settings.store = False
             settings.response_include = ["reasoning.encrypted_content"]

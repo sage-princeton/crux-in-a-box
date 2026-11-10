@@ -556,10 +556,6 @@ info "Staging the run's software declaration"
 ssh "$SLUG" 'sudo install -d -m 755 /usr/local/lib/crux'
 scp -q "$SCRIPT_DIR/run_provision.py" "$SLUG:/tmp/run_provision.py"
 ssh "$SLUG" 'sudo install -m 644 /tmp/run_provision.py /usr/local/lib/crux/run_provision.py'
-if [ "$SCAFFOLD_MODULE" = acp ]; then
-  git -C "$SCRIPT_DIR/../.." show HEAD:scaffolds/sdk/crux_scaffold/openrouter.py \
-    | ssh "$SLUG" 'sudo sh -c "umask 022; cat > /usr/local/lib/crux/openrouter.py"'
-fi
 if git -C "$SCRIPT_DIR/../.." cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
   git -C "$SCRIPT_DIR/../.." show "HEAD:$DROP_IN_PATH/provision.json"
 else

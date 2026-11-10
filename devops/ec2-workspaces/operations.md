@@ -194,22 +194,13 @@ with either agent. Set `CODEX_MODEL` or `CLAUDE_MODEL` to its full OpenRouter
 model ID, and put `OPENROUTER_API_KEY` in the base secrets JSON. Omitting
 `MODEL_PROVIDER` keeps direct OpenAI/Anthropic billing.
 
-Research models through OpenRouter are pinned to Google AI Studio, Anthropic,
-or OpenAI according to their model vendor, with provider fallback disabled.
-**Also set each workspace BYOK credential's Shared capacity fallback to
-"Never use shared capacity for any model on this provider" (`is_byok_only=true`).**
-These must be prioritized credentials (`is_fallback=false`). Confirm their model,
-API-key and member filters include the intended run and judge models. The body
-allowlist alone cannot stop same-provider OpenRouter-billed fallback. Verify
-`is_byok=true` and the provider on actual generations before launching a run.
-This requires a management key or workspace-admin access; an inference key or
-the official OpenRouter MCP cannot change these controls. See
-[OpenRouter BYOK](https://openrouter.ai/docs/guides/overview/auth/byok).
-
-ACP boxes use `crux-openrouter-routing.service` on loopback port 18765, installed
-from the SDK's shared routing module. The gateway requires it, and cannot fall
-back to a direct OpenRouter URL if it fails. Inspect that unit when local model
-connections fail; stop the gateway between turns before changing the adapter.
+OpenRouter access alone does not establish Google Cloud billing. That requires
+a configured Vertex AI BYOK account and a model served by Vertex. To require
+that billing path, restrict routing to Vertex and disable shared-capacity
+fallback in OpenRouter; verify the actual provider and BYOK usage before a run.
+An OpenRouter preset can enforce `provider.only=["google-vertex"]` and
+`allow_fallbacks=false`; select it with `google/gemini-3.5-flash@preset/<slug>`
+as the model. The BYOK key's shared-capacity fallback setting is still required.
 
 Boxes keep Ubuntu's daily unattended security upgrades, and needrestart still
 restarts the services they touch, except the run services `crux-acp-gateway`
@@ -318,13 +309,11 @@ For an SDK box:
 - **Codex workers:** only declared coding harnesses are probed. Codex uses the
   run's model and effort, and inherits compatible Responses endpoints and their
   selected credential. Chat Completions works for SDK-only drop-ins. Codex cannot
-  send arbitrary SDK `extra_body` fields; when an OpenRouter drop-in declares custom routing rules
+  send the SDK's `extra_body`; when an OpenRouter drop-in declares routing rules
   and Codex workers, use `OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/<name>`
-  and create a preset with the same custom fields. The built-in exclusive
-  Google AI Studio/Anthropic/OpenAI policy needs no preset: native requests pass
-  through a temporary loopback adapter that applies the shared body policy.
+  and create a preset with the same rules (e.g. Vertex only, fallback disabled).
   Provisioning checks the preset suffix, not the account-side preset contents;
-  verify those and the BYOK-only settings above before launch. Other endpoints with
+  verify those and the Vertex BYOK settings before launch. Other endpoints with
   Codex workers must omit `extra_body` and enforce routing at their endpoint.
 - **Sandbox prerequisites:** the SDK installer adds system `bubblewrap` and
   loads Ubuntu's `bwrap-userns-restrict` AppArmor profile when required. Existing

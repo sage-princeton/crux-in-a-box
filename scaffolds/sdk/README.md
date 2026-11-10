@@ -25,13 +25,6 @@ workers in both blocking and background mode. Worker usage reaches Langfuse and
 the local ledger while a brief runs; its final summary adds no duplicate usage.
 Tracing requires the Langfuse settings in the configuration reference.
 
-Google models through OpenRouter always use Google AI Studio with provider fallback
-disabled. This applies to SDK agents, judges, compaction, probes and native Codex
-workers; the latter use a temporary loopback adapter with the same routing policy.
-Anthropic and OpenAI models are likewise pinned to their native providers. In the
-OpenRouter workspace, set each BYOK credential to **Never use shared capacity for
-any model on this provider**. Provider pinning alone cannot enforce BYOK-only billing.
-
 Set `runtime.model_provider.max_request_bytes` to reject oversized SDK requests
 before sending them. The PI receives delegate failures through the existing
 result tools; same-agent recovery is not implemented. See the

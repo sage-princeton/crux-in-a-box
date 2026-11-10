@@ -18,10 +18,6 @@ scaffold_install_preflight() {
 }
 
 scaffold_install() {
-info "Shared OpenRouter routing adapter"
-[ -f /usr/local/lib/crux/openrouter.py ] || die "Stage the shared OpenRouter routing module before installing ACP."
-"$RUN_HOME/.local/bin/uv" venv --quiet --allow-existing --python /usr/bin/python3 /opt/crux-openrouter/.venv
-"$RUN_HOME/.local/bin/uv" pip install --quiet --python /opt/crux-openrouter/.venv/bin/python 'httpx==0.28.1'
 # ====== CODEX CLI ======
 # Pinned like the agent packages below. It was previously installed unpinned,
 # which is how two boxes in this fleet ended up on 0.153.4 and 0.154.0.
@@ -126,7 +122,7 @@ scaffold_agent_env() {
   jq -cn --arg platform "$AGENT_PLATFORM" --arg provider "$MODEL_PROVIDER" \
   --arg name "$API_KEY_NAME" --arg key "$AGENT_API_KEY" --arg model "$MODEL" '
   if $platform == "claude" and $provider == "openrouter" then {
-    ANTHROPIC_BASE_URL: "http://127.0.0.1:18765",
+    ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
     ANTHROPIC_AUTH_TOKEN: $key,
     ANTHROPIC_API_KEY: "",
     ANTHROPIC_DEFAULT_FABLE_MODEL: $model,
@@ -145,30 +141,6 @@ scaffold_extra_env() {
 
 scaffold_configure() {
 CODEX_DIR="$RUN_HOME/.codex"
-ROUTING_UNIT=""
-if [ "$MODEL_PROVIDER" = openrouter ]; then
-  cat > /etc/systemd/system/crux-openrouter-routing.service <<UNIT
-[Unit]
-Description=CRUX OpenRouter inference routing
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-User=${RUN_USER}
-ExecStart=/opt/crux-openrouter/.venv/bin/python /usr/local/lib/crux/openrouter.py --port 18765
-Restart=on-failure
-RestartSec=1
-
-[Install]
-WantedBy=multi-user.target
-UNIT
-  systemctl daemon-reload
-  systemctl enable --now crux-openrouter-routing
-  curl --silent --output /dev/null --retry 10 --retry-delay 1 --retry-connrefused http://127.0.0.1:18765/ \
-    || die "OpenRouter routing adapter did not start. Inspect crux-openrouter-routing.service."
-  ROUTING_UNIT="Requires=crux-openrouter-routing.service
-After=crux-openrouter-routing.service"
-fi
 
 # ====== WORK DIR AND .mcp.json ======
 # acp-gateway finds its workspace by searching for .mcp.json in the cwd and up
@@ -237,7 +209,7 @@ if [ "$MODEL_PROVIDER" = openrouter ]; then
 
 [model_providers.openrouter]
 name = "OpenRouter"
-base_url = "http://127.0.0.1:18765"
+base_url = "https://openrouter.ai/api/v1"
 wire_api = "responses"
 supports_websockets = false
 
@@ -490,7 +462,6 @@ cat > /etc/systemd/system/crux-acp-gateway.service <<UNIT
 Description=CRUX ACP gateway ($AGENT_PLATFORM -> AgentRQ)
 After=network-online.target
 Wants=network-online.target
-$ROUTING_UNIT
 
 [Service]
 Type=simple

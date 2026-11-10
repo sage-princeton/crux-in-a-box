@@ -277,9 +277,8 @@ A CRUX with different needs changes declarations, not code. The same drop-in cou
   `llm_judge` (or derived) gate asks each model for an independent review, concurrently, and passes when a majority
   passes. The authors receive every review in full, numbered rather than named, after a line stating the count.
   A reviewer whose call fails counts against acceptance. Panel models run through the run's model provider with the
-  run's reasoning effort and `extra_body`. Google reviewers receive the platform's AI Studio allowlist;
-  Anthropic and OpenAI reviewers receive their own exclusive native-provider routes.
-  Check that Langfuse prices each name the provider reports, or panel spend reads as $0, and expect
+  run's reasoning effort and `extra_body`, so don't pin a single upstream provider in `extra_body` when the panel
+  spans vendors. Check that Langfuse prices each name the provider reports, or panel spend reads as $0, and expect
   the provider's per-request size limits to apply to every reviewer. `probe --drop-in` probes each panel model.
 
 ## Reliable operator steering and escalations
@@ -528,6 +527,9 @@ api = "responses"  # or "chat-completions" for endpoints without Responses suppo
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 
+[runtime.model_provider.extra_body.provider]
+only = ["google-ai-studio"]
+allow_fallbacks = false
 ```
 
 Set `CRUX_MODEL=google/gemini-4-argon` and `CRUX_REASONING_EFFORT=low`, `medium`, or `high`, and supply `OPENROUTER_API_KEY` in the process environment. Configuration selects the provider and transport; the environment selects the model and effort for all declared agents. Other compatible endpoints can use their own base URL and credential variable, without an OpenRouter dependency. The implementation uses the Agents SDK's `OpenAIProvider`; a third-party model adapter is unnecessary for these endpoints.
@@ -536,11 +538,11 @@ Optionally set `max_request_bytes` in `[runtime.model_provider]` to a positive i
 
 An oversized SDK request fails locally with actual/allowed byte counts and is not retried. A background delegate's failure reaches the PI through its existing result tool, allowing a new, smaller brief. A failure in the PI itself, judge or compactor still propagates; same-agent recovery and automatic compaction/rewrite are not implemented. The check covers SDK agents and probes, but does not cover the separate native Codex client. Limits will move to provider/model configuration maps under [AE-316](https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at).
 
-**BYOK-only routing and billing:** Google models through OpenRouter always carry `provider.only=["google-ai-studio"]` and `allow_fallbacks=false`, supplied by the shared `OPENROUTER_PROVIDER` policy. `OPENROUTER_PROVIDERS` similarly pins Anthropic and OpenAI models to `anthropic` and `openai`. This overrides conflicting provider allowlists in `extra_body`; other provider fields are preserved. The restriction applies to the actual model of each call, including mixed-vendor judge panels. Retries keep the same route and then fail. **Also set each matching workspace BYOK credential to Prioritized and Shared capacity fallback = Never use shared capacity for any model on this provider (`is_fallback=false`, `is_byok_only=true`).** Ensure its model/API-key/member filters include the run and judges. Request routing alone cannot prevent shared-capacity billing on the same provider. Verify `is_byok=true` and the generation's provider before launch. Vertex routing is no longer supported for Google runs. See [OpenRouter BYOK](https://openrouter.ai/docs/guides/overview/auth/byok).
+OpenRouter SDK requests always send `provider.allow_fallbacks=false`. Google models also send `provider.only=["google-ai-studio"]`, including Google judges in a mixed-model panel. Other provider fields in `extra_body` are preserved. BYOK-only billing additionally requires the AI Studio BYOK credential's Shared capacity fallback setting to be **Never use shared capacity for any model on this provider**. Verify `is_byok` and the generation's provider; the request payload cannot change account BYOK settings. See [OpenRouter provider selection](https://openrouter.ai/docs/guides/routing/provider-selection) and [BYOK](https://openrouter.ai/docs/guides/overview/auth/byok).
 
 The Responses path uses `store=false` and the complete local SDK session, including encrypted reasoning, across tool calls and restarts. Returned summaries reach Langfuse through the existing SDK instrumentation; cache and reasoning counts also reach the persisted usage ledger. Chat Completions uses the SDK's corresponding adapter; reasoning replay and tool compatibility depend on the selected endpoint. The runtime remains `openai-agents` in trace metadata because that is the scaffold executing the model calls. Langfuse's catalog cost estimate is separate from the provider's actual BYOK billing receipt.
 
-`run-harness/google-argon-smoke-test` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness: for compatible Responses endpoints set `CRUX_CODEX_BASE_URL` and `CRUX_CODEX_API_KEY_ENV` too, or let EC2 provisioning derive them. Codex keeps the run's model and effort and uses command-based provider authentication without an OpenAI login. For OpenRouter workers, the scaffold owns a temporary loopback forwarding adapter for the native client's lifetime, applying the same provider policy to every serialized request, including tool continuations and retries. No preset is required for this policy. Other arbitrary runtime `extra_body` fields still require a matching OpenRouter preset when Codex workers are declared; the native harness cannot forward those fields itself.
+`run-harness/google-argon-smoke-test` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness: for compatible Responses endpoints set `CRUX_CODEX_BASE_URL` and `CRUX_CODEX_API_KEY_ENV` too, or let EC2 provisioning derive them. Codex keeps the run's model and effort and uses command-based provider authentication without an OpenAI login. It cannot send the runtime's `extra_body`. For OpenRouter routing rules with Codex workers, use a model such as `google/gemini-4-argon@preset/ai-studio-only` and configure that preset with the same AI Studio-only, no-fallback routing. The runtime's provider block does not add an Antigravity adapter.
 
 For live tests, load the shared Langfuse settings from AWS SSM `/crux/system/env` in `us-east-1` and verify that the keys resolve to the **CRUX** project before making a model call. Keep fetched credentials in process memory. With the model-provider key and these Langfuse variables exported, run from `scaffolds/sdk`:
 
@@ -566,7 +568,7 @@ Live checks on 2026-10-22 exercised file write, isolated reviewer delegation, fi
 | `openai/gpt-6-astra` | OpenAI through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/eafbfa00f2dc920981f0bb51a0a088b0) |
 | `anthropic/claude-sonnet-5.5` | Anthropic through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/233c4a37211e560bcdcb6ca878b08005) |
 
-Qwen's Vertex attempt returned a 404 indicating that the GCP project could not access the publisher model in `us-south1`. Its successful retry changed the temporary drop-in's provider restriction to `only = ["deepinfra"]`, retaining `allow_fallbacks = false`; those calls used OpenRouter billing (`is_byok = false`). These are historical results; current Google calls use AI Studio exclusively.
+Qwen's Vertex attempt returned a 404 indicating that the GCP project could not access the publisher model in `us-south1`. Its successful retry changed the temporary drop-in's provider restriction to `only = ["deepinfra"]`, retaining `allow_fallbacks = false`; those calls used OpenRouter billing (`is_byok = false`). These are historical results; the checked-in Argon example now uses AI Studio only.
 
 Astra and Sonnet used temporary provider restrictions of `only = ["openai"]` and `only = ["anthropic"]`, respectively, with `allow_fallbacks = false` and `CRUX_REASONING_EFFORT=low`. Both completed the probe and smoke workflow, and all six generation receipts per model confirmed the expected provider and model. These calls used OpenRouter billing (`is_byok = false`).
 

@@ -10,7 +10,6 @@ import sys
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
 from contextlib import aclosing, suppress
-from dataclasses import replace
 from datetime import datetime
 from functools import partial
 from pathlib import Path
@@ -30,7 +29,6 @@ from crux_scaffold.components import Component, Registry
 from crux_scaffold.config import StandingContextOptions
 from crux_scaffold.delegate_mailboxes import DelegateMailbox
 from crux_scaffold.errors import InvalidDropInError
-from crux_scaffold.openrouter import is_openrouter, routing_proxy
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
@@ -226,15 +224,6 @@ class CodexCodingAgent(CodingAgent):
         self.client_factory = client_factory or (lambda ctx: codex_client(ctx, options, mailbox=self.mailbox))
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
-        base_url = ctx.env.get('CRUX_CODEX_BASE_URL')
-        if is_openrouter(base_url):
-            timeout = (self.options.stream_idle_timeout_ms or 300_000) / 1000
-            async with routing_proxy(base_url=base_url, read_timeout=timeout) as local_url:
-                routed = replace(ctx, env={**ctx.env, 'CRUX_CODEX_BASE_URL': local_url})
-                return await self._execute(brief, routed)
-        return await self._execute(brief, ctx)
-
-    async def _execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
         codex_home(ctx, self.mailbox).mkdir(parents=True, exist_ok=True)
         codex, turn, streaming, steering = self.client_factory(ctx), None, None, None

@@ -9,11 +9,6 @@ Docker and PostgreSQL 18. AWS deployment uses Terraform and an explicit profile.
 Deploy and verify the service using the [release runbook](ci/README.md#usage).
 [design.md](design.md) describes collection, storage, assessments and notifications.
 
-Review and status calls pin Anthropic/OpenAI models to their native providers and
-disable provider fallback. Configure matching OpenRouter workspace BYOK credentials
-as Prioritized with **Never use shared capacity for any model on this provider**
-(`is_byok_only=true`). Request pinning alone cannot prevent shared-capacity billing.
-
 ## Development
 
 From the repository root, with a disposable database ending in `_test`:
