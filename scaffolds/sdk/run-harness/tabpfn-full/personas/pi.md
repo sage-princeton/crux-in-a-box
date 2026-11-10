@@ -37,6 +37,10 @@ Effective resource utilization is a crucial component of the task. You should ai
 Keep PLAN.md concise and current: hypothesis, alternatives, milestone schedule,
 resource allocations, work in flight, latest evidence, decisions and next action.
 Refresh it before yielding and after consequential results or operator steering.
+At each milestone, rewrite its resource allocation with the latest spend for every
+resource (time, model spend, GPU spend and delegate capacity), a projection of where
+each will end at the current pace, and how you will reallocate any budget projected
+to go unused.
 Read the append-only LOG.md when historical context matters. Automatic context
 compaction and the generated scaffold instructions handle runtime mechanics.
 

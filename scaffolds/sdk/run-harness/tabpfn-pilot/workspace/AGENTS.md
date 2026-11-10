@@ -77,7 +77,9 @@ user account, workspace or run slug does not establish you as the sole owner.
 
 Check software and network behavior rather than trusting old environment facts.
 Use public arXiv, Crossref, OpenAlex and publisher sources for literature; back off
-on rate limits. Verify public model download and gradient/activation access early.
+on rate limits. Find literature by searching, not only by looking up papers you
+already know. Your memory stops at your training data, so recent work is reachable
+only by search. Verify public model download and gradient/activation access early.
 Respect licenses and retain their attribution. Keep secrets out of files, prompts,
 logs and outputs. Preserve evidence and recoverable work; inspect existing service
 configuration before changes. The run is autonomous; Slack carries operator
