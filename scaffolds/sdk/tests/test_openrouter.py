@@ -88,7 +88,7 @@ def test_argon_tools_delegates_billing_and_session_state(router, drop_in_dir, as
     assert (scaffold.drop_in.workspace / "NOTE.md").read_text() == "hello"
     assert len(configs) == 1 and configs[0]["api_key"] == "test-key"
     assert all(request["model"] == ENV["CRUX_MODEL"] and request["store"] is False for request in requests)
-    assert all(request["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False} for request in requests)
+    assert all(request["provider"] == {"only": ["google-ai-studio"], "allow_fallbacks": False} for request in requests)
     assert all(request["reasoning"] == {"effort": "low", "summary": "auto"} for request in requests)
     assert all("reasoning.encrypted_content" in request["include"] for request in requests)
     assert requests[1]["instructions"].startswith("You are the reviewer.")
@@ -128,7 +128,28 @@ def test_the_same_provider_settings_apply_to_the_probe(router, drop_in_dir):
     _, options = RUNTIMES.resolve("runtime", DropInDirectory.load(drop_in_dir).config.runtime)
     assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "Say SCAFFOLD-PROBE", NullTelemetry(),
                                                options=options)) == "SCAFFOLD-PROBE"
-    assert requests[0]["provider"]["only"] == ["google-vertex"] and requests[0]["store"] is False
+    assert requests[0]["provider"]["only"] == ["google-ai-studio"] and requests[0]["store"] is False
+
+
+@pytest.mark.parametrize("api", ["responses", "chat-completions"])
+@pytest.mark.parametrize("model", [ENV["CRUX_MODEL"], "anthropic/claude-opus-5.5"])
+def test_openrouter_payload_disables_fallbacks_and_pins_google(router, drop_in_dir, api, model):
+    path = drop_in_dir / "scaffold.toml"
+    unpinned = PROVIDER_CONFIG.split("[runtime.model_provider.extra_body.provider]")[0]
+    path.write_text(path.read_text().replace(PROVIDER_CONFIG, unpinned).replace('api = "responses"', f'api = "{api}"'))
+    requests, pending, _ = router
+    pending.append(response(say("SCAFFOLD-PROBE")) if api == "responses" else {
+        "id": "chat-test", "object": "chat.completion", "created": 1, "model": model,
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": "SCAFFOLD-PROBE"}}],
+    })
+    _, options = RUNTIMES.resolve("runtime", DropInDirectory.load(drop_in_dir).config.runtime)
+    assert asyncio.run(OpenAIAgentsRuntime.probe({**ENV, "CRUX_MODEL": model}, "Say SCAFFOLD-PROBE",
+                                               NullTelemetry(), options=options)) == "SCAFFOLD-PROBE"
+    expected = {"allow_fallbacks": False}
+    if model.startswith("google/"):
+        expected["only"] = ["google-ai-studio"]
+    assert requests[0]["provider"] == expected
 
 
 @pytest.mark.parametrize("model", [ENV["CRUX_MODEL"], "anthropic/claude-fable-5.1"])
@@ -146,7 +167,8 @@ def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop
     assert requests[0]["model"] == model
     assert "<resource_status>" not in str(requests[0])
     assert ("prompt_cache_breakpoint" in str(requests[0])) == model.startswith("anthropic/")
-    assert requests[0]["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False}
+    provider = "google-ai-studio" if model.startswith("google/") else "google-vertex"
+    assert requests[0]["provider"] == {"only": [provider], "allow_fallbacks": False}
     usage = scaffold.context.usage.by_source["judge:quality"]
     assert usage.requests == 1 and usage.total_tokens == 130
     assert usage.cached_input_tokens == 25 and usage.reasoning_output_tokens == 20
@@ -173,6 +195,8 @@ def test_judge_cache_boundaries_follow_its_model_override(router, drop_in_dir, a
     assert len(requests) == 2
     for request in requests:
         assert request["model"] == judge_model
+        provider = "google-ai-studio" if judge_model.startswith("google/") else "google-vertex"
+        assert request["provider"] == {"only": [provider], "allow_fallbacks": False}
         assert ("prompt_cache_breakpoint" in str(request)) == judge_model.startswith("anthropic/")
         assert "<resource_status>" not in str(request)
     if judge_model.startswith("anthropic/"):
@@ -210,16 +234,16 @@ def test_invalid_provider_settings_are_rejected(router, drop_in_dir, assemble, o
         assemble(drop_in_dir, env=ENV)
 
 
-def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble, monkeypatch):
+def test_an_ai_studio_only_route_never_falls_back(router, drop_in_dir, assemble, monkeypatch):
     requests, pending, _ = router
-    # An API error is retried on the same Vertex-only route, never through a direct or alternate provider.
+    # An API error is retried on the same AI Studio route, never through a direct or alternate provider.
     monkeypatch.setattr("crux_scaffold.agent_runtimes.openai_agents_sdk.MODEL_RETRIES", 1)
     monkeypatch.setattr("agents.run_internal.model_retry._sleep_for_retry", lambda delay: asyncio.sleep(0))
-    pending.extend([{"error": {"message": "No eligible Vertex endpoint", "code": "provider_unavailable"}}] * 2)
-    with pytest.raises(APIStatusError, match="No eligible Vertex endpoint"):
+    pending.extend([{"error": {"message": "No eligible AI Studio endpoint", "code": "provider_unavailable"}}] * 2)
+    with pytest.raises(APIStatusError, match="No eligible AI Studio endpoint"):
         asyncio.run(assemble(drop_in_dir, env=ENV).run())
     assert len(requests) == 2
-    assert all(request["provider"]["only"] == ["google-vertex"] and request["provider"]["allow_fallbacks"] is False
+    assert all(request["provider"]["only"] == ["google-ai-studio"] and request["provider"]["allow_fallbacks"] is False
                for request in requests)
 
 
@@ -424,7 +448,8 @@ def test_compaction_uses_ordinary_inference_and_preserves_cache_boundaries(
     telemetry.flush()
     wire = [request["input" if api == "responses" else "messages"] for request in requests]
     assert all(request["model"] == model for request in requests)
-    assert all(request["provider"] == {"only": ["google-vertex"], "allow_fallbacks": False} for request in requests)
+    provider = "google-ai-studio" if model.startswith("google/") else "google-vertex"
+    assert all(request["provider"] == {"only": [provider], "allow_fallbacks": False} for request in requests)
     for index in (2, 4):
         assert "CONTEXT CHECKPOINT COMPACTION" in str(wire[index][-1])
         assert "<resource_status>" not in str(wire[index])
