@@ -8,6 +8,7 @@ from crux_scaffold.agent_runtimes.base import Verdict
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, GateContext
 from crux_scaffold.telemetry import NullTelemetry
+from crux_scaffold.workspace import ReviewWorkspace
 
 from drop_ins import edit
 from scripted import ScriptedModel, call, say
@@ -207,3 +208,22 @@ def test_bad_pdf_and_page_errors_are_returned_to_the_reviewer(drop_in_dir, assem
     assert not result.passed
     assert "error: cannot read PDF page" in str(judge.inputs[1])
     assert "error: PDF page must be between 1 and 1" in str(judge.inputs[2])
+
+
+def test_a_named_judge_model_reviews_through_the_runtime_with_its_own_model(drop_in_dir, assemble):
+    configure_blind(drop_in_dir)
+    judges = {name: ScriptedModel(call("read_pdf", {"path": "submission.pdf", "page": 1}, f"pdf-{name}"),
+                                  say(Verdict(passed=True, feedback=f"by {name}", next_prompt=None).model_dump_json()))
+              for name in ("vendor/one", "vendor/two")}
+    scaffold = assemble(drop_in_dir, {"judge": ScriptedModel(), **judges})
+    snapshot = ReviewWorkspace.snapshot(scaffold.context.workspace, {"submission.pdf": "author/revision-7/draft.pdf"})
+
+    async def review(model):
+        async with scaffold.runtime:
+            return await scaffold.runtime.judge("panel", "Review.", "Available submission artifacts:\n- submission.pdf",
+                                                tools=["read_pdf"], max_turns=4, review_workspace=snapshot, model=model)
+
+    assert [asyncio.run(review(name)).feedback for name in judges] == ["by vendor/one", "by vendor/two"]
+    for judge in judges.values():
+        assert "data:image/png;base64," in str(judge.inputs)
+    assert scaffold.context.usage.by_source["judge:panel"].requests == 4

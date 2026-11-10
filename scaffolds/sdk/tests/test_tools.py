@@ -140,3 +140,23 @@ def test_shell_yields_and_cancellation_reaps_its_process(tmp_path):
             os.kill(pid, 0)
 
     asyncio.run(exercise())
+
+
+def test_read_pdf_renders_a_compact_palette_png_that_keeps_text_and_colour(tmp_path):
+    from io import BytesIO
+
+    from PIL import Image
+    from test_blind_review import submission_pdf
+
+    ctx = context(tmp_path, [])
+    (tmp_path / "ws" / "paper.pdf").write_bytes(submission_pdf())
+    tool = TOOLS.create("read_pdf", {})
+    text, image = asyncio.run(tool.invoke(ctx, tool.Arguments(path="paper.pdf", page=1)))
+    assert text.startswith("Page 1 of 1") and "Result: 42" in text
+    with Image.open(BytesIO(image.png)) as rendered:
+        # Page images accumulate in a conversation and providers cap request size, so pages are sent as
+        # 256-colour palette PNGs: about a quarter of an RGB PNG, with text and figure colours intact.
+        assert rendered.format == "PNG" and rendered.mode == "P"
+        assert rendered.size == (480, 480)  # a 240 pt page at the capped scale of 2
+        red, green, blue = rendered.convert("RGB").getpixel((160, 320))  # inside the blue square
+        assert blue > 200 and red < 60 and green < 60

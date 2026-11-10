@@ -97,3 +97,13 @@ def test_existing_dynamic_context_is_checked_for_placeholders(drop_in_dir):
     (drop_in_dir / "workspace/REQUEST.md").write_text("Target: {{TARGET}}")
     with pytest.raises(InvalidDropInError, match="workspace/REQUEST.md:1"):
         DropInDirectory.load(drop_in_dir)
+
+
+@pytest.mark.parametrize("offset", range(5))
+def test_truncation_is_reported_even_when_the_cut_falls_on_whitespace(drop_in_dir, offset):
+    # Reading one character past the allowance detects truncation; stripping that character must not hide it.
+    # Shifting a five-character pattern puts a space exactly at the cut for one of the offsets.
+    spec = AgentConfig(persona="personas/pm.md", workspace_context=["REQUEST.md"], workspace_context_max_chars=400)
+    drop_in = DropInDirectory.load(drop_in_dir)
+    (drop_in.workspace / "REQUEST.md").write_text("x" * offset + "word " * 300)
+    assert "truncated" in drop_in.research_context(spec)
