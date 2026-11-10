@@ -273,6 +273,13 @@ A CRUX with different needs changes declarations, not code. The same drop-in cou
   text and pixels, without document properties, attachments, source paths or filesystem metadata. No artifact code
   is executed. Run a small live review with your configured runtime and submission formats before a research run;
   automated tests use scripted models and make no network calls.
+- **Judge panel.** `models = ["google/gemini-4-argon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]` on an
+  `llm_judge` (or derived) gate asks each model for an independent review, concurrently, and passes when a majority
+  passes. The authors receive every review in full, numbered rather than named, after a line stating the count.
+  A reviewer whose call fails counts against acceptance. Panel models run through the run's model provider with the
+  run's reasoning effort and `extra_body`, so don't pin a single upstream provider in `extra_body` when the panel
+  spans vendors. Check that Langfuse prices each name the provider reports, or panel spend reads as $0, and expect
+  the provider's per-request size limits to apply to every reviewer. `probe --drop-in` probes each panel model.
 
 ## Reliable operator steering and escalations
 

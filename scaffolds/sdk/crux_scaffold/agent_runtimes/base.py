@@ -143,10 +143,11 @@ class AgentRuntime(Component):
 
     @abstractmethod
     async def judge(self, name: str, rubric: str, evidence: str, *, tools: list[str], max_turns: int | None,
-                    review_workspace: ReviewWorkspace | None = None) -> Verdict:
+                    review_workspace: ReviewWorkspace | None = None, model: str | None = None) -> Verdict:
         """Ask an isolated judge agent for a verdict. It has the named scaffold tools and no session, so it sees
         only the rubric, the evidence and what it checks itself. With review_workspace, bind every tool to that
-        snapshot and omit workflow metadata from model inputs. Count every call as judge:<name>.
+        snapshot and omit workflow metadata from model inputs. With model, use that model through the run's
+        provider instead of the run's model (a judge panel). Count every call as judge:<name>.
         Out of turns is a failing verdict, not an error."""
 
     @abstractmethod
