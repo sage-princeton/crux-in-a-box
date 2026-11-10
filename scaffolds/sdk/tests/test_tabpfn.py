@@ -22,7 +22,7 @@ from crux_scaffold.telemetry import NullTelemetry
 
 from scripted import ScriptedModel, call, say
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "run-harness/tabpfn"
+EXAMPLE = Path(__file__).resolve().parents[1] / "run-harness/tabpfn-pilot"
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon", "CRUX_REASONING_EFFORT": "high", "OPENROUTER_API_KEY": "test",
        "RUN_SLUG": "tabpfn-test", "SLACK_BOT_TOKEN": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test", "RUNPOD_API_KEY": "test"}
@@ -173,7 +173,7 @@ def test_a_panel_with_a_failed_reviewer_decides_but_is_reviewed_again(scaffold):
     assert len(judges[PANEL[0]].inputs) == len(judges[PANEL[2]].inputs) == 4
 
 
-@pytest.mark.parametrize("harness", ["tabpfn", "contrastive-rl"])
+@pytest.mark.parametrize("harness", ["tabpfn-pilot", "contrastive-rl-pilot"])
 @pytest.mark.parametrize("formatting", ["inline", "multiline", "table", "bold_values"])
 def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     root = tmp_path / harness

@@ -9,7 +9,7 @@ from crux_scaffold.errors import InvalidDropInError
 
 # TODO(AE-317): Replace the sibling-harness loader with shared research-library imports.
 # https://linear.app/agent-evals/issue/AE-317
-source = Path(crux_scaffold.__file__).resolve().parents[1] / "run-harness/tabpfn/tabpfn_extensions.py"
+source = Path(crux_scaffold.__file__).resolve().parents[1] / "run-harness/tabpfn-pilot/tabpfn_extensions.py"
 if not source.is_file():
     raise InvalidDropInError("The pilot requires the SDK source tree with its TabPFN research example")
 spec = importlib.util.spec_from_file_location("crux_drop_in.tabpfn_extensions", source)

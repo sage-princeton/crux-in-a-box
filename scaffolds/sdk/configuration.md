@@ -2,7 +2,7 @@
 
 ## A drop-in directory
 
-The [contrastive RL example](run-harness/contrastive-rl/OPERATOR_GUIDE.md) uses Argon
+The [contrastive RL example](run-harness/contrastive-rl-pilot/OPERATOR_GUIDE.md) uses Argon
 and the standard workspace provisioner with private `placeholders.txt` and
 `secrets.json` operator files, six hours, $100 inference and $30 RunPod. Its pinned
 CRTR source, example datasets and checkpoints are checked in with the workspace;
@@ -18,7 +18,7 @@ workspace/               where agents work; AGENTS.md and other standing context
 OPERATOR_GUIDE.md        how to resolve placeholders and launch; operator notes live only here
 ```
 
-The [TabPFN research example](run-harness/tabpfn/OPERATOR_GUIDE.md) combines a PI,
+The [TabPFN research example](run-harness/tabpfn-pilot/OPERATOR_GUIDE.md) combines a PI,
 research assistants, background Codex workers, blind PDF reviews, compaction,
 Slack steering and resource-driven finalization. Its only resource caps are six
 hours, $200 model spend and $100 RunPod; it declares no token or delegation limits.
