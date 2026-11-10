@@ -152,6 +152,36 @@ def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop
     assert usage.cached_input_tokens == 25 and usage.reasoning_output_tokens == 20
 
 
+@pytest.mark.parametrize("run_model,judge_model", [
+    (ENV["CRUX_MODEL"], "anthropic/claude-opus-5.5"),
+    ("anthropic/claude-opus-5.5", ENV["CRUX_MODEL"]),
+])
+def test_judge_cache_boundaries_follow_its_model_override(router, drop_in_dir, assemble, run_model, judge_model):
+    requests, pending, _ = router
+    pending.extend([
+        response(call("read_file", {"path": "AGENTS.md"})),
+        response(say('{"passed":true,"feedback":"Checked.","next_prompt":null}')),
+    ])
+    scaffold = assemble(drop_in_dir, env={**ENV, "CRUX_MODEL": run_model})
+
+    async def judge():
+        async with scaffold.runtime as runtime:
+            return await runtime.judge("quality", "Check the evidence.", "Evidence.",
+                                       tools=["read_file"], max_turns=2, model=judge_model)
+
+    assert asyncio.run(judge()).passed
+    assert len(requests) == 2
+    for request in requests:
+        assert request["model"] == judge_model
+        assert ("prompt_cache_breakpoint" in str(request)) == judge_model.startswith("anthropic/")
+        assert "<resource_status>" not in str(request)
+    if judge_model.startswith("anthropic/"):
+        assert requests[0]["input"][0] == requests[1]["input"][0]
+        assert requests[0]["input"][0]["content"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+        assert requests[1]["input"][-1]["type"] == "function_call_output"
+        assert requests[1]["input"][-1]["output"][0]["prompt_cache_breakpoint"] == {"mode": "explicit"}
+
+
 def test_missing_provider_credentials_fail_before_any_request(router, drop_in_dir, assemble):
     requests, _, _ = router
     with pytest.raises(InvalidDropInError, match="OPENROUTER_API_KEY"):

@@ -421,7 +421,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 context=ctx,
                 max_turns=max_turns,
                 hooks=UsageHooks(ctx.usage, f"{JUDGE}:{name}"),
-                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=self._select_cache_input),
+                run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=partial(
+                    self._select_cache_input, model=model or ctx.model)),
             )
         except MaxTurnsExceeded:
             return Verdict(
@@ -607,10 +608,10 @@ class OpenAIAgentsRuntime(AgentRuntime):
         result.input.append({"role": "user", "content": "\n\n".join(tail)})
         return result
 
-    async def _select_cache_input(self, data: CallModelData[Any]) -> ModelInputData:
-        return self._cache_input(data.model_data)
+    async def _select_cache_input(self, data: CallModelData[Any], *, model: str) -> ModelInputData:
+        return self._cache_input(data.model_data, model=model)
 
-    def _cache_input(self, data: ModelInputData) -> ModelInputData:
+    def _cache_input(self, data: ModelInputData, *, model: str | None = None) -> ModelInputData:
         """OpenRouter translates these text boundaries to Claude's cache_control blocks.
 
         Mark stable instructions and retained conversation, never the replaced status tail.
@@ -618,7 +619,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         """
         provider = self.options.model_provider
         if (provider.type != "openai-compatible" or provider.base_url.host != "openrouter.ai"
-                or not self.assembly.context.model.removeprefix("~").startswith("anthropic/")):
+                or not (model or self.assembly.context.model).removeprefix("~").startswith("anthropic/")):
             return data
         selected = list(data.input)
         if data.instructions:
