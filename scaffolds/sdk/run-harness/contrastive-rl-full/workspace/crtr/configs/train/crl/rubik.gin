@@ -1,0 +1,38 @@
+run.seed = 0
+run.job_class = @TrainJob
+TrainJob.train_steps = 500000000
+TrainJob.batch_size = 512
+TrainJob.dataset_class = @ContrastiveDataset
+    ContrastiveDataset.double_batch = 1
+    ContrastiveDataset.path = 'example_datasets/rubik'
+
+TrainJob.metric = 'dot'
+TrainJob.search_shuffles = [10, 15, 20]
+TrainJob.lr = 3e-4
+TrainJob.solving_interval = 150000
+TrainJob.model_type = @LNDenseNet
+    LNDenseNet.repr_dim = 64
+    LNDenseNet.hidden_size = 1024
+    LNDenseNet.depth = 8
+
+TrainJob.eval_job_class = @SolveJob
+    SolveJob.solver_class = @BestFSSolver
+    BestFSSolver.goal_builder_class = @TrivialPolicy
+    TrivialPolicy.env = @make_RubikEnv
+
+    BestFSSolver.max_tree_size = 1000
+    BestFSSolver.max_tree_depth = -1
+    BestFSSolver.value_estimator_class = @ValueEstimator
+
+    SolveJob.n_jobs = 200
+    SolveJob.n_parallel_workers = 1
+    SolveJob.batch_size = 200
+    SolveJob.budget_checkpoints = [50, 100, 500, 1000]
+    SolveJob.generate_problems = @generate_problems_rubik
+
+
+
+
+
+
+

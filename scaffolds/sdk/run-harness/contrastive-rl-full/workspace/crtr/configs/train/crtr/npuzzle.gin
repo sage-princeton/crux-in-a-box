@@ -1,0 +1,40 @@
+run.seed = 0
+run.job_class = @TrainJob
+TrainJob.train_steps = 500000000
+TrainJob.batch_size = 512
+# Default: HF oolongie/npuzzle-trajectories is 5×5 (shape 25). For ICLR 15-puzzle
+# (4×4) comparison on Athena, override path + NPuzzle.n + LNDenseNet.input_size.
+TrainJob.dataset_class = @ContrastiveDataset
+    ContrastiveDataset.double_batch = 2
+    ContrastiveDataset.path = 'training_datasets/npuzzle'
+
+TrainJob.metric = 'dot'
+# Match Ben/ICLR CRTR training loss (exclude positive diagonal from uniformity).
+contrastive_loss.exclude_diagonal = True
+contrastive_loss.loss_type = 'backward'
+TrainJob.search_shuffles = [-1]
+TrainJob.lr = 3e-4
+TrainJob.solving_interval = 10000
+TrainJob.test_path = 'training_datasets/npuzzle'
+TrainJob.model_type = @LNDenseNet
+    LNDenseNet.input_size = 25
+    LNDenseNet.repr_dim = 64
+    LNDenseNet.hidden_size = 1024
+    LNDenseNet.depth = 8
+
+TrainJob.eval_job_class = @SolveJob
+    SolveJob.n_actions = 1
+    SolveJob.solver_class = @BestFSSolver
+        BestFSSolver.goal_builder_class = @TrivialPolicy
+            TrivialPolicy.env = @NPuzzle
+            NPuzzle.n = 5
+
+        BestFSSolver.max_tree_size = 6000
+        BestFSSolver.max_tree_depth = -1
+        BestFSSolver.value_estimator_class = @ValueEstimator
+
+    SolveJob.n_jobs = 200
+    SolveJob.n_parallel_workers = 1
+    SolveJob.batch_size = 200
+    SolveJob.budget_checkpoints = [50, 100, 500, 1000]
+    SolveJob.generate_problems = @generate_problems_npuzzle

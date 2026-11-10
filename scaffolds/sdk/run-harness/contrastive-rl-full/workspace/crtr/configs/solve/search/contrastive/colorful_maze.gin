@@ -1,0 +1,28 @@
+run.seed = 0
+run.job_class = @SolveJob
+    SolveJob.n_actions = 4
+    SolveJob.generate_problems = @generate_problems_colorful_maze
+    SolveJob.shuffles = 6
+    SolveJob.metric = 'l2'
+
+    SolveJob.network = @LNConvNet()
+    LNConvNet.input_size = 1
+    LNConvNet.repr_dim = 64
+    LNConvNet.hidden_size = 64
+    LNConvNet.depth = 8
+
+    SolveJob.solver_class = @BestFSSolver
+    BestFSSolver.goal_builder_class = @TrivialPolicy
+        TrivialPolicy.env = @ColorfulMazeEnv
+        ColorfulMazeEnv.targets = 3
+        ColorfulMazeEnv.size = 10
+
+    BestFSSolver.max_tree_size = 50000
+    BestFSSolver.max_tree_depth = -1
+    BestFSSolver.value_estimator_class = @ValueEstimator
+    BestFSSolver.checkpoint_path = 'example_checkpoints/colorful_maze/crtr.pt'
+
+    SolveJob.n_jobs = 200
+    SolveJob.n_parallel_workers = 1
+    SolveJob.batch_size = 200
+    SolveJob.budget_checkpoints = [50, 100, 500, 1000, 5000, 20000, 50000]

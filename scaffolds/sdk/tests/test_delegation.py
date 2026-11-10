@@ -329,10 +329,13 @@ def test_background_cleanup_releases_running_and_queued_slots(drop_in_dir, assem
             if pm.inputs:
                 await started.wait()
                 assert len(calls) == 1
+                assert set(scaffold.runtime._coding_tasks) == {"engineer", "other_engineer"}
                 if ending == "error":
                     raise RuntimeError("model failed")
                 if ending == "cancel":
                     asyncio.current_task().cancel()
+                elif ending == "timeout":
+                    run_timeout.reschedule(asyncio.get_running_loop().time())
                 await asyncio.Event().wait()
             return await respond(*args, **kwargs)
 
@@ -341,7 +344,9 @@ def test_background_cleanup_releases_running_and_queued_slots(drop_in_dir, assem
         monkeypatch.setattr(pm, "get_response", response)
         expected = {"error": RuntimeError, "cancel": asyncio.CancelledError, "timeout": TimeoutError}[ending]
         with pytest.raises(expected):
-            await asyncio.wait_for(scaffold.run(), 0.1)
+            async with asyncio.timeout(None) as run_timeout:
+                await scaffold.run()
+        assert len(calls) == 1
         assert not scaffold.runtime._coding_tasks
         assert scaffold.runtime._active_delegates == 0
         async with scaffold.runtime.delegation_slot():
