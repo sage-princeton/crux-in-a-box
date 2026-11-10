@@ -1,0 +1,43 @@
+run.seed = 0
+run.job_class = @TrainJobBaseline
+TrainJobBaseline.train_steps = 500000000
+TrainJobBaseline.batch_size = 500
+TrainJobBaseline.dataset_class = @BaselineDatasetDiffLen
+    BaselineDatasetDiffLen.path = 'example_datasets/sokoban'
+
+TrainJobBaseline.search_shuffles = [-1]
+TrainJobBaseline.lr = 3e-4
+TrainJobBaseline.solving_interval = 50000
+TrainJobBaseline.model_type = @LNConvNet
+TrainJobBaseline.test_path = 'example_datasets/sokoban'
+    LNConvNet.input_size = 14
+    LNConvNet.repr_dim = 150
+    LNConvNet.hidden_size = 64
+    LNConvNet.depth = 8
+    LNConvNet.baseline = True
+
+TrainJobBaseline.eval_job_class = @SolveJob
+    SolveJob.solver_class = @BestFSSolver
+    BestFSSolver.goal_builder_class = @TrivialPolicy
+        TrivialPolicy.env = @CustomSokobanEnv
+    CustomSokobanEnv.generator = @CustomSokobanGenerator
+    CustomSokobanEnv.boards_path = 'training_datasets/sokoban_eval_boards/eval_boards.pkl'
+    CustomSokobanEnv.grid_size = 12
+
+    BestFSSolver.max_tree_size = 1000
+    BestFSSolver.max_tree_depth = -1
+    BestFSSolver.value_estimator_class = @ValueEstimatorBaseline
+
+    SolveJob.n_jobs = 200
+    SolveJob.n_parallel_workers = 1
+    SolveJob.batch_size = 200
+    SolveJob.budget_checkpoints = [50, 100, 500, 1000]
+    SolveJob.generate_problems = @gen_problems_sokoban.generate_problems_sokoban
+
+
+
+
+
+
+
+

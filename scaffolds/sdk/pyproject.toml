@@ -1,6 +1,6 @@
 [tool.ruff]
 extend = "../../pyproject.toml"
-extend-exclude = ["run-harness/contrastive-rl-pilot/workspace/crtr"]
+extend-exclude = ["run-harness/contrastive-rl-pilot/workspace/crtr", "run-harness/contrastive-rl-full/workspace/crtr"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["crux_scaffold"]

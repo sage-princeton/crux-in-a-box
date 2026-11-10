@@ -1,0 +1,27 @@
+run.seed = 0
+run.job_class = @SolveJob
+    SolveJob.n_actions = 1
+    SolveJob.generate_problems = @generate_problems_rubik
+    SolveJob.shuffles = 1000
+    SolveJob.metric = 'dot'
+
+
+    SolveJob.network = @LNDenseNet()
+    LNDenseNet.input_size = 108
+    LNDenseNet.repr_dim = 21
+    LNDenseNet.hidden_size = 1024
+    LNDenseNet.depth = 8
+
+    SolveJob.solver_class = @BestFSSolver
+    BestFSSolver.goal_builder_class = @TrivialPolicy
+        TrivialPolicy.env = @make_RubikEnv
+
+    BestFSSolver.max_tree_size = 6000
+    BestFSSolver.max_tree_depth = -1
+    BestFSSolver.value_estimator_class = @ValueEstimatorBaseline
+    BestFSSolver.checkpoint_path = 'example_checkpoints/rubik/supervised.pt'
+    
+    SolveJob.n_jobs = 1000
+    SolveJob.n_parallel_workers = 1
+    SolveJob.batch_size = 200
+    SolveJob.budget_checkpoints = [50, 100, 500, 1000]
