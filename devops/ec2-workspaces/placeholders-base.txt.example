@@ -59,9 +59,11 @@ CLAUDE_ACP_VERSION=0.77.0
 # The committed drop-in's [runtime.model_provider] selects its endpoint and
 # credential name. MODEL_PROVIDER=openrouter is also accepted when that table
 # points to OpenRouter. It needs no AgentRQ workspace, control box settings or
-# CLI/ACP pins. For OpenRouter + Codex workers with routing overrides, use
-# google/gemini-4-argon@preset/<your-preset> and set matching Vertex-only routing
-# in the preset. Compatible providers use persistent or trim_recent context.
+# CLI/ACP pins. OpenRouter research models are pinned to their BYOK provider:
+# Google AI Studio, Anthropic, or OpenAI, with provider fallback disabled.
+# In the OpenRouter workspace, set each BYOK integration to "Never use shared
+# capacity for any model on this provider". Request routing alone does not
+# prevent OpenRouter-billed fallback on the same provider.
 
 # The drop-in directory staged at /srv/crux-run/run-harness, as a repo-relative
 # path. Default: run-harness. openai-agents needs one with a scaffold.toml,

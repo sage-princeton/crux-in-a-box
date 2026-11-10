@@ -43,6 +43,8 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
+Research inference through OpenRouter is restricted to Google AI Studio, Anthropic or OpenAI by one shared policy in `openrouter.py`, with provider fallback disabled. SDK model settings apply it per requested model; native Codex requests pass through a temporary loopback adapter owned by the coding-client lifecycle. ACP provisioning installs the same adapter as a local service. Other model vendors and endpoints retain their routing. BYOK-only billing additionally requires prioritized workspace credentials with `is_byok_only=true`; the request policy cannot configure these account controls.
+
 The orchestrator receives a generated setup before its persona and static context. It describes the scaffold, phases and gates, available delegates/tools, steering, configured limits, context policy and restart behavior. These instructions are assembled once. Delegates get their own scoped setup and static files. Current phase, iteration, gate outcomes, research state and remaining resources belong in the dynamic user context. MCP launch arguments and environment values are excluded.
 
 A drop-in can append guidance or disable the generated setup in `scaffold.toml`:

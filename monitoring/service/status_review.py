@@ -6,7 +6,7 @@ from pathlib import Path
 
 import jsonschema
 
-from review import CoverageError, encoded, get_json, model_family, select_reviewer
+from review import CoverageError, encoded, get_json, model_family, provider_preferences, select_reviewer
 
 CHUNK_BYTES = 24 * 1024
 MAX_CHUNKS = 8
@@ -111,7 +111,7 @@ def call(client, store, secret, model, stage, payload, budget):
             "model": model,
             "max_tokens": MAX_OUTPUT,
             "temperature": 0,
-            "provider": {"require_parameters": True, "data_collection": "deny"},
+            "provider": provider_preferences(model),
             "messages": [
                 {"role": "system", "content": prompt},
                 {"role": "user", "content": encoded(payload).decode()},

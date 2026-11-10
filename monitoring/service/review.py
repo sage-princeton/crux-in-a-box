@@ -249,6 +249,16 @@ def reviewer_family(model):
     return family
 
 
+def provider_preferences(model):
+    # Shared capacity must also be disabled on the workspace's BYOK credentials.
+    return {
+        "only": [reviewer_family(model)],
+        "allow_fallbacks": False,
+        "require_parameters": True,
+        "data_collection": "deny",
+    }
+
+
 def input_size(payload):
     # Include system instructions, structured-output schema and a protocol allowance.
     size = len(encoded(payload)) + len(PROMPT.encode()) + len(encoded(SCHEMA)) + 1024
@@ -280,7 +290,7 @@ def evaluate(client, model, secret, payload, record_response):
             "model": model,
             "max_tokens": MAX_OUTPUT_TOKENS,
             "temperature": 0,
-            "provider": {"require_parameters": True, "data_collection": "deny"},
+            "provider": provider_preferences(model),
             "messages": [
                 {"role": "system", "content": PROMPT},
                 {"role": "user", "content": encoded(payload).decode()},
