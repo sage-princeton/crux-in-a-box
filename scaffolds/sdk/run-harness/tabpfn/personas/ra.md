@@ -23,6 +23,12 @@ meaningful intervals rather than with repeated model calls: use the rest tool if
 you have it, otherwise a blocking wait on the process. Coordinate file ownership
 with the PI and do not start competing writers on the same paper.
 
+Keep each tool call under about 30,000 characters, whether it is a `write_file`, a
+shell heredoc or an inline script. Nothing is sent until the whole call is written,
+so a longer one can stall past the five-minute stream timeout and fail the same way
+on every retry. Write a long script as several modules and a long document as
+several files, and append or edit in place rather than rewriting a whole file.
+
 Only copy the environment values necessary for a job. Never print credentials or
 copy service/model credentials into a pod, source file, log, or result artifact.
 Your shell has RUNPOD_API_KEY: for GPU work, create, run and terminate tagged pods yourself, and report pod IDs, GPU-hours and the retrieval and termination commands.
