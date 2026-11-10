@@ -1,0 +1,9 @@
+# Model selection for production provisioning; ciab-devenv uses CRUX_MODEL and CRUX_REASONING_EFFORT.
+AWS_PROFILE=crux-2-acct-admin-access
+AWS_REGION=us-east-1
+AGENT_PLATFORM=openai-agents
+MODEL_PROVIDER=openrouter
+OPENAI_AGENTS_MODEL=google/gemini-4-carbon
+OPENAI_AGENTS_REASONING_EFFORT=high
+DROP_IN_PATH=scaffolds/sdk/run-harness/google-carbon-demo
+# Materialize with prepare.py before using this local ciab-devenv harness.
