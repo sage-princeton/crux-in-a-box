@@ -12,7 +12,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[3]
 
 
-@pytest.mark.parametrize("model", ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "future-model"])
+@pytest.mark.parametrize("model", ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "google/gemini-4-carbon", "future-model"])
 @pytest.mark.parametrize("effort", ["none", "minimal", "low", "medium", "high", "xhigh", "max", "invalid"])
 def test_openai_scaffolds_share_effort_validation(model, effort):
     results = []
@@ -47,6 +47,8 @@ load_agent_config settings
     allowed = effort in {"none", "low", "medium", "high", "xhigh", "max"}
     if model in {"gpt-6-astra", "gpt-6.1-sol"} and effort == "none":
         allowed = False
+    if model == "google/gemini-4-carbon":
+        allowed = effort in {"low", "medium", "high"}
     assert [result.returncode == 0 for result in results] == [allowed, allowed]
     assert ["unchecked" in result.stderr for result in results] == [
         model == "future-model" and allowed,

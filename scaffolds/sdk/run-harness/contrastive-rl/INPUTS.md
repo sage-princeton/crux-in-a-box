@@ -14,7 +14,7 @@
   loop/review/resource/cleanup implementation, not a claimed exact repeat of Max's
   unidentified pilot. Baseline extension SHA-256:
   `48caa0383bd7033bce04370bb86cb8719a1a0a06125512b09a5efdb0c086c7d8`.
-- Model: `google/gemini-4-argon`, high effort, normal OpenRouter
+- Model: `google/gemini-4-carbon`, high effort, normal OpenRouter
   routing. No private preset/BYOK settings. Listed in the provider catalog on
   2026-10-29; no inference probe has been performed for this pilot.
 - Resource caps: 21600 seconds, $100 total agent/delegate/review inference, $30
@@ -29,5 +29,5 @@ Tests cover assembly without a channel, every bundled source file's checksum,
 resource reserves/deadlines and cleanup. A fresh checkout needs no source
 preparation: fill the example operator configuration/credentials and use
 make-new-workspace.sh as documented in OPERATOR_GUIDE.md. Provisioning checks
-Argon SDK/Codex inference before research starts. The agent's authorized inference
+Carbon SDK/Codex inference before research starts. The agent's authorized inference
 spend and TOML budget are $100; leave the OpenRouter key's account limit unchanged.

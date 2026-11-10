@@ -58,7 +58,7 @@ load_agent_config() {
     *) die "$EFFORT_KEY must be none|low|medium|high|xhigh|max (got '$EFFORT')." ;;
   esac
 
-  # Effort levels per supported model, recorded 2026-10-01. Neither harness
+  # Effort levels per supported model, recorded 2026-11-10. Neither harness
   # rejects a level the model lacks: Codex sends model_reasoning_effort to the
   # API as-is.
   # - Codex: OpenAI's model docs (developers.openai.com/api/docs/models). The
@@ -67,6 +67,7 @@ load_agent_config() {
   #   `none`, and adds `ultra`, which OpenAI's docs don't list.
   # - Claude: Anthropic's effort docs (platform.claude.com/docs/en/build-with-claude/effort);
   #   check with GET /v1/models/{id} (capabilities.effort.<level>.supported).
+  # - Carbon: ai.google.dev/gemini-api/docs/whats-new-gemini-4-carbon (low/medium/high).
   # UPDATE THIS TABLE when changing the models used for runs or bumping
   # CODEX_VERSION or CLAUDE_VERSION. Other models (e.g. OpenRouter IDs) only
   # get a warning.
@@ -76,6 +77,8 @@ load_agent_config() {
     openai-agents:gpt-6-astra|openai-agents:gpt-6.1-sol|\
     claude:claude-fable-5-1|claude:claude-opus-5-5|claude:claude-sonnet-5-5)
       supported="low medium high xhigh max" ;;
+    codex:google/gemini-4-carbon|openai-agents:google/gemini-4-carbon)
+      supported="low medium high" ;;
     codex:gpt-6-luna|openai-agents:gpt-6-luna)
       supported="none low medium high xhigh max" ;;
     *)
