@@ -70,3 +70,7 @@ docs/superpowers/
 /reports/
 /docs/plans/
 .worktrees
+
+# User-local agent configurations
+.codex/
+.claude/
