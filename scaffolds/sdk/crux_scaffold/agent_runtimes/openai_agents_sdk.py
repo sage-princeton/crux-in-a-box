@@ -59,7 +59,6 @@ from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
-OPENROUTER_PROVIDER = "google-ai-studio"
 
 
 class ModelProviderOptions(Options):
@@ -898,7 +897,7 @@ def _model_settings(options: ModelProviderOptions, env: Mapping[str, str], *, mo
         if options.base_url.host == "openrouter.ai":
             provider = {**options.extra_body.get("provider", {}), "allow_fallbacks": False}
             if (model or env.get("CRUX_MODEL", "")).removeprefix("~").startswith("google/"):
-                provider["only"] = [OPENROUTER_PROVIDER]
+                provider["only"] = ["google-ai-studio"]
             settings.extra_body = {**options.extra_body, "provider": provider}
         if options.api == "responses":
             settings.store = False
