@@ -56,7 +56,11 @@ def requirements(config: dict, model_provider: str, model: str) -> dict:
     if coding and base_url:
         if api != "responses":
             raise ConfigurationError("Codex coding agents require a Responses provider")
-        if extra_body and (not openrouter or not re.search(r"@preset/[A-Za-z0-9_-]+$", model)):
+        google_routing = (openrouter and model.removeprefix('~').startswith('google/')
+                          and extra_body.keys() <= {'provider'}
+                          and isinstance(extra_body.get('provider', {}), dict)
+                          and extra_body.get('provider', {}).keys() <= {'only', 'allow_fallbacks'})
+        if extra_body and not google_routing and (not openrouter or not re.search(r"@preset/[A-Za-z0-9_-]+$", model)):
             raise ConfigurationError("Codex cannot forward runtime.model_provider.extra_body; for OpenRouter use model@preset/NAME with matching routing settings")
         result.update(codex_base_url=base_url, codex_api_key_env=key)
     return result

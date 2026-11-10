@@ -7,14 +7,19 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+import threading
 from abc import abstractmethod
-from collections.abc import Awaitable, Callable
-from contextlib import aclosing, suppress
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import aclosing, asynccontextmanager, suppress
+from dataclasses import replace
 from datetime import datetime
 from functools import partial
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
+import httpx
 from openai_codex import ApprovalMode, AsyncCodex, CodexConfig, Sandbox
 from openai_codex.generated.v2_all import (
     ErrorNotification,
@@ -209,6 +214,77 @@ def codex_client(ctx: RunContext, options: CodexOptions | None = None, *,
     ))
 
 
+@asynccontextmanager
+async def google_ai_studio_route(*, base_url: str, read_timeout: float) -> AsyncIterator[str]:
+    """Add routing to native Codex requests until Codex supports provider extra_body itself."""
+    hop_headers = {'host', 'content-length', 'connection', 'transfer-encoding', 'keep-alive',
+                   'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'upgrade'}
+    with httpx.Client(timeout=httpx.Timeout(read_timeout, connect=10), follow_redirects=False) as client:
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *_) -> None:
+                pass  # Requests and credentials must not enter the logs.
+
+            def do_GET(self) -> None:
+                if self.path.split('?', 1)[0] != '/models':
+                    self.send_error(404)
+                    return
+                self.forward()
+
+            def do_POST(self) -> None:
+                self.connection.settimeout(30)
+                if self.path not in {'/responses', '/responses/compact'}:
+                    self.send_error(404)
+                    return
+                if self.headers.get('Transfer-Encoding') or self.headers.get('Content-Encoding'):
+                    self.send_error(415)
+                    return
+                try:
+                    size = int(self.headers.get('Content-Length', '-1'))
+                    if size < 0:
+                        raise ValueError
+                    body = json.loads(self.rfile.read(size))
+                    body['provider'] = {**(body.get('provider') or {}),
+                                        'only': ['google-ai-studio'], 'allow_fallbacks': False}
+                except (ValueError, TypeError, AttributeError):
+                    self.send_error(400)
+                    return
+                self.forward(body)
+
+            def forward(self, body: dict[str, Any] | None = None) -> None:
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in hop_headers}
+                sent = False
+                try:
+                    with client.stream(self.command, base_url.rstrip('/') + self.path,
+                                       headers=headers, json=body) as response:
+                        self.send_response(response.status_code)
+                        for key, value in response.headers.items():
+                            if key.lower() not in hop_headers:
+                                self.send_header(key, value)
+                        self.send_header('Connection', 'close')
+                        self.end_headers()
+                        sent = True
+                        for chunk in response.iter_raw():
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
+                except (httpx.HTTPError, OSError):
+                    if not sent:
+                        self.send_error(502, 'Upstream connection failed')
+                finally:
+                    self.close_connection = True
+
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True)
+        thread.start()
+        try:
+            yield f'http://127.0.0.1:{server.server_port}'
+        finally:
+            try:
+                await uninterrupted(asyncio.to_thread(server.shutdown))
+            finally:
+                server.server_close()
+                thread.join()
+
+
 @CODING_AGENTS.register
 class CodexCodingAgent(CodingAgent):
     """One fresh Codex thread per brief, so the brief is the coding agent's whole task context."""
@@ -224,6 +300,15 @@ class CodexCodingAgent(CodingAgent):
         self.client_factory = client_factory or (lambda ctx: codex_client(ctx, options, mailbox=self.mailbox))
 
     async def execute(self, brief: str, ctx: RunContext) -> CodingResult:
+        base_url = ctx.env.get('CRUX_CODEX_BASE_URL', '')
+        if urlsplit(base_url).hostname == 'openrouter.ai' and ctx.model.removeprefix('~').startswith('google/'):
+            timeout = self.options.stream_idle_timeout_ms or 300_000
+            async with google_ai_studio_route(base_url=base_url, read_timeout=timeout / 1000) as url:
+                ctx = replace(ctx, env={**ctx.env, 'CRUX_CODEX_BASE_URL': url})
+                return await self._execute(brief, ctx)
+        return await self._execute(brief, ctx)
+
+    async def _execute(self, brief: str, ctx: RunContext) -> CodingResult:
         instructions = self.developer_instructions
         codex_home(ctx, self.mailbox).mkdir(parents=True, exist_ok=True)
         codex, turn, streaming, steering = self.client_factory(ctx), None, None, None

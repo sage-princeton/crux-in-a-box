@@ -308,13 +308,15 @@ For an SDK box:
   excluded. Custom provider credentials are validated and copied only once.
 - **Codex workers:** only declared coding harnesses are probed. Codex uses the
   run's model and effort, and inherits compatible Responses endpoints and their
-  selected credential. Chat Completions works for SDK-only drop-ins. Codex cannot
-  send the SDK's `extra_body`; when an OpenRouter drop-in declares routing rules
-  and Codex workers, use `OPENAI_AGENTS_MODEL=google/gemini-4-argon@preset/<name>`
-  and create a preset with the same rules (e.g. Vertex only, fallback disabled).
-  Provisioning checks the preset suffix, not the account-side preset contents;
-  verify those and the Vertex BYOK settings before launch. Other endpoints with
-  Codex workers must omit `extra_body` and enforce routing at their endpoint.
+  selected credential. Chat Completions works for SDK-only drop-ins. Google
+  Codex workers at OpenRouter automatically pin AI Studio with fallbacks disabled;
+  use a plain model such as `google/gemini-4-carbon`, without creating a preset.
+  A worker-owned local adapter adds these fields to native requests. Preflight
+  accepts `extra_body` containing only `provider.only` and `provider.allow_fallbacks`,
+  which this policy overrides. Other OpenRouter `extra_body` settings still need
+  a matching `model@preset/<name>`; preflight checks the suffix, not its contents.
+  Verify AI Studio's BYOK settings forbid shared capacity before launch. Other
+  endpoints with Codex workers must omit `extra_body` and enforce routing at their endpoint.
 - **Sandbox prerequisites:** the SDK installer adds system `bubblewrap` and
   loads Ubuntu's `bwrap-userns-restrict` AppArmor profile when required. Existing
   profiles are preserved; the global namespace restriction stays enabled.

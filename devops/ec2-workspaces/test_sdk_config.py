@@ -81,7 +81,7 @@ class SDKConfigTests(unittest.TestCase):
         config = DIRECT + '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
         self.assertEqual(self.inspect(config)["coding_agent"], "codex")
 
-    def test_codex_inherits_responses_endpoint_and_requires_presets_for_routing(self):
+    def test_codex_inherits_responses_endpoint_and_pins_google_without_presets(self):
         worker = '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
         routing = '\n[runtime.model_provider.extra_body.provider]\nonly = ["google-vertex"]\nallow_fallbacks = false\n'
         self.assertEqual(self.inspect(COMPATIBLE + worker), {
@@ -89,8 +89,16 @@ class SDKConfigTests(unittest.TestCase):
             "codex_base_url": "https://openrouter.ai/api/v1", "codex_api_key_env": "OPENROUTER_API_KEY",
         })
         config = COMPATIBLE + routing + worker
-        self.assertIn("preset", self.inspect(config, success=False))
-        self.assertEqual(self.inspect(config, model="google/gemini-4-argon@preset/vertex-only")["coding_agent"], "codex")
+        for model in ('google/gemini-4-carbon', '~google/gemini-4-carbon'):
+            self.assertEqual(self.inspect(config, model=model)['coding_agent'], 'codex')
+        self.assertIn('preset', self.inspect(config, model='anthropic/claude-opus-5.5', success=False))
+        unsupported = config.replace('[runtime.model_provider.extra_body.provider]',
+                                     '[runtime.model_provider.extra_body]\ntemperature = 0.5\n'
+                                     '[runtime.model_provider.extra_body.provider]')
+        self.assertIn('preset', self.inspect(unsupported, success=False))
+        custom = config.replace('openrouter.ai', 'models.example.test')
+        self.assertIn('preset', self.inspect(custom, success=False))
+        self.assertEqual(self.inspect(config, model="anthropic/claude-opus-5.5@preset/custom")["coding_agent"], "codex")
         self.assertIn("Responses", self.inspect(config.replace('api = "responses"', 'api = "chat-completions"'),
                                                success=False))
         self.assertIsNone(self.inspect(COMPATIBLE.replace('api = "responses"', 'api = "chat-completions"'))["coding_agent"])

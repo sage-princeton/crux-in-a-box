@@ -92,6 +92,8 @@ flowchart LR
     style box fill:none,stroke:#444,stroke-dasharray:5 5
 ```
 
+Google Codex workers using OpenRouter own a loopback adapter for the duration of their brief. It adds AI Studio-only, no-fallback routing to native requests because Codex has no request-body extension field. This avoids a saved OpenRouter preset; it adds no service or package dependency.
+
 ## Tracing
 
 - **Context selection is visible.** Every SDK orchestrator/delegate selection emits a `context:select` span with strategy, agent, item target, before/after/dropped counts, retained input positions. It records metadata without conversation bodies, including no-op selections. Selection excludes legacy context snapshots and precedes task relocation, request-only cache markers and refreshed research/resource status. Static instructions remain outside conversation history. It makes no model call and adds no priced usage. Blind judges use their isolated input filter; native coding workers manage their own context. These events do not claim to trace those workers' internal trimming.
