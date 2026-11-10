@@ -52,8 +52,8 @@ ssh contrastive-rl-<unique-suffix>
 
 ```bash
 cd /srv/crux-run/run-harness
-python3 prepare.py --channel C0CEJP2MP2P \ #crux-contrastive-rl channel in Max's Workspace
-  --operator U0BUSP5CJM6 \ # Max Morgan user ID (change to your user ID to steer)
+# Channel is set to crux-constrastive-rl channel in Max's Workspace; user is set to Max Morgan user ID (change to your user ID to steer)
+python3 prepare.py --channel C0CEJP2MP2P --operator U0BUSP5CJM6 \
   --after-ts "$(date +%s).000000"
 cd workspace/paper
 latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex
