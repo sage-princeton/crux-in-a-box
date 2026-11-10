@@ -33,7 +33,7 @@ from crux_scaffold.telemetry import NullTelemetry
 TARGET = HERE / "PROMPTS.md"
 # Stand-ins for the run's placeholders and credentials: assembling the scaffold calls nothing.
 SLACK = {"{{SLACK_CHANNEL_ID}}": "C0PROMPTS", "{{SLACK_OPERATOR_ID}}": "U0PROMPTS", "{{SLACK_AFTER_TS}}": "0"}
-ENV = {"CRUX_MODEL": "google/gemini-4-argon", "CRUX_REASONING_EFFORT": "high", "RUN_SLUG": "tabpfn-prompts",
+ENV = {"CRUX_MODEL": "google/gemini-4-carbon", "CRUX_REASONING_EFFORT": "high", "RUN_SLUG": "tabpfn-prompts",
        "OPENROUTER_API_KEY": "unused", "SLACK_BOT_TOKEN": "unused", "COST_TRACKER_URL": "https://cost.invalid/cost",
        "COST_TRACKER_TOKEN": "unused", "RUNPOD_API_KEY": "unused"}
 # Lines that stay on their own when paragraphs are unwrapped: headings, list items, table rows, fences and LaTeX.

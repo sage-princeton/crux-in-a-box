@@ -25,7 +25,7 @@ type = "compaction"
 context_window_tokens = 1048576
 trigger_tokens = 650000
 keep_recent_items = 20
-image_tokens = 1120  # Gemini 4 Argon default for image inputs.
+image_tokens = 1120  # Gemini 4 Carbon default for image inputs.
 
 [budget]
 max_wall_seconds = 21600
@@ -67,7 +67,7 @@ blind = true
 artifacts = { "submission.pdf" = "paper/paper.pdf" }
 tools = ["read_file", "list_files", "read_pdf"]
 max_turns = "unlimited"
-models = ["google/gemini-4-argon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+models = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
 
 [gates.final_review]
 type = "tabpfn_review"
@@ -77,7 +77,7 @@ artifacts = { "submission.pdf" = "paper/paper.pdf" }
 tools = ["read_file", "list_files", "read_pdf"]
 max_turns = "unlimited"
 final = true
-models = ["google/gemini-4-argon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+models = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
 
 [agents.pi]
 persona = "personas/pi.md"
