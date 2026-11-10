@@ -17,7 +17,7 @@ from crux_scaffold.resources import ResourceMetric, ResourceSnapshot
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 
-PILOT = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl"
+PILOT = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl-pilot"
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon", "OPENROUTER_API_KEY": "test",
        "SLACK_BOT_TOKEN": "test",
        "RUN_SLUG": "contrastive-test", "RUNPOD_API_KEY": "test",

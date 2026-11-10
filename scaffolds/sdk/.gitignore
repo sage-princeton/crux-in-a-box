@@ -3,5 +3,5 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .state/
-# Generated locally by run-harness/tabpfn/render_prompts.py for reading and editing; not committed.
-run-harness/tabpfn/PROMPTS.md
+# Generated locally by run-harness/tabpfn-pilot/render_prompts.py for reading and editing; not committed.
+run-harness/tabpfn-pilot/PROMPTS.md

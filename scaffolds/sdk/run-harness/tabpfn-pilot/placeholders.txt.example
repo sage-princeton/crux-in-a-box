@@ -9,4 +9,4 @@ AGENT_PLATFORM=openai-agents
 MODEL_PROVIDER=openrouter
 OPENAI_AGENTS_MODEL=google/gemini-4-carbon
 OPENAI_AGENTS_REASONING_EFFORT=high
-DROP_IN_PATH=scaffolds/sdk/run-harness/tabpfn
+DROP_IN_PATH=scaffolds/sdk/run-harness/tabpfn-pilot
