@@ -1,6 +1,6 @@
 # Contrastive RL SDK pilot
 
-This guide provides instructions for reproducing the the Contrastive 
+This guide provides instructions for reproducing the the Contrastive
 Reinforcement Learning (RL) research task.
 For run configurations, see `./placeholders.txt`, `./secrets.json`, `./scaffold.toml`,
 and the referenced `.md` files in this directory and child directories.

@@ -161,11 +161,11 @@ def test_rejected_assistant_request_reaches_pi_as_failed_result(wire, drop_in_di
     if after_tool:
         pending.append(response(response_call('read_file', {'path': 'large.txt'})))
     pm = ScriptedModel(call('reviewer', {'brief': brief}, 'start'),
-                       call('reviewer_result', {'wait': True}, 'collect'), say('I can narrow the brief.'))
+                       call('delegate_inbox', {'wait_seconds': 10}, 'collect'), say('I can narrow the brief.'))
     scaffold = assemble(drop_in_dir, {'pm': pm}, env=ENV)
     outcome = asyncio.run(scaffold.run())
     assert outcome.final_output == 'I can narrow the brief.'
-    result = json.loads(tool_outputs(pm.inputs[-1])[-1])
+    result, = json.loads(tool_outputs(pm.inputs[-1])[-1])['results']
     assert result['status'] == 'failed' and result['collected']
     assert 'not sent' in result['result'] and '20000' in result['result']
     assert 'private-marker' not in result['result']
