@@ -295,7 +295,7 @@ type = "openai-agents"
 server = "slack"                    # a declared [mcp_servers.slack]
 channel_id = "C123"
 operator_ids = ["U123"]            # Slack user IDs allowed to issue instructions
-# Explicit run boundary for steering and agents' Slack reads; 0 includes all available history.
+# Explicit run boundary; 0 includes all available history.
 after_ts = "1792036800.000000"
 # thread_ts = "1792036800.000000"  # optional fixed thread; omit for top-level channel posts
 poll_interval_seconds = 30          # poll spacing during rest and phase intervals
@@ -311,20 +311,6 @@ are ignored. In channel mode, replies must be new top-level posts; in fixed-thre
 mode, reply in that thread. Post a new message to correct an earlier one; edits are
 not redelivered. Delegates retain their isolated brief; the orchestrator passes on
 relevant steering when it next delegates.
-
-Agents' own Slack reads share that boundary. Every message listing the steering
-server returns to an agent keeps only messages posted after `after_ts`, whichever
-tool or channel it came from, so what a reused channel held before launch stays out
-of the conversation. Posts after launch reach the agent in full, including another
-run's posts in a shared channel and link previews of older messages. A pagination
-cursor leaves with the rows it rode on: history cannot page back past the boundary,
-and a thread page holding only earlier messages comes back empty, without its cursor
-to later replies. A message tool whose output cannot be filtered returns an error
-instead of the listing. Steering's own scans stay unfiltered, because thread scans
-must traverse every page. Only the server named in `server` is filtered, so give
-agents Slack access through it. This limits the MCP tools, not access: agent shells
-and Codex workers that inherit `SLACK_BOT_TOKEN` can still call the Slack API
-directly.
 
 `rest` and phase intervals poll at the configured interval and wake when messages
 are pending. Detection latency during waits is at most that interval **plus the

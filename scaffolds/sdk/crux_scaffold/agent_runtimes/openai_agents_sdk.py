@@ -38,7 +38,6 @@ from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool import ToolOutputImage, ToolOutputText
 from agents.tool_context import ToolContext
-from mcp.types import CallToolResult, TextContent
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
@@ -53,7 +52,7 @@ from crux_scaffold.context_strategies import is_standing_context
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
 from crux_scaffold.errors import InvalidDropInError, RequestSizeExceededError, ToolError
-from crux_scaffold.steering import MESSAGE_TOOLS, WITHHELD, SteeringOptions, within_run
+from crux_scaffold.steering import SteeringOptions
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
 from crux_scaffold.usage import UsageLedger
@@ -202,10 +201,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if self.options.steering:
             used.add(self.options.steering.server)
         used = sorted(used)
-        steering = self.options.steering
-        self.servers = {name: _mcp_server(name, config.mcp_servers[name], ctx.env,
-                                          after_ts=steering.after_ts if steering and name == steering.server else None)
-                        for name in used}
+        self.servers = {name: _mcp_server(name, config.mcp_servers[name], ctx.env) for name in used}
         for name in delegation_order(config.agents):
             spec = config.agents[name]
             tools = [self._function_tool(self.assembly.tools[tool]) for tool in spec.tools]
@@ -242,9 +238,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 if self.options.background_coding or self.delegates:
                     self._check_result_names({tool.name for tool in await server.list_tools()})
             if steering:
-                server = self.servers[steering.options.server]
-                steering.transport = _UnfilteredCalls(server)
-                available = {tool.name for tool in await server.list_tools()}
+                steering.transport = self.servers[steering.options.server]
+                available = {tool.name for tool in await steering.transport.list_tools()}
                 required = {"conversations_replies" if steering.options.thread_ts else "conversations_history"}
                 if any(tool.type_name == "escalate" for tool in self.assembly.tools.values()):
                     required.add("conversations_add_message")
@@ -838,45 +833,14 @@ def _stamp(moment: datetime) -> str:
     return moment.isoformat(timespec="seconds")
 
 
-def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str], *,
-                after_ts: str | None = None) -> MCPServerStdio:
-    options = {"params": {"command": config.command, "args": config.args, "env": config.resolved_env(name, env)},
-               "name": name, "cache_tools_list": True, "client_session_timeout_seconds": config.timeout_seconds,
-               "max_retry_attempts": 0}
-    return MCPServerStdio(**options) if after_ts is None else _SteeringServer(after_ts=after_ts, **options)
-
-
-class _SteeringServer(MCPServerStdio):
-    """The steering MCP server: agents see only Slack messages posted after the run start (`after_ts`)."""
-
-    def __init__(self, *, after_ts: str, **options: Any) -> None:
-        super().__init__(**options)
-        self.after_ts = after_ts
-
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None,
-                        meta: dict[str, Any] | None = None) -> CallToolResult:
-        result = await super().call_tool(tool_name, arguments, meta)
-        if result.is_error:
-            return result
-        text = "\n".join(block.text for block in result.content if block.type == "text")
-        try:
-            visible = within_run(tool_name, text, self.after_ts)
-        except ValueError:
-            return CallToolResult(content=[TextContent(type="text", text=WITHHELD)], is_error=True)
-        if visible is None and tool_name not in MESSAGE_TOOLS:
-            return result
-        # Message listings reach agents as filtered text only, never as other content blocks.
-        return CallToolResult(content=[TextContent(type="text", text=visible or "")])
-
-
-class _UnfilteredCalls:
-    """Steering's own reads and posts. Thread scans need every page and cursor; Steering applies `after_ts` itself."""
-
-    def __init__(self, server: MCPServerStdio) -> None:
-        self.server = server
-
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
-        return await MCPServerStdio.call_tool(self.server, tool_name, arguments)
+def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str]) -> MCPServerStdio:
+    return MCPServerStdio(
+        params={"command": config.command, "args": config.args, "env": config.resolved_env(name, env)},
+        name=name,
+        cache_tools_list=True,
+        client_session_timeout_seconds=config.timeout_seconds,
+        max_retry_attempts=0,
+    )
 
 
 def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:

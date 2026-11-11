@@ -25,11 +25,10 @@ def inbox(path, *messages):
     path.write_text(output.getvalue())
 
 
-def configured(root, tmp_path, *, extra="", agent_reads=False):
+def configured(root, tmp_path, *, extra=""):
     add_fake_slack(root)
-    if not agent_reads:
-        # The runtime must start the steering server even when the model has no Slack tools.
-        edit(root, "scaffold.toml", '\nmcp_servers = ["slack"]', '')
+    # The runtime must start the steering server even when the model has no Slack tools.
+    edit(root, "scaffold.toml", '\nmcp_servers = ["slack"]', '')
     edit(root, "scaffold.toml", 'tools = ["read_file", "write_file", "rest"]',
          'tools = ["read_file", "write_file", "rest", "escalate"]')
     edit(root, "scaffold.toml", 'env = { FAKE_SLACK_LOG =',
@@ -446,49 +445,3 @@ def test_compaction_checkpoint_survives_steering_inserted_during_turn(drop_in_di
     assert "handoff includes operator request" in str(resumed.inputs[0])
     assert '"one"' not in json.dumps(resumed.inputs[0])
     assert "compaction:pm" not in second.context.usage.by_source
-
-
-def test_agent_slack_reads_start_at_the_run_boundary(drop_in_dir, assemble, tmp_path):
-    env = configured(drop_in_dir, tmp_path, agent_reads=True)
-    inbox(tmp_path / "inbox.csv", ("2.000000", "Steer this run"), ("0.500000", "Prior run: method X, Accept"))
-    pm = ScriptedModel(call("conversations_history", {"channel_id": "C_OTHER", "limit": "30d"}, "read"), say("done"))
-    asyncio.run(assemble(drop_in_dir, {"pm": pm}, env=env).run())
-    output = str(tool_outputs(pm.inputs[1])[0])
-    assert "Steer this run" in output
-    assert "Prior run" not in json.dumps(pm.inputs) + output
-    assert "after the run start" in pm.instructions[0]
-    assert [m["text"] for m in messages(pm.inputs[0])] == ["Steer this run"]
-
-
-def test_no_run_start_is_claimed_when_after_ts_includes_all_history(drop_in_dir, assemble, tmp_path):
-    env = configured(drop_in_dir, tmp_path, agent_reads=True)
-    edit(drop_in_dir, "scaffold.toml", 'after_ts = "1.000000"', 'after_ts = "0"')
-    pm = ScriptedModel(say("done"))
-    asyncio.run(assemble(drop_in_dir, {"pm": pm}, env=env).run())
-    assert "after the run start" not in pm.instructions[0]
-
-
-def test_unfilterable_slack_listing_is_withheld_from_agents(drop_in_dir, assemble, tmp_path):
-    env = configured(drop_in_dir, tmp_path, agent_reads=True)
-    (tmp_path / "inbox.csv").write_text("ts,user,text\n0.500000,U_OP,Prior run result\n")
-    pm = ScriptedModel(call("conversations_history", {"channel_id": "C123"}, "read"), say("done"))
-    asyncio.run(assemble(drop_in_dir, {"pm": pm}, env=env).run())
-    output = str(tool_outputs(pm.inputs[1])[0])
-    assert "withheld" in output
-    assert "Prior run" not in json.dumps(pm.inputs) + output
-
-
-def test_steering_reads_unfiltered_pages_while_agents_see_the_run_only(drop_in_dir, assemble, tmp_path):
-    # Thread scans page oldest first, so steering needs every page and cursor; it applies after_ts itself.
-    env = configured(drop_in_dir, tmp_path, agent_reads=True)
-    inbox(tmp_path / "inbox.csv", ("0.500000", "Thread parent before the run"))
-    scaffold = assemble(drop_in_dir, env=env)
-
-    async def check():
-        async with scaffold.runtime:
-            arguments = {"channel_id": "C123", "thread_ts": "0.500000"}
-            agent = await scaffold.runtime.servers["slack"].call_tool("conversations_replies", arguments)
-            steering = await scaffold.context.steering.transport.call_tool("conversations_replies", arguments)
-            assert "Thread parent" not in agent.content[0].text and not agent.is_error
-            assert "Thread parent" in steering.content[0].text
-    asyncio.run(check())

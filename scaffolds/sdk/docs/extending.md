@@ -446,15 +446,6 @@ must finish every page. Channel mode accepts top-level messages; thread mode
 accepts replies in its configured thread. Other authors and bot posts are ignored.
 Edits/deletions of old messages are not new instructions: post a new correction.
 
-`after_ts` also bounds what agents read. The runtime gives agents a steering server
-whose results pass through `within_run(tool, text, after_ts)`: any CSV with a `MsgID`
-column loses rows at or before `after_ts`, whichever tool returned it, and the
-cursor on a removed last row goes with it (for an oldest-first thread page holding
-only earlier messages, that is the cursor to later replies). Output without messages passes
-unchanged; a `MESSAGE_TOOLS` result that cannot be parsed reaches the agent as the
-`WITHHELD` error, and message listings reach agents as text only. `Steering` itself
-receives an unfiltered transport, since thread scans need every page and cursor.
-
 `steering.json` in the state directory atomically stores the source/policy, scanned
 timestamp, ordered inbox, pending/delivered status and escalation outbox. A complete
 scan commits its cursor together with messages; a failed, malformed or capped scan

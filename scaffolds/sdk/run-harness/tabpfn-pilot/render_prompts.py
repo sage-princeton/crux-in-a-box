@@ -32,7 +32,7 @@ from crux_scaffold.telemetry import NullTelemetry
 
 TARGET = HERE / "PROMPTS.md"
 # Stand-ins for the run's placeholders and credentials: assembling the scaffold calls nothing.
-SLACK = {"{{SLACK_CHANNEL_ID}}": "C0PROMPTS", "{{SLACK_OPERATOR_ID}}": "U0PROMPTS", "{{SLACK_AFTER_TS}}": "1700000000.000000"}
+SLACK = {"{{SLACK_CHANNEL_ID}}": "C0PROMPTS", "{{SLACK_OPERATOR_ID}}": "U0PROMPTS", "{{SLACK_AFTER_TS}}": "0"}
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon", "CRUX_REASONING_EFFORT": "high", "RUN_SLUG": "tabpfn-prompts",
        "OPENROUTER_API_KEY": "unused", "SLACK_BOT_TOKEN": "unused", "COST_TRACKER_URL": "https://cost.invalid/cost",
        "COST_TRACKER_TOKEN": "unused", "RUNPOD_API_KEY": "unused"}
@@ -140,7 +140,7 @@ def offline_scaffold(env):
 
 
 def scaffold_setup():
-    """The setup sections the scaffold generates for the PI and the research assistant, Slack IDs and run start in angle brackets.
+    """The setup sections the scaffold generates for the PI and the research assistant, Slack IDs in angle brackets.
 
     PROMPTS.md can't show the {{...}} placeholders themselves: the drop-in refuses to load with any left unresolved.
     """
@@ -152,7 +152,6 @@ def scaffold_setup():
         raise ValueError("the scaffold's instruction layout changed; update scaffold_setup in render_prompts.py")
     pi = pi.replace(SLACK["{{SLACK_CHANNEL_ID}}"], "<Slack channel ID>")
     pi = pi.replace(SLACK["{{SLACK_OPERATOR_ID}}"], "<operator's Slack user ID>")
-    pi = pi.replace(SLACK["{{SLACK_AFTER_TS}}"], "<run start>")
     return pi, ra
 
 
@@ -290,7 +289,7 @@ These blocks don't come from this drop-in's prompt files, so rewording them take
 """)
     doc.block("Scaffold setup (PI)", "The top of the PI's system instructions on every call, before `personas/pi.md` "
               "(a `---` line separates them). The scaffold writes it from `scaffold.toml`, so the loop, gates, "
-              "delegates, tools, limits and Slack settings follow the configuration; the run fills in the Slack values "
+              "delegates, tools, limits and Slack settings follow the configuration; the run fills in the Slack IDs "
               "shown in angle brackets. Its wording is in `crux_scaffold/scaffold.py` and is shared by every "
               "drop-in. From this drop-in, `[preamble] append = \"...\"` in `scaffold.toml` adds text after it, and "
               "`[preamble] enabled = false` removes it, including the operator-steering rules, together with the "
