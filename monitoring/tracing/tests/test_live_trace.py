@@ -104,6 +104,7 @@ def test_passes_send_each_observation_once_and_end_with_the_full_turn(rollouts, 
     [turn] = scenario.turns
     with Collector() as collector:
         passes(scenario.main, home, collector, live, every(scenario.main))
+    assert collector.ingestion_versions and set(collector.ingestion_versions) == {"4"}
     spans = collector.spans
     assert_sent_once(spans)
     [root] = roots(spans)

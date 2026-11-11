@@ -60,6 +60,16 @@ def assert_turn_root(root: Span, turn, expect):
     assert root.input == turn.prompt
 
 
+def test_stop_hook_ingestion_version(rollouts, stop_hook, tmp_path, expect):
+    scenario = rollouts.subagents()
+    transcript = scenario.write(tmp_path / "sessions")
+    with Collector() as collector:
+        stop_hook(transcript, collector, scenario.turns[-1])
+    assert collector.spans
+    assert collector.ingestion_versions
+    assert set(collector.ingestion_versions) == {expect["ingestion_version_header"]}
+
+
 def test_long_turn_exports_every_tool_call_and_model_step(traced, expect):
     scenario, spans, _ = traced("long_turn")
     [turn] = scenario.turns

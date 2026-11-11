@@ -60,6 +60,7 @@ class Collector:
         self.spans: list[Span] = []
         self.exports = 0
         self.bad_requests: list[str] = []
+        self.ingestion_versions: list[str | None] = []
         collector = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -79,6 +80,7 @@ class Collector:
 
             def do_POST(self):
                 body = self._body()
+                collector.ingestion_versions.append(self.headers.get("x-langfuse-ingestion-version"))
                 if self.path != TRACES_PATH or "json" not in self.headers.get("content-type", ""):
                     collector.bad_requests.append(f"{self.path} {self.headers.get('content-type')}")
                 else:
@@ -88,6 +90,10 @@ class Collector:
                 self.send_header("content-length", "2")
                 self.end_headers()
                 self.wfile.write(b"{}")
+
+            def do_GET(self):
+                collector.bad_requests.append(f"GET {self.path}")
+                self.send_error(405)
 
             def log_message(self, *args):
                 pass

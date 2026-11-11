@@ -20,7 +20,8 @@ class LangfuseOtlpSink(SpanSink):
     def __init__(self, base_url: str, public_key: str, secret_key: str, service_name: str = "codex"):
         self.url = base_url.rstrip("/") + "/api/public/otel/v1/traces"
         token = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
-        self.headers = {"Content-Type": "application/json", "Authorization": f"Basic {token}"}
+        self.headers = {"Content-Type": "application/json", "Authorization": f"Basic {token}",
+                        "x-langfuse-ingestion-version": "4"}
         self.resource = {"attributes": [{"key": "service.name", "value": {"stringValue": service_name}}]}
 
     def send(self, spans: list[dict]) -> None:

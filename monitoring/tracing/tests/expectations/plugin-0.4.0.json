@@ -1,5 +1,6 @@
 {
   "plugin_version": "0.4.0",
+  "ingestion_version_header": null,
   "notes": [
     "What @langfuse/codex-observability-plugin 0.4.0 exports for the rollout fixtures, observed against a local OTLP collector.",
     "Each key is a behavior the tests check; a new plugin version needs every value re-derived, not copied."
