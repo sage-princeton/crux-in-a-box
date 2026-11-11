@@ -416,7 +416,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             instructions=rubric,
             output_type=Verdict,
             model=self._model(JUDGE, model),
-            model_settings=self._settings(model),
+            model_settings=self._settings(),
             tools=[self._function_tool(self.assembly.tools[tool], ctx) for tool in tools],
         )
         try:
@@ -482,8 +482,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
         model = name or self.assembly.context.model
         return self.provider.get_model(model) if self.provider else model
 
-    def _settings(self, model: str | None = None) -> ModelSettings:
-        return _model_settings(self.options.model_provider, self.assembly.context.env, model=model)
+    def _settings(self) -> ModelSettings:
+        return _model_settings(self.options.model_provider, self.assembly.context.env)
 
     def _instructions(self, context: RunContextWrapper, agent: Agent) -> str:
         return self.assembly.instructions(agent.name)
@@ -918,7 +918,7 @@ TRANSIENT_FAILURES = retry_policies.any(
 MODEL_RETRIES = 8
 
 
-def _model_settings(options: ModelProviderOptions, env: Mapping[str, str], *, model: str | None = None) -> ModelSettings:
+def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
     settings = ModelSettings(
         reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"),
         retry=ModelRetrySettings(
@@ -930,11 +930,6 @@ def _model_settings(options: ModelProviderOptions, env: Mapping[str, str], *, mo
         # Compatible endpoints keep state locally; signed reasoning must survive the round trip.
         settings.preserve_raw_usage = True
         settings.extra_body = options.extra_body or None
-        if options.base_url.host == "openrouter.ai":
-            provider = {**options.extra_body.get("provider", {}), "allow_fallbacks": False}
-            if (model or env.get("CRUX_MODEL", "")).removeprefix("~").startswith("google/"):
-                provider["only"] = ["google-ai-studio"]
-            settings.extra_body = {**options.extra_body, "provider": provider}
         if options.api == "responses":
             settings.store = False
             settings.response_include = ["reasoning.encrypted_content"]

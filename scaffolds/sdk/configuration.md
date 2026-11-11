@@ -542,7 +542,7 @@ base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 
 [runtime.model_provider.extra_body.provider]
-only = ["google-ai-studio"]
+only = ["google-vertex"]
 allow_fallbacks = false
 ```
 
@@ -552,11 +552,11 @@ Optionally set `max_request_bytes` in `[runtime.model_provider]` to a positive i
 
 An oversized SDK request fails locally with actual/allowed byte counts and is not retried. A background delegate's failure reaches the PI through its existing result tool, allowing a new, smaller brief. A failure in the PI itself, judge or compactor still propagates; same-agent recovery and automatic compaction/rewrite are not implemented. The check covers SDK agents and probes, but does not cover the separate native Codex client. Limits will move to provider/model configuration maps under [AE-316](https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at).
 
-OpenRouter SDK requests always send `provider.allow_fallbacks=false`. Google models also send `provider.only=["google-ai-studio"]`, including Google judges in a mixed-model panel. Other provider fields in `extra_body` are preserved. BYOK-only billing additionally requires the AI Studio BYOK credential's Shared capacity fallback setting to be **Never use shared capacity for any model on this provider**. Verify `is_byok` and the generation's provider; the request payload cannot change account BYOK settings. See [OpenRouter provider selection](https://openrouter.ai/docs/guides/routing/provider-selection) and [BYOK](https://openrouter.ai/docs/guides/overview/auth/byok).
+**GCP billing:** OpenRouter must have the intended Google Vertex BYOK integration configured, with shared-capacity fallback disabled for Argon. The request above pins Vertex and disables provider fallback; it cannot change the account's BYOK settings. Check `is_byok` in the returned usage and the generation's provider before treating a run as GCP-billed. An OpenRouter key alone does not establish that billing path. See [OpenRouter BYOK](https://openrouter.ai/docs/guides/overview/auth/byok).
 
 The Responses path uses `store=false` and the complete local SDK session, including encrypted reasoning, across tool calls and restarts. Returned summaries reach Langfuse through the existing SDK instrumentation; cache and reasoning counts also reach the persisted usage ledger. Chat Completions uses the SDK's corresponding adapter; reasoning replay and tool compatibility depend on the selected endpoint. The runtime remains `openai-agents` in trace metadata because that is the scaffold executing the model calls. Langfuse's catalog cost estimate is separate from the provider's actual BYOK billing receipt.
 
-`run-harness/google-argon-smoke-test` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness: for compatible Responses endpoints set `CRUX_CODEX_BASE_URL` and `CRUX_CODEX_API_KEY_ENV` too, or let EC2 provisioning derive them. Codex keeps the run's model and effort and uses command-based provider authentication without an OpenAI login. It cannot send the runtime's `extra_body`. For OpenRouter routing rules with Codex workers, use a model such as `google/gemini-4-argon@preset/ai-studio-only` and configure that preset with the same AI Studio-only, no-fallback routing. The runtime's provider block does not add an Antigravity adapter.
+`run-harness/google-argon-smoke-test` exercises a file write, a fresh-context reviewer, a file read, and a command gate. It has no coding-agent dependency. Codex is a separate coding harness: for compatible Responses endpoints set `CRUX_CODEX_BASE_URL` and `CRUX_CODEX_API_KEY_ENV` too, or let EC2 provisioning derive them. Codex keeps the run's model and effort and uses command-based provider authentication without an OpenAI login. It cannot send the runtime's `extra_body`. For OpenRouter routing rules with Codex workers, use a model such as `google/gemini-4-argon@preset/vertex-only` and configure that preset with the same Vertex-only, no-fallback routing. The runtime's provider block does not add an Antigravity adapter.
 
 For live tests, load the shared Langfuse settings from AWS SSM `/crux/system/env` in `us-east-1` and verify that the keys resolve to the **CRUX** project before making a model call. Keep fetched credentials in process memory. With the model-provider key and these Langfuse variables exported, run from `scaffolds/sdk`:
 
@@ -582,7 +582,7 @@ Live checks on 2026-10-22 exercised file write, isolated reviewer delegation, fi
 | `openai/gpt-6-astra` | OpenAI through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/eafbfa00f2dc920981f0bb51a0a088b0) |
 | `anthropic/claude-sonnet-5.5` | Anthropic through OpenRouter | [Passed](https://us.cloud.langfuse.com/project/cmtt04tkw03sgad0d26k5qm9d/traces/233c4a37211e560bcdcb6ca878b08005) |
 
-Qwen's Vertex attempt returned a 404 indicating that the GCP project could not access the publisher model in `us-south1`. Its successful retry changed the temporary drop-in's provider restriction to `only = ["deepinfra"]`, retaining `allow_fallbacks = false`; those calls used OpenRouter billing (`is_byok = false`). These are historical results; the checked-in Argon example now uses AI Studio only.
+Qwen's Vertex attempt returned a 404 indicating that the GCP project could not access the publisher model in `us-south1`. Its successful retry changed the temporary drop-in's provider restriction to `only = ["deepinfra"]`, retaining `allow_fallbacks = false`; those calls used OpenRouter billing (`is_byok = false`). The checked-in Argon example keeps its Vertex-only route.
 
 Astra and Sonnet used temporary provider restrictions of `only = ["openai"]` and `only = ["anthropic"]`, respectively, with `allow_fallbacks = false` and `CRUX_REASONING_EFFORT=low`. Both completed the probe and smoke workflow, and all six generation receipts per model confirmed the expected provider and model. These calls used OpenRouter billing (`is_byok = false`).
 
