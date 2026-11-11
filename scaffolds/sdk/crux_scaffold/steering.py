@@ -21,6 +21,11 @@ TIMESTAMP = r"^(?:0|[0-9]+\.[0-9]{6})$"
 READ_FAILURE = ("read_failed: check MCP credentials, channel membership, read scopes and the Slack MCP CSV schema; "
                 "cursor unchanged; retry at the next boundary")
 UNCERTAIN = "uncertain: verify the channel before creating a new request_id; this request will not be resent"
+# slack-mcp-server v1.3.0 tools that list messages. Bot tokens get only history and replies.
+MESSAGE_TOOLS = frozenset({"conversations_history", "conversations_replies", "conversations_search_messages",
+                           "conversations_unreads"})
+WITHHELD = ("withheld: this Slack listing could not be limited to messages after the run start, so none of it is "
+            "shown; continue without it")
 
 
 class SteeringOptions(Options):
@@ -172,6 +177,40 @@ class Steering:
         return {"role": "user", "content": json.dumps({
             "kind": "operator_steering", "message_id": message["ts"], "source": message["user"],
             "channel": self.options.channel_id, "thread": self.options.thread_ts, "text": message["text"]})}
+
+
+def within_run(tool: str, text: str, after_ts: str) -> str | None:
+    """An agent's view of Slack MCP output: messages at or before `after_ts`, the run's start, removed.
+
+    Any message listing (a CSV with a `MsgID` column) is filtered, whichever tool or channel it came from. Its
+    pagination cursor rides on the last row and leaves with it: newest-first history loses the way into earlier
+    messages, and an oldest-first thread page holding only earlier messages comes back empty, without the cursor to
+    later replies. Returns None for output that lists no messages. Raises ValueError when a message tool's output
+    cannot be filtered.
+    """
+    try:
+        header = next(csv.reader(io.StringIO(text)), [])
+    except csv.Error:
+        header = []
+    if "MsgID" not in header:
+        if tool in MESSAGE_TOOLS and text.strip():
+            raise ValueError("unrecognized Slack MCP message listing")
+        return None
+    try:
+        reader = csv.DictReader(io.StringIO(text), strict=True)
+        listed = list(reader)
+    except csv.Error:
+        raise ValueError("invalid Slack MCP message listing") from None
+    if any(None in row or None in row.values() or not re.fullmatch(TIMESTAMP, row["MsgID"]) for row in listed):
+        raise ValueError("invalid Slack MCP message")
+    kept = [row for row in listed if Decimal(row["MsgID"]) > Decimal(after_ts)]
+    if len(kept) == len(listed):
+        return text
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=reader.fieldnames, lineterminator="\n")
+    writer.writeheader()
+    writer.writerows(kept)
+    return output.getvalue()
 
 
 def _parse_page(text: str) -> tuple[list[dict], str]:

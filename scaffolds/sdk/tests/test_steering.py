@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from crux_scaffold.errors import InvalidDropInError, ToolError
-from crux_scaffold.steering import Escalation, Steering, SteeringOptions
+from crux_scaffold.steering import Escalation, Steering, SteeringOptions, within_run
 from crux_scaffold.telemetry import NullTelemetry
 
 
@@ -174,3 +174,75 @@ def test_recipient_is_bound_to_durable_state(tmp_path):
     steering.save()
     with pytest.raises(InvalidDropInError, match="steering state"):
         Steering(steering.options, tmp_path, Transport(), NullTelemetry(), recipient="other_agent")
+
+
+# The header slack-mcp-server v1.3.0 writes for every message listing.
+SLACK_FIELDS = ["MsgID", "UserID", "UserName", "RealName", "Channel", "ThreadTs", "Text", "Time", "Permalink",
+                "Reactions", "BotName", "FileCount", "AttachmentIDs", "HasMedia", "Cursor"]
+
+
+def listing(*messages, cursor=""):
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(SLACK_FIELDS)
+    for index, (ts, text) in enumerate(messages):
+        row = dict.fromkeys(SLACK_FIELDS, "")
+        row.update(MsgID=ts, UserID="U_OP", Channel="C_ANY", Text=text, FileCount="0", HasMedia="false",
+                   Cursor=cursor if index == len(messages) - 1 else "")
+        writer.writerow(row.values())
+    return output.getvalue()
+
+
+def rows(text):
+    assert text is not None
+    return [(row["MsgID"], row["Text"], row["Cursor"]) for row in csv.DictReader(io.StringIO(text))]
+
+
+def test_agent_reads_lose_earlier_history_and_the_cursor_into_it():
+    # History is newest first: the oldest row carries the cursor to still older pages.
+    page = listing(("3.000000", "this run,\n \"quoted\""), ("1.000000", "boundary"), ("0.500000", "prior run"),
+                   cursor="older")
+    visible = within_run("conversations_history", page, "1.000000")
+    assert rows(visible) == [("3.000000", "this run,\n \"quoted\"", "")]
+    assert "prior run" not in visible and "older" not in visible
+    assert next(csv.reader(io.StringIO(visible))) == SLACK_FIELDS
+
+
+def test_agent_reads_keep_a_cursor_that_leads_forward():
+    # Replies are oldest first: an old thread parent is withheld, later replies and their cursor remain.
+    page = listing(("0.500000", "old parent"), ("2.000000", "reply"), cursor="newer")
+    assert rows(within_run("conversations_replies", page, "1.000000")) == [("2.000000", "reply", "newer")]
+    unchanged = listing(("2.000000", "reply"), cursor="newer")
+    assert within_run("conversations_replies", unchanged, "1.000000") == unchanged
+    # A thread page holding only earlier messages comes back empty: its cursor to later replies leaves with them.
+    earlier = listing(("0.500000", "old parent"), ("0.700000", "old reply"), cursor="newer")
+    assert within_run("conversations_replies", earlier, "1.000000") == ",".join(SLACK_FIELDS) + "\n"
+
+
+def test_any_message_listing_is_limited_whichever_tool_returns_it():
+    page = listing(("0.500000", "prior run"))
+    assert within_run("future_search_tool", page, "1.000000") == ",".join(SLACK_FIELDS) + "\n"
+    assert within_run("conversations_history", "", "1.000000") is None
+
+
+@pytest.mark.parametrize("tool,text", [
+    ("conversations_add_message", "posted"),
+    ("channels_list", "ID,Name,Topic,Purpose,MemberCount,Cursor\nC1,general,,,3,\n"),
+    ("channels_list", "a" * 200_000),
+    ("channels_list", "ID,Na\rme\nC1,general\n"),
+])
+def test_output_without_messages_passes_unchanged(tool, text):
+    assert within_run(tool, text, "1.000000") is None
+
+
+@pytest.mark.parametrize("text", [
+    "ts,user,text\n0.500000,U_OP,prior run\n",
+    listing(("yesterday", "prior run")),
+    listing(("0.500000", "prior run")).replace("C_ANY", "C_ANY,extra", 1),
+    'MsgID,Text,Cursor\n0.500000,"unterminated,\n',
+    "a" * 200_000,
+    "MsgID,Te\rxt\n0.500000,prior run\n",
+])
+def test_unrecognized_message_listings_are_withheld(text):
+    with pytest.raises(ValueError):
+        within_run("conversations_history", text, "1.000000")
