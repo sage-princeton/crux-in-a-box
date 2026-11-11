@@ -87,7 +87,9 @@ user account, workspace or run slug does not establish you as the sole owner.
 
 Check software and network behavior rather than trusting old environment facts.
 Use public arXiv, Crossref, OpenAlex and publisher sources for literature; back off
-on rate limits. Check dependencies, trajectory files, checkpoint loading and GPU
+on rate limits. Find literature by searching, not only by looking up papers you
+already know. Your memory stops at your training data, so recent work is reachable
+only by search. Check dependencies, trajectory files, checkpoint loading and GPU
 execution early. The source recommends Python 3.10; verify an actual compatible
 runtime. Cluster launchers assume Slurm and institutional paths. Training defaults
 can request 500 million steps; choose bounded steps, problem counts and search
