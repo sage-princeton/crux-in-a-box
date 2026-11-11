@@ -266,14 +266,6 @@ started. In this mode the gateway unit runs `codex-live-trace.py --once
 re-enables it and every turn would be traced twice; provisioning fails if its
 `Stop` hook still runs. Follow the exporter with `journalctl -u crux-codex-live-trace`.
 
-The live exporter sends `x-langfuse-ingestion-version: 4` to select Langfuse's
-v4 ingestion path. The pinned Stop-hook plugin (`0.4.0`) uses OTLP but omits
-that header; source inspection of `0.4.3` found the same gap. Ingestion remains
-supported, but without the header Langfuse documents delays of up to 15 minutes.
-The [tracing tests](../../monitoring/tracing/tests/README.md#langfuse-v4-ingestion)
-record the plugin's header behavior and reject deprecated API reads in the
-fixture paths. A production canary is still needed to verify backend behavior.
-
 The exporter is the `live_trace/` package, installed to `/usr/local/lib/crux/`
 with its `codex-live-trace.py` entry point. Only `live_trace/codex.py` knows the
 Codex rollout format; the turn model, the Langfuse observation schema, the ledger
