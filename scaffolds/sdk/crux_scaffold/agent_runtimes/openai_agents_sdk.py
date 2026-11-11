@@ -49,7 +49,7 @@ from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, 
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
 from crux_scaffold.components import CountLimit, Options, count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
-from crux_scaffold.context_strategies import is_standing_context
+from crux_scaffold.context_strategies import is_standing_context, since_restart
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
 from crux_scaffold.errors import InvalidDropInError, RequestSizeExceededError, ToolError
@@ -177,6 +177,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
         self._coding_cancelled: dict[str, tuple[datetime, datetime]] = {}  # started, cancelled; not yet reported
         self._stack = AsyncExitStack()
         self._steering_items: list[dict] = []
+        self._restart_tools: set[str] = set()
         self.delegates: DelegateTasks | None = None
         self._delegate_context: ContextVar[tuple[str, list[dict]] | None] = ContextVar('delegate_context', default=None)
         if options.interactive_delegates:
@@ -198,6 +199,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
         if self.options.background_coding or self.delegates:
             declared = set(self.assembly.tools) | set(config.agents) | set(config.coding_agents)
             self._check_result_names(declared)
+        self._restart_tools = {name for name in config.agents[config.orchestrator].tools
+                               if self.assembly.tools[name].type_name == "restart_context"}
         used = {server for agent in config.agents.values() for server in agent.mcp_servers}
         if self.options.steering:
             used.add(self.options.steering.server)
@@ -551,6 +554,9 @@ class OpenAIAgentsRuntime(AgentRuntime):
             for index, item in enumerate(stored):
                 if item in self._steering_items and item not in history:
                     history.insert(index, item)
+        if is_orchestrator:
+            # After a deliberate restart the orchestrator continues from its handoff; the session keeps everything.
+            history = since_restart(history, self._restart_tools)
         strategy = self.assembly.context_strategy
         ctx = self.assembly.context
         research = self.assembly.research_context(data.agent.name)

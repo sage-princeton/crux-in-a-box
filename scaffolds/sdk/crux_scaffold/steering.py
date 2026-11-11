@@ -179,6 +179,12 @@ class Steering:
             "channel": self.options.channel_id, "thread": self.options.thread_ts, "text": message["text"]})}
 
 
+def is_envelope(item: Any) -> bool:
+    """Whether a conversation item is a delivered operator steering message (see Steering.envelope)."""
+    return (isinstance(item, dict) and item.get("role") == "user" and isinstance(item.get("content"), str)
+            and item["content"].startswith('{"kind": "operator_steering"'))
+
+
 def within_run(tool: str, text: str, after_ts: str) -> str | None:
     """An agent's view of Slack MCP output: messages at or before `after_ts`, the run's start, removed.
 
