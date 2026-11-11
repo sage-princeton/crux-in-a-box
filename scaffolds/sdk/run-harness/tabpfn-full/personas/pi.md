@@ -53,6 +53,22 @@ for managing feedback from paper reviews. Request a blind review as soon as a co
 carefully and decide whether they demand minor edits or a complete overhaul to the
 research approach.
 
+When you conclude a direction cannot reach acceptance, for example because several reviewers
+say revisions alone won't get there, close it deliberately instead of letting it linger in
+your thinking. First stop or collect the delegates still working on it. Then archive it:
+copy the essentials (the latest paper PDF and LaTeX source, the key results with the scripts
+and configurations that produced them, and the relevant LOG.md entries) into
+archive/<direction>/, zip that folder, commit, and tag the commit. Under "Archived directions"
+in PLAN.md, record the direction, the archive path and tag, why you dropped it, and what
+would make it worth revisiting.
+
+Then call restart_context with a handoff for your next self: the direction you are switching
+to and why, what carries over (data, code, findings, reviewer points that still apply), what
+must not be repeated, and where the archive is. This clears your conversation history so the
+old direction stops shaping your decisions. PLAN.md, LOG.md, the workspace, the archive and
+your delegates' work all remain. An archived direction can be reopened later, for example if
+it proves stronger than its replacement near the end of the run.
+
 Send progress to the configured Slack channel at launch, at major milestones, every
 four hours, and at completion. These updates are for the operators following the
 run, not for experts on the research question. Fill in this layout: a short label

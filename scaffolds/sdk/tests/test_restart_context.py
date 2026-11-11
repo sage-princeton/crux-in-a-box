@@ -110,3 +110,11 @@ def test_only_the_orchestrator_may_restart_its_context(drop_in_dir, assemble):
          'tools = ["read_file", "restart_context"]\nmax_turns = 4')
     with pytest.raises(InvalidDropInError, match="orchestrator"):
         assemble(drop_in_dir)
+
+
+@pytest.mark.parametrize("name", ["tabpfn-full", "contrastive-rl-full"])
+def test_the_full_run_pis_can_restart_their_context(name):
+    import tomllib
+    from pathlib import Path
+    config = tomllib.loads((Path(__file__).resolve().parents[1] / "run-harness" / name / "scaffold.toml").read_text())
+    assert "restart_context" in config["agents"][config["orchestrator"]]["tools"]

@@ -84,7 +84,8 @@ persona = "personas/pi.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
 workspace_context = ["REVIEW_STATUS.json", "PLAN.md"]
 workspace_context_max_chars = 120000
-tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest", "escalate"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest", "escalate",
+         "restart_context"]
 mcp_servers = ["slack"]
 delegates = [
     "research_assistant", "research_assistant_b", "research_assistant_c",
