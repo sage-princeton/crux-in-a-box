@@ -325,6 +325,8 @@ The existing runtime's `model_provider` options configure the SDK's `OpenAIProvi
 | `api_key_env` | Credential variable name, default `OPENAI_API_KEY`. Resolve from `RunContext.env`, never embed the value in TOML. |
 | `extra_body` | Provider-specific request fields, such as OpenRouter's `provider.only` and `allow_fallbacks`. Cannot replace the run model, input, tools, reasoning, or session settings. Never put credentials here. |
 | `max_request_bytes` | Optional positive integer. Reject serialized HTTP bodies larger than this many bytes before transport; equality is allowed. Omitted means no byte limit. Available for both provider types. |
+| `max_output_tokens` | Optional positive integer. Sent as each response's output budget, reasoning included (`max_output_tokens` on Responses, `max_tokens` on Chat Completions), for PI, SDK delegates, judges, compaction and probes. Omitted means the provider's default. Codex workers keep their own default. |
+| `service_tier` | Optional `flex` or `priority`. Sent as `service_tier` on every SDK request (PI, SDK delegates, judges, compaction, probes). Omitted means the provider's default tier. Codex workers stay on the default tier: Codex omits a tier its model catalog doesn't advertise. |
 
 All agents and judges share one configured provider/client, which closes when the runtime exits, including failed MCP startup. `CRUX_MODEL` and `CRUX_REASONING_EFFORT` remain the sole model and effort settings. The compatible Responses path disables server storage, requests encrypted reasoning for local replay, and preserves raw usage. The Chat Completions adapter sends reasoning effort without Responses-only summary/include options. Coding-agent SDK configuration remains the coding agent's responsibility.
 

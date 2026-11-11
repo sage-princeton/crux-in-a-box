@@ -71,6 +71,10 @@ class ModelProviderOptions(Options):
     api_key_env: str = Field("OPENAI_API_KEY", pattern=r"^[A-Z_][A-Z0-9_]*$")
     extra_body: dict[str, Any] = Field(default_factory=dict)
     max_request_bytes: int | None = Field(None, gt=0, strict=True)
+    # Sent as the response's output budget (reasoning included); omitted, the provider's default applies.
+    max_output_tokens: int | None = Field(None, gt=0, strict=True)
+    # The provider's processing tier for every SDK request; omitted, the provider's default tier serves it.
+    service_tier: Literal["flex", "priority"] | None = None
 
     @model_validator(mode="after")
     def validate_provider(self) -> Self:
@@ -94,8 +98,12 @@ class ModelProviderOptions(Options):
             "reasoning",
             "reasoning_effort",
             "include",
+            "max_output_tokens",
+            "max_tokens",
+            "service_tier",
         } & self.extra_body.keys():
-            raise ValueError("extra_body cannot override the run model, context, tools, reasoning or session settings")
+            raise ValueError("extra_body cannot override the run model, context, tools, reasoning, session, output "
+                             "budget or service tier settings")
         return self
 
 
@@ -921,6 +929,7 @@ MODEL_RETRIES = 8
 def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> ModelSettings:
     settings = ModelSettings(
         reasoning=Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None, summary="auto"),
+        max_tokens=options.max_output_tokens,
         retry=ModelRetrySettings(
             max_retries=MODEL_RETRIES, policy=TRANSIENT_FAILURES,
             backoff=ModelRetryBackoffSettings(initial_delay=2, max_delay=60, multiplier=2, jitter=True),
@@ -935,6 +944,8 @@ def _model_settings(options: ModelProviderOptions, env: Mapping[str, str]) -> Mo
             settings.response_include = ["reasoning.encrypted_content"]
         else:
             settings.reasoning = Reasoning(effort=env.get("CRUX_REASONING_EFFORT") or None)
+    if options.service_tier:
+        settings.extra_args = {"service_tier": options.service_tier}
     return settings
 
 

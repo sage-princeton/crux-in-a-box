@@ -102,6 +102,7 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert scaffold.loop.type_name == "tabpfn_research"
     assert str(scaffold.runtime.options.model_provider.base_url) == "https://openrouter.ai/api/v1"
     assert not scaffold.runtime.options.model_provider.extra_body
+    assert scaffold.runtime.options.model_provider.max_output_tokens == 65536
     assert scaffold.strategy.type_name == "compaction"
     workers = {f"worker_{letter}" for letter in "abcdefgh"}
     assistants = {"research_assistant", "research_assistant_b", "research_assistant_c"}

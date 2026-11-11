@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import tomllib
 from collections import deque
+from pathlib import Path
 
 import httpx
 import pytest
@@ -152,6 +154,39 @@ def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop
     assert usage.cached_input_tokens == 25 and usage.reasoning_output_tokens == 20
 
 
+def test_the_output_budget_and_service_tier_reach_agent_and_judge_requests(router, drop_in_dir, assemble):
+    # Gemini 4 Carbon's default tier stops a response at 32,768 tokens; a larger budget needs a tier that serves it.
+    requests, pending, _ = router
+    config = drop_in_dir / "scaffold.toml"
+    config.write_text(config.read_text().replace(
+        'api_key_env = "OPENROUTER_API_KEY"\n',
+        'api_key_env = "OPENROUTER_API_KEY"\nmax_output_tokens = 65536\nservice_tier = "priority"\n'))
+    pending.extend([response(say("done")),
+                    response(say(json.dumps({"passed": True, "feedback": "Checked.", "next_prompt": None})))])
+    scaffold = assemble(drop_in_dir, env=ENV)
+
+    async def run():
+        async with scaffold.runtime as runtime:
+            await runtime.run("Start.", workflow="test")
+            return await runtime.judge("quality", "Check the evidence.", "Evidence.", tools=[], max_turns=1)
+
+    assert asyncio.run(run()).passed
+    assert len(requests) == 2
+    assert all(request["max_output_tokens"] == 65536 and request["service_tier"] == "priority"
+               and request["provider"]["only"] == ["google-vertex"] for request in requests)
+
+
+@pytest.mark.parametrize("name", ["tabpfn-pilot", "tabpfn-full", "contrastive-rl-pilot", "contrastive-rl-full"])
+def test_carbon_drop_ins_set_an_explicit_output_budget(name):
+    config = tomllib.loads((Path(__file__).resolve().parents[1] / "run-harness" / name / "scaffold.toml").read_text())
+    provider = config["runtime"]["model_provider"]
+    assert provider["max_output_tokens"] == 65536 and provider["service_tier"] == "priority"
+    assert "extra_body" not in provider  # Codex provisioning rejects routing extras
+    # Codex can't request a tier, so the run model routes every call, workers included, through the priority preset.
+    example = (Path(__file__).resolve().parents[1] / "run-harness" / name / "placeholders.txt.example").read_text()
+    assert "\nOPENAI_AGENTS_MODEL=google/gemini-4-carbon@preset/ai-studio-priority\n" in example
+
+
 @pytest.mark.parametrize("run_model,judge_model", [
     (ENV["CRUX_MODEL"], "anthropic/claude-opus-5.5"),
     ("anthropic/claude-opus-5.5", ENV["CRUX_MODEL"]),
@@ -201,6 +236,15 @@ def test_missing_provider_credentials_fail_before_any_request(router, drop_in_di
      "cannot override"),
     ('[runtime.model_provider.extra_body.provider]',
      '[runtime.model_provider.extra_body]\nreasoning_effort = "high"\n[runtime.model_provider.extra_body.provider]',
+     "cannot override"),
+    ('api_key_env = "OPENROUTER_API_KEY"', 'api_key_env = "OPENROUTER_API_KEY"\nmax_output_tokens = 0',
+     "greater than 0"),
+    ('api_key_env = "OPENROUTER_API_KEY"', 'api_key_env = "OPENROUTER_API_KEY"\nmax_output_tokens = "65536"',
+     "valid integer"),
+    ('api_key_env = "OPENROUTER_API_KEY"', 'api_key_env = "OPENROUTER_API_KEY"\nservice_tier = "fast"',
+     "'flex' or 'priority'"),
+    ('[runtime.model_provider.extra_body.provider]',
+     '[runtime.model_provider.extra_body]\nservice_tier = "priority"\n[runtime.model_provider.extra_body.provider]',
      "cannot override"),
 ])
 def test_invalid_provider_settings_are_rejected(router, drop_in_dir, assemble, old, new, error):

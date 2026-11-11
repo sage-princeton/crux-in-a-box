@@ -12,6 +12,11 @@ api = "responses"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 max_request_bytes = 20000000
+# Gemini 4 Carbon's default tier stops each response at 32,768 tokens, reasoning included, and the runtime does not
+# retry that stop. Its priority tier serves larger budgets (BYOK on Google AI Studio) at 1.8x the default price.
+# Both apply to the SDK agents, judges and compaction.
+max_output_tokens = 65536
+service_tier = "priority"
 
 [runtime.steering]
 server = "slack"
