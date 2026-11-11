@@ -33,7 +33,7 @@ Agent orchestration is implemented directly in `openai_agents_sdk/openai_agents_
 
 - **`scaffold.py` is the only composition root.** Components receive their dependencies and never build one another.
 - **Agent SDKs stay in their modules.**
-  - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK.
+  - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools/`, `usage.py` and `workspace.py` never import an agent SDK.
   - The OpenAI Agents SDK stays in `openai_agents_sdk/` and `context_strategies.py`.
   - Codex stays in `coding_agents.py`.
 - **Configuration is declarative and strict.**

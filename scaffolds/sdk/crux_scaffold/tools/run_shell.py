@@ -4,7 +4,7 @@ from crux_scaffold.tools.registry import TOOLS
 from crux_scaffold.tools.shell_arguments import ShellArguments
 from crux_scaffold.tools.shell_options import ShellOptions
 from crux_scaffold.tools.tool import Tool
-from crux_scaffold.workspace import RunContext
+from crux_scaffold.workspace import JOBS_DIR, RunContext
 
 
 @TOOLS.register

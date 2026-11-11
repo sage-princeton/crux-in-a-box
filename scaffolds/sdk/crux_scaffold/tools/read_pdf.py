@@ -4,6 +4,7 @@ from contextlib import closing
 from io import BytesIO
 
 import pypdfium2 as pdfium
+from PIL import Image
 
 from crux_scaffold.errors import ToolError
 from crux_scaffold.tools.pdf_arguments import PdfArguments

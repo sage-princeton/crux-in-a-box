@@ -71,13 +71,13 @@ def test_carbon_provider_and_context_build_without_openai_credentials(scaffold):
     description = scaffold.runtime.describe()
     assert description[0] == "model provider openai-compatible (responses)"
     assert scaffold.strategy.type_name == "compaction"
-    assert scaffold.runtime.provider is not None
+    assert scaffold.runtime._builder.resources.connection._provider is not None
     workers = {f"worker_{letter}" for letter in "abcdefgh"}
     assistants = {"research_assistant", "research_assistant_b", "research_assistant_c"}
     assert set(scaffold.coding_agents) == workers
     assert set(scaffold.drop_in.config.agents) == {"pi"} | assistants
     assert set(scaffold.drop_in.config.agents["pi"].delegates) == workers | assistants
-    tools = {tool.name for tool in scaffold.runtime.agents["pi"].tools}
+    tools = {tool.name for tool in scaffold.runtime._builder.agents["pi"].tools}
     assert workers | assistants | {'delegate_inbox'} <= tools
     assert not {f"{name}_result" for name in workers | assistants} & tools
     assert scaffold.context.model == "google/gemini-4-carbon@preset/ai-studio-priority"
@@ -117,7 +117,7 @@ def script_panel(scaffold, *passed, rounds=1):
         verdict = Verdict(passed=accept, feedback=f"Overall: {5 if accept else 2}", next_prompt=None)
         turns = [call("read_pdf", {"path": "submission.pdf", "page": 1}, "pdf"), say(verdict.model_dump_json())]
         judges[model] = ScriptedModel(*turns * rounds)
-    scaffold.runtime.models.update(judges)
+    scaffold.runtime._builder.resources.connection._models.update(judges)
     return judges
 
 
@@ -215,7 +215,7 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     assert status["verdict"]["passed"] is False and status["verdict"]["feedback"].count(feedback) == 3
     assert json.loads(workspace.read_file(status["review_path"]))["verdict"] == status["verdict"]
     workspace.write_file("PLAN.md", "Old plan. " * 10000)
-    research = scaffold.assembly.research_context("pi")
+    research = scaffold._research_context("pi")
     assert json.dumps(status, indent=2) in research
     assert "truncated" in research
 

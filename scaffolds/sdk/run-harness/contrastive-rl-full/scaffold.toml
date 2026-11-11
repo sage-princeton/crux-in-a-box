@@ -2,7 +2,6 @@ orchestrator = "pi"
 extensions = ["research_extensions.py"]
 
 [runtime]
-type = "openai-agents"
 max_turns = "unlimited"
 interactive_delegates = true
 

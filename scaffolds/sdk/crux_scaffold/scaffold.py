@@ -76,10 +76,15 @@ class Scaffold:
 
     def _runtime(self, config: RuntimeConfig, overrides: Mapping[str, Any] | None) -> OpenAIAgentsRuntime:
         delegation = DelegationLimiter(self.drop_in.config.delegation.max_concurrent)
-        coding_tasks = CodingTasks(self.context, delegation, tarts_in_background=config.background_coding)
+        coding_tasks = CodingTasks(
+            self.context, delegation, starts_in_background=config.background_coding,
+            wait_seconds=None if config.coding_result_wait_seconds == "unlimited" else config.coding_result_wait_seconds)
         tools = AgentTools(self.tools, self.coding_agents, coding_tasks, delegation)
         builder = self._agent_builder(config, tools, overrides)
-        return OpenAIAgentsRuntime(builder, self.strategy, coding_tasks, config.max_turns)
+        return OpenAIAgentsRuntime(builder, self.strategy, coding_tasks, config.max_turns,
+                                   delegation=delegation, research_context=self._research_context,
+                                   interactive_delegates=config.interactive_delegates,
+                                   coding_result_wait_seconds=config.coding_result_wait_seconds)
 
     def _agent_builder(
         self, config: RuntimeConfig, tools: AgentTools, overrides: Mapping[str, Any] | None
@@ -115,7 +120,7 @@ class Scaffold:
                      f"Available tools: {', '.join(spec.tools) or 'none'}. "
                      f"MCP servers: {', '.join(spec.mcp_servers) or 'none'}.\n"
                      + "\n".join(self._delegate_instructions(name) + self._context_instructions(name)))
-            if getattr(self.runtime.options, 'interactive_delegates', False):
+            if getattr(self.runtime, 'interactive_delegates', False):
                 setup = setup.replace('Each invocation starts fresh', 'Each new brief starts fresh')
                 # TODO(AE-327): Generalize ask_pi and its guidance for non-PI orchestrators.
                 setup += ("\nUse ask_pi(message) for clarifying questions and report_progress(message) for meaningful "
@@ -210,7 +215,7 @@ class Scaffold:
                 "New briefs start fresh conversations. Task IDs prevent steering a superseded brief."),
             ]
         if coding and self.runtime.background_coding and not getattr(
-                self.runtime.options, 'interactive_delegates', False):
+                self.runtime, 'interactive_delegates', False):
             lines += ["Coding delegates start in the background with one outstanding task per name across callers."]
             for name in coding:
                 lines.append(f"Use `{name}_result(wait=false)` to check status or collect a completed result; "
@@ -219,7 +224,7 @@ class Scaffold:
                        "starting another brief for that worker. The runtime awaits outstanding coding work before "
                        "gates and saves uncollected completion reports in the conversation. Pending tasks are not "
                        "restored after restart. SDK-agent delegates remain blocking unless interactive_delegates is enabled.")]
-        elif coding and not getattr(self.runtime.options, 'interactive_delegates', False):
+        elif coding and not getattr(self.runtime, 'interactive_delegates', False):
             lines.append("Coding delegate calls block until completion without repeated orchestrator model calls.")
         return lines
 
@@ -321,7 +326,7 @@ class Scaffold:
                              "Full gate feedback is in state.json / the continuation prompt.")
         tools = self.drop_in.config.agents[name].tools if name in self.drop_in.config.agents else []
         for tool_name in tools:
-            tool = self.assembly.tools[tool_name]
+            tool = self.tools[tool_name]
             if isinstance(tool, Rest):
                 parts.append(f"`{tool_name}`: {max(0, tool.options.total_seconds - tool.used_seconds):g}s remaining.")
         if name == self.drop_in.config.orchestrator:

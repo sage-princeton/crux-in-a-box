@@ -30,7 +30,6 @@ def test_unlimited_orchestrator_and_phases_run_past_defaults(drop_in_dir, assemb
     with (drop_in_dir / "scaffold.toml").open("a") as stream:
         stream.write('''
 [runtime]
-type = "openai-agents"
 max_turns = "unlimited"
 [gates.ready]
 type = "command"

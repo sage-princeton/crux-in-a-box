@@ -13,10 +13,11 @@ from test_blind_review import configure_blind
 from test_coding_agents import ANSWER, FakeCodex, completed, item, usage
 
 from crux_scaffold import cli
-from crux_scaffold.openai_agents_sdk.openai_agents_sdk import OpenAIAgentsRuntime
 from crux_scaffold.cli import main
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
+from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import probe_model
 from crux_scaffold.telemetry import (
     LangfuseTelemetry,
     NullTelemetry,
@@ -425,11 +426,11 @@ def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_l
         return response
     model.get_response = metered
     scaffold = assemble(drop_in_dir, {"pm": model}, env=ENV, telemetry=telemetry)
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     with telemetry.trace("compaction test"):
         asyncio.run(CONTEXT_STRATEGIES.create("context", {"type": "compaction"})._summarize(
             [{"role": "user", "content": "Completed history"}],
-            ctx=scaffold.context, agent=scaffold.runtime.agents["pm"],
+            ctx=scaffold.context, agent=scaffold.runtime._builder.agents["pm"],
             model_provider=scaffold.runtime.run_config.model_provider,
             instructions="fixed", prepare_input=scaffold.runtime._cache_input))
     telemetry.flush()
@@ -464,7 +465,8 @@ def test_probe_sets_auto_reasoning_summary_mode(monkeypatch):
         return type("Result", (), {"final_output": "ok"})()
 
     monkeypatch.setattr(Runner, "run", run)
-    assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "prompt", NullTelemetry())) == "ok"
+    assert asyncio.run(probe_model(ENV, "prompt", NullTelemetry(),
+                                   model_provider=ModelProvider(type="openai", api="responses"))) == "ok"
     assert captured["agent"].model_settings.reasoning.summary == "auto"
 
 

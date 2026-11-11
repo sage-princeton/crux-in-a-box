@@ -275,78 +275,31 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 ## OpenAI Agents SDK integration
 
-`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_runtime.py` runs agents directly on the OpenAI Agents SDK. It has no runtime base class or registry and owns delegation capacity management. Each supporting class has its own module in `openai_agents_sdk/`: `turn_outcome.py`, `verdict.py`, `_delegate_call.py`, `model_provider.py`, `runtime_config.py`, `brief_arguments.py`, `coding_result_arguments.py` and `usage_hooks.py`.
+`OpenAIAgentsRuntime` in `openai_agents_sdk/openai_agents_runtime.py` runs agents directly on the OpenAI Agents SDK, without a runtime base class, registry or `Assembly` object. The composition root constructs its concrete dependencies:
 
-The package's nine classes connect as follows. Nodes outside the package show its callers and execution dependencies; arrows describe construction, use or returned values.
-
-![OpenAI Agents SDK class relationships](openai-agents-sdk.png)
-
-<details>
-<summary>Mermaid source</summary>
-
-```mermaid
-flowchart TD
-    scaffold["Scaffold"] -->|constructs| runtime["OpenAIAgentsRuntime"]
-    callers["Loop / judge gates"] -->|"run() / judge()"| runtime
-
-    subgraph config["Configuration"]
-        options["OpenAIAgentsOptions"] -->|contains| provider["ModelProviderOptions"]
-    end
-    options -->|configures| runtime
-
-    subgraph support["Runtime support"]
-        brief["BriefArguments"]
-        result["CodingResultArguments"]
-        call["_DelegateCall"]
-        hooks["UsageHooks"]
-    end
-    runtime -->|validates coding briefs| brief
-    runtime -->|validates result requests| result
-    runtime -->|tracks delegation slots| call
-    runtime -->|installs| hooks
-
-    runtime -->|"run() returns"| outcome["TurnOutcome"]
-    runtime -->|"judge() returns"| verdict["Verdict"]
-    runtime -->|executes through| sdk["SDK Agent / Runner"]
-    sdk -->|model completion callback| hooks
-    hooks -->|records tokens| ledger["UsageLedger in RunContext"]
-    runtime -->|wraps| tools["Scaffold tools / CodingAgent / MCP servers"]
-    runtime -->|history and sessions| context["ContextStrategy"]
-
-    cli["CLI probe"] --> probe["probe_model()"]
-    provider -->|configures| probe
-    probe -->|one model turn| sdk
-```
-
-</details>
-
-`BriefArguments` and `CodingResultArguments` describe coding-tool inputs; `_DelegateCall` is internal scheduling state. `TurnOutcome` and `Verdict` carry results back to the loop and gates. `UsageHooks` implements the SDK's `RunHooks` callbacks and records tokens in `UsageLedger`.
-
-`scaffold.py` constructs `OpenAIAgentsRuntime(*, model_provider, drop_in, context, tools, coding_agents, context_strategy, instructions, max_turns=50, background_coding=False, models=None)` with its dependencies and runtime properties passed directly. `models` substitutes scripted models by agent name; the scaffold's `runtime_overrides` supplies this test seam. `RuntimeConfig.from_config` validates `[runtime]` at the composition boundary and reports `InvalidDropInError` for invalid settings. The runtime does not retain this configuration object. The optional `type` key accepts only `openai-agents` for compatibility with existing drop-ins; it does not select an implementation. Steering is assembled separately into `RunContext.steering`. The CLI validates runtime settings without steering during provisioning and passes only the model provider to the module-level `probe_model` function.
-
-| Runtime property | Meaning |
+| Class | Responsibility |
 |---|---|
-| `model_provider` | A `ModelProvider` declaring the endpoint, API adapter, credential variable and request extras. |
-| `model_family` | A derived `anthropic`, `google`, `openai` or `None`, based on `RunContext.model` after stripping a leading `~`. The prefixes `anthropic/`, `google/` and `openai/` identify their families, including model names with preset suffixes. An unprefixed name on the direct OpenAI provider resolves to `openai`; other names remain unclassified. This value is not a separate TOML setting. |
-| `max_turns` | The orchestrator's per-iteration turn limit, default 50; `"unlimited"` disables it. |
-| `background_coding` | Whether coding delegates start as background tasks, default `False`. |
+| `RuntimeConfig`, `ModelProvider` | Strict runtime and provider configuration. `[runtime].type` is removed; `[context].type` still selects persistent history, trimming or compaction. |
+| `ModelConnection` | Provider clients, per-model overrides, request-size limits, reasoning settings and transient retries. |
+| `SdkResources` | MCP connections, filtered Slack reads, steering startup and cleanup. |
+| `AgentTools`, `AgentBuilder` | Convert scaffold tools and delegates into SDK tools and agents. |
+| `DelegationLimiter` | Share capacity, suspend nested callers and reacquire slots before continuing. |
+| `CodingTasks` | Run, inspect, collect, drain and cancel background coding work. |
+| `OpenAIAgentsRuntime` | Run orchestrator turns and isolated judge panels, refresh model input and manage interactive delegate conversations. |
 
-`instructions(agent_name) -> str` returns stable setup + persona + static files, cached at assembly. `research_context(agent_name) -> str` returns current workflow/remaining rest, for the orchestrator the runtime's `coding_status()` line, and bounded declared research files. Runtime implementations call the latter at their model boundary; generated setup is scoped to each agent's actual capabilities. The built-in phased loop's current iteration, recent gate outcomes, process start and restart count come from persisted RunState, with references to full feedback; custom loops retain `describe()` for their stable summary.
+The [interactive architecture diagram](openai-agents-sdk.html) illustrates these dependencies.
 
-`[preamble].enabled` controls generated setup (including delegates); `append` remains orchestrator-only inline guidance, including when generation is disabled. Static policy describes configured limits and steering; changing measurements belong in research/resource context. Reassembly intentionally reloads instructions.
+`scaffold.py` supplies stable `instructions(agent_name)` and refreshed `research_context(agent_name)` callbacks. Generated setup is scoped to each agent's capabilities. Current workflow, gate outcomes, remaining rest and bounded research files are refreshed at every model boundary, independently of conversation selection.
 
-**Methods:**
+`runtime_overrides={"models": ...}` supplies scripted test models through `ModelConnection`. The module-level `probe_model(env, prompt, telemetry, *, model_provider)` makes a traced provisioning call using the same provider configuration, without assembling a runtime. Provisioning ignores steering and unresolved operator placeholders; `check` and `run` require prepared inputs.
 
-| Method | Contract |
+| Runtime method | Contract |
 |---|---|
-| `__aenter__`, `__aexit__` | Start and stop the MCP servers. Open the orchestrator's session from `context_strategy.session(...)`. |
-| `run(prompt, *, workflow)` | Send one prompt to the orchestrator, continuing its session. Return `TurnOutcome(completed=False)` when the agent runs out of turns; don't raise. `workflow` names the turn in traces. |
-| `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None, model=None)` | Run a fresh judge agent, with the named tools and no session, for a `Verdict` (`passed`, `feedback`, `next_prompt`). `max_turns` is a positive integer or `None` for no turn limit. When a `ReviewWorkspace` is supplied, bind every tool to that snapshot and use a neutral agent name; never fall back to the shared workspace or add workflow metadata to model inputs. Running out of turns returns a failing `Verdict`; don't raise. Count every call under `judge:<name>`. The judge uses `ctx.model`, like every agent, unless `model` names another model for a judge panel; resolve that name through the run's provider and settings. |
-| `describe()` | Assembly details, including provider and one line per agent, printed by `check`. |
-| `coding_status()` (base implementation) | One factual line on background coding briefs that are running, finished but uncollected, or cancelled and not yet reported; empty (the default) when there are none. The composition root adds it to the orchestrator's research context on every call. |
-| `delegation_slot(*, background=False)` (base implementation) | An async context manager around each delegated SDK-agent or coding-agent invocation. Queues at the shared concurrency cap and suspends a nested caller's slot until its children finish. Do not wrap the root orchestrator. |
-| `delegation_wait()` (base implementation) | Suspend a delegated caller while awaiting independently scheduled background work; reacquire its capacity before resuming. Does not acquire a new slot. |
-| `probe(env, prompt, telemetry, *, options=None)` (classmethod) | One traced model call without running a loop. Optional validated runtime options let `probe --drop-in` use the run's model provider. The CLI ignores steering and unresolved prompt/operator placeholders during a probe; `check` and `run` require a fully prepared drop-in. |
+| `async __aenter__` / `async __aexit__` | Open SDK resources and durable sessions; stop active delegate work before closing resources. |
+| `run(prompt, *, workflow)` | Continue the orchestrator session and return a `TurnOutcome`. Outstanding interactive work makes the turn incomplete. |
+| `judge(name, rubric, evidence, *, tools, max_turns, review_workspace=None, model=None)` | Run a fresh isolated judge, optionally using a panel model and a confined review workspace. Return a failing `Verdict` when turns run out. |
+| `describe()` | Build and describe the configured provider, agents and tools without model calls. |
+| `coding_status()` | Report running, uncollected or unreported cancelled coding work for the orchestrator's dynamic context. |
 
 **The behavior the rest of the scaffold relies on:**
 
@@ -360,9 +313,9 @@ flowchart TD
 - **Delegates.**
   - A delegated agent or coding agent is a tool whose call starts from a fresh context holding only the caller's brief.
   - A coding agent is called through `CodingAgent.run`.
-  - Wrap the entire delegated invocation in `async with self.delegation_slot()`, including SDK execution, coding-worker execution and error handling. `OpenAIAgentsRuntime` owns the run's shared capacity and propagates nested call identity through task-local context. Blocking callers must await their children inside the scope. Independently scheduled background workers acquire `delegation_slot(background=True)` inside their task, covering the complete worker execution without suspending their continuing caller. Result waits use the same internal suspension context so a one-slot parent can await its worker. Own, drain and cancel background tasks through the runtime lifecycle; do not suppress cancellation.
+  - Wrap the entire delegated invocation in `async with delegation.slot()`, including SDK execution, coding-worker execution and error handling. `DelegationLimiter` owns the run's shared capacity and propagates nested call identity through task-local context. Blocking callers must await their children inside the scope. Independently scheduled background workers acquire `delegation.slot(background=True)` inside their task, covering the complete worker execution without suspending their continuing caller. Result waits use the same internal suspension context so a one-slot parent can await its worker. Own, drain and cancel background tasks through `CodingTasks` and the runtime lifecycle; do not suppress cancellation.
 - **MCP servers.** Start each server an agent lists, with the environment from `McpServerConfig.resolved_env`.
-- **Context.** The existing `_select_input` filter removes known legacy standing snapshots, cuts the orchestrator's history at its latest successful `restart_context` call (`context_strategies.since_restart`: the last exchange boundary at or before the call, keeping that response's tool pairs and every earlier operator steering envelope; a refused call cuts nothing), applies `context_strategy.select`, then assembles a fresh user tail from `Assembly.research_context`, `ctx.budget_status()` and any transport warning. The first call moves the trailing user task into that tail once; tool continuations retain the raw task and complete exchanges, refreshing only the state. SDK sessions persist the original raw input and output, not filter additions. The SDK input sequence identifies the current task: a new run ends with a user message, while tool continuations end with tool results. Retried operator steering envelopes remain historical instructions, not a new task. A separate `pending-turn-<agent-hash>.json` input-admission record stores the phase, task hash and original history offset before the SDK writes a new task. On retry, an exact task at that offset is reused by passing empty new input; any stored tool progress remains available. The record survives exceptions/cancellation and clears on a normal runtime return, including a turn-limit outcome. This prevents duplicate input across interrupted runtime calls; it does not provide exactly-once tool execution or cover failures after the runtime returns to gates. Never infer duplicates merely from repeated text. Never reorder or drop tool pairs or real historical user messages to deduplicate text. Judges use a separate cache-only filter without shared run state.
+- **Context.** The existing `_select_input` filter removes known legacy standing snapshots, cuts the orchestrator's history at its latest successful `restart_context` call (`context_strategies.since_restart`: the last exchange boundary at or before the call, keeping that response's tool pairs and every earlier operator steering envelope; a refused call cuts nothing), awaits `context_strategy.select_for_call`, then assembles a fresh user tail from the `research_context` callback, `ctx.budget_status()` and any transport warning. The first call moves the trailing user task into that tail once; tool continuations retain the raw task and complete exchanges, refreshing only the state. SDK sessions persist the original raw input and output, not filter additions. The SDK input sequence identifies the current task: a new run ends with a user message, while tool continuations end with tool results. Retried operator steering envelopes remain historical instructions, not a new task. A separate `pending-turn-<agent-hash>.json` input-admission record stores the phase, task hash and original history offset before the SDK writes a new task. On retry, an exact task at that offset is reused by passing empty new input; any stored tool progress remains available. The record survives exceptions/cancellation and clears on a normal runtime return, including a turn-limit outcome. This prevents duplicate input across interrupted runtime calls; it does not provide exactly-once tool execution or cover failures after the runtime returns to gates. Never infer duplicates merely from repeated text. Never reorder or drop tool pairs or real historical user messages to deduplicate text. Judges use a separate cache-only filter without shared run state.
 - **Usage.** Add every model call's tokens to `ctx.usage` under the agent's name, so the budget holds.
 - **Reasoning summaries.** The built-in runtime and Codex coding-agent turns set the reasoning-summary option to `auto`, selecting the most detailed summarizer available for the model. Returned summaries are present in the SDK response spans or `codex:reasoning` observations; these are summaries, not private chain-of-thought, and availability depends on the model/provider.
 - **Tracing.** When `telemetry.sdk_tracing` is true, export SDK spans through OpenTelemetry. Use the native OpenInference input/output payloads, invocation parameters, tool schemas, usage and nesting; do not duplicate them with a scaffold trace processor. Responses instructions appear in invocation parameters and the response output; Chat Completions instructions appear in its input messages. Keep each span under OpenTelemetry's 128-attribute limit (see the README's Tracing section).

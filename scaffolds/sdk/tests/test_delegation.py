@@ -111,7 +111,7 @@ def test_parents_reacquire_capacity_before_resuming(drop_in_dir, assemble, concu
             active -= 1
 
         async def branch(depth):
-            async with runtime.delegation_slot():
+            async with runtime._delegation.slot():
                 await step()
                 if depth:
                     await asyncio.gather(*(branch(depth - 1) for _ in range(3)))
@@ -132,10 +132,10 @@ def test_cancelling_a_queued_delegate_does_not_steal_capacity(drop_in_dir, assem
         entered = []
 
         async def queued(name):
-            async with runtime.delegation_slot():
+            async with runtime._delegation.slot():
                 entered.append(name)
 
-        async with runtime.delegation_slot():
+        async with runtime._delegation.slot():
             cancelled = asyncio.create_task(queued("cancelled"), context=Context())
             remaining = asyncio.create_task(queued("remaining"), context=Context())
             await asyncio.sleep(0)
@@ -155,8 +155,8 @@ def test_nested_cancellation_does_not_wait_for_unrelated_work(drop_in_dir, assem
     limits(drop_in_dir, 1)
     reviewer = ScriptedModel(call("engineer", {"brief": "nested"}, "r1"), say("ok"))
     scaffold = assemble(drop_in_dir, {"reviewer": reviewer})
-    scaffold.runtime.build()
-    tools = {tool.name: tool for tool in scaffold.runtime.agents["pm"].tools}
+    scaffold.runtime._build()
+    tools = {tool.name: tool for tool in scaffold.runtime._builder.agents["pm"].tools}
 
     async def exercise():
         started = asyncio.Queue()
@@ -219,8 +219,8 @@ def test_slots_are_released_after_every_exit(drop_in_dir, assemble, monkeypatch,
         return CodingResult(completed=True, final_response="ok", usage=TokenUsage())
 
     monkeypatch.setattr(scaffold.coding_agents["engineer"], "execute", execute)
-    scaffold.runtime.build()
-    tool = next(tool for tool in scaffold.runtime.agents["pm"].tools if tool.name == delegate)
+    scaffold.runtime._build()
+    tool = next(tool for tool in scaffold.runtime._builder.agents["pm"].tools if tool.name == delegate)
     raw = json.dumps({"brief" if delegate == "engineer" else "input": "work"})
 
     async def invoke():
@@ -298,7 +298,7 @@ def test_background_workers_share_capacity_with_their_waiting_parent(
         assert (await scaffold.run()).status == "completed"
         assert sorted(finished) == ["engineer", "other_engineer"]
         assert peak == concurrent
-        assert active == scaffold.runtime._active_delegates == 0
+        assert active == scaffold.runtime._delegation._active == 0
 
     asyncio.run(asyncio.wait_for(exercise(), 2))
 
@@ -329,7 +329,7 @@ def test_background_cleanup_releases_running_and_queued_slots(drop_in_dir, assem
             if pm.inputs:
                 await started.wait()
                 assert len(calls) == 1
-                assert set(scaffold.runtime._coding_tasks) == {"engineer", "other_engineer"}
+                assert set(scaffold.runtime._coding_tasks._tasks) == {"engineer", "other_engineer"}
                 if ending == "error":
                     raise RuntimeError("model failed")
                 if ending == "cancel":
@@ -347,9 +347,9 @@ def test_background_cleanup_releases_running_and_queued_slots(drop_in_dir, assem
             async with asyncio.timeout(None) as run_timeout:
                 await scaffold.run()
         assert len(calls) == 1
-        assert not scaffold.runtime._coding_tasks
-        assert scaffold.runtime._active_delegates == 0
-        async with scaffold.runtime.delegation_slot():
-            assert scaffold.runtime._active_delegates == 1
+        assert not scaffold.runtime._coding_tasks._tasks
+        assert scaffold.runtime._delegation._active == 0
+        async with scaffold.runtime._delegation.slot():
+            assert scaffold.runtime._delegation._active == 1
 
     asyncio.run(asyncio.wait_for(exercise(), 2))

@@ -7,6 +7,8 @@ from agents.mcp import MCPServerStdio
 
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
+from crux_scaffold.openai_agents_sdk._steering_server import _SteeringServer
+from crux_scaffold.openai_agents_sdk._unfiltered_calls import _UnfilteredCalls
 from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
 from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
 from crux_scaffold.steering import Steering
@@ -59,10 +61,16 @@ class SdkResources:
         return used
 
     def _server(self, name: str) -> MCPServerStdio:
-        return MCPServerStdio(params=self._params(name),
+        steering = self.context.steering
+        factory = MCPServerStdio
+        options = {}
+        if steering and name == steering.options.server:
+            factory = _SteeringServer
+            options["after_ts"] = steering.options.after_ts
+        return factory(params=self._params(name),
                               name=name,
                               cache_tools_list=True,
-                              **self._server_settings(name))
+                              **self._server_settings(name), **options)
 
     def _params(self, name: str) -> dict:
         spec = self.drop_in.config.mcp_servers[name]
@@ -82,8 +90,9 @@ class SdkResources:
     async def _bind_steering(self, escalate: bool) -> None:
         if not (steering := self.context.steering):
             return
-        steering.transport = self.servers[steering.options.server]
-        available = {tool.name for tool in await steering.transport.list_tools()}
+        server = self.servers[steering.options.server]
+        steering.transport = _UnfilteredCalls(server)
+        available = {tool.name for tool in await server.list_tools()}
         self._validate_steering(available, steering.options.thread_ts, escalate)
 
     def _required_steering_tools(self, thread_ts: str | None, escalate: bool) -> set[str]:

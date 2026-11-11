@@ -177,7 +177,7 @@ class LlmJudgeGate(Gate):
         return "\n\n".join(parts)
 
 
-async def judge_panel(runtime: AgentRuntime, name: str, rubric: str, evidence: str, models: list[str],
+async def judge_panel(runtime: OpenAIAgentsRuntime, name: str, rubric: str, evidence: str, models: list[str],
                       **options) -> tuple[dict, list[dict]]:
     """Ask each model for an independent verdict on the same evidence; the panel passes when a majority passes.
 

@@ -14,11 +14,11 @@ from crux_scaffold.tools.pdf_arguments import PdfArguments
 from crux_scaffold.tools.read_file import ReadFile
 from crux_scaffold.tools.read_pdf import ReadPdf
 from crux_scaffold.tools.registry import TOOLS
-from crux_scaffold.tools.restart_arguments import RestartArguments
-from crux_scaffold.tools.restart_context import RESTARTED, RestartContext
 from crux_scaffold.tools.rest import Rest
 from crux_scaffold.tools.rest_arguments import RestArguments
 from crux_scaffold.tools.rest_options import RestOptions
+from crux_scaffold.tools.restart_arguments import RestartArguments
+from crux_scaffold.tools.restart_context import RESTARTED, RestartContext
 from crux_scaffold.tools.review import validate_review_tools
 from crux_scaffold.tools.run_shell import RunShell
 from crux_scaffold.tools.shell_arguments import ShellArguments
@@ -42,11 +42,11 @@ __all__ = [
     "PdfArguments",
     "ReadFile",
     "ReadPdf",
-    "RestartArguments",
-    "RestartContext",
     "Rest",
     "RestArguments",
     "RestOptions",
+    "RestartArguments",
+    "RestartContext",
     "RunShell",
     "ShellArguments",
     "ShellOptions",
@@ -57,8 +57,3 @@ __all__ = [
     "WriteFile",
     "validate_review_tools",
 ]
-
-
-def validate_review_tools(tools: list[Tool]) -> None:
-    if any(type(tool) not in (ReadFile, ListFiles, ReadPdf) for tool in tools):
-        raise InvalidDropInError("blind review tools must be read_file, list_files or read_pdf implementations")

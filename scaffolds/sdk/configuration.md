@@ -1,5 +1,9 @@
 # SDK configuration reference
 
+`[runtime]` configures the concrete OpenAI Agents SDK integration. Remove the former
+`type = "openai-agents"` runtime key. Context strategies remain configured through
+`[context].type`, including token based `compaction`.
+
 ## A drop-in directory
 
 The [contrastive RL example](run-harness/contrastive-rl-pilot/OPERATOR_GUIDE.md) uses Argon
@@ -167,7 +171,6 @@ Merge this fragment into a drop-in that already declares its loop, prompts and w
 orchestrator = "pi"
 
 [runtime]
-type = "openai-agents"
 background_coding = true
 
 [agents.pi]
@@ -302,7 +305,6 @@ Reuse a declared Slack MCP server and configure the run's source and authorized 
 
 ```toml
 [runtime]
-type = "openai-agents"
 
 [runtime.steering]
 server = "slack"                    # a declared [mcp_servers.slack]
@@ -546,7 +548,6 @@ OpenAI remains the default. To query another compatible endpoint, add a provider
 
 ```toml
 [runtime]
-type = "openai-agents"
 
 [runtime.model_provider]
 type = "openai-compatible"

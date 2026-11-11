@@ -68,7 +68,7 @@ def test_errors_a_retry_cannot_fix_still_end_the_turn(drop_in_dir, assemble, del
 
 
 def test_retries_stop_at_the_limit(drop_in_dir, assemble, delays, monkeypatch):
-    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.openai_agents_sdk.MODEL_RETRIES", 1)
+    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.model_connection.MODEL_RETRIES", 1)
     pm = FlakyModel([status_error(openai.InternalServerError, 504)] * 3, say("done"))
     with pytest.raises(openai.InternalServerError):
         asyncio.run(assemble(drop_in_dir, {"pm": pm}).run())

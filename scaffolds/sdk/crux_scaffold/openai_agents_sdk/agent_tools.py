@@ -37,7 +37,11 @@ class AgentTools:
         self._delegation = delegation
 
     @property
-    def tarts_in_background(self) -> bool:
+    def coding_agents(self):
+        return self._coding_agents
+
+    @property
+    def starts_in_background(self) -> bool:
         return self._coding_tasks.start_in_background
 
     def function(self, tool: Tool, context: RunContext) -> FunctionTool:
@@ -52,12 +56,12 @@ class AgentTools:
         return self._coding_tool(self._coding_agents[name])
 
     def results(self, delegates: Iterable[str]) -> list[FunctionTool]:
-        if not self.tarts_in_background:
+        if not self.starts_in_background:
             return []
         return [self._result_tool(name) for name in delegates if name in self._coding_agents]
 
     def result_names(self, delegates: Iterable[str]) -> set[str]:
-        if not self.tarts_in_background:
+        if not self.starts_in_background:
             return set()
         return {f"{name}_result" for name in delegates if name in self._coding_agents}
 
@@ -82,7 +86,7 @@ class AgentTools:
         )
 
     def _coding_description(self, agent: CodingAgent) -> str:
-        if self.tarts_in_background:
+        if self.starts_in_background:
             return agent.description + f" Starts in the background; collect its result using {agent.name}_result."
         return agent.description
 
@@ -102,7 +106,7 @@ class AgentTools:
             args = CodingResultArguments.model_validate_json(raw)
         except ValidationError as exc:
             return f"error: {exc}"
-        return await self._coding_tasks.collect(name, wait=args.wait)
+        return await self._coding_tasks.collect(name, wait=args.wait, timeout=self._coding_tasks.wait_seconds)
 
     async def _invoke_delegate(self, invoke: Callable[..., Awaitable[str]], context: ToolContext[Any], raw: str) -> str:
         async with self._delegation.slot():
