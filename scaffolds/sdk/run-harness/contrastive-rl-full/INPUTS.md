@@ -17,8 +17,8 @@
 - Model: `google/gemini-4-carbon`, high effort, normal OpenRouter
   routing. No private preset/BYOK settings. Listed in the provider catalog on
   2026-10-29; no inference probe has been performed for this pilot.
-- Resource caps: 21600 seconds, $100 total agent/delegate/review inference, $30
-  RunPod. Last-hour/10% reserves; AWS infrastructure separate.
+- Resource caps: 604800 seconds (seven days), $15,000 total agent/delegate/review
+  inference, $1,000 RunPod. Last-hour/10% reserves; AWS infrastructure separate.
 - Changes from the SDK example: task/context, model/routing, spend allowances,
   CRTR source staging, unattended operation and bundled research inputs.
   Agent/delegate topology, loop, reviewer rubric, venue template, review gate
@@ -30,4 +30,4 @@ resource reserves/deadlines and cleanup. A fresh checkout needs no source
 preparation: fill the example operator configuration/credentials and use
 make-new-workspace.sh as documented in OPERATOR_GUIDE.md. Provisioning checks
 Carbon SDK/Codex inference before research starts. The agent's authorized inference
-spend and TOML budget are $100; leave the OpenRouter key's account limit unchanged.
+spend and TOML budget are $15,000; leave the OpenRouter key's account limit unchanged.

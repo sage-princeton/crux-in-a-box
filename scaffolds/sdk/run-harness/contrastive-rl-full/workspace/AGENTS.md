@@ -2,8 +2,8 @@
 
 Produce an exceptional, honest research paper answering RESEARCH.md, plus its
 reproducible project and accessible HTML results page. The complete resource
-envelope is six hours from scaffold launch, $100 for all agent/judge/compaction
-model calls and $30 for RunPod. The OpenRouter key's higher account limit does
+envelope is seven days from scaffold launch, $15,000 for all agent/judge/compaction
+model calls and $1,000 for RunPod. The OpenRouter key's higher account limit does
 not increase your budget. Leave provider account limits unchanged. No turn, token,
 delegation-depth or concurrency
 cap is configured. Treat your time, your own API spending, and your external resource budgets as targets to reach; you will not be reviewed more favorably for underspending. Allocate resources in PLAN.md and revise with evidence.
@@ -57,8 +57,8 @@ reviewed again. Acceptance is Overall ≥5/6, not an author certification.
 
 The PI, SDK assistants and Codex workers can run shell commands, install research
 packages in a project venv, access the network and use RunPod. Available credentials
-are for SDK inference, Langfuse cost/tracing, Slack and RunPod only. There is no
-email, Together AI, Hugging Face token, external reviewer account
+are for SDK inference, Langfuse cost/tracing, Slack, RunPod and Hugging Face
+(`HF_TOKEN`) only. There is no email, Together AI, external reviewer account
 or separate experiment-LLM allocation. Never use agent-provider credentials as an
 experimental model. Use the supplied question/context and `crtr/` as your
 starting input. SOURCE.json records the archive revision/hash and checksums of
@@ -107,5 +107,5 @@ environment readiness separately from scientific promise.
 Keep every file write small enough to finish in a few minutes. A tool call's contents are sent only once the whole call is written, and the provider drops a response that sends nothing for five minutes. One call that writes more than about 30,000 characters, such as a whole paper or a long script, can therefore fail, and each retry rewrites it and fails the same way. Build long documents from smaller files, such as one \input file per paper section, and edit files in place rather than rewriting them whole.
 
 The harness switches to finalization when one hour, 10% of model spend, or 10% of
-the RunPod allowance remains (at five hours, $90 inference or $27 RunPod).
+the RunPod allowance remains (at 6 days 23 hours, $13,500 inference or $900 RunPod).
 It may interrupt active work at that boundary.

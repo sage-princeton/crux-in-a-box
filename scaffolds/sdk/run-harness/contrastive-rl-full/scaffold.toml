@@ -28,8 +28,8 @@ keep_recent_items = 20
 image_tokens = 1120  # Gemini 4 Carbon default for image inputs.
 
 [budget]
-max_wall_seconds = 21600
-max_cost_usd = 100
+max_wall_seconds = 604800
+max_cost_usd = 15000
 
 [resources.models]
 type = "langfuse"
@@ -38,7 +38,7 @@ refresh_seconds = 30
 [resources.gpu]
 type = "runpod"
 refresh_seconds = 30
-limits = { cost_usd = 30 }
+limits = { cost_usd = 1000 }
 
 [loop]
 type = "tabpfn_research"
@@ -188,7 +188,7 @@ timeout_seconds = 600
 [tools.rest]
 min_seconds = 1
 max_seconds = 300
-total_seconds = 21600
+total_seconds = 604800
 
 [mcp_servers.slack]
 command = "npx"
