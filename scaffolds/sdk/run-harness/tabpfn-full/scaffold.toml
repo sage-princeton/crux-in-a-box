@@ -42,7 +42,7 @@ limits = { cost_usd = 1000 }
 
 [loop]
 type = "tabpfn_research"
-reserve_wall_seconds = 3600
+reserve_wall_seconds = 60480  # 10% of the seven-day run
 reserve_fraction = 0.1
 poll_seconds = 15
 

@@ -7,8 +7,8 @@ the first completed draft and then following any substantial revision by writing
 then finish this iteration. The gate runs an independent, tool-using reviewer.
 An Accept advances to finalization; a rejection returns evidence to work on.
 
-The harness switches to finalization when one hour, 10% of model spend, or 10% of
-the RunPod allowance remains (at 6 days 23 hours, $13,500 inference or $900 RunPod).
+The harness switches to finalization when 10% of the time (16.8 hours), of model spend, or of
+the RunPod allowance remains (at 6 days 7 hours, $13,500 inference or $900 RunPod).
 It may interrupt active work at that boundary.
 Checkpoint often and return to the loop at useful milestones. Finalization is part
 of the same seven-day/$15,000/$1,000 envelope. Do not spend those reserves on exploration.

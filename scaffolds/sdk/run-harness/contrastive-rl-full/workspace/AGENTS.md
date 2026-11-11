@@ -106,6 +106,6 @@ environment readiness separately from scientific promise.
 
 Keep every file write small enough to finish in a few minutes. A tool call's contents are sent only once the whole call is written, and the provider drops a response that sends nothing for five minutes. One call that writes more than about 30,000 characters, such as a whole paper or a long script, can therefore fail, and each retry rewrites it and fails the same way. Build long documents from smaller files, such as one \input file per paper section, and edit files in place rather than rewriting them whole.
 
-The harness switches to finalization when one hour, 10% of model spend, or 10% of
-the RunPod allowance remains (at 6 days 23 hours, $13,500 inference or $900 RunPod).
+The harness switches to finalization when 10% of the time (16.8 hours), of model spend, or of
+the RunPod allowance remains (at 6 days 7 hours, $13,500 inference or $900 RunPod).
 It may interrupt active work at that boundary.

@@ -18,7 +18,7 @@
   routing. No private preset/BYOK settings. Listed in the provider catalog on
   2026-10-29; no inference probe has been performed for this pilot.
 - Resource caps: 604800 seconds (seven days), $15,000 total agent/delegate/review
-  inference, $1,000 RunPod. Last-hour/10% reserves; AWS infrastructure separate.
+  inference, $1,000 RunPod. 10% time/spend reserves; AWS infrastructure separate.
 - Changes from the SDK example: task/context, model/routing, spend allowances,
   CRTR source staging, unattended operation and bundled research inputs.
   Agent/delegate topology, loop, reviewer rubric, venue template, review gate
