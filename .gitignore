@@ -21,8 +21,6 @@ clean-room
 # local diagnostics / caches — never commit
 *.jsonl
 *.zip
-# Full-run drop-ins ship their pinned venue template.
-!scaffolds/sdk/run-harness/*/neurips_*.zip
 # raw run telemetry holds live credentials — only the _CLEAN versions may be committed
 personas_telemetry.jsonl
 tabpfn_telemetry.jsonl
