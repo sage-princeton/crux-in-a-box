@@ -1,15 +1,15 @@
-"""Resolve a staged drop-in and install the pinned official paper style, before launch."""
+"""Resolve a staged drop-in and install the bundled, pinned NeurIPS 2026 paper style, before launch."""
 
 import argparse
 import hashlib
 import io
 import re
-import urllib.request
 import zipfile
 from pathlib import Path
 
-TEMPLATE_URL = "https://media.neurips.cc/Conferences/NeurIPS2025/Styles.zip"
-TEMPLATE_SHA256 = "72032130232955b785cd622b7c52d893e3166f30a90e1e6279d0a28e8373beef"
+# The NeurIPS 2026 formatting-instructions archive (neurips_2026.sty, neurips_2026.tex, checklist.tex), bundled.
+TEMPLATE = Path(__file__).resolve().with_name("neurips_2026.zip")
+TEMPLATE_SHA256 = "6d06b8938bd88f56986f2858e90f6a98b9eeb1f29f613ca8ae708d0be553318a"
 
 
 def prepare(root, channel, operator, after_ts, archive):
@@ -19,9 +19,9 @@ def prepare(root, channel, operator, after_ts, archive):
         if not re.fullmatch(pattern, value):
             raise ValueError(f"Invalid {name}")
     if hashlib.sha256(archive).hexdigest() != TEMPLATE_SHA256:
-        raise ValueError("Venue template checksum mismatch; verify the upstream archive before changing the pin")
+        raise ValueError("Venue template checksum mismatch; verify the archive before changing the pin")
     with zipfile.ZipFile(io.BytesIO(archive)) as template:
-        style = template.read("Styles/neurips_2025.sty")
+        style = template.read("neurips_2026.sty")
     config = root / "scaffold.toml"
     text = config.read_text()
     for key, value in {"SLACK_CHANNEL_ID": channel, "SLACK_OPERATOR_ID": operator,
@@ -32,7 +32,7 @@ def prepare(root, channel, operator, after_ts, archive):
     templates = root / "workspace/templates"
     templates.mkdir(exist_ok=True)
     (templates / "paper_template.zip").write_bytes(archive)
-    (root / "workspace/paper/neurips_2025.sty").write_bytes(style)
+    (root / "workspace/paper/neurips_2026.sty").write_bytes(style)
     config.write_text(text)
 
 
@@ -41,12 +41,8 @@ if __name__ == "__main__":
     parser.add_argument("--channel", required=True)
     parser.add_argument("--operator", required=True)
     parser.add_argument("--after-ts", required=True)
-    parser.add_argument("--template", type=Path, help="Use a previously downloaded, checksum-verified archive")
+    parser.add_argument("--template", type=Path, default=TEMPLATE,
+                        help="Venue template archive (default: the bundled neurips_2026.zip; checksum-verified)")
     args = parser.parse_args()
-    if args.template:
-        archive = args.template.read_bytes()
-    else:
-        with urllib.request.urlopen(TEMPLATE_URL, timeout=60) as response:
-            archive = response.read(2_000_000)
-    prepare(Path(__file__).resolve().parent, args.channel, args.operator, args.after_ts, archive)
+    prepare(Path(__file__).resolve().parent, args.channel, args.operator, args.after_ts, args.template.read_bytes())
     print("Drop-in resolved and pinned venue template installed. Run scaffold check before starting.")

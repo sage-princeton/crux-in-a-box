@@ -55,7 +55,7 @@ without starting it.
 ssh tabpfn-sdk-<unique-suffix>
 ```
 
-2.  Prepare the workspace by replacing some placeholders in prompts, fetching/compiling the NeurIPs LaTeX template, and validating run configuration:
+2.  Prepare the workspace by replacing some placeholders in prompts, installing the bundled NeurIPS 2026 LaTeX template (`neurips_2026.zip`, checksum-pinned in `prepare.py`), compiling it, and validating run configuration:
 
 ```bash
 cd /srv/crux-run/run-harness

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "apt_packages": ["latexmk", "texlive-latex-extra", "texlive-fonts-recommended", "poppler-utils", "python3-venv", "rsync", "unzip"],
+  "apt_packages": ["latexmk", "texlive-latex-extra", "texlive-fonts-recommended", "cm-super", "poppler-utils", "python3-venv", "rsync", "unzip"],
   "checks": [
     {"name": "latex", "argv": ["latexmk", "-v"]},
     {"name": "pdf-text", "argv": ["pdftotext", "-v"]},
