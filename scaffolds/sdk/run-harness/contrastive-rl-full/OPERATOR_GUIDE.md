@@ -53,6 +53,7 @@ ssh contrastive-rl-<unique-suffix>
 ```bash
 cd /srv/crux-run/run-harness
 # Channel is set to crux-constrastive-rl channel in Max's Workspace; user is set to Max Morgan user ID (change to your user ID to steer)
+# --after-ts marks the run start: steering and the agent's Slack tools ignore earlier channel messages.
 python3 prepare.py --channel C0CEJP2MP2P --operator U0BUSP5CJM6 \
   --after-ts "$(date +%s).000000"
 cd workspace/paper

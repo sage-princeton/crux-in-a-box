@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from datetime import UTC
+from decimal import Decimal
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -212,8 +213,11 @@ class Scaffold:
                   "supersede older instructions. Rest wakes for steering; arbitrary model/tool calls and native "
                   "coding-result waits are never interrupted. Replies in the configured source arrive by the same "
                   "route. Delivery state and identified messages survive restart.")]
-        if any(self.assembly.tools[name].type_name == "escalate"
-               for name in self.drop_in.config.agents[self.drop_in.config.orchestrator].tools):
+        orchestrator = self.drop_in.config.agents[self.drop_in.config.orchestrator]
+        if options.server in orchestrator.mcp_servers and Decimal(options.after_ts) > 0:
+            lines.append(f"Slack listings from MCP `{options.server}` show only messages posted after the run start "
+                         f"(Slack ts {options.after_ts}).")
+        if any(self.assembly.tools[name].type_name == "escalate" for name in orchestrator.tools):
             lines.append("Use escalate for broken resources or operator action, reuse the same request_id on retries, "
                          "and continue independent work while awaiting the operator's reply.")
         return lines
