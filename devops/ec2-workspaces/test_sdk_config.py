@@ -53,26 +53,11 @@ class SDKConfigTests(unittest.TestCase):
                 self.assertEqual(self.inspect(config + 'max_request_bytes = 20000000\n' + worker),
                                  self.inspect(config + worker))
 
-    def test_output_token_budget_preserves_provider_selection_and_codex_settings(self):
-        # An output budget only shapes SDK responses; unlike extra_body routing it needs no Codex preset.
-        worker = '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
-        self.assertEqual(self.inspect(COMPATIBLE + 'max_output_tokens = 65536\n' + worker),
-                         self.inspect(COMPATIBLE + worker))
-
-    def test_service_tier_preserves_provider_selection_and_codex_settings(self):
-        worker = '\n[coding_agents.worker]\ntype = "codex"\ndescription = "work"\n'
-        self.assertEqual(self.inspect(COMPATIBLE + 'service_tier = "priority"\n' + worker),
-                         self.inspect(COMPATIBLE + worker))
-        error = self.inspect(COMPATIBLE + 'service_tier = "fixture-private"\n', success=False)
-        self.assertIn('service_tier must be flex or priority', error)
-        self.assertNotIn('fixture-private', error)
-
-    def test_invalid_output_token_budgets_fail_without_echoing_values(self):
-        for value in ('0', '-1', 'true', '1.5', '"fixture-private"'):
-            with self.subTest(value=value):
-                error = self.inspect(COMPATIBLE + f'max_output_tokens = {value}\n', success=False)
-                self.assertIn('max_output_tokens must be a positive integer', error)
-                self.assertNotIn('fixture-private', error)
+    def test_preset_parameters_are_not_provider_options(self):
+        for setting in ('max_output_tokens = 65536', 'service_tier = "priority"'):
+            with self.subTest(setting=setting):
+                error = self.inspect(COMPATIBLE + setting + "\n", success=False)
+                self.assertIn("Invalid runtime.model_provider fields", error)
 
     def test_invalid_request_byte_limits_fail_without_echoing_values(self):
         for value in ('0', '-1', 'true', '1.5', '"fixture-private"'):

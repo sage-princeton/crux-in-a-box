@@ -12,11 +12,6 @@ api = "responses"
 base_url = "https://openrouter.ai/api/v1"
 api_key_env = "OPENROUTER_API_KEY"
 max_request_bytes = 20000000
-# Gemini 4 Carbon's default tier stops each response at 32,768 tokens, reasoning included, and the runtime does not
-# retry that stop. Its priority tier serves larger budgets (BYOK on Google AI Studio) at 1.8x the default price.
-# Both apply to the SDK agents, judges and compaction.
-max_output_tokens = 65536
-service_tier = "priority"
 
 [runtime.steering]
 server = "slack"
@@ -72,7 +67,7 @@ blind = true
 artifacts = { "submission.pdf" = "paper/paper.pdf" }
 tools = ["read_file", "list_files", "read_pdf"]
 max_turns = "unlimited"
-models = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+models = ["google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
 
 [gates.final_review]
 type = "tabpfn_review"
@@ -82,7 +77,7 @@ artifacts = { "submission.pdf" = "paper/paper.pdf" }
 tools = ["read_file", "list_files", "read_pdf"]
 max_turns = "unlimited"
 final = true
-models = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+models = ["google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
 
 [agents.pi]
 persona = "personas/pi.md"

@@ -15,7 +15,7 @@
   unidentified pilot. Baseline extension SHA-256:
   `48caa0383bd7033bce04370bb86cb8719a1a0a06125512b09a5efdb0c086c7d8`.
 - Model: `google/gemini-4-carbon@preset/ai-studio-priority`, high effort: the
-  preset pins Google AI Studio's priority tier (BYOK) for the SDK agents and Codex workers. Listed in the provider catalog on
+  preset pins Google AI Studio's priority tier (BYOK) and a 65,536-token output budget for SDK agents and Codex workers. Listed in the provider catalog on
   2026-10-29; no inference probe has been performed for this pilot.
 - Resource caps: 21600 seconds, $100 total agent/delegate/review inference, $30
   RunPod. Last-hour/10% reserves; AWS infrastructure separate.

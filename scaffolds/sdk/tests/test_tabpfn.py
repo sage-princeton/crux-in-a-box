@@ -23,7 +23,7 @@ from crux_scaffold.telemetry import NullTelemetry
 from scripted import ScriptedModel, call, say
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "run-harness/tabpfn-pilot"
-ENV = {"CRUX_MODEL": "google/gemini-4-carbon", "CRUX_REASONING_EFFORT": "high", "OPENROUTER_API_KEY": "test",
+ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "CRUX_REASONING_EFFORT": "high", "OPENROUTER_API_KEY": "test",
        "RUN_SLUG": "tabpfn-test", "SLACK_BOT_TOKEN": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test", "RUNPOD_API_KEY": "test"}
 
@@ -80,7 +80,7 @@ def test_carbon_provider_and_context_build_without_openai_credentials(scaffold):
     tools = {tool.name for tool in scaffold.runtime.agents["pi"].tools}
     assert workers | assistants | {'delegate_inbox'} <= tools
     assert not {f"{name}_result" for name in workers | assistants} & tools
-    assert scaffold.context.model == "google/gemini-4-carbon"
+    assert scaffold.context.model == "google/gemini-4-carbon@preset/ai-studio-priority"
     assert scaffold.context.reasoning_effort == "high"
 
 
@@ -107,7 +107,7 @@ def test_unrequested_or_invalid_paper_never_calls_reviewer(scaffold):
     assert "abstract" in asyncio.run(gate.check(gate_context(scaffold))).feedback.lower()
 
 
-PANEL = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+PANEL = ["google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
 
 
 def script_panel(scaffold, *passed, rounds=1):

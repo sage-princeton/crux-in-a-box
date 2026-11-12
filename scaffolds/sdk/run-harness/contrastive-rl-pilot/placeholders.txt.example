@@ -8,8 +8,8 @@ USE_ELASTIC_IP=false
 KEY_NAME=crux-acp
 AGENT_PLATFORM=openai-agents
 MODEL_PROVIDER=openrouter
-# The ai-studio-priority preset in the crux OpenRouter workspace pins Google AI Studio and sets service_tier=priority
-# (Codex can't request a tier itself, so the preset is how its workers reach the priority tier too).
+# The ai-studio-priority preset pins Google AI Studio, disables fallbacks, and sets
+# max_tokens=65536 and service_tier=priority for both SDK agents and Codex workers.
 OPENAI_AGENTS_MODEL=google/gemini-4-carbon@preset/ai-studio-priority
 OPENAI_AGENTS_REASONING_EFFORT=high
 DROP_IN_PATH=scaffolds/sdk/run-harness/contrastive-rl-pilot
