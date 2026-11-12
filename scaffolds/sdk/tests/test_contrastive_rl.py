@@ -18,7 +18,7 @@ from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 
 PILOT = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl-pilot"
-ENV = {"CRUX_MODEL": "google/gemini-4-carbon", "OPENROUTER_API_KEY": "test",
+ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "OPENROUTER_API_KEY": "test",
        "SLACK_BOT_TOKEN": "test",
        "RUN_SLUG": "contrastive-test", "RUNPOD_API_KEY": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test"}
@@ -115,7 +115,7 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert scaffold.context.steering is not None
     assert "escalate" in config.agents["pi"].tools
     assert config.agents["pi"].mcp_servers == ["slack"]
-    assert scaffold.context.model == "google/gemini-4-carbon"
+    assert scaffold.context.model == "google/gemini-4-carbon@preset/ai-studio-priority"
 
 
 def test_pilot_bundles_complete_pinned_source_without_archive_preparation():

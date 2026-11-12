@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import tomllib
 from collections import deque
+from pathlib import Path
 
 import httpx
 import pytest
@@ -152,9 +154,53 @@ def test_the_judge_uses_the_provider_and_accounts_for_usage_details(router, drop
     assert usage.cached_input_tokens == 25 and usage.reasoning_output_tokens == 20
 
 
+def test_preset_reaches_agents_judges_and_probe_without_request_overrides(router, drop_in_dir, assemble):
+    requests, pending, _ = router
+    config = drop_in_dir / "scaffold.toml"
+    config.write_text(config.read_text().split("[runtime.model_provider.extra_body.provider]")[0])
+    model = "google/gemini-4-carbon@preset/ai-studio-priority"
+    env = {**ENV, "CRUX_MODEL": model}
+    pending.extend([
+        response(call("reviewer", {"input": "Review the evidence."})),
+        response(say("Checked.")),
+        response(say("done")),
+        response(say(json.dumps({"passed": True, "feedback": "Checked.", "next_prompt": None}))),
+        response(say("SCAFFOLD-PROBE")),
+    ])
+    scaffold = assemble(drop_in_dir, env=env)
+
+    async def run():
+        async with scaffold.runtime as runtime:
+            await runtime.run("Start.", workflow="test")
+            verdict = await runtime.judge("quality", "Check the evidence.", "Evidence.", tools=[], max_turns=1)
+        assert await OpenAIAgentsRuntime.probe(env, "Say SCAFFOLD-PROBE", NullTelemetry(),
+                                             options=scaffold.runtime.options) == "SCAFFOLD-PROBE"
+        return verdict
+
+    assert asyncio.run(run()).passed
+    assert len(requests) == 5
+    assert all(request["model"] == model for request in requests)
+    assert all(not {"max_output_tokens", "max_tokens", "service_tier", "provider"} & request.keys()
+               for request in requests)
+
+
+@pytest.mark.parametrize("name", ["tabpfn-pilot", "tabpfn-full", "contrastive-rl-pilot", "contrastive-rl-full"])
+def test_carbon_drop_ins_use_the_preset_without_request_overrides(name):
+    config = tomllib.loads((Path(__file__).resolve().parents[1] / "run-harness" / name / "scaffold.toml").read_text())
+    provider = config["runtime"]["model_provider"]
+    assert not {"max_output_tokens", "service_tier", "extra_body"} & provider.keys()
+    for gate in ("research_review", "final_review"):
+        assert config["gates"][gate]["models"] == [
+            "google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-opus-5.5", "openai/gpt-6-astra",
+        ]
+    example = (Path(__file__).resolve().parents[1] / "run-harness" / name / "placeholders.txt.example").read_text()
+    assert "\nOPENAI_AGENTS_MODEL=google/gemini-4-carbon@preset/ai-studio-priority\n" in example
+
+
 @pytest.mark.parametrize("run_model,judge_model", [
     (ENV["CRUX_MODEL"], "anthropic/claude-opus-5.5"),
     ("anthropic/claude-opus-5.5", ENV["CRUX_MODEL"]),
+    ("anthropic/claude-opus-5.5", "google/gemini-4-carbon@preset/ai-studio-priority"),
 ])
 def test_judge_cache_boundaries_follow_its_model_override(router, drop_in_dir, assemble, run_model, judge_model):
     requests, pending, _ = router
@@ -202,6 +248,10 @@ def test_missing_provider_credentials_fail_before_any_request(router, drop_in_di
     ('[runtime.model_provider.extra_body.provider]',
      '[runtime.model_provider.extra_body]\nreasoning_effort = "high"\n[runtime.model_provider.extra_body.provider]',
      "cannot override"),
+    ('api_key_env = "OPENROUTER_API_KEY"', 'api_key_env = "OPENROUTER_API_KEY"\nmax_output_tokens = 65536',
+     "Extra inputs are not permitted"),
+    ('api_key_env = "OPENROUTER_API_KEY"', 'api_key_env = "OPENROUTER_API_KEY"\nservice_tier = "priority"',
+     "Extra inputs are not permitted"),
 ])
 def test_invalid_provider_settings_are_rejected(router, drop_in_dir, assemble, old, new, error):
     path = drop_in_dir / "scaffold.toml"

@@ -67,7 +67,7 @@ blind = true
 artifacts = { "submission.pdf" = "paper/paper.pdf" }
 tools = ["read_file", "list_files", "read_pdf"]
 max_turns = "unlimited"
-models = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+models = ["google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
 
 [gates.final_review]
 type = "tabpfn_review"
@@ -77,7 +77,7 @@ artifacts = { "submission.pdf" = "paper/paper.pdf" }
 tools = ["read_file", "list_files", "read_pdf"]
 max_turns = "unlimited"
 final = true
-models = ["google/gemini-4-carbon", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
+models = ["google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
 
 [agents.pi]
 persona = "personas/pi.md"

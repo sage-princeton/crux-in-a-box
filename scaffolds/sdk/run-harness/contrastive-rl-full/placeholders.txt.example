@@ -8,6 +8,8 @@ USE_ELASTIC_IP=false
 KEY_NAME=crux-acp
 AGENT_PLATFORM=openai-agents
 MODEL_PROVIDER=openrouter
-OPENAI_AGENTS_MODEL=google/gemini-4-carbon
+# The ai-studio-priority preset pins Google AI Studio, disables fallbacks, and sets
+# max_tokens=65536 and service_tier=priority for both SDK agents and Codex workers.
+OPENAI_AGENTS_MODEL=google/gemini-4-carbon@preset/ai-studio-priority
 OPENAI_AGENTS_REASONING_EFFORT=high
 DROP_IN_PATH=scaffolds/sdk/run-harness/contrastive-rl-full

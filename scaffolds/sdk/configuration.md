@@ -550,6 +550,24 @@ Set `CRUX_MODEL=google/gemini-4-argon` and `CRUX_REASONING_EFFORT=low`, `medium`
 
 Optionally set `max_request_bytes` in `[runtime.model_provider]` to a positive integer for either provider type. Omit it to disable the check. The complete serialized HTTP body is measured before sending; requests at the limit are allowed. This includes UTF-8 text, images, tool schemas/results, encrypted reasoning and `extra_body`, independently of the token context window. Both research pilots set `max_request_bytes = 20000000` for their current Google AI Studio route; this is not a universal provider limit. Proxies can transform the body downstream, so a conservative limit may be needed for the selected route.
 
+The Carbon research pilots and full runs use `google/gemini-4-carbon@preset/ai-studio-priority` for SDK agents and Codex workers. Create that preset in the OpenRouter workspace used by the run key with these provider preferences:
+
+```json
+{"only": ["google-ai-studio"], "allow_fallbacks": false}
+```
+
+Set its parameters to:
+
+```json
+{"max_tokens": 65536, "service_tier": "priority"}
+```
+
+The preset supplies a 65,536-token response budget, including reasoning, and priority processing to both clients. Keep the output budget, service tier and provider route out of the request: explicit request values override preset settings. `max_tokens` is the preset's output-budget field; the Responses API calls the same budget `max_output_tokens`. OpenRouter's response may echo `max_output_tokens: null` when the budget comes from a preset; inspect its upstream debug event to verify `generationConfig.maxOutputTokens`.
+
+Carbon's default Google AI Studio endpoint stops at 32,768 output tokens, and the runtime does not retry an exhausted output budget. The preset raises that limit while keeping the budget bounded for Codex's request timeout. It does not guarantee that every request finishes before the timeout. Provisioning probes and calls using the configured model inherit the preset. The research judge panels also name the preset explicitly for their Carbon seat; the other panel models keep their own routing.
+
+Priority processing has its own prices. Langfuse must match both the configured preset name (Codex usage and compaction) and the response model `google/gemini-4-carbon` (SDK calls) to the intended prices. A missing price definition is metered at $0. See the [OpenRouter endpoint prices](https://openrouter.ai/google/gemini-4-carbon) and [Langfuse model definitions](https://langfuse.com/docs/observability/features/token-and-cost-tracking#adding-custom-model-definitions).
+
 An oversized SDK request fails locally with actual/allowed byte counts and is not retried. A background delegate's failure reaches the PI through its existing result tool, allowing a new, smaller brief. A failure in the PI itself, judge or compactor still propagates; same-agent recovery and automatic compaction/rewrite are not implemented. The check covers SDK agents and probes, but does not cover the separate native Codex client. Limits will move to provider/model configuration maps under [AE-316](https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at).
 
 **GCP billing:** OpenRouter must have the intended Google Vertex BYOK integration configured, with shared-capacity fallback disabled for Argon. The request above pins Vertex and disables provider fallback; it cannot change the account's BYOK settings. Check `is_byok` in the returned usage and the generation's provider before treating a run as GCP-billed. An OpenRouter key alone does not establish that billing path. See [OpenRouter BYOK](https://openrouter.ai/docs/guides/overview/auth/byok).
