@@ -428,7 +428,8 @@ def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_l
     scaffold.runtime.build()
     with telemetry.trace("compaction test"):
         asyncio.run(CONTEXT_STRATEGIES.create("context", {"type": "compaction"})._summarize(
-            [], ctx=scaffold.context, agent=scaffold.runtime.agents["pm"],
+            [{"role": "user", "content": "Completed history"}],
+            ctx=scaffold.context, agent=scaffold.runtime.agents["pm"],
             model_provider=scaffold.runtime.run_config.model_provider,
             instructions="fixed", prepare_input=scaffold.runtime._cache_input))
     telemetry.flush()

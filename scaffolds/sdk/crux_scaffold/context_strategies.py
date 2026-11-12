@@ -7,15 +7,18 @@ import hashlib
 import json
 from abc import ABC
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from agents import Agent, Session, SQLiteSession
+from agents import Agent, ModelSettings, Session, SQLiteSession
 from agents.models.interface import Model, ModelProvider, ModelTracing
 from agents.run_config import ModelInputData
+from openai import BadRequestError
 from pydantic import Field
 
 from crux_scaffold.components import Component, Options, Registry
+from crux_scaffold.errors import ContextLimitExceededError, RequestSizeExceededError
 from crux_scaffold.steering import is_envelope
 from crux_scaffold.tools import RESTARTED
 from crux_scaffold.usage import TokenUsage
@@ -128,11 +131,13 @@ class CompactionOptions(Options):
     :ivar trigger_tokens: Optional earlier estimated-token threshold.
     :ivar keep_recent_items: Soft target for unsummarized recent exchanges.
     :ivar image_tokens: Estimated tokens per image, independent of encoded payload size.
+    :ivar summary_max_tokens: Output cap for summaries, further limited to 10% of the model window.
     """
     context_window_tokens: int = Field(128000, ge=1, strict=True)
     trigger_tokens: int | None = Field(None, ge=1, strict=True)
     keep_recent_items: int = Field(20, ge=1, strict=True)
     image_tokens: int = Field(DEFAULT_IMAGE_TOKENS, ge=1, strict=True)
+    summary_max_tokens: int = Field(8192, ge=1, strict=True)
 
 
 class CompactionCheckpoint(Options):
@@ -315,8 +320,8 @@ class Compaction(ContextStrategy):
             if cut is None:
                 if fits(selected):
                     return selected
-                raise RuntimeError("compaction cannot fit the request below the token threshold; "
-                                   "history and checkpoint are unchanged")
+                raise ContextLimitExceededError("compaction cannot fit the request below the token threshold; "
+                                                "history and checkpoint are unchanged")
             summary = (await self._summarize(
                 prefix + items[covered:cut], ctx=ctx, agent=agent, model_provider=model_provider,
                 instructions=request_context["instructions"], prepare_input=prepare_input,
@@ -396,7 +401,7 @@ class Compaction(ContextStrategy):
         instructions: str | None,
         prepare_input: Callable[[ModelInputData], ModelInputData],
     ) -> str:
-        """Generate and meter one handoff through the calling agent's ordinary model.
+        """Fold complete exchanges into a handoff using independently bounded summary requests.
 
         :param items: Previous handoff and the next completed history prefix.
         :param ctx: Run usage ledger and telemetry.
@@ -406,18 +411,71 @@ class Compaction(ContextStrategy):
         :param prepare_input: Runtime cache formatting callback.
         :returns: Returned plain-text handoff, excluding reasoning content.
         """
+        output_limit = min(self.options.summary_max_tokens, max(1, self.options.context_window_tokens // 10))
+        input_limit = self.options.context_window_tokens * 9 // 10 - output_limit
+        settings = replace(agent.model_settings, max_tokens=output_limit)
+        boundaries = sorted({*_exchange_boundaries(items), len(items)})
+        covered, summary = 0, ""
+
+        def size(data: ModelInputData) -> int:
+            """Include formatted instructions and image allowances in the summary input estimate."""
+            return estimate_tokens([data.instructions, data.input], image_tokens=self.options.image_tokens)
+
+        def request(prefix: list, start: int, cut: int) -> ModelInputData:
+            """Render a candidate with fixed instructions, prior summary and the handoff prompt."""
+            return prepare_input(ModelInputData(input=[*prefix, *items[start:cut],
+                {"role": "user", "content": COMPACTION_PROMPT}], instructions=instructions))
+
+        while covered < len(items):
+            prefix = [CompactionCheckpoint(covered_items=covered, prefix_sha256="", summary=summary).item()] if covered else []
+            candidates = [cut for cut in boundaries if cut > covered]
+
+            low, high = 0, len(candidates)
+            while low < high:
+                middle = (low + high) // 2
+                if size(request(prefix, covered, candidates[middle])) <= input_limit:
+                    low = middle + 1
+                else:
+                    high = middle
+            if low == 0:
+                raise ContextLimitExceededError("compaction summary cannot fit a complete exchange; reduce tool output "
+                                                "or standing instructions, or correct the configured context window")
+            cut = candidates[low - 1]
+            data = request(prefix, covered, cut)
+            try:
+                summary = (await self._summary_call(data, ctx=ctx, agent=agent, model_provider=model_provider,
+                                                    settings=settings)).strip()
+            except (BadRequestError, RequestSizeExceededError) as exc:
+                if isinstance(exc, BadRequestError) and not _context_overflow(exc):
+                    raise
+                input_limit = min(input_limit - 1, size(data) // 2)
+                continue
+            if not summary:
+                raise RuntimeError("compaction returned an empty summary; history is unchanged")
+            covered = cut
+        return summary
+
+    async def _summary_call(self, request: ModelInputData, *, ctx: RunContext, agent: Agent,
+                            model_provider: ModelProvider, settings: ModelSettings) -> str:
+        """Meter one bounded handoff call using the run model and its reasoning settings.
+
+        :param request: Prepared, size-checked summary request.
+        :param ctx: Run context receiving usage and telemetry.
+        :param agent: Agent whose model and reasoning settings are retained.
+        :param model_provider: Resolver for named models.
+        :param settings: Model settings with an explicit summary output cap.
+        :returns: Plain-text handoff, excluding reasoning content.
+        """
         source = f"compaction:{agent.name}"
         model = agent.model
         if not isinstance(model, Model):
             model = model_provider.get_model(model)
-        request = prepare_input(ModelInputData(
-            input=[*items, {"role": "user", "content": COMPACTION_PROMPT}], instructions=instructions))
         with ctx.telemetry.generation(source, ctx.model, {
             "instructions": request.instructions, "input": request.input,
-            "model_settings": agent.model_settings.to_json_dict(), "tools": [],
+            "model_settings": settings.to_json_dict(), "tools": [],
         }) as outcome:
             response = await model.get_response(
-                system_instructions=request.instructions, input=request.input, model_settings=agent.model_settings,
+                system_instructions=request.instructions, input=request.input, model_settings=settings,
                 tools=[], output_schema=None, handoffs=[], tracing=ModelTracing.DISABLED,
                 previous_response_id=None, conversation_id=None, prompt=None,
             )
@@ -433,3 +491,13 @@ class Compaction(ContextStrategy):
                           reasoning_output_tokens=outcome.usage.reasoning_output_tokens)
             return "\n".join(part.text for item in response.output if item.type == "message"
                              for part in item.content if part.type == "output_text")
+
+
+def _context_overflow(error: BadRequestError) -> bool:
+    """Recognize context-limit rejections without treating unrelated HTTP 400s as size errors."""
+    body = error.body if isinstance(error.body, dict) else {}
+    detail = body.get("error", body)
+    code = detail.get("code") if isinstance(detail, dict) else None
+    return code in {"context_length_exceeded", "context_window_exceeded", "input_too_long"} or any(
+        phrase in str(error).lower() for phrase in ("maximum context length", "exceeds the context window",
+                                                  "exceeded the context window"))

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import sys
 from collections.abc import Mapping
@@ -16,6 +17,7 @@ from contextvars import ContextVar
 from dataclasses import replace
 from datetime import datetime
 from functools import partial
+from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 from agents import (
@@ -53,7 +55,7 @@ from crux_scaffold.context_strategies import is_standing_context, since_restart
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
 from crux_scaffold.errors import InvalidDropInError, RequestSizeExceededError, ToolError
-from crux_scaffold.steering import MESSAGE_TOOLS, WITHHELD, SteeringOptions, within_run
+from crux_scaffold.steering import MESSAGE_TOOLS, WITHHELD, SteeringOptions, is_envelope, within_run
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
 from crux_scaffold.usage import UsageLedger
@@ -286,7 +288,7 @@ class OpenAIAgentsRuntime(AgentRuntime):
             try:
                 result = await Runner.run(
                     orchestrator,
-                    prompt,
+                    await self._turn_input(prompt, workflow),
                     context=self.assembly.context,
                     max_turns=count_limit(self.options.max_turns),
                     hooks=self.hooks,
@@ -310,12 +312,41 @@ class OpenAIAgentsRuntime(AgentRuntime):
                     outcome = TurnOutcome(completed=False, final_output=(
                         'Delegate work is outstanding. Read delegate_inbox, answer questions, and collect results '
                         'before finishing. Interrupt work explicitly if it should stop.\n' + json.dumps(outstanding)))
+            self._pending_turn_path().unlink(missing_ok=True)
             return outcome
         except BaseException:
             if self.delegates:
                 await self.delegates.close()
             await self._cancel_coding()
             raise
+
+    def _pending_turn_path(self) -> Path:
+        """Locate the orchestrator's durable input-admission marker outside its workspace."""
+        name = self.assembly.drop_in.config.orchestrator
+        return self.assembly.context.state_dir / f"pending-turn-{hashlib.sha256(name.encode()).hexdigest()}.json"
+
+    async def _turn_input(self, prompt: str, workflow: str) -> str | list:
+        """Resume an interrupted turn without saving its task twice.
+
+        :param prompt: Loop-supplied task, retained unchanged in the SDK session.
+        :param workflow: Phase identity distinguishing pending tasks with identical text.
+        :returns: The new task, or no additional input when that pending task is already durable.
+        """
+        path = self._pending_turn_path()
+        identity = {"workflow": workflow, "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest()}
+        history = await self.session.get_items()
+        if path.exists():
+            pending = json.loads(path.read_text())
+            index = pending["history_items"]
+            if all(pending.get(key) == value for key, value in identity.items()) and 0 <= index < len(history):
+                item = history[index]
+                if item.get("role") == "user" and item.get("content") == prompt:
+                    return []
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(json.dumps({**identity, "history_items": len(history)}))
+        temporary.replace(path)
+        return prompt
 
     def _check_result_names(self, names: set[str]) -> None:
         config = self.assembly.drop_in.config
@@ -544,6 +575,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 annotations.append(f"Steering transport status: {steering.state['status']}")
         history = [item for item in data.model_data.input if not is_standing_context(item)]
         prompt_item = history[-1] if history and history[-1].get("role") == "user" else None
+        if prompt_item is not None and is_envelope(prompt_item):
+            prompt_item = None
         if pinned_mail:
             session = self.assembly.context_strategy.session(session_id, self.assembly.context)
             for index, item in enumerate(await session.get_items()):

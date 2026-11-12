@@ -62,6 +62,20 @@ def test_a_loop_that_does_not_complete_exits_3(drop_in_dir, tmp_path, capsys):
     assert capsys.readouterr().out.startswith("loop iterations_exhausted in phase main")
 
 
+def test_irreducible_context_exits_without_systemd_retry(drop_in_dir, tmp_path, capsys):
+    """Preserve pending state and use an exit code already excluded from systemd restarts."""
+    with (drop_in_dir / 'scaffold.toml').open('a') as config:
+        config.write('\n[context]\ntype = "compaction"\ntrigger_tokens = 1500\n')
+    (drop_in_dir / 'PROMPT.md').write_text('oversized task ' * 2000)
+    model = ScriptedModel()
+    assert run_cli(drop_in_dir, tmp_path, {'pm': model}) == 2
+    assert 'context limit:' in capsys.readouterr().err
+    assert not model.inputs
+    state = json.loads((tmp_path / 'state/state.json').read_text())
+    assert state['iteration'] == 0
+    assert list((tmp_path / 'state').glob('pending-turn-*.json'))
+
+
 def test_sigterm_stops_the_run_cleanly_so_a_restart_resumes_it(drop_in_dir, tmp_path, capsys):
     assert run_cli(drop_in_dir, tmp_path, {"pm": StoppedModel()}) == 128 + signal.SIGTERM
     assert "stopped by SIGTERM" in capsys.readouterr().err

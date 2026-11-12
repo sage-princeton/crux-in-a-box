@@ -27,9 +27,17 @@ Tracing requires the Langfuse settings in the configuration reference.
 
 Set `runtime.model_provider.max_request_bytes` to reject oversized SDK requests
 before sending them. The PI receives delegate failures through the existing
-result tools; same-agent recovery is not implemented. See the
+result tools. Compaction retries smaller complete exchanges; ordinary PI/judge
+requests are not automatically rewritten. See the
 [provider configuration](configuration.md#model-providers-and-gcp-hosted-argon)
 for scope and provider-route limits.
+
+Interrupted runtime tasks resume from their saved session without appending the
+same continuation again. Keep `pending-turn-*.json`, compaction checkpoints,
+`state.json` and `sessions.sqlite` together. An irreducible compaction limit exits
+2 and leaves the production service stopped for operator repair. Existing
+duplicate history requires a separate, backed-up cleanup while the service is
+stopped.
 
 ## Development
 

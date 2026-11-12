@@ -17,6 +17,145 @@ from drop_ins import edit
 from scripted import ScriptedModel, call, say
 
 
+def test_summary_requests_are_bounded_and_preserve_complete_exchanges(tmp_path):
+    """Compact a history larger than the model window through bounded, metered chunks."""
+    strategy = local_strategy(context_window_tokens=4000, trigger_tokens=1800, keep_recent_items=1)
+    ctx = compaction_context(tmp_path)
+    history = [item for i in range(8) for item in (
+        user(f'task {i}'), {'type': 'function_call', 'call_id': str(i), 'name': 'read_file', 'arguments': '{}'},
+        {'type': 'function_call_output', 'call_id': str(i), 'output': 'evidence ' * 400})]
+    history.append(user('Continue after review'))
+
+    class BoundedModel(ScriptedModel):
+        async def get_response(self, *args, **kwargs):
+            cap = kwargs['model_settings'].max_tokens
+            assert cap and cap <= 400
+            assert estimate_tokens([kwargs['system_instructions'], kwargs['input']]) + cap <= 3600
+            assert kwargs['tools'] == []
+            return await super().get_response(*args, **kwargs)
+
+    model = BoundedModel(*[say('Earlier evidence retained.') for _ in range(8)])
+    selected = asyncio.run(strategy.select_for_call(history, ctx=ctx, session_id='pm',
+        request_context={'instructions': 'Fixed rules', 'research': '', 'resources': ''},
+        agent=Agent(name='pm', model=model), model_provider=RunConfig().model_provider,
+        prepare_input=lambda data: data, research_context=lambda: ''))
+    assert 1 < len(model.inputs) <= 8
+    pairs = [(x['type'], x['call_id']) for batch in model.inputs for x in batch if 'call_id' in x]
+    assert pairs == [(x['type'], x['call_id']) for x in history if 'call_id' in x]
+    assert selected[-1] == history[-1]
+    assert ctx.usage.by_source['compaction:pm'].requests == len(model.inputs)
+
+
+@pytest.mark.parametrize('code', ['context_length_exceeded', 'invalid_api_key'])
+def test_summary_provider_overflow_splits_but_other_bad_requests_propagate(tmp_path, code):
+    """Recover from tokenizer underestimation without retrying unrelated provider errors."""
+    import httpx
+    from openai import BadRequestError
+
+    class ProviderModel(ScriptedModel):
+        def __init__(self, *turns):
+            super().__init__(*turns)
+            self.attempts = []
+
+        async def get_response(self, *args, **kwargs):
+            size = estimate_tokens(kwargs['input'])
+            self.attempts.append(size)
+            if len(self.attempts) == 1:
+                raise BadRequestError('provider rejection', body={'code': code},
+                    response=httpx.Response(400, request=httpx.Request('POST', 'https://provider.test')))
+            return await super().get_response(*args, **kwargs)
+
+    strategy = local_strategy(context_window_tokens=20000, trigger_tokens=1500, keep_recent_items=1)
+    ctx = compaction_context(tmp_path)
+    history = [item for i in range(6) for item in (user(f'old {i} ' * 200),
+               {'role': 'assistant', 'content': 'answer'})] + [user('Current task')]
+    model = ProviderModel(*[say('summary') for _ in range(6)])
+    async def run():
+        return await strategy.select_for_call(history, ctx=ctx, session_id='pm',
+            request_context={'instructions': 'fixed', 'research': '', 'resources': ''},
+            agent=Agent(name='pm', model=model), model_provider=RunConfig().model_provider,
+            prepare_input=lambda data: data, research_context=lambda: '')
+    if code == 'invalid_api_key':
+        with pytest.raises(BadRequestError):
+            asyncio.run(run())
+        assert len(model.attempts) == 1
+        assert not list(ctx.state_dir.glob('compaction-*.json'))
+    else:
+        assert asyncio.run(run())[-1] == history[-1]
+        assert model.attempts[1] < model.attempts[0]
+        assert ctx.usage.by_source['compaction:pm'].requests == len(model.inputs)
+
+
+def test_single_oversized_summary_exchange_fails_before_provider_call(tmp_path):
+    """Keep history intact when no complete exchange fits the summary budget."""
+    strategy = local_strategy(context_window_tokens=4000, trigger_tokens=1500, keep_recent_items=1)
+    ctx = compaction_context(tmp_path)
+    model = ScriptedModel(say('must not be called'))
+    history = [user('x' * 30000), {'role': 'assistant', 'content': 'answer'}, user('Now')]
+    with pytest.raises(RuntimeError, match='summary.*complete exchange'):
+        asyncio.run(strategy.select_for_call(history, ctx=ctx, session_id='pm',
+            request_context={'instructions': '', 'research': '', 'resources': ''},
+            agent=Agent(name='pm', model=model), model_provider=RunConfig().model_provider,
+            prepare_input=lambda data: data, research_context=lambda: ''))
+    assert not model.inputs
+    assert not list(ctx.state_dir.glob('compaction-*.json'))
+
+
+def test_repeated_selection_failures_do_not_append_continuations(drop_in_dir, assemble):
+    """Resume the same pending turn across process reconstructions without growing history."""
+    async def run():
+        for _ in range(5):
+            scaffold = assemble(drop_in_dir, {'pm': ScriptedModel()})
+            scaffold.strategy.select_for_call = AsyncMock(side_effect=RuntimeError('compaction failed'))
+            with pytest.raises(RuntimeError, match='compaction failed'):
+                await turns(scaffold, 'Research continuation with review feedback')
+            assert await scaffold.runtime.session.get_items() == [user('Research continuation with review feedback')]
+        recovered = assemble(drop_in_dir, {'pm': ScriptedModel(say('Recovered'))})
+        await turns(recovered, 'Research continuation with review feedback')
+        stored = await recovered.runtime.session.get_items()
+        assert sum(x.get('role') == 'user' for x in stored) == 1
+        assert 'Recovered' in str(stored)
+    asyncio.run(run())
+
+
+def test_pending_turn_resume_preserves_tool_progress_and_repeated_completed_prompts(drop_in_dir, assemble):
+    """Retry after tools with no new prompt, while allowing identical prompts in later turns."""
+    class InterruptedModel(ScriptedModel):
+        async def get_response(self, *args, **kwargs):
+            if not self.turns:
+                raise RuntimeError('interrupted after tool')
+            return await super().get_response(*args, **kwargs)
+
+    async def run():
+        first = assemble(drop_in_dir, {'pm': InterruptedModel(call('read_file', {'path': 'AGENTS.md'}, 'read'))})
+        with pytest.raises(RuntimeError, match='interrupted after tool'):
+            await turns(first, 'Continue')
+        before = await first.runtime.session.get_items()
+        model = ScriptedModel(say('Recovered'), say('New iteration'))
+        recovered = assemble(drop_in_dir, {'pm': model})
+        await turns(recovered, 'Continue', 'Continue')
+        stored = await recovered.runtime.session.get_items()
+        assert stored[:len(before)] == before
+        assert sum(x.get('role') == 'user' and x.get('content') == 'Continue' for x in stored) == 2
+        assert any(x.get('type') == 'function_call_output' for x in model.inputs[0])
+    asyncio.run(run())
+
+
+def test_pending_turn_crash_before_input_write_can_still_admit_prompt(drop_in_dir, assemble):
+    """A pending-turn marker without its session write must not lose the task on restart."""
+    async def run():
+        first = assemble(drop_in_dir, {'pm': ScriptedModel()})
+        async with first.runtime as runtime:
+            runtime.session.add_items = AsyncMock(side_effect=RuntimeError('storage interrupted'))
+            with pytest.raises(RuntimeError, match='storage interrupted'):
+                await runtime.run('Continue', workflow='main')
+        recovered = assemble(drop_in_dir, {'pm': ScriptedModel(say('Recovered'))})
+        await turns(recovered, 'Continue')
+        stored = await recovered.runtime.session.get_items()
+        assert sum(x.get('role') == 'user' for x in stored) == 1
+    asyncio.run(run())
+
+
 async def turns(scaffold, *prompts):
     async with scaffold.runtime as runtime:
         for prompt in prompts:
