@@ -80,3 +80,26 @@ journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 m
 ```
 
 You should see the agent report its initial milestone in the Slack channel within about ~20 minutes. You can also check OpenRouter for inference spending and Langfuse for streaming traces before then.
+
+## Steering
+
+Steering messages can be sent to the principal investigator agent through the configured Slack channel. The agent will not react or respond to the steering messages, so use Langfuse to assess whether the agent acknowledged the message.
+
+## Pausing and restarting
+
+If you find an issue in the run that cannot be overcome with steering, consider pausing the run, making a fix and resuming later.
+
+> [!WARNING]
+> Paused downtime counts toward the sevend day time limit.
+> Pausing the harness will shut down any active RunPods and interrupt delegates (RAs, Codex workers). The PI is responsible for resuming both after the run is restarted.
+
+To pause the run, run this from the run workspace:
+```bash
+sudo systemctl stop crux-sdk-run
+```
+
+To resume the run:
+```bash
+sudo systemctl start crux-sdk-run
+journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 minutes
+```
