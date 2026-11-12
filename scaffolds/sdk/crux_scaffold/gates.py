@@ -19,8 +19,8 @@ from crux_scaffold.tools import Tool, validate_review_tools
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 if TYPE_CHECKING:
-    from crux_scaffold.agent_runtimes.base import AgentRuntime
     from crux_scaffold.drop_in import DropInDirectory
+    from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
 
 MAX_FEEDBACK_CHARS = 4_000
 
@@ -41,7 +41,7 @@ class GateContext:
 
     run: RunContext
     drop_in: DropInDirectory
-    runtime: AgentRuntime
+    runtime: OpenAIAgentsRuntime
     phase: str
     iteration: int
     last_output: str
@@ -177,7 +177,7 @@ class LlmJudgeGate(Gate):
         return "\n\n".join(parts)
 
 
-async def judge_panel(runtime: AgentRuntime, name: str, rubric: str, evidence: str, models: list[str],
+async def judge_panel(runtime: OpenAIAgentsRuntime, name: str, rubric: str, evidence: str, models: list[str],
                       **options) -> tuple[dict, list[dict]]:
     """Ask each model for an independent verdict on the same evidence; the panel passes when a majority passes.
 

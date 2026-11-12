@@ -5,7 +5,6 @@ import signal
 import pytest
 
 from crux_scaffold import cli
-from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.cli import main
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity
 
@@ -27,6 +26,30 @@ def test_check_prints_the_assembly_without_calling_a_model(drop_in_dir, tmp_path
     assert "engineer: coding agent scripted" in out
     assert "phase main: gates [] max_iterations 1" in out
     assert models["pm"].inputs == []
+
+
+def test_runtime_settings_use_the_openai_sdk_without_a_type_selector(drop_in_dir, tmp_path, capsys):
+    with (drop_in_dir / "scaffold.toml").open("a") as config:
+        config.write("\n[runtime]\nmax_turns = 17\n")
+    pm = ScriptedModel(say("All done."))
+    assert run_cli(drop_in_dir, tmp_path, {"pm": pm}) == 0
+    assert "All done." in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("command", ["check", "run", "probe"])
+@pytest.mark.parametrize("setting", ['type = "other-sdk"', 'max_turns = 0', 'max_truns = 17'])
+def test_runtime_settings_fail_as_config_errors_before_model_calls(
+    drop_in_dir, tmp_path, capsys, command, setting,
+):
+    with (drop_in_dir / "scaffold.toml").open("a") as config:
+        config.write(f"\n[runtime]\n{setting}\n")
+    pm = ScriptedModel(say("should not run"))
+    args = [command, "--drop-in", str(drop_in_dir)]
+    if command != "probe":
+        args += ["--state-dir", str(tmp_path / "state")]
+    assert main(args, env={"CRUX_MODEL": "unscripted"}, runtime_overrides={"models": {"pm": pm}}) == 2
+    assert "runtime" in capsys.readouterr().err
+    assert pm.inputs == []
 
 
 def test_unresolved_placeholders_stop_the_run_before_any_model_call(drop_in_dir, tmp_path, capsys):
@@ -106,15 +129,13 @@ def probe_telemetry(monkeypatch):
 
 
 def test_probe_passes_only_when_every_probed_agent_answers(monkeypatch, probe_telemetry, capsys):
-    runtime = RUNTIMES.get("openai-agents")
-
-    async def answer(env, prompt, telemetry):
+    async def answer(env, prompt, telemetry, *, model_provider):
         return cli.PROBE_MARKER
 
     async def coding_answer(type_name, env, telemetry, request):
         return "something else"
 
-    monkeypatch.setattr(runtime, "probe", answer)
+    monkeypatch.setattr(cli, "probe_model", answer)
     assert main(["probe"], env={}, telemetry=probe_telemetry) == 0
     assert "SCAFFOLD-PROBE ok: openai-agents; traced to Langfuse environment=local" in capsys.readouterr().out
     monkeypatch.setattr(cli, "probe_coding_agent", coding_answer)
@@ -122,25 +143,25 @@ def test_probe_passes_only_when_every_probed_agent_answers(monkeypatch, probe_te
     assert "codex did not answer SCAFFOLD-PROBE" in capsys.readouterr().err
 
 
-def test_probe_uses_the_drop_ins_runtime_options(drop_in_dir, monkeypatch, probe_telemetry):
+def test_probe_receives_provider_settings_without_runtime_turn_limits(drop_in_dir, monkeypatch, probe_telemetry):
     with (drop_in_dir / "scaffold.toml").open("a") as config:
-        config.write('\n[runtime]\ntype = "openai-agents"\nmax_turns = 17\n')
+        config.write('\n[runtime]\nmax_turns = 17\n')
     seen = []
 
-    async def answer(env, prompt, telemetry, *, options):
-        seen.append(options.max_turns)
+    async def answer(env, prompt, telemetry, *, model_provider):
+        seen.append(model_provider.type)
+        assert not hasattr(model_provider, "max_turns")
         return cli.PROBE_MARKER
 
-    monkeypatch.setattr(RUNTIMES.get("openai-agents"), "probe", answer)
+    monkeypatch.setattr(cli, "probe_model", answer)
     assert main(["probe", "--drop-in", str(drop_in_dir)], env={}, telemetry=probe_telemetry) == 0
-    assert seen == [17]
+    assert seen == ["openai"]
 
 
 def test_provisioning_probe_reads_provider_before_operator_preparation(drop_in_dir, monkeypatch, probe_telemetry):
     with (drop_in_dir / "scaffold.toml").open("a") as config:
         config.write('''
 [runtime]
-type = "openai-agents"
 [runtime.model_provider]
 type = "openai-compatible"
 api = "responses"
@@ -155,12 +176,12 @@ after_ts = "{{SLACK_AFTER_TS}}"
     edit(drop_in_dir, "PROMPT.md", "channel C123", "channel {{SLACK_CHANNEL_ID}}")
     seen = []
 
-    async def answer(env, prompt, telemetry, *, options):
-        seen.append(options.model_provider.api_key_env)
-        assert options.steering is None
+    async def answer(env, prompt, telemetry, *, model_provider):
+        seen.append(model_provider.api_key_env)
+        assert not hasattr(model_provider, "steering")
         return cli.PROBE_MARKER
 
-    monkeypatch.setattr(RUNTIMES.get("openai-agents"), "probe", answer)
+    monkeypatch.setattr(cli, "probe_model", answer)
     assert main(["probe", "--drop-in", str(drop_in_dir)], env={}, telemetry=probe_telemetry) == 0
     assert seen == ["OPENROUTER_API_KEY"]
 
@@ -254,13 +275,13 @@ def test_probe_also_checks_every_judge_panel_model(drop_in_dir, monkeypatch, pro
         config.write('\n[gates.panel]\ntype = "llm_judge"\nrubric = "rubric.md"\nmodels = ["vendor/a", "vendor/b"]\n')
     asked = []
 
-    async def answer(env, prompt, telemetry, *, options):
+    async def answer(env, prompt, telemetry, *, model_provider):
         asked.append(env.get("CRUX_MODEL"))
         if env.get("CRUX_MODEL") == "vendor/b":
             raise RuntimeError("No endpoints found for vendor/b")
         return cli.PROBE_MARKER
 
-    monkeypatch.setattr(RUNTIMES.get("openai-agents"), "probe", answer)
+    monkeypatch.setattr(cli, "probe_model", answer)
     assert main(["probe", "--drop-in", str(drop_in_dir)], env={"CRUX_MODEL": "run/model"},
                 telemetry=probe_telemetry) == cli.EXIT_PROBE_FAILED
     assert asked == ["run/model", "vendor/a", "vendor/b"]

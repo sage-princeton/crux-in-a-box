@@ -41,15 +41,15 @@ def test_a_drop_in_can_append_guidance_and_disable_generation(drop_in_dir, assem
     assert instructions.startswith("# Scaffold setup") is enabled
     assert (instructions.index("Ask the operator before publishing.")
             < instructions.index("You are the product manager."))
-    assert scaffold.assembly.instructions("reviewer").startswith("You are the reviewer.")
-    assert ("# Scaffold setup" in scaffold.assembly.instructions("reviewer")) is enabled
+    assert scaffold._instructions("reviewer").startswith("You are the reviewer.")
+    assert ("# Scaffold setup" in scaffold._instructions("reviewer")) is enabled
 
 
 def test_disabling_the_preamble_preserves_the_original_instructions(drop_in_dir, assemble):
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"', 'orchestrator = "pm"\n[preamble]\nenabled = false')
     scaffold = assemble(drop_in_dir)
-    assert scaffold.runtime.assembly.instructions("pm") == scaffold.drop_in.instructions("pm")
-    assert scaffold.runtime.assembly.instructions("reviewer") == "You are the reviewer."
+    assert scaffold._instructions("pm") == scaffold.drop_in.instructions("pm")
+    assert scaffold._instructions("reviewer") == "You are the reviewer."
 
 
 @pytest.mark.parametrize("setting", ['enabeld = true', 'enabled = "sometimes"', 'append = ["file.md"]'])
@@ -127,7 +127,7 @@ command = "private-server"
 args = ["private-argument"]
 env = { TOKEN = "private-value" }
 ''')
-    instructions = assemble(drop_in_dir).runtime.assembly.instructions("pm")
+    instructions = assemble(drop_in_dir)._instructions("pm")
     assert "`slack` (stdio MCP server)" in instructions
     assert "MCP tools" in instructions
     assert "123s total" in instructions
@@ -149,7 +149,7 @@ def test_custom_loops_supply_their_own_summary(drop_in_dir, assemble):
 
     edit(drop_in_dir, "scaffold.toml", 'type = "phased"\n\n[[loop.phases]]\nname = "main"\n'
          'prompt = "PROMPT.md"\ncontinue_prompt = "prompts/continue.md"', 'type = "described"')
-    instructions = assemble(drop_in_dir).assembly.instructions("pm")
+    instructions = assemble(drop_in_dir)._instructions("pm")
     assert "Loop: `described`.\nWaits for operator approval." in instructions
     assert "Phases run in order" not in instructions
     assert "Current phase:" not in instructions
@@ -157,7 +157,7 @@ def test_custom_loops_supply_their_own_summary(drop_in_dir, assemble):
 
 def test_the_demo_preamble_matches_the_snapshot(tmp_path, assemble):
     scaffold = assemble(resolved_copy(tmp_path))
-    instructions = scaffold.runtime.assembly.instructions("product_manager")
+    instructions = scaffold._instructions("product_manager")
     preamble = instructions.split("\n\n---\n\n", 1)[0]
     assert preamble + "\n" == SNAPSHOT.read_text()
 
@@ -168,7 +168,6 @@ def test_optional_limits_and_background_work_match_configuration(drop_in_dir, as
         with (drop_in_dir / "scaffold.toml").open("a") as stream:
             stream.write("""
 [runtime]
-type = "openai-agents"
 background_coding = true
 [delegation]
 max_concurrent = 2
@@ -187,7 +186,7 @@ type = "runpod"
     scaffold = assemble(drop_in_dir, env={"COST_TRACKER_URL": "https://private.invalid/secret-path",
                         "COST_TRACKER_TOKEN": "private-credential", "RUN_SLUG": "test-run",
                         "RUNPOD_API_KEY": "private-runpod-credential"})
-    text = scaffold.assembly.instructions("pm")
+    text = scaffold._instructions("pm")
     assert "max iterations 1" in text
     if configured:
         for expected in ("Token limit: 0.", "Model spend limit: 4.5 USD", "Wall-clock limit: 123s",
@@ -204,10 +203,10 @@ type = "runpod"
         assert "engineer_result" not in text
     for hidden in ("None", "private.invalid", "private-credential", "private-runpod-credential"):
         assert hidden not in text
-    rest = scaffold.assembly.tools["rest"]
+    rest = scaffold.tools["rest"]
     rest.used_seconds = 89
-    assert "1s remaining" in scaffold.assembly.research_context("pm")
-    assert scaffold.assembly.instructions("pm") == text
+    assert "1s remaining" in scaffold._research_context("pm")
+    assert scaffold._instructions("pm") == text
 
 
 @pytest.mark.parametrize("strategy,expected", [("persistent", "all history"), ("trim_recent", "max_items 17"),
@@ -218,7 +217,7 @@ def test_context_guidance_follows_strategy_and_declared_sources(drop_in_dir, ass
          f'orchestrator = "pm"\n[context]\ntype = "{strategy}"\n{options[strategy]}')
     edit(drop_in_dir, "scaffold.toml", 'context = ["workspace/AGENTS.md"]',
          'context = ["workspace/AGENTS.md"]\nworkspace_context = ["REQUEST.md"]\ncontext_max_chars = 200')
-    text = assemble(drop_in_dir).assembly.instructions("pm")
+    text = assemble(drop_in_dir)._instructions("pm")
     for fragment in (expected, "workspace/AGENTS.md", "REQUEST.md", "200 characters", "stable instructions"):
         assert fragment in text
     assert "outside conversation selection" not in text
@@ -229,18 +228,18 @@ def test_steering_guidance_moves_into_setup_even_without_model_mcp_access(drop_i
 
     env = configured(drop_in_dir, tmp_path)
     scaffold = assemble(drop_in_dir, env=env)
-    text = scaffold.assembly.instructions("pm")
+    text = scaffold._instructions("pm")
     for expected in ("# Operator steering", "operator_steering", "precedence", "C123", "U_OP", "2s",
                      "Rest wakes", "escalate", "independent work"):
         assert expected in text
     assert text.count("# Operator steering") == 1
     assert "Operator steering" not in scaffold.drop_in.instructions("pm")
     assert "automatically poll or inject" not in text
-    assert "Operator steering" not in scaffold.assembly.instructions("reviewer")
+    assert "Operator steering" not in scaffold._instructions("reviewer")
     edit(drop_in_dir, "scaffold.toml", 'orchestrator = "pm"',
          'orchestrator = "pm"\n[preamble]\nenabled = false')
     scaffold = assemble(drop_in_dir, env=env)
-    assert "Operator steering" not in scaffold.assembly.instructions("pm")
+    assert "Operator steering" not in scaffold._instructions("pm")
 
 
 @pytest.mark.parametrize("blind", [False, True])
@@ -254,7 +253,7 @@ blind = {str(blind).lower()}
 """ + ('artifacts = { "paper.md" = "SUBMISSION.md" }\n' if blind else 'inspect = ["SUBMISSION.md"]\n'))
     edit(drop_in_dir, "scaffold.toml", 'continue_prompt = "prompts/continue.md"',
          'continue_prompt = "prompts/continue.md"\ngates = ["review"]')
-    text = assemble(drop_in_dir).assembly.instructions("pm")
+    text = assemble(drop_in_dir)._instructions("pm")
     assert "isolated reviewer" in text
     assert "blind review" in text if blind else "non-blind review" in text
     assert "SUBMISSION.md" in text
@@ -279,5 +278,5 @@ def test_live_tool_allowance_updates_on_every_model_call(drop_in_dir, assemble):
 
 def test_orchestrator_turn_limit_comes_from_runtime_not_delegate_defaults(drop_in_dir, assemble):
     with (drop_in_dir / "scaffold.toml").open("a") as stream:
-        stream.write('\n[runtime]\ntype = "openai-agents"\nmax_turns = 12\n')
-    assert "up to 12 model turns" in assemble(drop_in_dir).assembly.instructions("pm")
+        stream.write('\n[runtime]\nmax_turns = 12\n')
+    assert "up to 12 model turns" in assemble(drop_in_dir)._instructions("pm")

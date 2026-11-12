@@ -11,11 +11,11 @@ from scripted import ScriptedModel, call, say
 def interactive(root):
     edit(root, 'scaffold.toml', 'delegates = ["engineer", "reviewer"]', 'delegates = ["reviewer"]')
     with (root / 'scaffold.toml').open('a') as config:
-        config.write('\n[runtime]\ntype = "openai-agents"\ninteractive_delegates = true\n')
+        config.write('\n[runtime]\ninteractive_delegates = true\n')
 
 
 def tool(runtime, agent, name):
-    return next(t for t in runtime.agents[agent].tools if t.name == name)
+    return next(t for t in runtime._builder.agents[agent].tools if t.name == name)
 
 
 async def invoke(runtime, name, **args):
@@ -35,7 +35,7 @@ def test_assistant_questions_progress_steering_and_same_session_resume(drop_in_d
             task_id = started['id']
             await runtime.delegates.tasks[task_id]
             assert not any(t.name in {'send_message', 'interrupt_delegate', 'request_progress'}
-                           for t in runtime.agents['reviewer'].tools)
+                           for t in runtime._builder.agents['reviewer'].tools)
             inbox = await invoke(runtime, 'delegate_inbox', wait_seconds=0)
             question = inbox['tasks'][0]['questions'][0]
             assert question['text'] == 'Which dataset?'
@@ -228,7 +228,7 @@ def test_pi_handles_another_delegate_event_before_slow_worker_finishes(drop_in_d
 
             scaffold.coding_agents['engineer'].execute = slow
             reviewer.get_response, pm.get_response = review, pi
-            names = {t.name for t in runtime.agents['pm'].tools}
+            names = {t.name for t in runtime._builder.agents['pm'].tools}
             assert 'delegate_inbox' in names
             assert not {'engineer_result', 'reviewer_result'} & names
             outcome = await asyncio.wait_for(runtime.run('Coordinate', workflow='test'), 3)

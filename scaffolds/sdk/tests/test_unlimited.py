@@ -2,17 +2,17 @@ import asyncio
 
 import pytest
 
-from crux_scaffold.agent_runtimes.base import Verdict
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsOptions
 from crux_scaffold.config import AgentConfig, PhaseConfig
 from crux_scaffold.gates import JudgeOptions
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import Verdict
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 
 from drop_ins import edit
 from scripted import ScriptedModel, call, say, tool_outputs
 
 
 @pytest.mark.parametrize("options,required,field", [
-    (OpenAIAgentsOptions, {}, "max_turns"),
+    (RuntimeConfig, {}, "max_turns"),
     (AgentConfig, {"persona": "pi.md"}, "max_turns"),
     (JudgeOptions, {"rubric": "review.md"}, "max_turns"),
     (PhaseConfig, {"name": "work", "prompt": "p.md", "continue_prompt": "c.md"}, "max_iterations"),
@@ -30,7 +30,6 @@ def test_unlimited_orchestrator_and_phases_run_past_defaults(drop_in_dir, assemb
     with (drop_in_dir / "scaffold.toml").open("a") as stream:
         stream.write('''
 [runtime]
-type = "openai-agents"
 max_turns = "unlimited"
 [gates.ready]
 type = "command"

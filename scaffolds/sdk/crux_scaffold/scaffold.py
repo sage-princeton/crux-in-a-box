@@ -10,15 +10,21 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-import crux_scaffold.agent_runtimes.openai_agents_sdk
 import crux_scaffold.external_resources  # noqa: F401  registers compute resource providers
-from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, CommandGate, LlmJudgeGate
 from crux_scaffold.loop import LOOPS, LoopOutcome, PhasedLoop, StateFile
+from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
+from crux_scaffold.openai_agents_sdk.agent_tools import AgentTools
+from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
+from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
+from crux_scaffold.openai_agents_sdk.sdk_resources import SdkResources
 from crux_scaffold.resources import RESOURCE_PROVIDERS, ResourceMonitor
 from crux_scaffold.steering import Steering
 from crux_scaffold.telemetry import Telemetry
@@ -44,29 +50,48 @@ class Scaffold:
             raise InvalidDropInError("budget.model_resource must name a declared resource when max_cost_usd is set")
         self.context.resources = ResourceMonitor(providers) if providers else None
         self.strategy = CONTEXT_STRATEGIES.create("context", config.context)
-        self.loop = LOOPS.create("loop", config.loop, gates={name: GATES.create(name, table)
-                                                             for name, table in config.gates.items()})
+        self.loop = LOOPS.create(
+            "loop", config.loop, gates={name: GATES.create(name, table) for name, table in config.gates.items()}
+        )
         self.coding_agents = self._coding_agents()
-        tools = self._tools()
+        self.tools = self._tools()
         for gate in self.loop.gates.values():
-            gate.validate_tools(tools)
+            gate.validate_tools(self.tools)
         others = ({tool for name, agent in config.agents.items() if name != config.orchestrator for tool in agent.tools}
                   | {tool for gate in self.loop.gates.values() for tool in gate.tools})
-        if any(tools[name].type_name == "restart_context" for name in others):
+        if any(self.tools[name].type_name == "restart_context" for name in others):
             raise InvalidDropInError("restart_context is for the orchestrator only: it clears the orchestrator's "
                                      "own conversation")
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
-        self.assembly = Assembly(drop_in, self.context, tools, self.coding_agents, self.strategy, self._instructions,
-                                 self._research_context)
-        self.runtime = RUNTIMES.create("runtime", config.runtime, assembly=self.assembly, **(runtime_overrides or {}))
-        steering = getattr(self.runtime.options, "steering", None)
+        runtime_config = RuntimeConfig.from_config(config.runtime)
+        self.runtime = self._runtime(runtime_config, runtime_overrides)
+        steering = runtime_config.steering
         if steering:
             if steering.server not in config.mcp_servers:
                 raise InvalidDropInError(f"steering uses undefined MCP server '{steering.server}'")
             self.context.steering = Steering(steering, state_dir, None, telemetry, recipient=config.orchestrator)
-        elif any(tool.type_name == "escalate" for tool in self.assembly.tools.values()):
+        elif any(tool.type_name == "escalate" for tool in self.tools.values()):
             raise InvalidDropInError("escalate requires runtime.steering")
         self._compiled_instructions = {name: self._compose_instructions(name) for name in config.agents}
+
+    def _runtime(self, config: RuntimeConfig, overrides: Mapping[str, Any] | None) -> OpenAIAgentsRuntime:
+        delegation = DelegationLimiter(self.drop_in.config.delegation.max_concurrent)
+        coding_tasks = CodingTasks(
+            self.context, delegation, starts_in_background=config.background_coding,
+            wait_seconds=None if config.coding_result_wait_seconds == "unlimited" else config.coding_result_wait_seconds)
+        tools = AgentTools(self.tools, self.coding_agents, coding_tasks, delegation)
+        builder = self._agent_builder(config, tools, overrides)
+        return OpenAIAgentsRuntime(builder, self.strategy, coding_tasks, config.max_turns,
+                                   delegation=delegation, research_context=self._research_context,
+                                   interactive_delegates=config.interactive_delegates,
+                                   coding_result_wait_seconds=config.coding_result_wait_seconds)
+
+    def _agent_builder(
+        self, config: RuntimeConfig, tools: AgentTools, overrides: Mapping[str, Any] | None
+    ) -> AgentBuilder:
+        connection = ModelConnection(config.model_provider, self.context.env, **(overrides or {}))
+        resources = SdkResources(self.drop_in, self.context, connection)
+        return AgentBuilder(resources, tools, self._instructions)
 
     def _tools(self) -> dict[str, Tool]:
         config = self.drop_in.config
@@ -95,7 +120,7 @@ class Scaffold:
                      f"Available tools: {', '.join(spec.tools) or 'none'}. "
                      f"MCP servers: {', '.join(spec.mcp_servers) or 'none'}.\n"
                      + "\n".join(self._delegate_instructions(name) + self._context_instructions(name)))
-            if getattr(self.runtime.options, 'interactive_delegates', False):
+            if getattr(self.runtime, 'interactive_delegates', False):
                 setup = setup.replace('Each invocation starts fresh', 'Each new brief starts fresh')
                 # TODO(AE-327): Generalize ask_pi and its guidance for non-PI orchestrators.
                 setup += ("\nUse ask_pi(message) for clarifying questions and report_progress(message) for meaningful "
@@ -111,18 +136,18 @@ class Scaffold:
         config = self.drop_in.config
         spec = config.agents[config.orchestrator]
         lines = ["# Scaffold setup", "",
-                 f"You are `{config.orchestrator}`, the orchestrator in the `{self.runtime.type_name}` agent runtime.",
+                 f"You are `{config.orchestrator}`, the orchestrator using the OpenAI Agents SDK.",
                  ("The scaffold sends you one prompt per loop iteration. "
                   "Your persona follows this generated setup."),
                  "", "## Loop and gates", "", *self._loop_instructions(),
                  "", "## Delegates", "", *self._delegate_instructions(),
                  "", "## Tools and MCP servers", ""]
-        if turns := getattr(self.runtime.options, "max_turns", None):
-            lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
-                         else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
-        lines += [f"- `{name}`: {self.assembly.tools[name].description}" for name in spec.tools]
+        turns = self.runtime.max_turns
+        lines.append("The runtime has no model-turn limit per orchestrator iteration." if turns == "unlimited"
+                     else f"The runtime allows up to {turns} model turns per orchestrator iteration.")
+        lines += [f"- `{name}`: {self.tools[name].description}" for name in spec.tools]
         for name in spec.tools:
-            tool = self.assembly.tools[name]
+            tool = self.tools[name]
             if isinstance(tool, RunShell):
                 lines.append(f"`{name}` command timeout {tool.options.timeout_seconds:g}s; each call starts in "
                              "the workspace root and returns its exit code and combined output.")
@@ -169,13 +194,13 @@ class Scaffold:
                    "The root orchestrator uses no slot. Native subagents inside coding harnesses consume no "
                    "additional scaffold slots or depth.")]
         coding = [name for name in names if name in self.coding_agents]
-        if getattr(self.runtime.options, 'interactive_delegates', False):
+        if self.runtime.interactive_delegates:
             lines += [
                 ("All delegates start in the background and keep a durable conversation per task ID. "
                 "Use `delegate_inbox(wait_seconds=0)` to inspect all tasks, messages and collect every ready result. "
                 "When waiting, make one `delegate_inbox(wait_seconds=...)` call: any new delegate message, "
                 "completion, failure or interruption releases it. Other delegates keep running. "
-                f"Each requested wait is capped by coding_result_wait_seconds={self.runtime.options.coding_result_wait_seconds}. "
+                f"Each requested wait is capped by coding_result_wait_seconds={self.runtime.coding_result_wait_seconds}. "
                 "Collected results are not returned again unless that task is resumed and finishes again."),
                 ("Use `send_message(task_id, message, reply_to, interrupt)` to steer or answer a question. "
                 "It resumes the same conversation if the delegate has stopped. Set interrupt=true to stop active "
@@ -189,8 +214,8 @@ class Scaffold:
                 "Tasks survive restarts as interrupted conversations; use send_message to resume deliberately. "
                 "New briefs start fresh conversations. Task IDs prevent steering a superseded brief."),
             ]
-        if coding and getattr(self.runtime.options, "background_coding", False) and not getattr(
-                self.runtime.options, 'interactive_delegates', False):
+        if coding and self.runtime.background_coding and not getattr(
+                self.runtime, 'interactive_delegates', False):
             lines += ["Coding delegates start in the background with one outstanding task per name across callers."]
             for name in coding:
                 lines.append(f"Use `{name}_result(wait=false)` to check status or collect a completed result; "
@@ -199,7 +224,7 @@ class Scaffold:
                        "starting another brief for that worker. The runtime awaits outstanding coding work before "
                        "gates and saves uncollected completion reports in the conversation. Pending tasks are not "
                        "restored after restart. SDK-agent delegates remain blocking unless interactive_delegates is enabled.")]
-        elif coding and not getattr(self.runtime.options, 'interactive_delegates', False):
+        elif coding and not getattr(self.runtime, 'interactive_delegates', False):
             lines.append("Coding delegate calls block until completion without repeated orchestrator model calls.")
         return lines
 
@@ -222,7 +247,7 @@ class Scaffold:
         if options.server in orchestrator.mcp_servers and Decimal(options.after_ts) > 0:
             lines.append(f"Slack listings from MCP `{options.server}` show only messages posted after the run start "
                          f"(Slack ts {options.after_ts}).")
-        if any(self.assembly.tools[name].type_name == "escalate" for name in orchestrator.tools):
+        if any(self.tools[name].type_name == "escalate" for name in orchestrator.tools):
             lines.append("Use escalate for broken resources or operator action, reuse the same request_id on retries, "
                          "and continue independent work while awaiting the operator's reply.")
         return lines
@@ -256,7 +281,7 @@ class Scaffold:
                          "overlapping costs are not added. Reports can lag; stale or missing measurements are "
                          "unknown, not zero. An outage alone does not stop the run. These are pacing controls.")
         for name in self.drop_in.config.agents[self.drop_in.config.orchestrator].tools:
-            tool = self.assembly.tools[name]
+            tool = self.tools[name]
             if isinstance(tool, Rest):
                 policy = tool.options
                 lines.append(f"`{name}` bounds each requested wait to {policy.min_seconds:g}–{policy.max_seconds:g}s "
@@ -301,7 +326,7 @@ class Scaffold:
                              "Full gate feedback is in state.json / the continuation prompt.")
         tools = self.drop_in.config.agents[name].tools if name in self.drop_in.config.agents else []
         for tool_name in tools:
-            tool = self.assembly.tools[tool_name]
+            tool = self.tools[tool_name]
             if isinstance(tool, Rest):
                 parts.append(f"`{tool_name}`: {max(0, tool.options.total_seconds - tool.used_seconds):g}s remaining.")
         if name == self.drop_in.config.orchestrator:
@@ -360,12 +385,22 @@ class Scaffold:
 
     def describe(self) -> list[str]:
         config = self.drop_in.config
-        return [f"drop-in {self.drop_in.root}; runtime {self.runtime.type_name}; orchestrator {config.orchestrator}",
-                f"context {self.strategy.type_name}; budget {config.budget.model_dump(exclude_none=True)}",
-                *(f"resource {name}: {table.get('type', name)}" for name, table in config.resources.items()),
-                *([(f"steering: {config.orchestrator} via MCP {self.context.steering.options.server}; "
-                    f"status {self.context.steering.state['status']}")] if self.context.steering else []),
-                *self.runtime.describe(),
-                *(f"{name}: coding agent {agent.type_name}" for name, agent in self.coding_agents.items()),
-                *self.loop.describe(),
-                *(f"gate {name}: {gate.type_name}" for name, gate in self.loop.gates.items())]
+        return [
+            f"drop-in {self.drop_in.root}; runtime openai-agents; orchestrator {config.orchestrator}",
+            f"context {self.strategy.type_name}; budget {config.budget.model_dump(exclude_none=True)}",
+            *(f"resource {name}: {table.get('type', name)}" for name, table in config.resources.items()),
+            *(
+                [
+                    (
+                        f"steering: {config.orchestrator} via MCP {self.context.steering.options.server}; "
+                        f"status {self.context.steering.state['status']}"
+                    )
+                ]
+                if self.context.steering
+                else []
+            ),
+            *self.runtime.describe(),
+            *(f"{name}: coding agent {agent.type_name}" for name, agent in self.coding_agents.items()),
+            *self.loop.describe(),
+            *(f"gate {name}: {gate.type_name}" for name, gate in self.loop.gates.items()),
+        ]
