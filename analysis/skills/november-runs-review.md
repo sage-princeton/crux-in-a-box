@@ -8,6 +8,8 @@ Output should be a structured HTML file with a left sidebar for each section / q
 - one col for each run
 - pill for each question, including status, one of OK (green); cannot verify (yellow); Not OK (red)
 
+Note: the langfuse cost tracking is off by a factor of two with OpenRouter; this is known and is NOT an issue; if this appears to be a problem, disregard it.
+
 =====
 
 Logging and cost tracking
@@ -37,9 +39,9 @@ Scaffolding
 - SCA-1: Did the agent receive conflicting instructions from different parts of the system prompts, the developer prompts, and the user prompts?
 - SCA-2: Were all of the system prompts with the crucial instructions always held in context?
 - SCA-3: Was compaction occurring properly?
-- SCA-4: Model–harness fit: Argon is driving the Codex harness. Look for tool-call failures, malformed patches, and tool use unlike OpenAI models in Codex.
+- SCA-4: Model–harness fit: Carbon is driving the Codex harness. Look for tool-call failures, malformed patches, and tool use unlike OpenAI models in Codex.
 - SCA-5: Was the reasoning effort actually passed to every agent (PI, research assistant, workers, reviewer)? Are reasoning tokens non-zero for each?
-- SCA-6: What is the context window we are using? Are we using a 1 million token window for Argon in both the PI and the Codex workers? Is the context window size well calibrated to the model or are we undersizing the window / overestimating the overhead needed for MCP tool manifests, provider token differences, etc.?
+- SCA-6: What is the context window we are using? Are we using a 1 million token window for Carbon in both the PI and the Codex workers? Is the context window size well calibrated to the model or are we undersizing the window / overestimating the overhead needed for MCP tool manifests, provider token differences, etc.?
 
 Multi-agent orchestration
 
