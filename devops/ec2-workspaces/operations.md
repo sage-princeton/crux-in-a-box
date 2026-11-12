@@ -142,6 +142,19 @@ Then:
 `<slug>` is letters/digits/hyphens only — it becomes the EC2 `Name` tag, the
 `~/.ssh/config` alias, the AgentRQ workspace name, and a Langfuse environment.
 
+Successful provisioning records the full source commit in the EC2 `CruxGitSha`
+tag. The deployer pins the harness, SDK, setup scripts and tracing adapters to
+that commit; uncommitted changes are not deployed. Commit changes to the
+provisioner itself before invoking it. Configuration, secrets and
+optional `WORKSPACE_DIR` inputs remain separate from that revision. Reprovisioning
+clears the previous tag before staging and sets it after setup succeeds, so a
+missing tag means no completed deployment is identified. Inspect it with:
+
+```bash
+aws ec2 describe-instances --filters "Name=tag:Name,Values=<slug>" \
+  --query 'Reservations[].Instances[].Tags[?Key==`CruxGitSha`].Value' --output text
+```
+
 ### Known failure modes
 
 - **`VcpuLimitExceeded` / `AddressLimitExceeded`** on the "Instance" or
