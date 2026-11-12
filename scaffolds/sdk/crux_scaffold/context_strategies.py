@@ -16,6 +16,8 @@ from agents.run_config import ModelInputData
 from pydantic import Field
 
 from crux_scaffold.components import Component, Options, Registry
+from crux_scaffold.steering import is_envelope
+from crux_scaffold.tools import RESTARTED
 from crux_scaffold.usage import TokenUsage
 from crux_scaffold.workspace import RunContext
 
@@ -225,6 +227,30 @@ def _exchange_boundaries(items: list[Any]) -> list[int]:
                             item.get("role") == "assistant" and next_item.get("role") == "user"):
             boundaries.append(index + 1)
     return boundaries
+
+
+def since_restart(items: list[Any], restart_tools: set[str]) -> list[Any]:
+    """The orchestrator's history from its latest successful context restart, with earlier operator steering.
+
+    A restart is a call to one of ``restart_tools`` whose result starts with ``RESTARTED``; a refused call restarts
+    nothing. The cut falls on the last exchange boundary at or before that call, so the response that made it, any
+    parallel calls and all their results stay paired. Operator steering keeps its authority across a restart.
+
+    :param items: Original orchestrator history, standing context excluded.
+    :param restart_tools: Tool names of type ``restart_context`` available to the orchestrator.
+    :returns: The history to select from: unchanged when no restart succeeded.
+    """
+    if not restart_tools:
+        return items
+    succeeded = {item.get("call_id") for item in items if isinstance(item, dict)
+                 and item.get("type") == "function_call_output" and str(item.get("output")).startswith(RESTARTED)}
+    calls = [index for index, item in enumerate(items) if isinstance(item, dict)
+             and item.get("type") == "function_call" and item.get("name") in restart_tools
+             and item.get("call_id") in succeeded]
+    if not calls:
+        return items
+    cut = max([0, *(boundary for boundary in _exchange_boundaries(items) if boundary <= calls[-1])])
+    return [item for item in items[:cut] if is_envelope(item)] + items[cut:]
 
 
 def _history_digest(items: list[Any]) -> str:

@@ -218,6 +218,32 @@ class Rest(Tool):
                 f"Rest budget left: {policy.total_seconds - self.used_seconds:g}s.")
 
 
+# Starts every successful restart_context result; the runtime cuts the orchestrator's history only at such a result.
+RESTARTED = "Context restarted."
+
+
+class RestartArguments(Arguments):
+    handoff: str = Field(min_length=1, max_length=20_000, description=(
+        "Notes for your next self: the direction you are taking and why, what carries over (data, code, findings, "
+        "reviewer points that still apply), what not to repeat, and where the archive of the old direction is."))
+
+
+@TOOLS.register
+class RestartContext(Tool):
+    """The orchestrator's deliberate context reset: its runtime drops the conversation before this call."""
+
+    type_name = "restart_context"
+    description = ("Clear your conversation history and continue from a handoff you write. Use it after archiving a "
+                   "direction you are abandoning, so its conversation stops shaping your decisions. Your "
+                   "instructions, the workspace (PLAN.md, LOG.md, archives) and your delegates' work are unaffected; "
+                   "only your earlier conversation leaves your context.")
+    Arguments = RestartArguments
+
+    async def invoke(self, ctx: RunContext, args: RestartArguments) -> str:
+        return (f"{RESTARTED} Your earlier conversation has left your context; the run's state keeps it. "
+                f"Continue from your handoff:\n\n{args.handoff}")
+
+
 @TOOLS.register
 class BudgetStatus(Tool):
     type_name = "budget_status"

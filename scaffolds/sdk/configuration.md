@@ -144,6 +144,16 @@ keep it with `sessions.sqlite`. Changed history invalidates the checkpoint.
 Compaction calls are billed and traced as `compaction:<agent>`. Durable research
 files remain the source of current plans/results and are refreshed after selection.
 
+Add `restart_context` to the orchestrator's `tools` to let it clear its own
+conversation, for example after archiving a direction that reviews showed cannot
+succeed. It takes a `handoff` (up to 20,000 characters) written for the agent's
+next self. From that call on, every orchestrator call, including after a phase
+change or restart, selects only the response that made the call and what follows,
+plus earlier operator steering, which keeps its authority. Instructions, standing
+context, research files and delegates are unaffected, and SQLite keeps the full
+history. The selected history then goes through the configured strategy as usual.
+Only the orchestrator may list it, and it applies with the `openai-agents` runtime.
+
 ## Rest while coding delegates work
 
 Coding delegates normally return only when their work finishes. This already waits without repeated orchestrator model calls, but the orchestrator cannot check progress or revise its wait during the call. Enable `background_coding` to let the orchestrator start a coding delegate, choose a rest duration, and check the result afterward.

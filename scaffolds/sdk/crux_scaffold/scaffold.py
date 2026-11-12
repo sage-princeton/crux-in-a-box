@@ -50,6 +50,11 @@ class Scaffold:
         tools = self._tools()
         for gate in self.loop.gates.values():
             gate.validate_tools(tools)
+        others = ({tool for name, agent in config.agents.items() if name != config.orchestrator for tool in agent.tools}
+                  | {tool for gate in self.loop.gates.values() for tool in gate.tools})
+        if any(tools[name].type_name == "restart_context" for name in others):
+            raise InvalidDropInError("restart_context is for the orchestrator only: it clears the orchestrator's "
+                                     "own conversation")
         self._agent_instructions = {name: drop_in.instructions(name) for name in config.agents}
         self.assembly = Assembly(drop_in, self.context, tools, self.coding_agents, self.strategy, self._instructions,
                                  self._research_context)
