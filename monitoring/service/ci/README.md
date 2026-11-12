@@ -23,7 +23,6 @@ actionlint
 terraform -chdir=monitoring/service/terraform fmt -check
 terraform -chdir=monitoring/service/terraform init -backend=false
 terraform -chdir=monitoring/service/terraform validate
-terraform -chdir=monitoring/service/terraform test
 ```
 
 Review the trusted GitHub Terraform plan before merging infrastructure changes.

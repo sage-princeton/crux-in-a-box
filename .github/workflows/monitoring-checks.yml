@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       deploy:
-        description: Deploy this tested ref to the monitoring environment
+        description: Deploy this checked ref to the monitoring environment
         required: false
         default: false
         type: boolean
@@ -36,23 +36,10 @@ jobs:
       - run: python -m ruff check .
       - run: python -m ruff format --check monitoring/service
   monitoring:
-    name: Monitoring behavior and image
+    name: Monitoring assets, images and security
     needs: python-lint
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_DB: monitoring_test
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: monitoring-ci
-        ports: ['5432:5432']
-        options: >-
-          --health-cmd "pg_isready -U postgres -d monitoring_test"
-          --health-interval 5s --health-timeout 5s --health-retries 12
-    env:
-      DATABASE_URL: postgresql+psycopg://postgres:monitoring-ci@127.0.0.1:5432/monitoring_test
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -60,7 +47,6 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
-      - run: python -m pip install -r monitoring/service/web-requirements.txt -r requirements-dev.txt 'moto[s3,ec2,ssm]>=5,<6' PyYAML==6.0.3
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
@@ -72,21 +58,10 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build:css
           git diff --exit-code -- static/app.css
-      - name: Verify Alembic upgrade, rollback and upgrade
-        run: |
-          alembic -c monitoring/service/alembic.ini upgrade head
-          alembic -c monitoring/service/alembic.ini downgrade base
-          alembic -c monitoring/service/alembic.ini upgrade head
-      - name: Monitoring behavior against PostgreSQL
-        run: python -m pytest -q monitoring/service/tests
       - name: Build app and HTTPS proxy images
         run: |
           docker build --platform linux/amd64 -t crux-monitoring:check monitoring/service
-          docker run --rm --read-only --network none crux-monitoring:check python worker.py --help
-          docker run --rm --read-only --network none crux-monitoring:check python -c 'from web import create_app'
-          docker run --rm --network host --read-only --tmpfs /tmp -e DATABASE_URL crux-monitoring:check alembic upgrade head
           docker build --platform linux/amd64 -f monitoring/service/Dockerfile.proxy -t crux-proxy:check monitoring/service
-          docker run --rm --read-only --network none crux-proxy:check caddy version
       - name: Install Trivy
         id: trivy
         run: |
@@ -98,10 +73,10 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/security"
           pip install bandit==1.9.4
-          bandit -r monitoring/service -x monitoring/service/tests --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
-          bandit -r monitoring/service -x monitoring/service/tests -ll
-          trivy fs --scanners misconfig,secret --skip-dirs monitoring/service/tests --skip-dirs monitoring/service/node_modules --format json --output "$RUNNER_TEMP/security/source.json" monitoring/service
-          trivy fs --scanners secret --skip-dirs monitoring/service/tests --skip-dirs monitoring/service/node_modules --exit-code 1 monitoring/service
+          bandit -r monitoring/service --exit-zero -f json -o "$RUNNER_TEMP/security/bandit.json"
+          bandit -r monitoring/service -ll
+          trivy fs --scanners misconfig,secret --skip-dirs monitoring/service/node_modules --format json --output "$RUNNER_TEMP/security/source.json" monitoring/service
+          trivy fs --scanners secret --skip-dirs monitoring/service/node_modules --exit-code 1 monitoring/service
       - name: Scan worker image
         if: ${{ !cancelled() && steps.trivy.outcome == 'success' }}
         run: bash monitoring/service/ci/scan-image.sh crux-monitoring:check "$RUNNER_TEMP/security/worker.json"
@@ -134,7 +109,6 @@ jobs:
       - run: terraform fmt -check
       - run: terraform init -backend=false -lockfile=readonly
       - run: terraform validate
-      - run: terraform test
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'

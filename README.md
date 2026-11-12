@@ -32,11 +32,10 @@ python -m ruff check .
 python -m pytest -q
 ```
 
-The full suite needs all component dependencies and disposable PostgreSQL; see
-[monitoring](monitoring/service/README.md#development),
-[SDK](scaffolds/sdk/README.md#development) and
-[tracing](monitoring/tracing/tests/README.md#development). CI scans complete PR
-commit ranges with TruffleHog.
+The test suite needs the [SDK dependencies](scaffolds/sdk/README.md#development).
+See [DevOps](devops/ec2-workspaces/README.md#development) for provisioning checks
+and [monitoring](monitoring/README.md#development) for its lint, build and security
+checks. CI scans complete PR commit ranges with TruffleHog.
 
 ## Layout
 

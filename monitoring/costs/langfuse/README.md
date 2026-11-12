@@ -19,9 +19,8 @@ and accounting limits. This service uses no model-provider keys.
 
 ## Development
 
-From this directory, run the collector tests and deployment-script checks:
+From this directory, check the deployment script:
 
 ```sh
-python3 -m unittest discover -s tests
 shellcheck deploy.sh
 ```

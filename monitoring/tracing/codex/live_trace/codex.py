@@ -26,8 +26,7 @@ Strict where a wrong guess would corrupt the trace, tolerant everywhere else:
   because this module has not seen its shape before.
 
 The line shapes are those codex 0.153.4 (installed by codex-acp 1.10.0) writes,
-checked against ae240-test's rollouts; monitoring/tracing/tests/fixtures
-reproduces them.
+checked against ae240-test's rollouts.
 """
 from __future__ import annotations
 
