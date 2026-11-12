@@ -230,7 +230,7 @@ def test_steering_guidance_moves_into_setup_even_without_model_mcp_access(drop_i
     env = configured(drop_in_dir, tmp_path)
     scaffold = assemble(drop_in_dir, env=env)
     text = scaffold.assembly.instructions("pm")
-    for expected in ("# Operator steering", "operator_steering", "precedence", "C123", "U_OP", "2s",
+    for expected in ("# Operator steering", "operator_steering", "precedence", "C123", "Any person", "2s",
                      "Rest wakes", "escalate", "independent work"):
         assert expected in text
     assert text.count("# Operator steering") == 1

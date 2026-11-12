@@ -149,7 +149,6 @@ api_key_env = "OPENROUTER_API_KEY"
 [runtime.steering]
 server = "slack"
 channel_id = "{{SLACK_CHANNEL_ID}}"
-operator_ids = ["{{SLACK_OPERATOR_ID}}"]
 after_ts = "{{SLACK_AFTER_TS}}"
 ''')
     edit(drop_in_dir, "PROMPT.md", "channel C123", "channel {{SLACK_CHANNEL_ID}}")

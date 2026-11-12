@@ -32,7 +32,7 @@ from crux_scaffold.telemetry import NullTelemetry
 
 TARGET = HERE / "PROMPTS.md"
 # Stand-ins for the run's placeholders and credentials: assembling the scaffold calls nothing.
-SLACK = {"{{SLACK_CHANNEL_ID}}": "C0PROMPTS", "{{SLACK_OPERATOR_ID}}": "U0PROMPTS", "{{SLACK_AFTER_TS}}": "1700000000.000000"}
+SLACK = {"{{SLACK_CHANNEL_ID}}": "C0PROMPTS", "{{SLACK_AFTER_TS}}": "1700000000.000000"}
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon", "CRUX_REASONING_EFFORT": "high", "RUN_SLUG": "tabpfn-prompts",
        "OPENROUTER_API_KEY": "unused", "SLACK_BOT_TOKEN": "unused", "COST_TRACKER_URL": "https://cost.invalid/cost",
        "COST_TRACKER_TOKEN": "unused", "RUNPOD_API_KEY": "unused"}
@@ -151,7 +151,6 @@ def scaffold_setup():
     if not (pi.startswith("# Scaffold setup") and ra.startswith("# Scaffold setup")):
         raise ValueError("the scaffold's instruction layout changed; update scaffold_setup in render_prompts.py")
     pi = pi.replace(SLACK["{{SLACK_CHANNEL_ID}}"], "<Slack channel ID>")
-    pi = pi.replace(SLACK["{{SLACK_OPERATOR_ID}}"], "<operator's Slack user ID>")
     pi = pi.replace(SLACK["{{SLACK_AFTER_TS}}"], "<run start>")
     return pi, ra
 

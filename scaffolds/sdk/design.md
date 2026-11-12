@@ -37,7 +37,7 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Conversation retention and compaction | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate`, `restart_context` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
-| Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox with durable delivery; agents' Slack listings start at the run boundary; `escalate` outbox |
+| Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox accepting any person in the configured channel/thread, with durable delivery; agents' Slack listings start at the run boundary; `escalate` outbox |
 | Observability | `Telemetry` | Langfuse, or off |
 | Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `AgentRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`; delegation concurrency and depth limits |
 

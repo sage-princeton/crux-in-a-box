@@ -16,7 +16,6 @@ max_request_bytes = 20000000
 [runtime.steering]
 server = "slack"
 channel_id = "{{SLACK_CHANNEL_ID}}"
-operator_ids = ["{{SLACK_OPERATOR_ID}}"]
 after_ts = "{{SLACK_AFTER_TS}}"
 poll_interval_seconds = 30
 

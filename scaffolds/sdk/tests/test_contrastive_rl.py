@@ -34,7 +34,7 @@ def pilot_dir(tmp_path):
 
 @pytest.fixture
 def scaffold(tmp_path, pilot_dir):
-    prepare(pilot_dir, "CTEST", "UTEST", "1.000000")
+    prepare(pilot_dir, "CTEST", "1.000000")
     return Scaffold(DropInDirectory.load(pilot_dir), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
 
 
@@ -49,21 +49,20 @@ def style_archive(style=b"% test venue style\n"):
 ARCHIVE = style_archive()
 
 
-def prepare(root, channel, operator, after_ts, archive=ARCHIVE):
+def prepare(root, channel, after_ts, archive=ARCHIVE):
     spec = importlib.util.spec_from_file_location("contrastive_prepare", PILOT / "prepare.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.TEMPLATE_SHA256 = hashlib.sha256(ARCHIVE).hexdigest()
-    module.prepare(root, channel, operator, after_ts, archive)
+    module.prepare(root, channel, after_ts, archive)
 
 
 def test_preparation_resolves_steering_and_preserves_existing_run(pilot_dir):
     with pytest.raises(InvalidDropInError, match="unresolved placeholders"):
         DropInDirectory.load(pilot_dir)
-    prepare(pilot_dir, "CTEST", "UTEST", "1.000000")
+    prepare(pilot_dir, "CTEST", "1.000000")
     config = DropInDirectory.load(pilot_dir).config
     assert config.runtime["steering"]["channel_id"] == "CTEST"
-    assert config.runtime["steering"]["operator_ids"] == ["UTEST"]
     assert config.runtime["steering"]["after_ts"] == "1.000000"
     assert config.mcp_servers["slack"].env["SLACK_MCP_ADD_MESSAGE_TOOL"] == "CTEST"
     assert (pilot_dir / "workspace/paper/neurips_2025.sty").read_bytes() == b"% test venue style\n"
@@ -71,24 +70,24 @@ def test_preparation_resolves_steering_and_preserves_existing_run(pilot_dir):
     assert "\\usepackage{neurips_2025}" in (pilot_dir / "workspace/paper/paper.tex").read_text()
     original = (pilot_dir / "scaffold.toml").read_bytes()
     with pytest.raises(ValueError, match="already resolved"):
-        prepare(pilot_dir, "COTHER", "UOTHER", "2.000000")
+        prepare(pilot_dir, "COTHER", "2.000000")
     assert (pilot_dir / "scaffold.toml").read_bytes() == original
 
 
-@pytest.mark.parametrize("channel,operator,after_ts", [
-    ("bad-channel", "UTEST", "0"), ("CTEST", "bad-operator", "0"), ("CTEST", "UTEST", "yesterday"),
+@pytest.mark.parametrize("channel,after_ts", [
+    ("bad-channel", "0"), ("CTEST", "yesterday"),
 ])
-def test_preparation_rejects_invalid_steering_without_changing_config(pilot_dir, channel, operator, after_ts):
+def test_preparation_rejects_invalid_steering_without_changing_config(pilot_dir, channel, after_ts):
     original = (pilot_dir / "scaffold.toml").read_bytes()
     with pytest.raises(ValueError, match="Invalid"):
-        prepare(pilot_dir, channel, operator, after_ts)
+        prepare(pilot_dir, channel, after_ts)
     assert (pilot_dir / "scaffold.toml").read_bytes() == original
 
 
 def test_preparation_rejects_an_unpinned_venue_template_without_changing_anything(pilot_dir):
     original = (pilot_dir / "scaffold.toml").read_bytes()
     with pytest.raises(ValueError, match="checksum mismatch"):
-        prepare(pilot_dir, "CTEST", "UTEST", "1.000000", archive=style_archive(b"% altered\n"))
+        prepare(pilot_dir, "CTEST", "1.000000", archive=style_archive(b"% altered\n"))
     assert (pilot_dir / "scaffold.toml").read_bytes() == original
     assert not (pilot_dir / "workspace/paper/neurips_2025.sty").exists()
     assert not (pilot_dir / "workspace/templates").exists()

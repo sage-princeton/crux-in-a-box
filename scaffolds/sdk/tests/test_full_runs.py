@@ -26,6 +26,6 @@ def test_full_run_preparation_resolves_slack_settings_without_a_download(tmp_pat
     spec = importlib.util.spec_from_file_location(f"{name.replace('-', '_')}_prepare", root / "prepare.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.prepare(root, "C123", "U123", "1.000000")
+    module.prepare(root, "C123", "1.000000")
     config = (root / "scaffold.toml").read_text()
     assert 'channel_id = "C123"' in config and "{{SLACK_" not in config

@@ -34,7 +34,7 @@ def scaffold(tmp_path):
     shutil.copytree(EXAMPLE, root)
     path = root / "scaffold.toml"
     path.write_text(path.read_text().replace("{{SLACK_CHANNEL_ID}}", "CTEST")
-                    .replace("{{SLACK_OPERATOR_ID}}", "UTEST").replace("{{SLACK_AFTER_TS}}", "0"))
+                    .replace("{{SLACK_AFTER_TS}}", "0"))
     return Scaffold(DropInDirectory.load(root), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
 
 
@@ -180,7 +180,7 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     shutil.copytree(EXAMPLE.parent / harness, root)
     config = root / "scaffold.toml"
     config.write_text(config.read_text().replace("{{SLACK_CHANNEL_ID}}", "CTEST")
-                      .replace("{{SLACK_OPERATOR_ID}}", "UTEST").replace("{{SLACK_AFTER_TS}}", "0"))
+                      .replace("{{SLACK_AFTER_TS}}", "0"))
     scaffold = Scaffold(DropInDirectory.load(root), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
     submit(scaffold)
     scores = {"Quality": "2", "Clarity": "2", "Significance": "2", "Originality": "3",
