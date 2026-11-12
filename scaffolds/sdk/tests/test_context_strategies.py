@@ -5,7 +5,9 @@ from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from agents import Agent, FunctionTool, RunConfig, SQLiteSession
+from agents import Agent, FunctionTool, ModelSettings, RunConfig, SQLiteSession
+from agents.run_config import ModelInputData
+from openai.types.shared import Reasoning
 
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES, STANDING_CONTEXT_HEADER, estimate_tokens
 from crux_scaffold.errors import InvalidDropInError
@@ -29,7 +31,7 @@ def test_summary_requests_are_bounded_and_preserve_complete_exchanges(tmp_path):
     class BoundedModel(ScriptedModel):
         async def get_response(self, *args, **kwargs):
             cap = kwargs['model_settings'].max_tokens
-            assert cap and cap <= 400
+            assert cap and cap >= 400
             assert estimate_tokens([kwargs['system_instructions'], kwargs['input']]) + cap <= 3600
             assert kwargs['tools'] == []
             return await super().get_response(*args, **kwargs)
@@ -44,6 +46,92 @@ def test_summary_requests_are_bounded_and_preserve_complete_exchanges(tmp_path):
     assert pairs == [(x['type'], x['call_id']) for x in history if 'call_id' in x]
     assert selected[-1] == history[-1]
     assert ctx.usage.by_source['compaction:pm'].requests == len(model.inputs)
+
+
+def test_summary_output_budget_grows_for_smaller_formatted_chunks(tmp_path):
+    """Leave 10% headroom while giving a smaller final chunk more generation space."""
+    strategy = local_strategy(context_window_tokens=4000)
+    calls = []
+
+    class BudgetModel(ScriptedModel):
+        async def get_response(self, *args, **kwargs):
+            size = estimate_tokens([kwargs['system_instructions'], kwargs['input']])
+            cap = kwargs['model_settings'].max_tokens
+            calls.append((size, cap))
+            assert size + cap == 3600
+            return await super().get_response(*args, **kwargs)
+
+    model = BudgetModel(*[say('Retained evidence ' * 20) for _ in range(5)])
+    history = [item for i in range(5) for item in (
+        user(f'experiment {i}: ' + 'x' * 4800), {'role': 'assistant', 'content': 'done'})]
+
+    def prepare(data):
+        """Include runtime formatting in the budget, not just raw history."""
+        return ModelInputData(instructions=None, input=[
+            {'role': 'developer', 'content': data.instructions}, *data.input, user('cache marker ' * 30)])
+
+    asyncio.run(strategy._summarize(history, ctx=compaction_context(tmp_path),
+        agent=Agent(name='pm', model=model), model_provider=RunConfig().model_provider,
+        instructions='fixed rules ' * 60, prepare_input=prepare))
+    assert len(calls) == 3
+    assert calls[-1][0] < calls[0][0]
+    assert calls[-1][1] > calls[0][1] > 400
+    assert 'Retained evidence' in str(model.inputs[-1])
+
+
+@pytest.mark.parametrize(('options', 'agent_cap', 'expected'), [
+    ({}, None, 32768),
+    ({'summary_max_tokens': 12000}, None, 12000),
+    ({'summary_max_tokens': 12000}, 6000, 6000),
+])
+def test_summary_output_ceiling_and_reasoning_are_preserved(tmp_path, options, agent_cap, expected):
+    """Bound spare capacity by configured ceilings without changing the caller's settings."""
+    settings = ModelSettings(max_tokens=agent_cap, reasoning=Reasoning(effort='high'))
+
+    class CeilingModel(ScriptedModel):
+        async def get_response(self, *args, **kwargs):
+            assert kwargs['model_settings'].max_tokens == expected
+            assert kwargs['model_settings'].reasoning.effort == 'high'
+            return await super().get_response(*args, **kwargs)
+
+    model = CeilingModel(say('summary'))
+    asyncio.run(local_strategy(**options)._summarize([user('completed history')],
+        ctx=compaction_context(tmp_path), agent=Agent(name='pm', model=model, model_settings=settings),
+        model_provider=RunConfig().model_provider, instructions='rules', prepare_input=lambda data: data))
+    assert settings.max_tokens == agent_cap
+
+
+@pytest.mark.parametrize('rejection', ['context', 'bytes'])
+def test_summary_rejections_reduce_combined_budget_for_remaining_chunks(tmp_path, rejection):
+    """Do not spend rejected input capacity on output, or reset it after a successful chunk."""
+    import httpx
+    from openai import BadRequestError
+
+    from crux_scaffold.errors import RequestSizeExceededError
+
+    attempts = []
+
+    class RejectedModel(ScriptedModel):
+        async def get_response(self, *args, **kwargs):
+            size = estimate_tokens([kwargs['system_instructions'], kwargs['input']])
+            attempts.append((size, kwargs['model_settings'].max_tokens))
+            if len(attempts) <= 2:
+                if rejection == 'bytes':
+                    raise RequestSizeExceededError(20000, 10000)
+                raise BadRequestError('context limit', body={'code': 'context_length_exceeded'},
+                    response=httpx.Response(400, request=httpx.Request('POST', 'https://provider.test')))
+            return await super().get_response(*args, **kwargs)
+
+    history = [item for i in range(12) for item in (
+        user(f'experiment {i}: ' + 'x' * 2000), {'role': 'assistant', 'content': 'done'})]
+    model = RejectedModel(*[say('summary') for _ in range(12)])
+    asyncio.run(local_strategy(context_window_tokens=12000)._summarize(history,
+        ctx=compaction_context(tmp_path), agent=Agent(name='pm', model=model),
+        model_provider=RunConfig().model_provider, instructions='rules', prepare_input=lambda data: data))
+    assert len(attempts) > 3
+    assert attempts[2][0] < attempts[1][0] < attempts[0][0]
+    assert sum(attempts[2]) < sum(attempts[1]) < sum(attempts[0]) <= 10800
+    assert all(sum(attempt) <= sum(attempts[2]) for attempt in attempts[2:])
 
 
 @pytest.mark.parametrize(('body', 'overflow'), [

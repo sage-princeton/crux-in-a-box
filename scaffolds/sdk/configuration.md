@@ -120,7 +120,7 @@ context_window_tokens = 128000
 # trigger_tokens = 90000  # optional earlier token trigger
 keep_recent_items = 20
 image_tokens = 4096      # estimated allowance per image; tune for the selected model
-summary_max_tokens = 8192 # summary output cap; also capped at 10% of the window
+summary_max_tokens = 32768 # generation ceiling; set within the selected model/route output limit
 ```
 
 Before every PI call, including tool continuations, compaction checks an
@@ -142,7 +142,11 @@ call fails without replacing the checkpoint or sending oversized ordinary
 inference. Fixed instructions, tool schemas and the current task cannot be
 removed to make room. The summary and its covered-history position survive restart in a separate checkpoint;
 keep it with `sessions.sqlite`. Changed history invalidates the checkpoint.
-Summary calls have their own budget: estimated formatted instructions, history, prior handoff and summary prompt plus the output cap must fit within 90% of the configured window. Large prefixes are folded through multiple summaries at complete exchange boundaries. The output cap preserves the PI's reasoning effort while avoiding provider defaults that reserve too much output. Recognized provider context-limit rejections and local request-byte rejections reduce the input budget and retry a smaller complete prefix; unrelated provider errors propagate. If even one complete exchange cannot fit, the CLI exits 2 and the production service does not restart it. History and the previous checkpoint remain available for operator repair.
+Summary calls have their own budget, independent of the ordinary trigger. Large prefixes are folded through complete exchanges with a rolling handoff. Each chunk's output allowance is the smaller of `summary_max_tokens` and the space left in 90% of the configured window after estimating its fully formatted input (fixed instructions, history, prior handoff and summary prompt). A lower agent `max_tokens` setting also applies. The remaining 10% is reserved for estimation error. Chunk selection reserves up to 8,192 output tokens, limited by the output ceiling and 10% of the window; shorter chunks can use additional spare capacity for generation.
+
+`summary_max_tokens` now defaults to 32,768 rather than 8,192, and is a ceiling rather than the fixed allowance on every request. Set it within the selected model and provider route's supported output limit; limits are not discovered automatically. Explicit existing values remain ceilings. The generation allowance includes reasoning as well as summary text, with the PI's reasoning effort preserved. The prompt still asks for a concise handoff; compaction does not detect or retry truncated output.
+
+Recognized provider context-limit rejections and local request-byte rejections halve the rejected chunk's estimated input budget. The combined budget also shrinks to that reduced input budget plus the original output reserve and stays reduced for the rest of that fold, so removed input is not simply reassigned to output. Unrelated provider errors propagate. If even one complete exchange cannot fit, the CLI exits 2 and the production service does not restart it. History and the previous checkpoint remain available for operator repair.
 
 Compaction calls are billed and traced as `compaction:<agent>`, once per successful chunk. Durable research
 files remain the source of current plans/results and are refreshed after selection.

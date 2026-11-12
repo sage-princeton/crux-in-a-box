@@ -171,7 +171,9 @@ def test_compaction_shrinks_serialized_requests_and_preserves_reasoning(wire, dr
     assert len(attempts) > len(sent) > 1
     assert all(len(request.content) <= 6500 for request in sent)
     bodies = [json.loads(request.content) for request in sent]
-    assert all(body['max_output_tokens'] == 8192 and body['reasoning']['effort'] == 'high' for body in bodies)
+    assert all(8192 <= body['max_output_tokens'] <= 32768 and body['reasoning']['effort'] == 'high'
+               for body in bodies)
+    assert len({body['max_output_tokens'] for body in bodies}) > 1
     assert scaffold.context.usage.by_source['compaction:pm'].requests == len(sent)
 
 
