@@ -41,7 +41,7 @@ from agents.strict_schema import ensure_strict_json_schema
 from agents.tool import ToolOutputImage, ToolOutputText
 from agents.tool_context import ToolContext
 from mcp.types import CallToolResult, TextContent
-from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
@@ -54,7 +54,7 @@ from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.context_strategies import is_standing_context, since_restart
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
-from crux_scaffold.errors import InvalidDropInError, RequestSizeExceededError, ToolError
+from crux_scaffold.errors import InvalidDropInError, ModelRequestError, RequestSizeExceededError, ToolError
 from crux_scaffold.steering import MESSAGE_TOOLS, WITHHELD, SteeringOptions, is_envelope, within_run
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
@@ -314,10 +314,13 @@ class OpenAIAgentsRuntime(AgentRuntime):
                         'before finishing. Interrupt work explicitly if it should stop.\n' + json.dumps(outstanding)))
             self._pending_turn_path().unlink(missing_ok=True)
             return outcome
-        except BaseException:
+        except BaseException as exc:
             if self.delegates:
                 await self.delegates.close()
             await self._cancel_coding()
+            # Compaction has already had its chance to shrink an oversized request.
+            if isinstance(exc, BadRequestError):
+                raise ModelRequestError from None
             raise
 
     def _pending_turn_path(self) -> Path:
@@ -463,6 +466,8 @@ class OpenAIAgentsRuntime(AgentRuntime):
                 run_config=RunConfig(workflow_name=f"{JUDGE}:{name}", call_model_input_filter=partial(
                     self._select_cache_input, model=model or ctx.model)),
             )
+        except BadRequestError:
+            raise ModelRequestError from None
         except MaxTurnsExceeded:
             return Verdict(
                 passed=False,

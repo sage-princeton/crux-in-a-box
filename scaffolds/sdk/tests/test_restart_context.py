@@ -10,7 +10,7 @@ from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.tools import RESTARTED
 
 from drop_ins import edit
-from scripted import ScriptedModel, call, say, tool_outputs
+from scripted import ScriptedModel, call, say
 
 RESTART = {"restart_context"}
 STEER = {"role": "user", "content": json.dumps({"kind": "operator_steering", "message_id": "2.000000",
@@ -34,18 +34,27 @@ def tool_result(call_id, text="ok"):
     return {"type": "function_call_output", "call_id": call_id, "output": text}
 
 
-def test_history_before_the_latest_restart_leaves_but_operator_steering_and_paired_calls_stay():
+def test_restart_is_a_deterministic_handoff_with_steering_and_parallel_results():
     items = [user("task"), STEER, reasoning("old"), tool_call("a"), tool_result("a"),
              reasoning("pivot"), tool_call("r", "restart_context"), tool_call("b"), tool_result("r", RESTARTED + " handoff"),
              tool_result("b"), user("next task")]
-    # The cut falls before the restarting response, so its reasoning, its parallel call and both results stay.
-    assert since_restart(items, RESTART) == [STEER] + items[5:]
+    original = json.dumps(items)
+    selected = since_restart(items, RESTART)
+    assert selected[0] == STEER and selected[-1] == user("next task")
+    assert selected[1]["role"] == "user"
+    assert "handoff" in json.dumps(selected[1]) and "read_file" in json.dumps(selected[1])
+    assert "ok" in json.dumps(selected[1])
+    assert not ids(selected) and "pivot" not in json.dumps(selected)
+    assert since_restart(items, RESTART) == selected
+    assert json.dumps(items) == original
 
 
 def test_the_latest_restart_wins_and_no_restart_changes_nothing():
     first = [user("task"), tool_call("r1", "restart_context"), tool_result("r1", RESTARTED + " first handoff")]
     second = [user("task 2"), tool_call("r2", "restart_context"), tool_result("r2", RESTARTED + " second handoff")]
-    assert since_restart(first + second, RESTART) == second
+    selected = since_restart(first + second, RESTART)
+    assert len(selected) == 1 and selected[0]["role"] == "user"
+    assert "second handoff" in json.dumps(selected) and "first handoff" not in json.dumps(selected)
     plain = [user("task"), tool_call("a"), tool_result("a")]
     assert since_restart(plain, RESTART) == plain
     assert since_restart(first, set()) == first
@@ -55,11 +64,30 @@ def test_the_latest_restart_wins_and_no_restart_changes_nothing():
     assert since_restart(refused, RESTART) == refused
 
 
-def test_a_restart_in_the_first_response_keeps_that_iteration_task():
+def test_a_restart_in_the_first_response_uses_only_its_handoff():
     items = [user("old task"), tool_call("a"), tool_result("a"),
              user("Continue after the review"), reasoning("pivot"), tool_call("r", "restart_context"),
              tool_result("r", RESTARTED + " handoff")]
-    assert since_restart(items, RESTART) == items[3:]
+    selected = since_restart(items, RESTART)
+    assert len(selected) == 1 and "handoff" in json.dumps(selected)
+    assert "Continue after the review" not in json.dumps(selected)
+
+
+@pytest.mark.parametrize("restart_first", [False, True])
+def test_reset_waits_for_the_whole_parallel_batch_and_preserves_images(restart_first):
+    image = {"type": "input_image", "image_url": "data:image/png;base64,AAAA", "detail": "auto"}
+    calls = [tool_call("r", "restart_context"), tool_call("pdf", "read_pdf")]
+    results = [tool_result("r", RESTARTED + " handoff"), tool_result("pdf", [image])]
+    if not restart_first:
+        calls.reverse()
+        results.reverse()
+    items = [user("old task"), *calls, *results[:1]]
+    assert since_restart(items, RESTART) == items
+    items.extend([STEER, results[1]])
+    selected = since_restart(items, RESTART)
+    assert selected[0] == STEER
+    assert image in selected[1]["content"]
+    assert not ids(selected)
 
 
 def restart_drop_in(root):
@@ -81,8 +109,9 @@ def test_the_orchestrator_continues_from_its_handoff_in_this_run_and_after_a_rel
     assert "c1" in ids(pm.inputs[1])
     after = pm.inputs[2]
     assert "c1" not in ids(after) and "PM standing context" not in json.dumps(after[:-1])
-    assert "c2" in ids(after) and handoff in tool_outputs(after)[0]
-    assert tool_outputs(after)[0].startswith(RESTARTED)
+    assert not ids(after) and after[0]["role"] == "user"
+    assert handoff in json.dumps(after[0])
+    assert len(pm.inputs) == 3  # Resetting context makes no additional model call.
 
     pm2 = ScriptedModel(say("resumed"))
     second = assemble(drop_in_dir, {"pm": pm2})
@@ -93,7 +122,7 @@ def test_the_orchestrator_continues_from_its_handoff_in_this_run_and_after_a_rel
 
     asyncio.run(resume())
     resumed = pm2.inputs[0]
-    assert "c1" not in ids(resumed) and "c2" in ids(resumed)
+    assert "c1" not in ids(resumed) and "c2" not in ids(resumed)
     assert handoff in json.dumps(resumed) and "Continue with B" in json.dumps(resumed)
 
 

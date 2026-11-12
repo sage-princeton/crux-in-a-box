@@ -7,6 +7,8 @@ from agents.exceptions import ModelBehaviorError
 from agents.models._response_terminal import response_terminal_failure_error
 from openai.types.responses import Response
 
+from crux_scaffold.errors import ModelRequestError
+
 from scripted import ScriptedModel, say
 
 
@@ -60,7 +62,7 @@ def test_transient_provider_errors_are_retried_within_the_turn(drop_in_dir, asse
                          ids=["bad-request", "out-of-output-tokens"])
 def test_errors_a_retry_cannot_fix_still_end_the_turn(drop_in_dir, assemble, delays, error):
     pm = FlakyModel([error], say("done"))
-    with pytest.raises((openai.BadRequestError, ModelBehaviorError)):
+    with pytest.raises((ModelRequestError, ModelBehaviorError)):
         asyncio.run(assemble(drop_in_dir, {"pm": pm}).run())
     assert (pm.attempts, delays) == (1, [])
 

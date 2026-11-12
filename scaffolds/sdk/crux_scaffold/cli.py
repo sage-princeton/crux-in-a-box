@@ -16,7 +16,7 @@ from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.components import Options
 from crux_scaffold.config import load_config
 from crux_scaffold.drop_in import DropInDirectory
-from crux_scaffold.errors import ContextLimitExceededError, InvalidDropInError
+from crux_scaffold.errors import ContextLimitExceededError, InvalidDropInError, ModelRequestError
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity, Telemetry, telemetry_from_env
 from crux_scaffold.usage import Budget, UsageLedger
@@ -77,6 +77,11 @@ def main(argv: Sequence[str] | None = None, env: Mapping[str, str] | None = None
         outcome = asyncio.run(until_stopped(scaffold.run()))
     except ContextLimitExceededError as exc:
         print(f"context limit: {exc}; state preserved; repair input/configuration before restarting", file=sys.stderr)
+        return EXIT_CONFIG
+    except ModelRequestError:
+        # Provider bodies may echo credentials or prompts; report only the failure class.
+        print("model request rejected (HTTP 400); state preserved; repair input/configuration before restarting",
+              file=sys.stderr)
         return EXIT_CONFIG
     except InvalidDropInError as exc:
         print(f"config error: {exc}", file=sys.stderr)
