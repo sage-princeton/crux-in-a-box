@@ -315,7 +315,7 @@ def test_existing_pending_reset_recovers_without_history_edits_or_extra_model_ca
     config.write_text(config.read_text().replace('tools = ["read_file", "write_file", "rest"]',
                       'tools = ["read_file", "write_file", "rest", "restart_context"]') +
                       '\n[context]\ntype = "compaction"\ntrigger_tokens = 12000\n')
-    prompt = (drop_in_dir / "PROMPT.md").read_text()
+    prompt = DropInDirectory.load(drop_in_dir).prompt("PROMPT.md")
     history = [{"role": "user", "content": prompt}, call("read_file", {"path": "AGENTS.md"}, "old"),
                {"type": "function_call_output", "call_id": "old", "output": "old direction"},
                {"type": "reasoning", "id": "rs-reset", "summary": [], "encrypted_content": "old-signature"},
@@ -338,6 +338,7 @@ def test_existing_pending_reset_recovers_without_history_edits_or_extra_model_ca
     assert "old direction" not in json.dumps(requests[0]["input"])
     assert "old-signature" not in json.dumps(requests[0]["input"])
     saved = asyncio.run(session.get_items())
+    assert len(saved) == len(history) + 1
     assert saved[:len(history)] == history
     assert sum(item.get("content") == prompt for item in saved) == 1
     assert not list(state.glob("pending-turn-*.json"))
