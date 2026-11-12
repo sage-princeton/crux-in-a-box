@@ -41,7 +41,8 @@ Spot-check delegated results; never invent experiments, citations or reviews.
 In addition to a comprehensive review of the literature, download multiple full papers that you think are particularly well-written from your literature review and use those as exemplars for your writing and organization. Model your style on these exemplars as closely as you can. Save the exemplars under literature/exemplars/ and record their paths and the outline you are following in PLAN.md.
 
 Build paper/paper.tex with `cd paper && latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex`.
-The venue style is installed by the operator's prepare.py. Keep abstract.txt as
+The venue style is paper/neurips_2026.sty; paper/checklist.tex is the NeurIPS paper checklist, for
+reference only. Keep abstract.txt as
 plain text and input it into the abstract. Keep `\label{crux:main-end}` immediately
 after the main body and before references. Main body ≤9 pages; abstract ≤200 words.
 Inspect the compiled PDF visually. Do not change the style or labels to evade caps.
