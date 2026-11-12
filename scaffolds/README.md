@@ -14,5 +14,5 @@ directories are empty placeholders; supply your own task inputs.
 ## Development
 
 Use the [SDK checks](sdk/README.md#development) for orchestration changes and the
-[tracing tests](../monitoring/tracing/tests/README.md#development) for Codex exporters.
+[monitoring checks](../monitoring/README.md#development) for Codex exporters.
 Exercise configuration changes with the selected Scaffold in ciab-devenv.

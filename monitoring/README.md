@@ -13,6 +13,7 @@ Use the selected component's prerequisites and operational runbook.
 
 ## Development
 
-Follow the [service checks](service/README.md#development),
-[cost-collector checks](costs/langfuse/README.md#development) or
-[tracing tests](tracing/tests/README.md#development) for the component you change.
+Follow the [service checks](service/README.md#development) or
+[cost-collector checks](costs/langfuse/README.md#development) for the component you
+change. Codex tracing adapters are covered by the repository's Ruff checks;
+exercise exporter changes with the selected Scaffold in ciab-devenv.

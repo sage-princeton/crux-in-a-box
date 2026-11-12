@@ -1,8 +1,0 @@
-extend = "../../pyproject.toml"
-
-# These modules import and request shared pytest fixtures by name.
-[lint.per-file-ignores]
-"tests/test_pipeline.py" = ["F401", "F811"]
-"tests/test_saml.py" = ["F401", "F811"]
-"tests/test_web.py" = ["F401", "F811"]
-"tests/test_status_web.py" = ["F401", "F811"]
