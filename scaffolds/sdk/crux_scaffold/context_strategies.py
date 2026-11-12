@@ -132,13 +132,13 @@ class CompactionOptions(Options):
     :ivar trigger_tokens: Optional earlier estimated-token threshold.
     :ivar keep_recent_items: Soft target for unsummarized recent exchanges.
     :ivar image_tokens: Estimated tokens per image, independent of encoded payload size.
-    :ivar summary_max_tokens: Output cap for summaries, further limited to 10% of the model window.
+    :ivar summary_max_tokens: Ceiling for each chunk's generation budget, including reasoning tokens.
     """
     context_window_tokens: int = Field(128000, ge=1, strict=True)
     trigger_tokens: int | None = Field(None, ge=1, strict=True)
     keep_recent_items: int = Field(20, ge=1, strict=True)
     image_tokens: int = Field(DEFAULT_IMAGE_TOKENS, ge=1, strict=True)
-    summary_max_tokens: int = Field(8192, ge=1, strict=True)
+    summary_max_tokens: int = Field(32768, ge=1, strict=True)
 
 
 class CompactionCheckpoint(Options):
@@ -426,9 +426,11 @@ class Compaction(ContextStrategy):
         :param prepare_input: Runtime cache formatting callback.
         :returns: Returned plain-text handoff, excluding reasoning content.
         """
-        output_limit = min(self.options.summary_max_tokens, max(1, self.options.context_window_tokens // 10))
-        input_limit = self.options.context_window_tokens * 9 // 10 - output_limit
-        settings = replace(agent.model_settings, max_tokens=output_limit)
+        output_ceiling = min(self.options.summary_max_tokens,
+                             agent.model_settings.max_tokens or self.options.summary_max_tokens)
+        output_reserve = min(output_ceiling, 8192, max(1, self.options.context_window_tokens // 10))
+        total_limit = self.options.context_window_tokens * 9 // 10
+        input_limit = total_limit - output_reserve
         boundaries = sorted({*_exchange_boundaries(items), len(items)})
         covered, summary = 0, ""
 
@@ -457,13 +459,17 @@ class Compaction(ContextStrategy):
                                                 "or standing instructions, or correct the configured context window")
             cut = candidates[low - 1]
             data = request(prefix, covered, cut)
+            input_tokens = size(data)
+            output_limit = min(output_ceiling, total_limit - input_tokens)
+            settings = replace(agent.model_settings, max_tokens=output_limit)
             try:
                 summary = (await self._summary_call(data, ctx=ctx, agent=agent, model_provider=model_provider,
                                                     settings=settings)).strip()
             except (BadRequestError, RequestSizeExceededError) as exc:
                 if isinstance(exc, BadRequestError) and not _context_overflow(exc):
                     raise
-                input_limit = min(input_limit - 1, size(data) // 2)
+                input_limit = min(input_limit - 1, input_tokens // 2)
+                total_limit = min(total_limit, input_limit + output_reserve)
                 continue
             if not summary:
                 raise RuntimeError("compaction returned an empty summary; history is unchanged")
