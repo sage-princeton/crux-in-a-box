@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from abc import ABC
 from collections.abc import Callable
 from dataclasses import replace
@@ -495,9 +496,32 @@ class Compaction(ContextStrategy):
 
 def _context_overflow(error: BadRequestError) -> bool:
     """Recognize context-limit rejections without treating unrelated HTTP 400s as size errors."""
-    body = error.body if isinstance(error.body, dict) else {}
-    detail = body.get("error", body)
-    code = detail.get("code") if isinstance(detail, dict) else None
-    return code in {"context_length_exceeded", "context_window_exceeded", "input_too_long"} or any(
-        phrase in str(error).lower() for phrase in ("maximum context length", "exceeds the context window",
-                                                  "exceeded the context window"))
+    pending = [error.body or error.message]
+    while pending:
+        detail = pending.pop()
+        if isinstance(detail, dict):
+            code = detail.get("code")
+            if isinstance(code, str) and code.lower() in {
+                "context_length_exceeded", "context_window_exceeded", "input_too_long"
+            }:
+                return True
+            pending.extend(detail.get(field) for field in ("error", "message"))
+            metadata = detail.get("metadata")
+            if isinstance(metadata, dict):
+                # OpenRouter wraps the provider's error as JSON or text in metadata.raw.
+                pending.append(metadata.get("raw"))
+        elif isinstance(detail, str):
+            try:
+                decoded = json.loads(detail)
+            except json.JSONDecodeError:
+                text = detail.lower()
+                if any(phrase in text for phrase in ("maximum context length", "exceeds the context window",
+                                                     "exceeded the context window")):
+                    return True
+                # Google's INVALID_ARGUMENT also covers auth/schema errors; require its input-limit message.
+                if re.search(r"\binput token count(?:\s*\([\d,\s]+\))?\s+exceeds\s+(?:the\s+)?"
+                             r"maximum number of tokens allowed\b", text):
+                    return True
+            else:
+                pending.append(decoded)
+    return False
