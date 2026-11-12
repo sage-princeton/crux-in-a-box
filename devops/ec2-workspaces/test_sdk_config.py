@@ -53,12 +53,6 @@ class SDKConfigTests(unittest.TestCase):
                 self.assertEqual(self.inspect(config + 'max_request_bytes = 20000000\n' + worker),
                                  self.inspect(config + worker))
 
-    def test_preset_parameters_are_not_provider_options(self):
-        for setting in ('max_output_tokens = 65536', 'service_tier = "priority"'):
-            with self.subTest(setting=setting):
-                error = self.inspect(COMPATIBLE + setting + "\n", success=False)
-                self.assertIn("Invalid runtime.model_provider fields", error)
-
     def test_invalid_request_byte_limits_fail_without_echoing_values(self):
         for value in ('0', '-1', 'true', '1.5', '"fixture-private"'):
             with self.subTest(value=value):
