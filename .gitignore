@@ -14,8 +14,6 @@ src/**/*secrets*.json
 INVENTORY.md
 .DS_Store
 
-**gog-home.tar.gz
-
 clean-room
 
 # local diagnostics / caches — never commit

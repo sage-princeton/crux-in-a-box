@@ -16,4 +16,4 @@ Use the [repository checks](../README.md#development), then the
 [Run Box checks](ec2-workspaces/README.md#development) or
 [controller checks](ec2-control/README.md#development) for the code you change.
 Exercise provisioning in ciab-devenv against this worktree before deploying to AWS.
-The [system design](../design.md) describes component boundaries.
+The [system design](../README.md#system-design) describes component boundaries.
