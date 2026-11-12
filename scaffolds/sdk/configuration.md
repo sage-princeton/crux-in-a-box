@@ -91,7 +91,7 @@ messages:     selected conversation history
               user: fresh research/workflow/resource context + current task (first call only)
 ```
 
-The first call combines the fresh prefix with the next task. Subsequent tool calls keep that task and complete tool exchanges in history, appending fresh context without repeating the task. Only raw tasks, actual exchanges and steering enter SQLite. All context strategies use this same assembly path; local compaction summarizes conversation history without storing the temporary research/resource tail. On restart, known legacy standing-context developer snapshots (including typed text blocks) are excluded from model/compaction input; genuine historical messages remain. This does not fix replay of an interrupted loop's launch prompt (AE-295).
+The first call combines the fresh prefix with the next task. Subsequent tool calls keep that task and complete tool exchanges in history, appending fresh context without repeating the task. Only raw tasks, actual exchanges and steering enter SQLite. All context strategies use this same assembly path; local compaction summarizes conversation history without storing the temporary research/resource tail. On restart, known legacy standing-context developer snapshots (including typed text blocks) are excluded from model/compaction input; genuine historical messages remain. A durable `pending-turn-<agent-hash>.json` record admits the loop task once: if a runtime call is interrupted after saving its task, restarting with the same phase and task resumes the stored exchange without appending the task again. Keep this file with `sessions.sqlite` and `state.json`. Successful runtime calls clear it, so later iterations may legitimately repeat identical instructions. This is input deduplication, not exactly-once execution of tools or gates; existing duplicates are not removed automatically.
 
 Agent delegates receive their own sources and brief, without the caller's conversation. Coding agents receive stable developer instructions plus a fresh context-prefixed brief at invocation; their harness owns later calls. Isolated judges retain their rubric and declared evidence without research/workflow/resource context.
 
@@ -120,6 +120,7 @@ context_window_tokens = 128000
 # trigger_tokens = 90000  # optional earlier token trigger
 keep_recent_items = 20
 image_tokens = 4096      # estimated allowance per image; tune for the selected model
+summary_max_tokens = 8192 # summary output cap; also capped at 10% of the window
 ```
 
 Before every PI call, including tool continuations, compaction checks an
@@ -141,7 +142,9 @@ call fails without replacing the checkpoint or sending oversized ordinary
 inference. Fixed instructions, tool schemas and the current task cannot be
 removed to make room. The summary and its covered-history position survive restart in a separate checkpoint;
 keep it with `sessions.sqlite`. Changed history invalidates the checkpoint.
-Compaction calls are billed and traced as `compaction:<agent>`. Durable research
+Summary calls have their own budget: estimated formatted instructions, history, prior handoff and summary prompt plus the output cap must fit within 90% of the configured window. Large prefixes are folded through multiple summaries at complete exchange boundaries. The output cap preserves the PI's reasoning effort while avoiding provider defaults that reserve too much output. Recognized provider context-limit rejections and local request-byte rejections reduce the input budget and retry a smaller complete prefix; unrelated provider errors propagate. If even one complete exchange cannot fit, the CLI exits 2 and the production service does not restart it. History and the previous checkpoint remain available for operator repair.
+
+Compaction calls are billed and traced as `compaction:<agent>`, once per successful chunk. Durable research
 files remain the source of current plans/results and are refreshed after selection.
 
 Add `restart_context` to the orchestrator's `tools` to let it clear its own
@@ -384,7 +387,7 @@ python -m crux_scaffold probe --drop-in DIR           # probe the drop-in's conf
 
 - 0: the loop completed.
 - 1: a probe failed.
-- 2: a configuration error.
+- 2: a configuration error or an irreducible compaction/context limit. State is preserved; repair the input/configuration before restarting. The production systemd unit excludes this status from automatic restarts.
 - 3: the loop stopped early because its iterations or budget ran out.
 - 128 + the signal number: the run was stopped by SIGTERM or SIGINT. The unfinished iteration reruns on restart.
 
@@ -578,7 +581,7 @@ Carbon's default Google AI Studio endpoint stops at 32,768 output tokens, and th
 
 Priority processing has its own prices. Langfuse must match both the configured preset name (Codex usage and compaction) and the response model `google/gemini-4-carbon` (SDK calls) to the intended prices. A missing price definition is metered at $0. See the [OpenRouter endpoint prices](https://openrouter.ai/google/gemini-4-carbon) and [Langfuse model definitions](https://langfuse.com/docs/observability/features/token-and-cost-tracking#adding-custom-model-definitions).
 
-An oversized SDK request fails locally with actual/allowed byte counts and is not retried. A background delegate's failure reaches the PI through its existing result tool, allowing a new, smaller brief. A failure in the PI itself, judge or compactor still propagates; same-agent recovery and automatic compaction/rewrite are not implemented. The check covers SDK agents and probes, but does not cover the separate native Codex client. Limits will move to provider/model configuration maps under [AE-316](https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at).
+An oversized SDK request fails locally with actual/allowed byte counts; the client never retries it unchanged. A background delegate's failure reaches the PI through its existing result tool, allowing a new, smaller brief. A failure in the PI itself or judge still propagates; automatic rewriting of those requests is not implemented. The compactor alone retries smaller complete prefixes and exits 2 if none fit. The check covers SDK agents and probes, but does not cover the separate native Codex client. Limits will move to provider/model configuration maps under [AE-316](https://linear.app/agent-evals/issue/AE-316/move-model-specific-configurations-into-configuration-maps-queried-at).
 
 **GCP billing:** OpenRouter must have the intended Google Vertex BYOK integration configured, with shared-capacity fallback disabled for Argon. The request above pins Vertex and disables provider fallback; it cannot change the account's BYOK settings. Check `is_byok` in the returned usage and the generation's provider before treating a run as GCP-billed. An OpenRouter key alone does not establish that billing path. See [OpenRouter BYOK](https://openrouter.ai/docs/guides/overview/auth/byok).
 

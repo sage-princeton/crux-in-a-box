@@ -14,7 +14,7 @@ from test_openrouter import say as response_text
 
 from crux_scaffold.agent_runtimes import openai_agents_sdk as sdk
 from crux_scaffold.context_strategies import Compaction
-from crux_scaffold.errors import RequestSizeExceededError
+from crux_scaffold.errors import ContextLimitExceededError, RequestSizeExceededError
 from crux_scaffold.telemetry import NullTelemetry
 
 from drop_ins import edit
@@ -143,12 +143,36 @@ def test_all_sdk_call_paths_reject_without_retry(wire, drop_in_dir, assemble, ca
                 instructions='instructions', prepare_input=lambda data: data,
             )
 
-    with pytest.raises(RequestSizeExceededError):
+    with pytest.raises(ContextLimitExceededError if caller == 'compaction' else RequestSizeExceededError):
         asyncio.run(run())
     attempts, sent, clients, _ = wire
     assert len(attempts) == 1 and sent == []
     assert all(client.is_closed() for client in clients)
     assert scaffold.context.usage.total_tokens == 0
+
+
+def test_compaction_shrinks_serialized_requests_and_preserves_reasoning(wire, drop_in_dir, assemble):
+    """Exercise chunk retries through the actual adapter and byte guard without network access."""
+    configure(drop_in_dir, 6500)
+    scaffold = assemble(drop_in_dir, env={**ENV, 'CRUX_REASONING_EFFORT': 'high'})
+    history = [item for i in range(8) for item in (
+        {'role': 'user', 'content': f'evidence {i} ' * 200},
+        {'role': 'assistant', 'content': 'completed'})]
+
+    async def run():
+        async with scaffold.runtime as runtime:
+            return await Compaction('context', Compaction.Options())._summarize(
+                history, ctx=scaffold.context, agent=runtime.agents['pm'],
+                model_provider=runtime.run_config.model_provider, instructions='fixed',
+                prepare_input=lambda data: data)
+
+    assert asyncio.run(run()) == 'done'
+    attempts, sent, _, _ = wire
+    assert len(attempts) > len(sent) > 1
+    assert all(len(request.content) <= 6500 for request in sent)
+    bodies = [json.loads(request.content) for request in sent]
+    assert all(body['max_output_tokens'] == 8192 and body['reasoning']['effort'] == 'high' for body in bodies)
+    assert scaffold.context.usage.by_source['compaction:pm'].requests == len(sent)
 
 
 @pytest.mark.parametrize('after_tool', [False, True], ids=['initial-brief', 'large-tool-output'])

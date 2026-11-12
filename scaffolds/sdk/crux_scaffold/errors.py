@@ -6,6 +6,10 @@ class ToolError(ValueError):
     """A tool call the agent should correct; returned to the model, never raised through the run."""
 
 
+class ContextLimitExceededError(RuntimeError):
+    """Context cannot fit safely; preserve state and require operator recovery instead of restarting."""
+
+
 class RequestSizeExceededError(ValueError):
     """A local request rejection that retrying unchanged cannot fix."""
 
