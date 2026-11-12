@@ -46,8 +46,36 @@ def test_summary_requests_are_bounded_and_preserve_complete_exchanges(tmp_path):
     assert ctx.usage.by_source['compaction:pm'].requests == len(model.inputs)
 
 
-@pytest.mark.parametrize('code', ['context_length_exceeded', 'invalid_api_key'])
-def test_summary_provider_overflow_splits_but_other_bad_requests_propagate(tmp_path, code):
+@pytest.mark.parametrize(('body', 'overflow'), [
+    pytest.param({'code': 'context_length_exceeded'}, True, id='openai-context'),
+    pytest.param({'code': 'invalid_api_key'}, False, id='openai-auth'),
+    pytest.param({'error': {'message': 'Provider returned error', 'code': 400, 'metadata': {
+        'raw': json.dumps({'error': {'code': 400, 'status': 'INVALID_ARGUMENT',
+            'message': 'The input token count exceeds the maximum number of tokens allowed 1048576.'}}),
+        'provider_name': 'Google AI Studio', 'is_byok': True, 'provider_error_code': '400'}}},
+        True, id='google-openrouter-json'),
+    pytest.param({'error': {'code': 400, 'status': 'INVALID_ARGUMENT',
+        'message': 'The input token count (1101838) exceeds the maximum number of tokens allowed (1048576).'}},
+        True, id='google-direct-counts'),
+    pytest.param({'error': {'code': 400, 'metadata': {'raw': {'error': {
+        'code': 'context_window_exceeded', 'message': 'Request rejected'}}}}}, True, id='nested-code'),
+    pytest.param({'error': {'code': 400, 'metadata': {
+        'raw': 'Input token count exceeds the maximum number of tokens allowed 32768.'}}},
+        True, id='google-plain-text'),
+    pytest.param({'error': {'code': 400, 'metadata': {'raw': json.dumps({'error': {
+        'code': 400, 'status': 'INVALID_ARGUMENT', 'message': 'Invalid API key.'}})}}},
+        False, id='google-auth'),
+    pytest.param({'error': {'code': 400, 'metadata': {'raw': json.dumps({'error': {
+        'code': 429, 'status': 'RESOURCE_EXHAUSTED',
+        'message': 'Quota exceeded for metric generate_content_paid_tier_input_token_count, limit: 1000'}})}}},
+        False, id='google-quota'),
+    pytest.param({'error': {'code': 400, 'metadata': {'raw': 'Malformed provider response {not JSON'}}},
+        False, id='malformed-wrapper'),
+    pytest.param({'error': {'code': 400, 'message': 'Invalid API key', 'metadata': {
+        'raw': json.dumps({'error': {'message': 'Invalid API key'},
+            'request': {'content': 'maximum context length exceeded'}})}}}, False, id='ignore-echoed-request'),
+])
+def test_summary_provider_overflow_splits_but_other_bad_requests_propagate(tmp_path, body, overflow):
     """Recover from tokenizer underestimation without retrying unrelated provider errors."""
     import httpx
     from openai import BadRequestError
@@ -61,7 +89,7 @@ def test_summary_provider_overflow_splits_but_other_bad_requests_propagate(tmp_p
             size = estimate_tokens(kwargs['input'])
             self.attempts.append(size)
             if len(self.attempts) == 1:
-                raise BadRequestError('provider rejection', body={'code': code},
+                raise BadRequestError('provider rejection', body=body,
                     response=httpx.Response(400, request=httpx.Request('POST', 'https://provider.test')))
             return await super().get_response(*args, **kwargs)
 
@@ -75,7 +103,7 @@ def test_summary_provider_overflow_splits_but_other_bad_requests_propagate(tmp_p
             request_context={'instructions': 'fixed', 'research': '', 'resources': ''},
             agent=Agent(name='pm', model=model), model_provider=RunConfig().model_provider,
             prepare_input=lambda data: data, research_context=lambda: '')
-    if code == 'invalid_api_key':
+    if not overflow:
         with pytest.raises(BadRequestError):
             asyncio.run(run())
         assert len(model.attempts) == 1
@@ -83,6 +111,7 @@ def test_summary_provider_overflow_splits_but_other_bad_requests_propagate(tmp_p
     else:
         assert asyncio.run(run())[-1] == history[-1]
         assert model.attempts[1] < model.attempts[0]
+        assert list(ctx.state_dir.glob('compaction-*.json'))
         assert ctx.usage.by_source['compaction:pm'].requests == len(model.inputs)
 
 
