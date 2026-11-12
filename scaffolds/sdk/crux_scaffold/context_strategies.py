@@ -236,15 +236,11 @@ def _exchange_boundaries(items: list[Any]) -> list[int]:
 
 
 def since_restart(items: list[Any], restart_tools: set[str]) -> list[Any]:
-    """The orchestrator's history from its latest successful context restart, with earlier operator steering.
-
-    A restart is a call to one of ``restart_tools`` whose result starts with ``RESTARTED``; a refused call restarts
-    nothing. The cut falls on the last exchange boundary at or before that call, so the response that made it, any
-    parallel calls and all their results stay paired. Operator steering keeps its authority across a restart.
+    """Replace the latest completed reset batch with its existing handoff and tool results, without inference.
 
     :param items: Original orchestrator history, standing context excluded.
     :param restart_tools: Tool names of type ``restart_context`` available to the orchestrator.
-    :returns: The history to select from: unchanged when no restart succeeded.
+    :returns: Steering, a deterministic handoff and subsequent history; original storage is unchanged.
     """
     if not restart_tools:
         return items
@@ -255,8 +251,26 @@ def since_restart(items: list[Any], restart_tools: set[str]) -> list[Any]:
              and item.get("call_id") in succeeded]
     if not calls:
         return items
-    cut = max([0, *(boundary for boundary in _exchange_boundaries(items) if boundary <= calls[-1])])
-    return [item for item in items[:cut] if is_envelope(item)] + items[cut:]
+    boundaries = _exchange_boundaries(items)
+    start = max([0, *(boundary for boundary in boundaries if boundary <= calls[-1])])
+    end = next((boundary for boundary in boundaries if boundary > calls[-1]), None)
+    if end is None:
+        return items  # A parallel tool is still pending; do not sever its call/result pair.
+    batch = items[start:end]
+    restart_id = items[calls[-1]]["call_id"]
+    result = next(item["output"] for item in batch
+                  if item.get("type") == "function_call_output" and item["call_id"] == restart_id)
+    content = [{"type": "input_text", "text": f"# Context restart handoff\n\n{result}"}]
+    names = {item["call_id"]: item["name"] for item in batch if item.get("type") == "function_call"}
+    for item in batch:
+        if item.get("type") != "function_call_output" or item["call_id"] == restart_id:
+            continue
+        content.append({"type": "input_text", "text":
+                        f"\nCompleted parallel tool {names[item['call_id']]} ({item['call_id']}):"})
+        output = item["output"]
+        content.extend(output if isinstance(output, list) else [{"type": "input_text", "text": str(output)}])
+    # A reset starts a new user turn, not a leading model/tool batch that providers may reject.
+    return [item for item in items[:end] if is_envelope(item)] + [{"role": "user", "content": content}] + items[end:]
 
 
 def _history_digest(items: list[Any]) -> str:

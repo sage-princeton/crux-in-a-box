@@ -1,6 +1,7 @@
 """Exercise the actual SDK's Responses adapter against scripted HTTP, without model calls."""
 
 import asyncio
+import hashlib
 import json
 import tomllib
 from collections import deque
@@ -8,11 +9,13 @@ from pathlib import Path
 
 import httpx
 import pytest
+from agents import SQLiteSession
 from openai import APIStatusError, AsyncOpenAI
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsRuntime
+from crux_scaffold.cli import main
 from crux_scaffold.context_strategies import estimate_tokens
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
@@ -66,7 +69,8 @@ def router(monkeypatch, drop_in_dir):
         assert request.headers["authorization"] == "Bearer test-key"
         requests.append(json.loads(request.content))
         body = pending.popleft()
-        return httpx.Response(503 if "error" in body else 200, json=body)
+        status, body = body if isinstance(body, tuple) else (503 if "error" in body else 200, body)
+        return httpx.Response(status, json=body)
 
     def client(**kwargs):
         configs.append(kwargs)
@@ -271,6 +275,72 @@ def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble, mon
     assert len(requests) == 2
     assert all(request["provider"]["only"] == ["google-vertex"] and request["provider"]["allow_fallbacks"] is False
                for request in requests)
+
+
+@pytest.mark.parametrize("source", ["pi", "judge", "compaction"])
+def test_unrecoverable_http400_stops_without_retry_and_preserves_state(router, drop_in_dir, tmp_path, capsys, source):
+    requests, pending, _ = router
+    config = drop_in_dir / "scaffold.toml"
+    if source == "judge":
+        config.write_text(config.read_text().replace('continue_prompt = "prompts/continue.md"',
+                          'continue_prompt = "prompts/continue.md"\ngates = ["review"]') +
+                          '\n[gates.review]\ntype = "llm_judge"\nrubric = "PROMPT.md"\n')
+        pending.append(response(say("ready")))
+    elif source == "compaction":
+        config.write_text(config.read_text() + '\n[context]\ntype = "compaction"\ntrigger_tokens = 12000\n')
+        state = tmp_path / "state"
+        state.mkdir()
+        session = SQLiteSession("pm", state / "sessions.sqlite")
+        asyncio.run(session.add_items([{"role": "user", "content": "historical task " * 10000},
+                                       {"role": "assistant", "content": "Earlier work completed."}]))
+    pending.append((400, {"error": {"message": "Provider returned error secret-test-value", "code": 400,
+                                   "metadata": {"raw": json.dumps({"error": {
+                                       "status": "INVALID_ARGUMENT",
+                                       "message": "Please ensure that function response turn comes immediately "
+                                                  "after a function call turn."}})}}}))
+    state = tmp_path / "state"
+    assert main(["run", "--drop-in", str(drop_in_dir), "--state-dir", str(state)], env=ENV) == 2
+    assert len(requests) == (2 if source == "judge" else 1)
+    stderr = capsys.readouterr().err
+    assert "model request rejected" in stderr and "state preserved" in stderr
+    assert "secret-test-value" not in stderr
+    saved = json.loads((state / "state.json").read_text())
+    assert saved["iteration"] == 0 and not saved["history"]
+    assert bool(list(state.glob("pending-turn-*.json"))) == (source != "judge")
+
+
+def test_existing_pending_reset_recovers_without_history_edits_or_extra_model_calls(router, drop_in_dir, tmp_path):
+    requests, pending, _ = router
+    config = drop_in_dir / "scaffold.toml"
+    config.write_text(config.read_text().replace('tools = ["read_file", "write_file", "rest"]',
+                      'tools = ["read_file", "write_file", "rest", "restart_context"]') +
+                      '\n[context]\ntype = "compaction"\ntrigger_tokens = 12000\n')
+    prompt = (drop_in_dir / "PROMPT.md").read_text()
+    history = [{"role": "user", "content": prompt}, call("read_file", {"path": "AGENTS.md"}, "old"),
+               {"type": "function_call_output", "call_id": "old", "output": "old direction"},
+               {"type": "reasoning", "id": "rs-reset", "summary": [], "encrypted_content": "old-signature"},
+               call("restart_context", {"handoff": "Continue with B."}, "reset"),
+               {"type": "function_call_output", "call_id": "reset",
+                "output": "Context restarted. Continue with B."}]
+    state = tmp_path / "state"
+    state.mkdir()
+    session = SQLiteSession("pm", state / "sessions.sqlite")
+    asyncio.run(session.add_items(history))
+    suffix = hashlib.sha256(b"pm").hexdigest()
+    (state / f"pending-turn-{suffix}.json").write_text(json.dumps({
+        "workflow": "main", "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(), "history_items": 0}))
+    (state / f"compaction-{suffix}.json").write_text(json.dumps({
+        "covered_items": 3, "prefix_sha256": "old-checkpoint", "summary": "old direction"}))
+    pending.append(response(say("Resumed B.")))
+    assert main(["run", "--drop-in", str(drop_in_dir), "--state-dir", str(state)], env=ENV) == 0
+    assert len(requests) == 1 and requests[0]["input"][0]["role"] == "user"
+    assert "Continue with B." in json.dumps(requests[0]["input"])
+    assert "old direction" not in json.dumps(requests[0]["input"])
+    assert "old-signature" not in json.dumps(requests[0]["input"])
+    saved = asyncio.run(session.get_items())
+    assert saved[:len(history)] == history
+    assert sum(item.get("content") == prompt for item in saved) == 1
+    assert not list(state.glob("pending-turn-*.json"))
 
 
 @pytest.mark.parametrize("reasoning_field", ["summary", "content", "encrypted_only"])

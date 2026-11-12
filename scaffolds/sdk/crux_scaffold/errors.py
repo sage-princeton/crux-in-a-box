@@ -10,6 +10,10 @@ class ContextLimitExceededError(RuntimeError):
     """Context cannot fit safely; preserve state and require operator recovery instead of restarting."""
 
 
+class ModelRequestError(RuntimeError):
+    """The provider rejected the model request after applicable context recovery; retrying unchanged cannot fix it."""
+
+
 class RequestSizeExceededError(ValueError):
     """A local request rejection that retrying unchanged cannot fix."""
 
