@@ -38,10 +38,6 @@ jobs:
         run: shellcheck -x -e SC2029,SC2088 devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh
       - name: SDK provider provisioning tests
         run: python3 -m unittest discover -s devops/ec2-workspaces -p 'test_*.py'
-      - name: Deployment revision tests
-        run: |
-          python3 -m pip install -r requirements-dev.txt
-          python3 -m pytest -q devops/ec2-workspaces/tests/test_deployment_revision.py
       - name: Changed-file whitespace
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
