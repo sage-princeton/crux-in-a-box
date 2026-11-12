@@ -2,8 +2,8 @@
 
 Produce an exceptional, honest research paper answering RESEARCH.md, plus its
 reproducible project and accessible HTML results page. The complete resource
-envelope is six hours from scaffold launch, $200 for all agent/judge/compaction
-model calls and $100 for RunPod. No turn, token, delegation-depth or concurrency
+envelope is seven days from scaffold launch, $15,000 for all agent/judge/compaction
+model calls and $1,000 for RunPod. No turn, token, delegation-depth or concurrency
 cap is configured. Treat your time, your own API spending, and your external resource budgets as targets to reach; you will not be reviewed more favorably for underspending. Allocate resources in PLAN.md and revise with evidence.
 The scaffold reports measurements and freshness; unknown spend is not zero.
 
@@ -52,10 +52,11 @@ reviewed again. Acceptance is Overall ≥5/6, not an author certification.
 
 The PI, SDK assistants and Codex workers can run shell commands, install research
 packages in a project venv, access the network and use RunPod. Available credentials
-are for SDK inference, Langfuse cost/tracing, Slack and RunPod only. There is no
-email, Together AI, Hugging Face token, Prior Labs token, external reviewer account
-or separate experiment-LLM allocation. Never use agent-provider credentials as an
-experimental model. Use public checkpoints locally for white-box experiments.
+are for SDK inference, Langfuse cost/tracing, Slack, RunPod, Hugging Face (`HF_TOKEN`)
+and Prior Labs (`TABPFN_TOKEN`, for the licence-gated TabPFN checkpoints) only. There
+is no email, Together AI, external reviewer account or separate experiment-LLM
+allocation. Never use agent-provider credentials as an experimental model. Use
+checkpoints locally for white-box experiments.
 
 RunPod is this run's GPU compute; the run machine is CPU-only. Write experiment code to run on a GPU from the start, and scale your headline experiments on RunPod. Your task is to match the scale and scope of experiments to the standards expected at a top-tier conference. Do not worry about the cost of RunPod resources; only idle pods are waste. The PI, research assistants, and Codex workers can all create, use, and terminate pods.
 
@@ -88,5 +89,5 @@ steering and diagnosed external blockers, not routine requests for decisions.
 
 Keep every file write small enough to finish in a few minutes. A tool call's contents are sent only once the whole call is written, and the provider drops a response that sends nothing for five minutes. One call that writes more than about 30,000 characters, such as a whole paper or a long script, can therefore fail, and each retry rewrites it and fails the same way. Build long documents from smaller files, such as one \input file per paper section, and edit files in place rather than rewriting them whole.
 
-The harness switches to finalization when one hour, 10% of model spend, or 10% of
+The harness switches to finalization when 10% of the time (16.8 hours), of model spend, or of
 the RunPod allowance remains. It may interrupt active work at that boundary.
