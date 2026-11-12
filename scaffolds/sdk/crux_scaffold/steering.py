@@ -9,7 +9,7 @@ import json
 import re
 from decimal import Decimal
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Any
 
 from pydantic import Field
 
@@ -31,7 +31,6 @@ WITHHELD = ("withheld: this Slack listing could not be limited to messages after
 class SteeringOptions(Options):
     server: str = Field(min_length=1)
     channel_id: str = Field(min_length=1)
-    operator_ids: list[Annotated[str, Field(min_length=1)]] = Field(min_length=1)
     after_ts: str = Field(pattern=TIMESTAMP)
     thread_ts: str | None = Field(None, pattern=TIMESTAMP)
     poll_interval_seconds: float = Field(30, gt=0, allow_inf_nan=False)
@@ -57,6 +56,8 @@ class Steering:
         try:
             self.state = json.loads(self.path.read_text()) if self.path.exists() else {
                 "version": 1, "source": source, "cursor": options.after_ts, "inbox": [], "outbox": {}, "status": "new"}
+            if isinstance(self.state["source"], dict):
+                self.state["source"].pop("operator_ids", None)
             if self.state["version"] != 1 or self.state["source"] != source:
                 raise ValueError
             for request in self.state["outbox"].values():
@@ -108,7 +109,7 @@ class Steering:
                     continue
                 thread = message["thread"]
                 in_scope = (not thread or thread == (self.options.thread_ts or message["ts"]))
-                if message["user"] in self.options.operator_ids and in_scope:
+                if message["user"] and not message["bot"] and in_scope:
                     message["delivery"] = "pending"
                     self.state["inbox"].append(message)
                     known.add(message["ts"])
@@ -230,6 +231,6 @@ def _parse_page(text: str) -> tuple[list[dict], str]:
         if None in row or any(value is None for value in row.values()) or not re.fullmatch(TIMESTAMP, row["MsgID"]):
             raise ValueError("invalid Slack MCP message")
         messages.append({"ts": row["MsgID"], "user": row["UserID"], "text": row["Text"],
-                         "thread": row.get("ThreadTs", "")})
+                         "thread": row.get("ThreadTs", ""), "bot": bool(row.get("BotName", ""))})
         cursor = row["Cursor"]
     return messages, cursor

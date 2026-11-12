@@ -440,14 +440,15 @@ MCP integration. It receives an existing MCP connection and telemetry; it does n
 start a server or build components. This extends the existing runtime/MCP and tool
 contracts rather than adding a transport registry.
 
-`SteeringOptions` declares a server, channel, optional fixed thread, nonempty
-`operator_ids` allowlist and explicit `after_ts` (Slack timestamp; `0` includes all
+`SteeringOptions` declares a server, channel, optional fixed thread and explicit `after_ts` (Slack timestamp; `0` includes all
 available history). `poll_interval_seconds` bounds waiting between polls;
 `max_pages` bounds one scan. It targets the CSV contract of
 [slack-mcp-server v1.3.0](https://github.com/korotovsky/slack-mcp-server/blob/v1.3.0/pkg/handler/conversations.go).
 Channel history is newest first; thread replies are oldest first, so thread scans
 must finish every page. Channel mode accepts top-level messages; thread mode
-accepts replies in its configured thread. Other authors and bot posts are ignored.
+accepts replies in its configured thread. Any person in that source can steer.
+Rows with a nonempty `BotName` or empty `UserID` are ignored; transport adapters
+should preserve the upstream `BotName` marker to prevent bot posts becoming steering.
 Edits/deletions of old messages are not new instructions: post a new correction.
 
 `after_ts` also bounds what agents read. The runtime gives agents a steering server
@@ -464,7 +465,10 @@ timestamp, ordered inbox, pending/delivered status and escalation outbox. A comp
 scan commits its cursor together with messages; a failed, malformed or capped scan
 leaves it unchanged. Pagination cursors are transient; each retry scans from the
 head so cursor expiration cannot skip messages. Reusing state with another source
-or allowlist fails. Keep this state with the conversation store when resuming.
+or recipient fails. The removed `operator_ids` configuration key is rejected; a
+legacy saved allowlist is discarded when loading state, preserving cursor, inbox,
+delivery markers and outbox. Already scanned messages are not replayed. Keep this
+state with the conversation store when resuming.
 
 `Escalation` requires a stable `request_id`, `failure`, `diagnosis`,
 `requested_action` and `meanwhile`. `Steering.escalate` persists before posting and

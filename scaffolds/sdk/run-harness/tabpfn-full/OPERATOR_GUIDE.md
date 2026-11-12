@@ -19,7 +19,7 @@ from `scaffolds/sdk`:
 - Any changes you want to be included in the run are committed on `HEAD`(the deployment scripts deploy from `HEAD`.
 - The workspace fleet's Langfuse project secrets have already been configured in SSM. See [workspace provisioning](../../../../devops/ec2-workspaces/README.md). That same project will be used for tracing and cost tracking; confirm the selected model has pricing.
 - The shared [Langfuse cost Lambda](../../../../monitoring/costs/langfuse/README.md) is deployed and you have the associated`LANGFUSE_BASE_URL` and `COST_TRACKER_TOKEN`.
-- A [Slack app](https://api.slack.com/apps) has been created from `slack-app-manifest.yaml`, installed into a Slack workspace, and`@crux-tabpfn`bot has been invited into a dedicated run channel. The channel ID and the steering User ID has been recorded.
+- A [Slack app](https://api.slack.com/apps) has been created from `slack-app-manifest.yaml`, installed into a Slack workspace, and`@crux-tabpfn`bot has been invited into a dedicated run channel. The channel ID has been recorded. Any person in that channel can steer the run.
 
 **Dependency setup:**
 
@@ -59,9 +59,9 @@ ssh tabpfn-sdk-<unique-suffix>
 
 ```bash
 cd /srv/crux-run/run-harness
-# Channel is set to crux-tab-pfn channel in Max's Workspace; user is set to Max Morgan user ID (change to your user ID to steer)
+# Channel is set to crux-tab-pfn channel in Max's Workspace. Any person in the channel can steer.
 # --after-ts marks the run start: steering and the agent's Slack tools ignore earlier channel messages.
-python3 prepare.py --channel C0CAP03MZNF --operator U0BUSP5CJM6 \
+python3 prepare.py --channel C0CAP03MZNF \
   --after-ts "$(date +%s).000000"
 cd workspace/paper
 latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex

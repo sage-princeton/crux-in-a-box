@@ -302,7 +302,7 @@ A CRUX with different needs changes declarations, not code. The same drop-in cou
 
 Steering is opt-in for the `openai-agents` runtime. It delivers operator instructions
 to the configured **orchestrator**, including when the model has no Slack read tools.
-Reuse a declared Slack MCP server and configure the run's source and authorized users:
+Reuse a declared Slack MCP server and configure the run's source:
 
 ```toml
 [runtime]
@@ -311,7 +311,6 @@ type = "openai-agents"
 [runtime.steering]
 server = "slack"                    # a declared [mcp_servers.slack]
 channel_id = "C123"
-operator_ids = ["U123"]            # Slack user IDs allowed to issue instructions
 # Explicit run boundary for steering and agents' Slack reads; 0 includes all available history.
 after_ts = "1792036800.000000"
 # thread_ts = "1792036800.000000"  # optional fixed thread; omit for top-level channel posts
@@ -323,11 +322,17 @@ Before **each orchestrator model call**, the scaffold scans for new messages, so
 them by Slack timestamp and adds identified operator instructions to its durable
 conversation. Newer instructions take precedence over conflicting workflow prompts,
 agent plans and older operator instructions, within system/developer and configured
-resource/tool constraints. An allowlist is required; other users and agent/bot posts
-are ignored. In channel mode, replies must be new top-level posts; in fixed-thread
+resource/tool constraints. Any person in the configured channel can steer the run;
+posts marked by the Slack MCP server with `BotName`, or without a `UserID`, are ignored. In channel mode, replies must be new top-level posts; in fixed-thread
 mode, reply in that thread. Post a new message to correct an earlier one; edits are
 not redelivered. Delegates retain their isolated brief; the orchestrator passes on
 relevant steering when it next delegates.
+
+The former `operator_ids` option and research drop-ins' `--operator` preparation
+argument are removed; delete them from existing configurations and launch commands.
+Existing steering state resumes with its cursor, inbox and outbox preserved; its
+saved allowlist is discarded. Earlier messages already passed by the cursor are
+not replayed.
 
 Agents' own Slack reads share that boundary. Every message listing the steering
 server returns to an agent keeps only messages posted after `after_ts`, whichever

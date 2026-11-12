@@ -12,12 +12,12 @@ from crux_scaffold.steering import Escalation, Steering, SteeringOptions, within
 from crux_scaffold.telemetry import NullTelemetry
 
 
-def response(*messages, cursor=""):
+def response(*messages, cursor="", bot_name="", thread=""):
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["MsgID", "UserID", "Text", "ThreadTs", "Cursor"])
+    writer.writerow(["MsgID", "UserID", "Text", "ThreadTs", "BotName", "Cursor"])
     for index, (ts, user, text) in enumerate(messages):
-        writer.writerow([ts, user, text, "", cursor if index == len(messages) - 1 else ""])
+        writer.writerow([ts, user, text, thread, bot_name, cursor if index == len(messages) - 1 else ""])
     return SimpleNamespace(is_error=False, content=[SimpleNamespace(type="text", text=output.getvalue())])
 
 
@@ -43,26 +43,26 @@ class Recorder(NullTelemetry):
 
 
 def make(tmp_path, transport, telemetry=None, **options):
-    policy = SteeringOptions(server="slack", channel_id="C123", operator_ids=["U_OP"], after_ts="1.000000",
+    policy = SteeringOptions(server="slack", channel_id="C123", after_ts="1.000000",
                              **options)
     return Steering(policy, tmp_path, transport, telemetry or NullTelemetry())
 
 
 def test_paginated_history_is_ordered_filtered_and_durable(tmp_path):
     transport = Transport(response(("4.000000", "U_OP", "new\nline, comma"), cursor="page2"),
-                          response(("3.000000", "U_BOT", "ignore"), ("2.000000", "U_OP", "first")),
+                          response(("3.000000", "U_OTHER", "second"), ("2.000000", "U_OP", "first")),
                           response(("4.000000", "U_OP", "new\nline, comma")))
     steering = make(tmp_path, transport)
     asyncio.run(steering.poll())
-    assert [m["text"] for m in steering.pending()] == ["first", "new\nline, comma"]
+    assert [m["text"] for m in steering.pending()] == ["first", "second", "new\nline, comma"]
     assert transport.calls[1][1]["cursor"] == "page2"
     assert transport.calls[1][1]["limit"] == ""
     steering.delivered("2.000000")
     restarted = make(tmp_path, transport)
     asyncio.run(restarted.poll())
-    assert [m["ts"] for m in restarted.pending()] == ["4.000000"]
+    assert [m["ts"] for m in restarted.pending()] == ["3.000000", "4.000000"]
     assert restarted.state["cursor"] == "4.000000"
-    assert len(restarted.state["inbox"]) == 2
+    assert len(restarted.state["inbox"]) == 3
 
 
 def test_thread_scan_traverses_all_pages_even_when_first_page_is_old(tmp_path):
@@ -111,21 +111,23 @@ def test_scan_limit_is_visible_and_does_not_commit_partial_history(tmp_path):
     assert "max_pages" in steering.state["status"]
 
 
-def test_state_cannot_silently_change_source_or_operator_authority(tmp_path):
+@pytest.mark.parametrize("update", [{"channel_id": "C_OTHER"}, {"thread_ts": "2.000000"},
+                                    {"after_ts": "2.000000"}, {"server": "other"}])
+def test_state_cannot_silently_change_source(tmp_path, update):
     steering = make(tmp_path, Transport())
     steering.save()
     with pytest.raises(InvalidDropInError, match="steering state"):
-        Steering(steering.options.model_copy(update={"operator_ids": ["U_OTHER"]}), tmp_path,
+        Steering(steering.options.model_copy(update=update), tmp_path,
                  Transport(), NullTelemetry())
 
 
 @pytest.mark.parametrize("update", [
-    {"operator_ids": []}, {"operator_ids": [""]}, {"poll_interval_seconds": float("inf")}, {"after_ts": "NaN"},
+    {"operator_ids": ["U_OP"]}, {"poll_interval_seconds": float("inf")}, {"after_ts": "NaN"},
     {"poll_interval_seconds": 0}, {"channel_id": ""}, {"unknown": True},
 ])
 def test_policy_is_strict(update):
     with pytest.raises(ValidationError):
-        SteeringOptions.model_validate({"server": "slack", "channel_id": "C123", "operator_ids": ["U_OP"],
+        SteeringOptions.model_validate({"server": "slack", "channel_id": "C123",
                                         "after_ts": "1.000000", **update})
 
 
@@ -246,3 +248,34 @@ def test_output_without_messages_passes_unchanged(tool, text):
 def test_unrecognized_message_listings_are_withheld(text):
     with pytest.raises(ValueError):
         within_run("conversations_history", text, "1.000000")
+
+
+@pytest.mark.parametrize("user,bot_name", [("U_BOT", "research-bot"), ("", ""), ("", "webhook")])
+def test_bot_or_authorless_posts_are_not_steering_but_advance_cursor(tmp_path, user, bot_name):
+    steering = make(tmp_path, Transport(response(("2.000000", user, "ignore"), bot_name=bot_name)))
+    asyncio.run(steering.poll())
+    assert steering.pending() == []
+    assert steering.state["cursor"] == "2.000000"
+
+
+@pytest.mark.parametrize("thread_ts,accepted", [(None, False), ("2.000000", True), ("9.000000", False)])
+def test_any_author_still_obeys_thread_scope(tmp_path, thread_ts, accepted):
+    steering = make(tmp_path, Transport(response(("3.000000", "U_OTHER", "reply"), thread="2.000000")),
+                    thread_ts=thread_ts)
+    asyncio.run(steering.poll())
+    assert bool(steering.pending()) is accepted
+
+
+def test_legacy_allowlist_state_resumes_without_losing_delivery_or_outbox(tmp_path):
+    steering = make(tmp_path, Transport(response(("2.000000", "U_OP", "first"))))
+    asyncio.run(steering.poll())
+    steering.delivered("2.000000")
+    steering.state["source"]["operator_ids"] = ["U_OP"]
+    steering.state["outbox"]["database-down"] = {"request": escalation().model_dump(), "status": "posted"}
+    steering.save()
+    restarted = make(tmp_path, Transport(response(("3.000000", "U_OTHER", "second"))))
+    asyncio.run(restarted.poll())
+    assert [m["text"] for m in restarted.pending()] == ["second"]
+    assert restarted.state["inbox"][0]["delivery"] == "delivered"
+    assert restarted.state["outbox"] == steering.state["outbox"]
+    assert "operator_ids" not in json.loads(restarted.path.read_text())["source"]

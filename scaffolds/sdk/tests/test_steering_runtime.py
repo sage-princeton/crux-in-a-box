@@ -16,12 +16,12 @@ from drop_ins import add_fake_slack, edit
 from scripted import ScriptedModel, call, say, tool_outputs
 
 
-def inbox(path, *messages):
+def inbox(path, *messages, user="U_OP"):
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["MsgID", "UserID", "Text", "ThreadTs", "Cursor"])
     for ts, text in messages:
-        writer.writerow([ts, "U_OP", text, "", ""])
+        writer.writerow([ts, user, text, "", ""])
     path.write_text(output.getvalue())
 
 
@@ -42,7 +42,6 @@ type = "openai-agents"
 [runtime.steering]
 server = "slack"
 channel_id = "C123"
-operator_ids = ["U_OP"]
 after_ts = "1.000000"
 poll_interval_seconds = 2
 ''' + extra)
@@ -97,13 +96,15 @@ def test_rest_wakes_for_steering_and_charges_only_waited_time(drop_in_dir, assem
 
     async def sleep(seconds):
         sleeps.append(seconds)
-        inbox(tmp_path / "inbox.csv", ("2.000000", "Proceed now"))
+        inbox(tmp_path / "inbox.csv", ("2.000000", "Proceed now"), user="U_OTHER")
     scaffold.context.sleep = sleep
     asyncio.run(scaffold.run())
     assert sleeps == [2]
     assert scaffold.runtime.assembly.tools["rest"].used_seconds == 2
     assert "steering" in tool_outputs(pm.inputs[1])[0]
     assert [m["text"] for m in messages(pm.inputs[1])] == ["Proceed now"]
+    assert messages(pm.inputs[1])[0]["source"] == "U_OTHER"
+    assert "Any person" in pm.instructions[0]
 
 
 def test_pending_steering_wakes_rest_without_sleep(drop_in_dir, assemble, tmp_path):
