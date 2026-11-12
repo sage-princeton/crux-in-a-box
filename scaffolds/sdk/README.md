@@ -51,6 +51,9 @@ After the setup above, run from this directory:
 Validate changed task inputs with `crux_scaffold check`, then exercise a bounded
 Run in ciab-devenv and inspect its outputs and traces.
 
+The [testing assessment](docs/testing-assessment.md) evaluates the SDK suite
+against Sandi Metz's testing approach and records concrete follow-up work.
+
 Research runs can opt into `runtime.interactive_delegates` for background research assistants and Codex workers with durable
 mailboxes. The PI can steer, interrupt, resume, and request progress; assistants can ask questions and report
 progress without interrupting active PI work. A single `delegate_inbox` tool waits for mail or any task finishing
