@@ -156,22 +156,23 @@ load_sdk_config() {
 }
 
 # The drop-in directory staged at /srv/crux-run/run-harness. Provisioning
-# archives the committed HEAD, so validate against HEAD, not the working tree.
+# archives a committed revision, so validate it rather than the working tree.
 load_drop_in_path() {
+  local revision="${2:-HEAD}"
   DROP_IN_PATH="$(cfg DROP_IN_PATH)"
   DROP_IN_PATH="${DROP_IN_PATH:-scaffolds/$AGENT_PLATFORM/run-harness}"
   [[ "$DROP_IN_PATH" =~ ^[A-Za-z0-9._/-]+$ && "$DROP_IN_PATH" != /* && "$DROP_IN_PATH" != *..* ]] \
     || die "DROP_IN_PATH must be a relative path inside the repository (got '$DROP_IN_PATH')."
-  git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/workspace" 2>/dev/null \
-    || die "$DROP_IN_PATH/workspace is not in the committed HEAD; provisioning stages committed files only."
+  git -C "$1" cat-file -e "$revision:$DROP_IN_PATH/workspace" 2>/dev/null \
+    || die "$DROP_IN_PATH/workspace is not in the deployment commit; provisioning stages committed files only."
   if [ "$SCAFFOLD_MODULE" = sdk ]; then
-    git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/scaffold.toml" 2>/dev/null \
-      || die "$DROP_IN_PATH/scaffold.toml is not in the committed HEAD; openai-agents boxes run a scaffold drop-in."
-    load_sdk_config < <(git -C "$1" show "HEAD:$DROP_IN_PATH/scaffold.toml")
+    git -C "$1" cat-file -e "$revision:$DROP_IN_PATH/scaffold.toml" 2>/dev/null \
+      || die "$DROP_IN_PATH/scaffold.toml is not in the deployment commit; openai-agents boxes run a scaffold drop-in."
+    load_sdk_config < <(git -C "$1" show "$revision:$DROP_IN_PATH/scaffold.toml")
   fi
-  if git -C "$1" cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
-    git -C "$1" show "HEAD:$DROP_IN_PATH/provision.json" \
-      | python3 "$1/devops/ec2-workspaces/run_provision.py" validate --manifest /dev/stdin \
+  if git -C "$1" cat-file -e "$revision:$DROP_IN_PATH/provision.json" 2>/dev/null; then
+    git -C "$1" show "$revision:$DROP_IN_PATH/provision.json" \
+      | python3 "${BASH_SOURCE[0]%/*}/run_provision.py" validate --manifest /dev/stdin \
       || die "Fix $DROP_IN_PATH/provision.json and commit it before provisioning."
   fi
 }
