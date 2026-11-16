@@ -1,0 +1,140 @@
+\documentclass[tikz,border=0pt]{standalone}
+\usepackage{crux-diagrams}
+\cruxmeta{One loop iteration, in time}{Swimlane sequence of one research iteration of the SDK scaffold: the loop prompts the PI, the PI calls the model and dispatches background delegates, collects their results, the loop runs the research_review gate with three judges, and Langfuse receives each observation when it ends, with the iteration span last.}
+
+% Local styles (figure-specific; shared grammar stays in crux-diagrams.sty).
+\tikzset{
+  lanesep/.style={draw=faint, line width=0.4pt},
+  guide/.style={draw=faint, line width=0.3pt, dash pattern=on 0.6pt off 1.6pt},
+  act/.style={draw=ink, line width=0.4pt, fill=fillB},
+  lanelabel/.style={text width=3.4cm, anchor=west, font=\small},
+  lbl/.style={font=\footnotesize, align=left, fill=white, inner sep=1.2pt, text=ink},
+  lfobs/.style={font=\footnotesize\ttfamily, align=left, fill=white, inner sep=1pt, text=ink},
+}
+% Step x positions (event order, not to scale).
+\def\sA{5.8}\def\sB{8.4}\def\sC{11.0}\def\sD{13.8}\def\sE{16.6}\def\sF{19.4}
+\def\sG{22.2}\def\sH{25.0}\def\sI{27.8}\def\sJ{30.6}\def\sK{33.4}\def\sL{36.2}
+% Lane centre lines.
+\def\yA{20.8}\def\yB{18.4}\def\yC{16.0}\def\yD{13.6}\def\yE{11.2}
+\newcommand\actbar[3]{\draw[act] (#1,#3-0.11) rectangle (#2,#3+0.11);}
+\newcommand\lfmark[3]{% x, row top y, text
+  \fill[mid] (#1,#2-0.17) circle (1.7pt);
+  \node[lfobs, anchor=north west] at (#1+0.1,#2) {#3};}
+\newcommand\lfopen[3]{%
+  \draw[mid, fill=white, line width=0.6pt] (#1,#2-0.17) circle (1.7pt);
+  \node[lfobs, anchor=north west] at (#1+0.1,#2) {#3};}
+
+\begin{document}
+\begin{tikzpicture}[crux]
+\cruxcanvas{40}{21}
+\begin{scope}[yshift=-3cm]
+
+\cruxtitle{0.5,23.6}{One loop iteration, in time}{One \cruxid{research \#n} iteration of \cruxid{tabpfn-full} with background delegates. Time runs left to right (event order, not to scale); one valid interleaving.}
+
+% ---- Lanes ---------------------------------------------------------------
+\fill[fillA] (0.3,22.0) rectangle (4.5,7.2);
+\foreach \y in {22.0,19.6,17.2,14.8,12.4,10.0,7.2}
+  \draw[lanesep] (0.3,\y) -- (39.7,\y);
+\node[component, lanelabel] at (0.5,\yA) {\textbf{Loop}\\\cruxid{ResearchLoop}};
+\node[role, lanelabel]      at (0.5,\yB) {\textbf{PI}\\SDK \cruxid{Runner}};
+\node[external, lanelabel]  at (0.5,\yC) {\textbf{OpenRouter}\\model provider};
+\node[role, lanelabel]      at (0.5,\yD) {\textbf{Delegates}\\RA / Codex worker};
+\node[gate, text width=3.4cm, anchor=west, font=\small, align=left] at (0.5,\yE) {\textbf{Gate + 3 judges}\\\cruxid{research\_review}};
+\node[external, lanelabel, anchor=north west] at (0.5,9.85) {\textbf{Langfuse}\\{\footnotesize each observation is sent once, when it ends (batched, $\leq$5\,s)}};
+
+% ---- Time ruler, step badges and guides -------------------------------------
+\draw[->, mid, line width=0.6pt] (4.8,22.45) -- (39.6,22.45);
+\node[font=\footnotesize, text=mid, anchor=east] at (4.5,22.45) {time $\rightarrow$};
+\foreach \n/\x in {1/\sA,2/\sB,3/\sC,4/\sD,5/\sE,6/\sF,7/\sG,8/\sH,9/\sI,10/\sJ,11/\sK,12/\sL}{
+  \draw[guide] (\x,22.2) -- (\x,7.2);
+  \node[stepbadge] at (\x,22.45) {\n};
+}
+
+% ---- Activation bars (open span / running work) ------------------------------
+\actbar{\sA}{\sL}{\yA}   % iteration span research #n
+\actbar{\sB}{\sH}{\yB}   % PI turn
+\actbar{\sD}{\sG}{\yD}   % background delegates
+\actbar{\sI}{\sK}{\yE}   % gate
+
+% 1  open iteration
+\node[lbl, anchor=south west] at (\sA+0.05,\yA+0.18) {budget check, open \cruxid{research \#n}};
+% 2  prompt
+\draw[control] (\sB,\yA-0.11) -- (\sB,\yB+0.11);
+\node[lbl, anchor=north west] at (\sB+0.1,\yA-0.2) {prompt};
+% 3  PI model call
+\draw[modelcall, bidir] (\sC,\yB-0.11) -- (\sC,\yC);
+\fill[ink] (\sC,\yC) circle (1.5pt);
+\node[lbl, anchor=west] at (\sC+0.15,\yC) {model call\\(compacts at $\geq$650k)};
+% 4  dispatch delegates
+\draw[delegation] (\sD,\yB-0.11) -- (\sD,\yD+0.11);
+\node[lbl, anchor=north west] at (\sD+0.1,\yB-0.2) {dispatch RA / \cruxid{worker\_a}};
+\node[lbl, anchor=north west] at (\sD+0.1,\yD-0.2) {run in background};
+% 5  delegate model calls
+\draw[modelcall, bidir] (\sE,\yD+0.11) -- (\sE,\yC);
+\fill[ink] (\sE,\yC) circle (1.5pt);
+\node[lbl, anchor=west] at (\sE+0.15,\yC) {RA calls,\\Codex turns};
+% 6  mail to PI
+\draw[data] (\sF,\yD+0.11) -- (\sF,\yB-0.11);
+\node[lbl, anchor=west] at (\sF+0.1,\yC-0.55) {mail:\\\cruxid{ask\_pi},\\\cruxid{report\_progress}};
+% 7  collect results
+\draw[toolcall, bidir] (\sG,\yB-0.11) -- (\sG,\yD+0.11);
+\node[lbl, anchor=north west] at (\sG+0.1,\yB-0.2) {\cruxid{delegate\_inbox}};
+\node[lbl, anchor=north west] at (\sG+0.1,\yD-0.2) {results collected};
+% 8  turn ends
+\draw[control] (\sH,\yB+0.11) -- (\sH,\yA-0.11);
+\node[lbl, anchor=north west] at (\sH+0.1,\yA-0.2) {turn done};
+\node[lbl, anchor=south east, text=mid] at (\sH-0.1,\yA+0.18) {if a delegate is uncollected: gates skipped, next iteration starts};
+% 9  gate
+\draw[control] (\sI,\yA-0.11) -- (\sI,\yE+0.11);
+\node[lbl, anchor=north west] at (\sI+0.1,\yE-0.2) {run gate};
+% 10 judges
+\foreach \dy in {0.35,0.6,0.85}
+  \draw[act] (\sJ,\yE+\dy-0.06) rectangle (\sJ+1.5,\yE+\dy+0.06);
+\draw[modelcall, bidir] (\sJ+0.3,\yE+0.91) -- (\sJ+0.3,\yC);
+\fill[ink] (\sJ+0.3,\yC) circle (1.5pt);
+\node[lbl, anchor=west] at (\sJ+0.45,\yC) {3 judges,\\in parallel};
+% 11 verdict
+\draw[control] (\sK,\yE+0.11) -- (\sK,\yA-0.11);
+\node[lbl, anchor=north west] at (\sK+0.1,\yA-0.2) {verdict};
+% 12 next
+\node[lbl, anchor=west] at (\sL+0.1,\yA) {continue, or\\phase \cruxid{finalize}};
+
+% ---- Langfuse: when each observation is exported -----------------------------
+\def\rowU{9.75}\def\rowL{8.45}
+\lfopen{\sA}{\rowU}{research \#n opened}
+\lfmark{\sC}{\rowL}{context:select\\response}
+\lfmark{\sD}{\rowU}{delegate:started\\tool span}
+\lfmark{\sE}{\rowL}{response, codex:*\\worker\_a:usage}
+\lfmark{\sG}{\rowU}{delegate\_inbox}
+\lfmark{\sH}{\rowL}{pi, research}
+\lfmark{\sJ}{\rowU}{judge:research\_review\\$\times$3}
+\lfmark{\sK}{\rowL}{gate:research\_review}
+\lfmark{\sL}{\rowU}{\textbf{research \#n}\\{\rmfamily\sffamily arrives last}}
+
+% ---- Step list and key --------------------------------------------------------
+\node[anchor=north west, font=\footnotesize, align=left, inner sep=0pt] at (0.5,6.7) {%
+  \textbf{Steps}\\[3pt]
+  \begin{tabular}{@{}r@{~~}p{9.4cm}r@{~~}p{9.4cm}r@{~~}p{9.4cm}@{}}
+  \textbf{1} & Budget check; open iteration span \cruxid{research \#n}. &
+  \textbf{5} & Delegates call the model in the background. &
+  \textbf{9} & Loop runs the \cruxid{research\_review} gate. \\
+  \textbf{2} & Loop sends the phase prompt to the PI. &
+  \textbf{6} & Delegates mail the PI; no mail interrupts its turn. &
+  \textbf{10} & Three judges review the paper in parallel. \\
+  \textbf{3} & PI model call; history compacted at $\geq$650k tokens. &
+  \textbf{7} & PI collects finished results with \cruxid{delegate\_inbox}. &
+  \textbf{11} & Verdict returns to the loop. \\
+  \textbf{4} & PI dispatches RA / Codex worker; the tool returns at once. &
+  \textbf{8} & Turn ends; gates run only if every delegate is collected. &
+  \textbf{12} & Continue prompt or switch to \cruxid{finalize}; span exported last. \\
+  \end{tabular}};
+\cruxlegend[anchor=north east]{39.6,6.95}{control,delegation,toolcall,modelcall,data}
+\node[anchor=north west, align=left, font=\scriptsize, text=ink, inner sep=0pt]
+  at ([yshift=-4pt]legend.south west) {two heads: call and its return\\
+  gray bar: span open / work running\\
+  {\color{mid}$\bullet$} sent to Langfuse, {\color{mid}$\circ$} opened};
+
+\cruxfooter{0.5,3.4}{\cruxid{crux\_scaffold/loop.py}, \cruxid{agent\_runtimes/openai\_agents\_sdk.py}, \cruxid{delegate\_tasks.py}, \cruxid{coding\_agents.py}, \cruxid{gates.py}, \cruxid{telemetry.py}, \cruxid{run-harness/tabpfn-full/tabpfn\_extensions.py}, \cruxid{scaffold.toml}}
+\end{scope}
+\end{tikzpicture}
+\end{document}

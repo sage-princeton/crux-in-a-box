@@ -1,0 +1,142 @@
+% crux-diagrams.sty — shared visual grammar for the SDK scaffold system diagrams.
+%
+% Every figure in this folder loads this package and draws only with the styles
+% below, so the set reads as one system: same node kinds, same edge kinds, same
+% type sizes. Grayscale only; edge kinds differ by dash pattern and arrow head,
+% never by color alone. Smallest permitted text is \scriptsize (7pt); \tiny is
+% not used.
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{crux-diagrams}[2026/11/15 CRUX SDK scaffold diagram styles]
+
+% --- Text: searchable, copyable, screen-reader friendly ----------------------
+\input{glyphtounicode}
+\pdfgentounicode=1
+\RequirePackage[T1]{fontenc}
+\RequirePackage[default,semibold]{sourcesanspro}
+\RequirePackage[varqu,scaled=0.92]{zi4}  % Inconsolata for identifiers
+\RequirePackage{xcolor}
+\RequirePackage{tikz}
+\usetikzlibrary{positioning,fit,backgrounds,calc,spy,arrows.meta,
+  shapes.multipart,shapes.geometric,shapes.misc,matrix,
+  decorations.pathreplacing,decorations.markings,quotes}
+\RequirePackage[pdfusetitle,hidelinks]{hyperref}
+
+% --- Source commit stamp (build.sh writes build/commit.tex) ------------------
+\IfFileExists{commit.tex}{\input{commit.tex}}{\providecommand\cruxcommit{working tree}}
+
+% --- Grayscale tokens --------------------------------------------------------
+\colorlet{ink}{black!88}
+\colorlet{mid}{black!60}
+\colorlet{faint}{black!38}
+\colorlet{fillA}{black!3}   % containers
+\colorlet{fillB}{black!8}   % chips, external systems
+\colorlet{fillC}{black!16}  % emphasis (the focus of a zoom)
+
+% --- Type scale (10pt base; never below \scriptsize = 7pt) -------------------
+\newcommand\cruxid[1]{{\ttfamily #1}}               % identifiers: tools, files, spans
+\newcommand\cruxkind[1]{{\scriptsize\itshape\color{mid}#1}} % [kind] tag under a title
+
+\tikzset{
+  crux/.style={font=\small, line join=round, >={Stealth[length=2.4mm,width=1.7mm]}},
+  % ---- Nodes ---------------------------------------------------------------
+  % An agent or other model-calling role. Title bold, body left-aligned.
+  role/.style={draw=ink, line width=0.8pt, fill=white, rounded corners=2.5pt,
+    align=left, inner sep=4pt, font=\small},
+  % A process, module or component that is not itself an LLM.
+  component/.style={draw=ink, line width=0.5pt, fill=white, rounded corners=1pt,
+    align=left, inner sep=3.5pt, font=\small},
+  % A grouping region (a module, a phase, a process). Label sits top-left.
+  container/.style={draw=mid, line width=0.5pt, fill=fillA, rounded corners=3pt,
+    inner sep=8pt},
+  % A trust or machine boundary (the run box, AWS account, a sandbox).
+  boundary/.style={draw=ink, line width=1pt, dash pattern=on 6pt off 3pt,
+    rounded corners=4pt, inner sep=10pt},
+  % A system outside the run box (model provider, Slack, Langfuse, RunPod).
+  external/.style={draw=ink, line width=0.5pt, fill=fillB, align=left,
+    inner sep=4pt, font=\small},
+  % A person (operator).
+  person/.style={draw=ink, line width=0.8pt, fill=white, rounded corners=8pt,
+    align=center, inner sep=4pt, font=\small},
+  % Persistent storage (SQLite, files, Langfuse store).
+  store/.style={cylinder, shape border rotate=90, aspect=0.18, draw=ink,
+    line width=0.5pt, fill=white, align=center, inner sep=3pt, font=\footnotesize},
+  % A deterministic or judged check the loop runs between iterations.
+  gate/.style={chamfered rectangle, chamfered rectangle xsep=2pt, draw=ink,
+    line width=0.8pt, fill=white, align=center, inner sep=3pt, font=\footnotesize},
+  % A tool name or other identifier chip.
+  chip/.style={rounded rectangle, draw=mid, line width=0.4pt, fill=fillB,
+    inner xsep=3pt, inner ysep=1.5pt, font=\scriptsize\ttfamily},
+  % Free annotation text.
+  note/.style={align=left, font=\footnotesize, text=mid},
+  % Region label placed at a container's north west.
+  regionlabel/.style={anchor=north west, font=\footnotesize\bfseries, text=ink,
+    inner sep=3pt},
+  % Edge label.
+  elabel/.style={font=\scriptsize, fill=white, inner sep=1pt, text=ink},
+  % Numbered step badge (sequence and lifecycle figures).
+  stepbadge/.style={circle, draw=ink, line width=0.6pt, fill=white,
+    font=\scriptsize\bfseries, inner sep=0.8pt, minimum size=4.2mm},
+  % Highlight of the region an inset zooms into, and the inset frame.
+  zoomsource/.style={draw=ink, line width=1.2pt, dash pattern=on 2pt off 1.5pt,
+    rounded corners=3pt, fill=fillC, fill opacity=0.35, text opacity=1},
+  zoomframe/.style={draw=ink, line width=1.2pt, rounded corners=4pt},
+  zoomray/.style={draw=faint, line width=0.5pt},
+  % ---- Edges (distinguishable without color) ------------------------------
+  control/.style={->, draw=ink, line width=0.9pt},                         % loop control: prompts, gate verdicts, lifecycle
+  delegation/.style={-{Triangle[open,length=2.6mm,width=2mm]}, draw=ink,
+    line width=0.9pt},                                                       % caller -> delegate (brief); return implied
+  toolcall/.style={->, draw=ink, line width=0.5pt},                        % agent -> tool / tool -> system
+  modelcall/.style={->, draw=ink, line width=0.5pt, double, double distance=1pt}, % request to a model provider
+  data/.style={->, draw=ink, line width=0.6pt, dash pattern=on 3pt off 2pt},   % reads/writes files or stores
+  telemetry/.style={-{Circle[length=1.6mm]}, draw=mid, line width=0.7pt,
+    dash pattern=on 0.8pt off 1.6pt},                                        % spans, generations, usage
+  config/.style={->, draw=mid, line width=0.6pt, dash pattern=on 4pt off 1.5pt on 0.8pt off 1.5pt}, % config / secrets injection
+  message/.style={->, draw=ink, line width=0.6pt, dash pattern=on 6pt off 2pt},  % human / steering messages
+  bidir/.style={<->},
+}
+
+% Labels shown in legends, one per edge kind.
+\@namedef{crux@label@control}{loop control (prompts, gate verdicts)}
+\@namedef{crux@label@delegation}{delegation (brief to a delegate)}
+\@namedef{crux@label@toolcall}{tool call}
+\@namedef{crux@label@modelcall}{model API request}
+\@namedef{crux@label@data}{reads / writes files or stores}
+\@namedef{crux@label@telemetry}{telemetry (spans, usage)}
+\@namedef{crux@label@config}{configuration or secrets}
+\@namedef{crux@label@message}{human or steering message}
+
+% \cruxlegend[<node options>]{<x,y>}{<comma list of edge kinds>}
+% Draws a key with one sample line per edge kind used in the figure, as a node
+% named `legend` (anchor north west at <x,y> unless the options say otherwise).
+\RequirePackage{etoolbox}
+\newcommand\crux@legendrow[1]{%
+  \tikz[crux, baseline=-0.6ex]\draw[#1] (0,0) -- (1.1,0); & \csname crux@label@#1\endcsname\\}
+\newcommand\crux@addrow[1]{\appto\crux@rows{\crux@legendrow{#1}}}
+\newcommand\cruxlegend[3][]{%
+  \def\crux@rows{}\forcsvlist\crux@addrow{#3}%
+  \node[draw=faint, line width=0.4pt, fill=white, rounded corners=2pt, inner sep=5pt,
+        anchor=north west, align=left, font=\scriptsize, #1] (legend) at (#2)
+    {{\footnotesize\bfseries Key}\\[2pt]
+     \renewcommand\arraystretch{1.25}%
+     \begin{tabular}{@{}l@{\hspace{5pt}}l@{}}\crux@rows\end{tabular}};%
+}
+
+% \cruxtitle{<x,y>}{<title>}{<who it is for / what it answers>}
+\newcommand\cruxtitle[3]{%
+  \node[anchor=north west, align=left, inner sep=0pt] (title) at (#1)
+    {{\large\bfseries #2}\\[2pt]{\footnotesize\color{mid}#3}};%
+}
+
+% \cruxfooter{<x,y>}{<source files>}
+\newcommand\cruxfooter[2]{%
+  \node[anchor=south west, align=left, inner sep=0pt, font=\scriptsize, text=mid] (footer) at (#1)
+    {Source: #2 \quad Commit: \cruxid{\cruxcommit}};%
+}
+
+% \cruxcanvas{<width cm>}{<height cm>} fixes the page size of a standalone figure.
+\newcommand\cruxcanvas[2]{\useasboundingbox (0,0) rectangle (#1,#2);}
+
+% \cruxmeta{<title>}{<plain-text description used as alt text>}
+\newcommand\cruxmeta[2]{\hypersetup{pdftitle={#1}, pdfsubject={#2}, pdfauthor={CRUX in a box}, pdflang={en-US}}}
+
+\endinput

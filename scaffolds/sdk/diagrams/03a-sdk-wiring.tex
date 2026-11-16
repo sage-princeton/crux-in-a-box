@@ -1,0 +1,149 @@
+\documentclass[tikz,border=0pt]{standalone}
+\usepackage{crux-diagrams}
+\usepackage{dirtree}
+\cruxmeta{Agents SDK and Langfuse wiring}{Components of the SDK scaffold process: the loop and agent runtime, the per-call input pipeline (session, context:select with compaction, refreshed context blocks, size check, OpenRouter Responses request), tools and background delegates, the usage ledger, and telemetry to Langfuse. Langfuse-priced spend returns through the cost Lambda and ResourceMonitor to the budget and the resource_status block of the next model call. A compact Langfuse observation tree shows one research iteration.}
+
+% Local helpers (figure-specific; shared grammar stays in crux-diagrams.sty).
+% \bx{style}{name}{x1}{y1}{x2}{y2}{text}: a node filling the given rectangle.
+\newcommand\bx[7]{%
+  \pgfmathsetmacro\bxw{#5-#3}\pgfmathsetmacro\bxh{#6-#4}%
+  \pgfmathsetmacro\bxt{(#5-#3)*28.45-10}%
+  \node[#1, minimum width=\bxw cm, minimum height=\bxh cm, text width=\bxt pt,
+        align=center] (#2) at ({(#3+#5)/2},{(#4+#6)/2}) {#7};}
+\tikzset{
+  halo/.style={preaction={draw=white, line width=3.2pt, solid, -}},
+  small/.style={font=\scriptsize},
+  badge/.style={circle, draw=ink, line width=0.6pt, fill=white, font=\scriptsize\bfseries, inner sep=0.8pt, minimum size=4.2mm},
+}
+\renewcommand*\DTstyle{\scriptsize\ttfamily}
+\newcommand\ot[1]{{\rmfamily\itshape\color{mid}#1}}  % observation type in the tree
+
+\begin{document}
+\begin{tikzpicture}[crux]
+\cruxcanvas{36}{24}
+
+\cruxtitle{0.6,23.75}{Agents SDK + Langfuse wiring}{How one scaffold process builds each model request, runs tools and delegates, and how spend reported by Langfuse flows back into the next request. Instance \cruxid{tabpfn-full}.}
+
+% ---- Regions --------------------------------------------------------------
+\draw[boundary] (0.5,3.9) rectangle (24.7,22.0);
+\node[regionlabel] at (0.5,22.0) {EC2 run box};
+\begin{scope}[on background layer]
+\fill[fillA, draw=mid, line width=0.5pt, rounded corners=3pt] (0.9,4.3) rectangle (20.3,21.3);
+\end{scope}
+\node[regionlabel] at (0.9,21.3) {Scaffold process: \cruxid{python -m crux\_scaffold run} (one asyncio process)};
+
+% ---- Row A: loop, runtime, judges, steering -------------------------------
+\bx{component}{loop}{1.3}{18.3}{5.0}{20.5}{\textbf{Loop}\\research $\rightarrow$ finalize\\one trace per iteration}
+\bx{component}{rt}{6.0}{18.3}{11.0}{20.5}{\textbf{AgentRuntime}\\\cruxid{openai\_agents\_sdk.py}\\builds SDK Agents: PI, RA, judges}
+\bx{role}{judges}{12.0}{18.3}{15.4}{20.5}{\textbf{Judges} $\times$3\\gate panel, isolated}
+\bx{component}{steer}{16.4}{18.3}{19.9}{20.5}{\textbf{Steering}\\operator messages}
+
+% ---- Row B: per-call input pipeline ---------------------------------------
+\begin{scope}[on background layer]
+\fill[white, draw=mid, line width=0.5pt, rounded corners=3pt] (1.3,13.4) rectangle (19.9,17.45);
+\end{scope}
+\node[regionlabel] at (1.3,17.45) {Per-call input pipeline \textmd{\scriptsize(every PI and RA model call)}};
+\bx{component}{s1}{1.6}{13.8}{5.2}{16.5}{\textbf{1 \,Session}\\load history\\\cruxid{sessions.sqlite}}
+\bx{component}{s2}{6.0}{13.8}{9.8}{16.5}{\textbf{2 \,context:select}\\ContextStrategy\\compaction when large}
+\bx{component}{s3}{10.6}{13.8}{14.9}{16.5}{\textbf{3 \,Context blocks}\\{\scriptsize\ttfamily <research\_context>\\<delegate\_status>\\<resource\_status>\\\# Current task}}
+\bx{component}{s4}{15.7}{13.8}{19.5}{16.5}{\textbf{4 \,Send}\\size check\\\cruxid{POST /responses}}
+\draw[control] (s1) -- (s2);
+\draw[control] (s2) -- (s3);
+\draw[control] (s3) -- (s4);
+\node[small, text=mid, anchor=north] at ($(s2.south)+(0,-0.02)$) {2--3 run in \cruxid{\_select\_input}};
+
+% ---- Row C: tools and delegates -------------------------------------------
+\bx{component}{tools}{11.6}{9.6}{15.3}{12.4}{\textbf{Tools}\\shell, files, PDF\\dispatch + control}
+\bx{component}{dt}{16.0}{9.6}{19.9}{12.4}{\textbf{DelegateTasks}\\background tasks\\\cruxid{delegates.sqlite}}
+
+% ---- Row D: accounting and telemetry --------------------------------------
+\bx{component}{ledger}{1.3}{4.8}{4.1}{8.6}{\textbf{UsageLedger}\\every model call,\\by source\\\cruxid{state.json}}
+\bx{component}{budget}{4.8}{4.8}{8.0}{8.6}{\textbf{Budget}\\\$ cap\\wall clock}
+\bx{component}{rm}{8.7}{4.8}{12.0}{8.6}{\textbf{ResourceMonitor}\\models: Langfuse\\gpu: RunPod}
+\bx{component}{tel}{12.6}{4.8}{15.3}{8.6}{\textbf{Telemetry}\\OpenInference\\+ Langfuse SDK\\5\,s batches}
+\bx{role}{ra}{16.0}{6.8}{19.9}{8.6}{\textbf{RA} $\times$3\\same pipeline}
+
+% ---- Child processes ------------------------------------------------------
+\bx{component}{slackmcp}{20.8}{18.3}{24.3}{20.5}{\textbf{Slack MCP}\\stdio child}
+\bx{role}{codex}{20.8}{9.6}{24.3}{12.4}{\textbf{Codex workers} $\times$8\\app-server\\+ \cruxid{crux\_delegate} MCP}
+
+% ---- Externals -------------------------------------------------------------
+\bx{external}{slack}{20.8}{22.5}{24.3}{23.6}{\textbf{Slack} channel}
+\bx{external}{or}{25.4}{13.6}{30.4}{17.0}{\textbf{OpenRouter}\\Responses API}
+\bx{external}{lambda}{8.7}{1.0}{12.0}{3.3}{\textbf{Cost Lambda}\\\cruxid{POST /cost}}
+\bx{external}{runpod}{4.8}{1.0}{8.0}{3.3}{\textbf{RunPod API}}
+
+% Langfuse panel with the observation tree
+\draw[external, rounded corners=0pt] (25.4,1.0) rectangle (35.6,12.8);
+\node[anchor=north west, font=\small] at (25.6,12.65) {\textbf{Langfuse}};
+\node[chip, anchor=west] (otlp) at (25.6,5.4) {OTLP ingest};
+\node[chip, anchor=west] (metrics) at (25.6,2.2) {Metrics API};
+\node[anchor=north west, inner sep=0pt] (tree) at (27.2,12.15) {%
+\begin{minipage}{8.2cm}
+{\footnotesize\bfseries One iteration's trace}\\[2pt]
+\DTsetlength{0.2em}{0.9em}{0.2em}{0.4pt}{1.4pt}%
+\dirtree{%
+.1 research \#n \ot{span, root}.
+.2 research \ot{agent}.
+.3 pi \ot{agent}.
+.4 context:select \ot{span}.
+.4 response \ot{generation}.
+.4 run\_shell \ot{tool}.
+.4 compaction:pi \ot{generation}.
+.4 research\_assistant \ot{tool}.
+.5 research\_assistant \ot{agent}.
+.6 response, tools {\ldots}.
+.4 worker\_a \ot{tool}.
+.5 worker\_a \ot{generation}.
+.6 worker\_a:usage \ot{generation}.
+.6 codex:* \ot{span / tool}.
+.2 judge:research\_review \ot{agent, $\times$3}.
+.3 judge {\textgreater} response, tools.
+.2 gate:research\_review \ot{evaluator}.
+}
+\end{minipage}};
+\node[small, text=mid, align=left, anchor=north west] at (29.6,3.6)
+  {RA and worker spans nest under the PI tool\\span that dispatched them.};
+
+% ---- Edges: control and model calls ---------------------------------------
+\draw[control] (loop) -- node[elabel, above]{run} (rt);
+\draw[control] (rt) -- node[elabel, above]{gates} (judges);
+\draw[control] (rt.south) -- node[elabel, right]{\cruxid{Runner.run}} (rt.south |- 0,17.45);
+\draw[modelcall] (judges.south) |- (17.6,17.9) -- (17.6,16.5);
+\node[elabel, anchor=south] at (16.3,17.9) {judges skip 1--3};
+\draw[modelcall] (s4.east |- 0,15.6) -- node[elabel, above]{request} (or.west |- 0,15.6);
+\draw[modelcall] (codex.east) -| (24.95,14.3) -- (or.west |- 0,14.3);
+
+% ---- Edges: tools and delegates -------------------------------------------
+\draw[toolcall] (s4.west |- 0,14.2) -- (15.1,14.2) -- node[elabel, left, pos=0.55]{tool calls} (15.1,12.4);
+\draw[delegation] (tools) -- (dt);
+\draw[delegation] (dt) -- (ra);
+\draw[delegation] (dt) -- (codex);
+
+% ---- Edges: Slack ----------------------------------------------------------
+\draw[message] (slack) -- (slackmcp);
+\draw[message] (slackmcp) -- (steer);
+
+% ---- Edges: accounting and the spend feedback loop ------------------------
+\draw[data] (ledger) -- (budget);
+\draw[telemetry, halo] (15.85,13.8) |- (15.6,13.2) -- (15.6,9.1) -| (14.4,8.6);
+\node[badge] at (15.0,9.1) {1};
+\draw[telemetry] (tel.east |- 0,5.4) -- node[elabel, above, pos=0.55]{OTLP/HTTP} (otlp.west);
+\node[badge] at (18.4,5.4) {2};
+\draw[data] (metrics.west) -- node[elabel, above, pos=0.5]{total cost} (lambda.east |- 0,2.2);
+\node[badge] at (20.5,2.2) {3};
+\draw[data] (lambda.north) -- node[elabel, right]{30\,s} (lambda.north |- rm.south);
+\node[badge] at (10.35,3.7) {4};
+\draw[data] (rm) -- (budget);
+\draw[data] (budget.north) |- (11.0,13.0) -- (11.0,13.8);
+\node[elabel, anchor=south west] at (6.5,13.0) {\cruxid{<resource\_status>}};
+\node[badge] at (11.0,13.0) {5};
+\draw[toolcall] (8.9,4.8) |- (6.4,3.7) -- (runpod.north);
+
+% ---- Key and footer --------------------------------------------------------
+\cruxlegend{29.7,23.8}{control,delegation,toolcall,modelcall,data,telemetry,message}
+\node[small, text=mid, align=left, anchor=north west] at (29.7,19.3)
+  {\textbf{1--5}: spend feedback loop. Usage rides on\\spans to Langfuse, which prices it; the Lambda\\returns total cost; the budget shows it in the\\next request's \cruxid{<resource\_status>}.};
+\cruxfooter{0.6,0.2}{\cruxid{crux\_scaffold/agent\_runtimes/openai\_agents\_sdk.py}, \cruxid{context\_strategies.py}, \cruxid{telemetry.py}, \cruxid{resources.py}, \cruxid{usage.py}, \cruxid{delegate\_tasks.py}, \cruxid{monitoring/costs/langfuse/lambda\_function.py}}
+\end{tikzpicture}
+\end{document}
