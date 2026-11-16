@@ -1,0 +1,3 @@
+This scaffold will become a paper on curating realistic, vision-centric
+malicious-use requests for red-teaming multimodal language models. No empirical
+or theoretical result is claimed at launch.
