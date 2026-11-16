@@ -1,0 +1,122 @@
+\documentclass[tikz,border=0pt]{standalone}
+\usepackage{crux-diagrams}
+\usepackage{array,booktabs}
+\newcommand\tid[1]{{\ttfamily\detokenize{#1}}}
+\newcommand\y{$\bullet$}
+\newcommand\n{{\color{faint}--}}
+\tikzset{ilabel/.style={elabel, fill=fillA}}
+\tikzset{decision/.style={diamond, draw=ink, line width=0.8pt, fill=white, aspect=2.6,
+  align=center, font=\footnotesize, inner sep=0.5pt}}
+\cruxmeta{Harness: the research loop, roles, tools and resources}{After a failed review the PI either revises and resubmits or archives the direction and restarts its context. Each phase (research, then finalize) repeats one iteration cycle: the loop prompts the PI, the PI works through its turn and briefs research assistants and Codex workers, and when the turn ends the loop either prompts again (delegate work still uncollected) or runs the phase's gate, a three-judge panel. A failing verdict becomes the next prompt; a pass moves to the next phase. A tool table and a resource table follow.}
+\begin{document}
+\begin{tikzpicture}[crux]
+\cruxcanvas{32}{25}
+\cruxtitle{0.6,24.6}{Harness: the research loop, roles, tools and resources}{The full research run (\tid{tabpfn-full}). How the loop drives the PI, where the judges and delegates come in, and what bounds the run.}
+
+% ================================================================ phases
+\node[component, text width=6.4cm] (p1) at (4.4,21.9) {\textbf{Phase 1: research}\\\footnotesize gate \tid{research_review}};
+\node[component, text width=6.4cm] (p2) at (14.6,21.9) {\textbf{Phase 2: finalize}\\\footnotesize gate \tid{final_review}; also needs \tid{reproduce.sh} to pass};
+\node[person, align=center] (done) at (22.4,21.9) {Run complete};
+\draw[control] (p1) -- node[elabel, above]{gate passes} node[elabel, below, align=center]{or 10\% of any\\budget left} (p2);
+\draw[control] (p2) -- node[elabel, above]{gate passes} (done);
+\node[note, anchor=north west] at (0.6,20.9) {Each phase repeats the iteration cycle below until its gate passes.};
+
+% ================================================================ steering
+\node[person] (op) at (1.7,19.4) {Operator};
+\node[external] (slack) at (5.9,19.4) {Slack channel};
+\draw[message] (op) -- node[elabel, above]{posts} (slack);
+
+% ================================================================ iteration cycle
+\node[component, text width=4.6cm] (prompt) at (3.8,16.6) {\textbf{1\quad Loop prompts the PI}\\\footnotesize the phase's prompt, or a continue prompt carrying the judges' feedback};
+\node[role, line width=1.3pt, text width=6.6cm, minimum height=2.2cm] (pi) at (12.6,16.6) {\textbf{2\quad PI turn}\quad PI $\times$1 \cruxkind{[orchestrator]}\\\footnotesize researches, briefs delegates, runs experiments and writes the paper, until it decides to end its turn};
+\node[decision] (dec) at (12.6,13.75) {\textbf{Draft complete?}\\\scriptsize the PI's call};
+\node[role, text width=6.0cm] (gate) at (12.6,10.2) {\textbf{3\quad Review: judge panel} $\times$3\\\footnotesize blind; reads only \tid{paper.pdf}; passes on 2 of 3};
+\node[component, align=center, font=\footnotesize] (pass) at (12.6,8.4) {next phase, or run complete};
+
+\draw[control] (prompt) -- node[ilabel, above]{one prompt} (pi);
+\draw[control] (pi) -- node[ilabel, left]{delegates finished and collected} (dec);
+\draw[control] (dec) -- node[ilabel, right, align=left]{yes: submit \tid{paper.pdf}\\and \tid{REVIEW_REQUEST.json}} (gate);
+\draw[control] (dec.west) -| node[ilabel, pos=0.3, above, align=center]{no: end the turn without submitting;\\the loop prompts again} ([xshift=0.7cm]prompt.south);
+\draw[control] (gate.west) -| node[ilabel, pos=0.3, above]{fail: the judges' feedback is the next prompt} ([xshift=-0.7cm]prompt.south);
+\draw[control] (gate) -- node[ilabel, right]{pass} (pass);
+
+\node[note, text width=6.3cm, anchor=north west] (sup) at (0.9,8.7) {\textbf{Budget reserve.} At 10\% of time, model spend or GPU spend left, a supervisor (every 15 s) cancels the current turn and moves the run to finalize.};
+
+\begin{scope}[on background layer]
+\node[container, fit=(prompt)(pi)(dec)(gate)(pass)(sup), inner sep=9pt, label={[regionlabel]north west:One iteration}] (cycle) {};
+\end{scope}
+
+\draw[message] (slack.east) -| node[elabel, pos=0.25, above]{steering} ([xshift=0.6cm]pi.north);
+\draw[toolcall] ([xshift=-0.6cm]pi.north) |- node[elabel, pos=0.75, below]{posts, escalates} ([yshift=-0.3cm]slack.east);
+
+% ================================================================ delegates
+\node[role, text width=7.0cm] (ra) at (26.4,17.6) {\textbf{Research assistants} $\times$3 \cruxkind{[SDK agents]}\\\footnotesize run in the background; can outlive the PI's turn};
+\node[role, text width=7.0cm] (cx) at (26.4,14.9) {\textbf{Codex workers} $\times$8 \cruxkind{[coding agents]}\\\footnotesize run in the background; full-access sandbox};
+
+\draw[delegation] (pi.east |- 0,17.45) -- node[elabel, above]{brief} (ra.west |- 0,17.45);
+\draw[message] (ra.west |- 0,16.95) -- node[elabel, below]{reports, questions} (pi.east |- 0,16.95);
+\draw[delegation] (pi.east |- 0,16.2) -- ++(3.5,0) |- node[elabel, pos=0.75, above]{brief} ([yshift=0.25cm]cx.west);
+\draw[message] ([yshift=-0.25cm]cx.west) -- ++(-3.4,0) |- node[elabel, pos=0.75, below]{reports, questions} (pi.east |- 0,15.75);
+
+% ================================================================ workspace
+\node[store, text width=4.4cm, minimum height=1.4cm] (ws) at (26.4,11.2) {\textbf{workspace/}\\\footnotesize plan, log, code, \tid{paper/}};
+\draw[data] ([xshift=-0.2cm]pi.south east) |- node[elabel, pos=0.75, above]{read / write} (ws.west);
+\draw[data] (cx) -- node[elabel, right]{read / write} (ws);
+\draw[data] (ra.east) -- ++(0.65,0) |- node[elabel, pos=0.75, below]{read / write} ([yshift=-0.35cm]ws.east);
+\draw[data] (gate.east) -- ++(1.3,0) |- node[elabel, pos=0.75, below]{reads \tid{paper.pdf}} ([yshift=-0.4cm]ws.west);
+
+
+% ================================================================ failed review: decision tree
+\node[component, text width=3.8cm] (t1) at (18.0,4.8) {\textbf{Read the verdict}\\\footnotesize \tid{REVIEW_STATUS.json} and the reviews};
+\node[decision] (t2) at (22.9,4.8) {Can revisions alone\\reach acceptance?};
+\node[component, text width=4.6cm] (rv) at (28.8,4.8) {\textbf{Revise or narrow the claim}\\\footnotesize then submit the new draft};
+\node[component, text width=4.6cm] (sw) at (22.9,2.15) {\textbf{Switch direction}\\\footnotesize collect its delegates; archive it to \tid{archive/<direction>/} (commit, tag)};
+\node[role, text width=4.6cm] (rc) at (28.8,2.15) {\tid{restart_context(handoff)}\\\footnotesize clears the PI's conversation; keeps \tid{PLAN.md}, \tid{LOG.md}, workspace, delegates' work};
+\draw[control] (t1) -- (t2);
+\draw[control] (t2) -- node[ilabel, above]{yes} (rv);
+\draw[control] (t2) -- node[ilabel, right]{no} (sw);
+\draw[control] (sw) -- (rc);
+\node[note, text width=3.8cm, anchor=north] (tnote) at (18.0,3.45) {The choice and its reason go in \tid{PLAN.md}. After a restart the PI continues from its handoff.};
+\begin{scope}[on background layer]
+\node[container, fit=(t1)(t2)(rv)(sw)(rc)(tnote), inner sep=7pt, label={[regionlabel, anchor=south west]north west:After a failed review, in the PI's next turn}] (tree) {};
+\end{scope}
+
+% ================================================================ tools and resources, grouped
+\node[anchor=north west, inner sep=0pt] (tools) at (0.9,5.65) {\footnotesize
+\renewcommand\arraystretch{1.08}%
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Tool & PI & RA & Codex & Judge\\
+\midrule
+Shell commands & \y & \y & \y & \n\\
+Read files and PDFs & \y & \y & \y & paper only\\
+Write files & \y & \y & \y & \n\\
+Budget check, rest & \y & \y & \n & \n\\
+Slack, escalate & \y & \n & \n & \n\\
+Brief, steer delegates & \y & \n & \n & \n\\
+Ask the PI, report & \n & \y & \y & \n\\
+Own subagents & \n & \n & \y & \n\\
+\bottomrule
+\end{tabular}};
+\node[anchor=north west, inner sep=0pt] (res) at (8.5,5.65) {\footnotesize
+\renewcommand\arraystretch{1.08}%
+\begin{tabular}{@{}ll@{}}
+\toprule
+Resource & Limit\\
+\midrule
+Wall clock & 7 days\\
+Model spend & \$15,000\\
+RunPod GPUs & \$1,000\\
+\midrule
+Finalize at & 10\% of any left\\
+\bottomrule
+\end{tabular}};
+\node[note, text width=5.6cm, anchor=north west] (resnote) at (8.5,2.95) {RA = research assistant. All model calls go to OpenRouter; the model comes from \tid{CRUX_MODEL}.};
+\begin{scope}[on background layer]
+\node[container, fit=(tools)(res)(resnote), inner sep=7pt, label={[regionlabel, anchor=south west]north west:Tools and resources}] (tr) {};
+\end{scope}
+
+\cruxlegend{25.6,24.5}{control,delegation,toolcall,data,message}
+\cruxfooter{0.6,0.35}{\tid{run-harness/tabpfn-full/scaffold.toml}, \tid{tabpfn_extensions.py}, \tid{crux_scaffold/loop.py}, \tid{gates.py}}
+\end{tikzpicture}
+\end{document}

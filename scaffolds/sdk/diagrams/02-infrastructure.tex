@@ -1,0 +1,85 @@
+\documentclass[tikz,border=0pt]{standalone}
+\usepackage{crux-diagrams}
+\newcommand\tid[1]{{\ttfamily\detokenize{#1}}}
+\cruxmeta{Infrastructure and provisioning}{The operator's laptop creates one EC2 run box in the CRUX AWS account and sets it up over SSH. On the box, systemd runs the scaffold as one process with secrets from a root-only environment file; the scaffold starts a Slack MCP server, Codex workers and shells. The box calls OpenRouter, Langfuse, Slack and RunPod, and an off-box monitoring service observes it.}
+\begin{document}
+\begin{tikzpicture}[crux]
+\cruxcanvas{32}{21}
+\cruxtitle{0.6,20.6}{Infrastructure and provisioning}{How one SDK run box is created, what runs on it, and what it talks to.}
+
+% ---------------------------------------------------------------- lifecycle
+\tikzset{lc/.style={component, text width=3.5cm, minimum height=1.15cm, font=\footnotesize, align=left}}
+\foreach \t [count=\k] in {
+  {\textbf{Provision}\\\tid{make-new-workspace.sh}},
+  {\textbf{Install}\\software, no secrets},
+  {\textbf{Configure}\\secrets, checks, unit},
+  {\textbf{Prepare}\\Slack channel},
+  {\textbf{Start}\\\tid{systemctl start}},
+  {\textbf{Steer, monitor}\\Slack, Langfuse},
+  {\textbf{Stop, keep results,}\\\textbf{tear down}}} {
+  \pgfmathsetmacro\xx{2.5+(\k-1)*4.45}
+  \node[lc] (l\k) at (\xx,18.3) {\k\quad\t};
+}
+\foreach \k [evaluate=\k as \j using int(\k+1)] in {1,...,6} { \draw[control] (l\k) -- (l\j); }
+
+% ---------------------------------------------------------------- laptop
+\node[person] (op) at (3.0,15.0) {Operator};
+\node[component, text width=4.3cm, align=center] (mnw) at (3.0,12.4) {\tid{make-new-workspace.sh}\\\footnotesize reads the run's config and secrets};
+\node[component, text width=4.3cm, align=center] (td) at (3.0,4.2) {\tid{teardown-workspace-}\\\tid{aws-resources.sh}};
+\draw[control] (op) -- (mnw);
+\begin{scope}[on background layer]
+\node[boundary, fit=(op)(mnw)(td), inner sep=9pt, label={[regionlabel]north west:Operator laptop}] (laptop) {};
+\end{scope}
+
+% ---------------------------------------------------------------- AWS
+\node[store, text width=3.8cm, align=center] (ssm) at (10.6,14.9) {SSM parameter\\\footnotesize Langfuse keys};
+\node[component, text width=3.8cm, align=center] (role) at (15.4,14.9) {Instance role\\\footnotesize can read that parameter};
+\node[component, text width=3.8cm, align=center] (sg) at (20.2,14.9) {Security group\\\footnotesize SSH from operator only};
+
+\node[store, text width=3.8cm, align=center] (env) at (10.9,11.2) {\tid{/etc/crux-run.env}\\\footnotesize all run secrets, root only};
+\node[component, text width=5.6cm, align=center] (unit) at (17.6,11.2) {systemd \tid{crux-sdk-run}\\\footnotesize restarts on a crash};
+\node[component, line width=1.2pt, text width=5.6cm, align=center] (scaf) at (17.6,8.9) {\textbf{Scaffold process}\\\footnotesize\tid{python -m crux_scaffold run}};
+\node[component, text width=3.3cm, align=center] (smcp) at (19.7,6.4) {Slack MCP server};
+\node[component, text width=3.3cm, align=center] (cdx) at (11.3,6.4) {Codex workers\\\footnotesize up to 8; call OpenRouter};
+\node[component, text width=3.3cm, align=center] (sh) at (15.5,6.4) {Shells\\\footnotesize inherit all secrets};
+\node[store, text width=3.8cm, align=center] (dropin) at (11.6,3.9) {\tid{/srv/crux-run/run-harness}\\\footnotesize config, prompts, \tid{workspace/}};
+\node[store, text width=3.8cm, align=center] (state) at (17.6,3.9) {\tid{/srv/crux-run/state}\\\footnotesize sessions, mailboxes, progress};
+
+\draw[config] (env) -- node[elabel, above, align=center]{loaded by\\systemd} (unit);
+\draw[control] (unit) -- (scaf);
+\draw[control] (scaf.south) ++(-2,0) -- ++(0,-0.6) -| (cdx.north);
+\draw[control] (scaf.south) -- ++(0,-0.6) -| (sh.north);
+\draw[control] (scaf.south) ++(2,0) -- ++(0,-0.6) -| (smcp.north);
+\draw[config] (ssm) -- node[elabel, right]{read at configure time} (env);
+
+\begin{scope}[on background layer]
+\coordinate (boxtop) at ([yshift=0.5cm]unit.north);
+\node[fit=(env)(unit)(smcp)(cdx)(dropin)(state)(boxtop), inner sep=9pt] (box) {};
+\node[container, fit=(ssm)(role)(sg)(box), inner sep=10pt, label={[regionlabel]north west:CRUX AWS account}] (aws) {};
+\node[boundary, fill=white, fit=(box), inner sep=0pt, label={[regionlabel, anchor=north east]north east:EC2 run box (Ubuntu, user \tid{ubuntu})}] {};
+\end{scope}
+
+\draw[data] (mnw.east) -- node[elabel, above, align=center]{SSH:\\code, scripts,\\secrets file} (mnw.east -| box.west);
+\draw[control] (td.east) -- node[elabel, above]{terminate} (td.east -| box.west);
+
+% ---------------------------------------------------------------- externals
+\tikzset{ext/.style={external, text width=5.4cm, align=left}}
+\node[ext] (or) at (28.4,14.6) {\textbf{OpenRouter}\\\footnotesize model calls for every agent};
+\node[ext] (lf) at (28.4,11.6) {\textbf{Langfuse}\\\footnotesize traces; spend read back for the budget};
+\node[ext] (sl) at (28.4,7.4) {\textbf{Slack}\\\footnotesize steering channel};
+\node[ext] (rp) at (28.4,5.2) {\textbf{RunPod}\\\footnotesize GPU pods};
+
+\draw[modelcall] ([yshift=0.3cm]scaf.east) -| ([xshift=-1.6cm]or.west) -- (or.west);
+\draw[telemetry] ([yshift=-0.3cm]scaf.east) -| ([xshift=-1.0cm]lf.west) -- (lf.west);
+\draw[toolcall] (smcp.east) -| ([xshift=-2.2cm]sl.west) -- (sl.west);
+\draw[toolcall] (sh.south) |- (rp.west);
+
+
+% ---------------------------------------------------------------- monitoring
+\node[external, text width=15.0cm, align=center] (mon) at (15.6,1.3) {\textbf{Monitoring service} (off the box) \footnotesize --- checks the box every 15 minutes, copies its files to S3; never changes the run};
+\draw[data] (mon.north) -- node[elabel, right]{observes} (mon.north |- aws.south);
+
+\cruxlegend{25.7,4.1}{control,modelcall,toolcall,data,config,telemetry}
+\cruxfooter{0.6,0.35}{\tid{devops/ec2-workspaces/}, \tid{run-harness/tabpfn-full/OPERATOR_GUIDE.md}, \tid{monitoring/service/}}
+\end{tikzpicture}
+\end{document}
