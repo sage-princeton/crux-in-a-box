@@ -1,0 +1,102 @@
+orchestrator = "pi"
+extensions = ["research_extensions.py"]
+
+[runtime]
+type = "openai-agents"
+max_turns = "unlimited"
+interactive_delegates = true
+
+[runtime.model_provider]
+type = "openai-compatible"
+api = "responses"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+[context]
+type = "compaction"
+context_window_tokens = 1050000
+trigger_tokens = 500000
+keep_recent_items = 20
+
+[budget]
+max_wall_seconds = 604800
+max_cost_usd = 15000
+
+[resources.models]
+type = "langfuse"
+refresh_seconds = 30
+
+[resources.experiments]
+type = "openrouter-experiments"
+# Submissions stop at exhaustion; the PI must retain inference for synthesis.
+
+[loop]
+type = "vf_research"
+reserve_wall_seconds = 7200
+reserve_fraction = 0.1
+
+[[loop.phases]]
+name = "research"
+prompt = "PROMPT.md"
+continue_prompt = "prompts/continue.md"
+gates = ["deliverables", "paper_review"]
+max_iterations = "unlimited"
+
+[[loop.phases]]
+name = "finalize"
+prompt = "FINAL_PASS.md"
+continue_prompt = "prompts/continue.md"
+gates = ["deliverables", "paper_review"]
+max_iterations = "unlimited"
+
+[gates.deliverables]
+type = "command"
+command = "test -s paper/paper.pdf && test -s RESULTS.md && test -s reproduce.sh && test -s COMPLETION_REPORT.md"
+
+[gates.paper_review]
+type = "llm_judge"
+rubric = "prompts/review.md"
+blind = true
+artifacts = { "submission.pdf" = "paper/paper.pdf" }
+tools = ["read_file", "list_files", "read_pdf"]
+max_turns = 12
+
+[agents.pi]
+persona = "personas/pi.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md", "RESULTS.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
+delegates = ["research_assistant", "research_assistant_b", "worker"]
+max_turns = "unlimited"
+
+[agents.research_assistant]
+persona = "personas/ra.md"
+description = "Independent research, literature, theory or analysis brief."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status"]
+max_turns = "unlimited"
+
+[agents.research_assistant_b]
+persona = "personas/ra.md"
+description = "A second independent research assistant for parallel briefs."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status"]
+max_turns = "unlimited"
+
+[coding_agents.worker]
+type = "codex"
+system_prompt = "personas/ra.md"
+description = "Implement, experiment, analyze or write; may use native children. Shared experiment credit is separate from worker inference."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[tools.run_shell]
+timeout_seconds = 600
+
+[tools.rest]
+min_seconds = 1
+max_seconds = 300
+total_seconds = 604800
