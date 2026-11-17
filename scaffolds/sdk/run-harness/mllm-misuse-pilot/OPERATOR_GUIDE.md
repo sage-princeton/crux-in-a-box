@@ -29,9 +29,8 @@ records what the run is given and what changed from the contrastive RL pilot.
    real-world photos; the account is shared, and the standing context asks the run
    to stay under about 2,000 searches.
 
-4. Create a fine-grained Hugging Face token whose only permission is read access
-   to the public gated repos the account can access (no private repos, no
-   organization permissions, no write). Accept the licences of any gated models the
+4. Create a Hugging Face token whose only permission is read access
+   to public repos. Accept the licences of any gated models the
    run may need on that account first; the agents cannot. Record it as `HF_TOKEN`
    in `secrets.json`, and revoke it after the run.
 
@@ -41,13 +40,10 @@ records what the run is given and what changed from the contrastive RL pilot.
    `OPENROUTER_EXPERIMENT_API_KEY` in `secrets.json`. Retain the example's
    `OPENROUTER_EXPERIMENT_BUDGET_USD=25`, `OPENROUTER_EXPERIMENT_KEY_CAP_USD=25`,
    `OPENROUTER_EXPERIMENT_BILLING_MODE=credits` and shared absolute
-   `OPENROUTER_EXPERIMENT_STATE_DIR=/srv/crux-run/state/experiments` values.
-   These settings pass through the run secrets bundle into the service environment.
+   `OPENROUTER_EXPERIMENT_STATE_DIR=/srv/crux-run/state/experiments` values;
+   these also go in secrets.json so they get bundled into the service environment.
 
-   This key must spend **OpenRouter credits, not BYOK**. Use an OpenRouter workspace
-   with no applicable BYOK credentials, or exclude the experiment key from every
-   BYOK credential using OpenRouter's [API key filters](https://openrouter.ai/docs/guides/overview/auth/byok#key-filters).
-   Do not change the agent-inference key's routing.
+   NB: The OPENROUTER_EXPERIMENT_API_KEY key must spend **OpenRouter credits, not BYOK**.
 
 ## Provisioning
 
