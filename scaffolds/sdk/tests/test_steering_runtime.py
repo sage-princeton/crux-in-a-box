@@ -176,7 +176,7 @@ def test_transport_failure_is_visible_to_the_model(drop_in_dir, assemble, tmp_pa
 def test_transport_status_changes_only_the_trailing_context(drop_in_dir, assemble, tmp_path):
     env = configured(drop_in_dir, tmp_path)
     scaffold = assemble(drop_in_dir, env=env)
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     steering = scaffold.context.steering
     statuses = iter(["read_failed: check MCP credentials", "ok"])
 
@@ -186,7 +186,7 @@ def test_transport_status_changes_only_the_trailing_context(drop_in_dir, assembl
     steering.poll = poll
     history = [{"role": "user", "content": "question"}, {"role": "assistant", "content": "answer"}]
     data = CallModelData(ModelInputData(input=history, instructions="fixed"),
-                         scaffold.runtime.agents["pm"], scaffold.context)
+                         scaffold.runtime._builder.agents["pm"], scaffold.context)
 
     async def check():
         failed = await scaffold.runtime._select_input(data)
@@ -214,13 +214,13 @@ def test_compaction_cannot_hide_oversized_replayed_steering(drop_in_dir, assembl
     pm = ScriptedModel(say('must not summarize an irreducible request'))
     scaffold = assemble(drop_in_dir, {'pm': pm}, env=env)
     runtime = scaffold.runtime
-    runtime.build()
+    runtime._build()
     runtime.session = scaffold.strategy.session('pm', scaffold.context)
     scaffold.context.steering.poll = AsyncMock()
     pinned = {'role': 'user', 'content': 'Operator request: ' + 'x' * 24000}
     runtime._steering_items = [pinned]
     history = [pinned, {'role': 'assistant', 'content': 'Acknowledged'}, {'role': 'user', 'content': 'Continue'}]
-    data = CallModelData(ModelInputData(input=history, instructions='fixed'), runtime.agents['pm'], scaffold.context)
+    data = CallModelData(ModelInputData(input=history, instructions='fixed'), runtime._builder.agents['pm'], scaffold.context)
     with pytest.raises(RuntimeError, match='cannot fit'):
         asyncio.run(runtime._select_input(data))
     assert not pm.inputs
@@ -317,8 +317,8 @@ def test_missing_transport_tool_fails_before_model_and_records_actionable_status
          f'type = "openai-agents"\nbackground_coding = {str(background).lower()}')
     pm = ScriptedModel(say("must not be called"))
     scaffold = assemble(drop_in_dir, {"pm": pm}, env=env)
-    scaffold.runtime.build()
-    server = scaffold.runtime.servers["slack"]
+    scaffold.runtime._build()
+    server = scaffold.runtime._builder.resources.servers["slack"]
     original = server.list_tools
     async def missing_history(*args, **kwargs):
         return [tool for tool in await original(*args, **kwargs) if tool.name != "conversations_history"]
@@ -400,7 +400,7 @@ def test_steering_arrives_while_a_background_coding_task_keeps_working(drop_in_d
     asyncio.run(scaffold.run())
     assert [m["text"] for m in messages(pm.inputs[1])] == ["Continue the independent task"]
     assert finished == [True]
-    assert not scaffold.runtime._coding_tasks
+    assert not scaffold.runtime._coding_tasks._tasks
 
 
 
@@ -488,7 +488,7 @@ def test_steering_reads_unfiltered_pages_while_agents_see_the_run_only(drop_in_d
     async def check():
         async with scaffold.runtime:
             arguments = {"channel_id": "C123", "thread_ts": "0.500000"}
-            agent = await scaffold.runtime.servers["slack"].call_tool("conversations_replies", arguments)
+            agent = await scaffold.runtime._builder.resources.servers["slack"].call_tool("conversations_replies", arguments)
             steering = await scaffold.context.steering.transport.call_tool("conversations_replies", arguments)
             assert "Thread parent" not in agent.content[0].text and not agent.is_error
             assert "Thread parent" in steering.content[0].text

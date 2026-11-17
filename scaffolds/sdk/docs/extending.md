@@ -281,6 +281,8 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 Runtime support types, configuration schemas, usage hooks and steering adapters each have their own module under `openai_agents_sdk/`. The `base` and `openai_agents_runtime` modules export their associated types.
 
+The built-in runtime delegates model/client configuration to `ModelConnection`, MCP and steering lifecycles to `SdkResources`, SDK agent/tool construction to `AgentBuilder` and `AgentTools`, shared capacity to `DelegationLimiter`, and background coding bookkeeping to `CodingTasks`. These are internal collaborators; the runtime registry, `Assembly`, runtime constructor and TOML selector remain unchanged.
+
 A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, and the context strategy. `runtime_overrides` add further keyword arguments, such as the test models that `openai-agents` takes. A new runtime module must be imported by `scaffold.py` so it registers. Its SDK stays inside that module.
 
 `Assembly.instructions(agent_name) -> str` returns stable setup + persona + static files, cached at assembly. `Assembly.research_context(agent_name) -> str` returns current workflow/remaining rest, for the orchestrator the runtime's `coding_status()` line, and bounded declared research files. Runtime implementations call the latter at their model boundary; generated setup is scoped to each agent's actual capabilities. The built-in phased loop's current iteration, recent gate outcomes, process start and restart count come from persisted RunState, with references to full feedback; custom loops retain `describe()` for their stable summary.

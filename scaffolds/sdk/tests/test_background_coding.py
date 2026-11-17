@@ -268,7 +268,7 @@ def test_a_cancelled_brief_stops_once_and_is_reported_to_its_result_tool(drop_in
     runtime, events = scaffold.runtime, []
 
     async def run():
-        waiting, wait = asyncio.Event(), runtime.delegation_wait
+        waiting, wait = asyncio.Event(), runtime._delegation.suspend_current
 
         @asynccontextmanager
         async def delegation_wait():
@@ -284,7 +284,7 @@ def test_a_cancelled_brief_stops_once_and_is_reported_to_its_result_tool(drop_in
                 events.append("stopped")
                 raise
 
-        scaffold.coding_agents["engineer"].execute, runtime.delegation_wait = worker, delegation_wait
+        scaffold.coding_agents["engineer"].execute, runtime._delegation.suspend_current = worker, delegation_wait
         async with runtime:
             first = asyncio.create_task(runtime.run("start", workflow="work"))
             await waiting.wait()

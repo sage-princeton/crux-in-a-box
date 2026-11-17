@@ -108,7 +108,7 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert set(config.agents) == {"pi"} | assistants
     assert set(config.agents["pi"].delegates) == workers | assistants
     scaffold.runtime.describe()
-    tools = {tool.name for tool in scaffold.runtime.agents["pi"].tools}
+    tools = {tool.name for tool in scaffold.runtime._builder.agents["pi"].tools}
     assert workers | assistants | {'delegate_inbox'} <= tools
     assert not {f"{name}_result" for name in workers | assistants} & tools
     assert scaffold.context.steering is not None

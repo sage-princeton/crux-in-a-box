@@ -96,15 +96,15 @@ def test_agent_can_run_a_shell_command_and_read_its_result(drop_in_dir, assemble
 
 def test_every_agent_takes_the_run_model_and_effort_from_the_env(drop_in_dir, assemble):
     scaffold = assemble(drop_in_dir, env={"CRUX_MODEL": "gpt-test", "CRUX_REASONING_EFFORT": "low"})
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     assert {name: (agent.model, agent.model_settings.reasoning.effort)
-            for name, agent in scaffold.runtime.agents.items()} == {"pm": ("gpt-test", "low"),
+            for name, agent in scaffold.runtime._builder.agents.items()} == {"pm": ("gpt-test", "low"),
                                                                      "reviewer": ("gpt-test", "low")}
 
 
 def test_a_run_without_crux_model_is_a_config_error(drop_in_dir, assemble):
     with pytest.raises(InvalidDropInError, match="CRUX_MODEL is not set"):
-        assemble(drop_in_dir, env={}).runtime.build()
+        assemble(drop_in_dir, env={}).runtime._build()
 
 
 @pytest.mark.parametrize("anchor,setting", [
@@ -144,7 +144,7 @@ def test_the_judge_is_an_isolated_agent_that_checks_the_work_with_its_tools(drop
     judge = ScriptedModel(call("read_file", {"path": "AGENTS.md"}, "j1"), say(verdict.model_dump_json()))
     pm = ScriptedModel()
     scaffold = assemble(drop_in_dir, {"judge": judge, "pm": pm})
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     result = asyncio.run(scaffold.runtime.judge("request_met", "Pass if tested.", "The evidence.",
                                                 tools=["read_file"], max_turns=4))
     assert result == verdict
@@ -158,7 +158,7 @@ def test_the_judge_is_an_isolated_agent_that_checks_the_work_with_its_tools(drop
 def test_a_judge_that_runs_out_of_turns_fails_with_the_reason(drop_in_dir, assemble):
     judge = ScriptedModel(*[call("read_file", {"path": "AGENTS.md"}, f"j{i}") for i in range(3)])
     scaffold = assemble(drop_in_dir, {"judge": judge})
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     result = asyncio.run(scaffold.runtime.judge("request_met", "rubric", "evidence", tools=["read_file"],
                                                 max_turns=2))
     assert (result.passed, result.next_prompt) == (False, None)
