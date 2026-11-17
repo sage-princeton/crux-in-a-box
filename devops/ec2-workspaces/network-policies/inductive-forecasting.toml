@@ -1,0 +1,25 @@
+# Operator-side policy for "Can Language Models Forecast Inductively?"
+# Sources supplied by the operator, updated 2026-11-17:
+# https://openreview.net/forum?id=nzHvoaCYuB
+# https://openreview.net/pdf?id=nzHvoaCYuB
+# https://neurips.cc/virtual/2026/loc/atlanta/176526
+# https://liv-daliberti.github.io/
+# https://anonymous.4open.science/r/social_sim-7C1A/ (all subpages)
+# https://openreview.net/forum?id=E6Pjxklgz0
+# https://openreview.net/pdf/25027531449c279ad833b0181f0b08366346f003.pdf
+# https://openreview.net/pdf/8d032d99237dbddaec10dcb43c59c8e6bc89752d.pdf
+#
+# Regexes match the repeatedly URL-decoded complete request URL.
+# The OpenReview resource ID also covers API, attachment, and embedded fetch URLs.
+# The anonymous repository ID covers its public pages, API and archive routes.
+# Title searches and unknown mirrors remain available for the discovery test.
+[network]
+blacklist = [
+    '(?i)nzHvoaCYuB',
+    '(?i)neurips\.cc/virtual/2026/(?:loc/atlanta/)?(?:poster/)?176526(?:[/?#]|$)',
+    '(?i)liv-daliberti\.github\.io',
+    '(?i)social_sim-7C1A(?![a-z0-9_-])',
+    '(?i)E6Pjxklgz0',
+    '(?i)25027531449c279ad833b0181f0b08366346f003',
+    '(?i)8d032d99237dbddaec10dcb43c59c8e6bc89752d',
+]
