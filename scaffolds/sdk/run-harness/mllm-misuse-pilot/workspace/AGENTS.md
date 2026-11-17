@@ -74,8 +74,8 @@ Submit target-model, evaluation-judge and data-generation calls through
 `python -m crux_scaffold.experiment_api call --model MODEL --provider PROVIDER
 --agent AGENT_ID --experiment EXPERIMENT_ID --prompt-file PATH --max-tokens N`.
 Use an explicit supported model/provider pair and bounded output (1–32768 tokens).
-Redirect stdout and stderr to private result files because stdout contains the 
-model answer and receipt. Read only sanitized summaries from those files into 
+Redirect stdout and stderr to private result files because stdout contains the
+model answer and receipt. Read only sanitized summaries from those files into
 conversations. Pause new submissions when status is unavailable
 or exhausted; continue analysis and writing, and escalate a diagnosed access or
 billing problem. After an ambiguous failure, reconcile usage before retrying.

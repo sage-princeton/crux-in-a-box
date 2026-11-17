@@ -94,8 +94,8 @@ sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
   /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold.experiment_api status
 ```
 
-Confirm the harness parameters are updated, the paper template compiles, the scaffold check 
-reports expected configuration values, and the experiment utility reports 
+Confirm the harness parameters are updated, the paper template compiles, the scaffold check
+reports expected configuration values, and the experiment utility reports
 correct configuration values.
 
 3. Start the run and observe the logs.
