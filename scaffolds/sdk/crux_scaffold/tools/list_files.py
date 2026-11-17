@@ -8,6 +8,8 @@ from crux_scaffold.workspace import RunContext
 
 @TOOLS.register
 class ListFiles(Tool):
+    """List workspace files beneath a requested directory."""
+
     type_name = "list_files"
     description = "List files under a workspace directory, recursively."
     Arguments = PathArguments

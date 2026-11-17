@@ -2,6 +2,60 @@
 
 This repo provisions and steers **CRUX runs**: autonomous research agents (OpenClaw on EC2) that take a research question and produce a paper. `linux/` provisions boxes, `run-harness/` is the scaffold the agent lives in, `harness-overview.html` explains it to humans.
 
+## Code style
+
+- object-oriented whenever possible
+- one class per file
+- file name matches class name
+- classes get concise docstrings
+- comments reflect current state, never historical state
+- always use the "YAGNI" principle - write code for the current change/feature, not for a hypothetical future addition
+- sandy metz approach: no more than 100 lines per class, 5 lines per method, 4 params per method
+
+### Variables are named according to what they are
+
+BAD: calling a list of TurnOutcome objects to "outputs"
+
+```
+def __init__(self, outputs: list[TurnOutcome], verdicts: list[Verdict] | None = None) -> None:
+```
+
+GOOD: calling a list of TurnOutcome objects "turn_outcomes"
+
+```
+def __init__(self, turn_outcomes: list[TurnOutcome], verdicts: list[Verdict] | None = None) -> None:
+```
+
+### Additional project guidance
+
+#### Naming
+
+- Boolean names read as yes/no questions: `is_active`, `has_credentials`, `uses_openrouter`.
+- Match the surrounding conventions for files, functions, environment variables, configuration keys, and flags. Harness gate flags use `REQUIRE_*=1`; operator placeholders use `{{KEY|default}}` and are documented in `linux/placeholders.txt.example`.
+- File and function names describe their current purpose. Rename them and update callers when that purpose changes.
+
+#### Control flow and structure
+
+- Prefer early-return guard clauses over nested `if/else` chains.
+- Use stateless, pure functions for calculations and transformations. Do not introduce mutable instance state just to initialize a value and read it back.
+- Prefer a plain configuration file or a small function over a generator, framework, or abstraction with one use case.
+- Keep shell scripts focused on provisioning and command orchestration; use Python for structured parsing and transformations rather than elaborate shell pipelines.
+
+#### Comments and code hygiene
+
+- Comments explain behavior, constraints, or rationale; keep ticket IDs and past state out of code comments.
+- Mark deliberately deferred work with a specific `TODO:` or `FIXME:` describing the remaining work.
+- Delete unused code, scripts, tests, and obsolete documentation rather than keeping them for hypothetical reuse. Check references before removing scaffold or operator files.
+- Prefer clear code and behavior tests over extra explanatory documents. The harness prompts, workspace instructions, operator guides, and overview are maintained interfaces; keep them synchronized when their behavior changes.
+
+#### Testing and review evidence
+
+- Test observable behavior and failure modes, not implementation details. Keep tests explicit even when that takes more lines.
+- For Python changes, use the affected component's pytest suite. For provisioning and watchdog changes, use fixtures and mocked commands so tests do not mutate live boxes or AWS resources.
+- Test new artifact gates with passing, failing, and flag-off fixtures as described below.
+- For UI changes, verify rendered states and include screenshots or a demo when useful; use snapshots when they capture a meaningful output contract.
+- For prompt or agent-behavior changes, include representative inputs and resulting behavior in the PR. When building LLM graders, use a different model family from the model being graded to reduce self-grading bias.
+
 ## Pull request scope
 
 Every PR should have a precise scope and add a testable unit of functionality. Keep PRs small when possible (for example, under 800 changed lines) so humans can review them. When a feature, story, or issue needs a larger implementation, prefer splitting it across multiple stacked PRs using GitHub's stacked PR feature.

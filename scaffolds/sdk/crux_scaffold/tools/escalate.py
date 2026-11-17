@@ -9,6 +9,8 @@ from crux_scaffold.workspace import RunContext
 
 @TOOLS.register
 class Escalate(Tool):
+    """Post an operator action request through the configured steering outbox."""
+
     type_name = "escalate"
     description = ("Ask the operator to fix a broken resource or take another action. Include the failure, "
                    "diagnosis, requested action and independent work you will continue. Reuse request_id "
