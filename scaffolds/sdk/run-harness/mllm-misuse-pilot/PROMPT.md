@@ -11,5 +11,8 @@ The harness switches to finalization when one hour, 10% of model spend, or 10% o
 the RunPod allowance remains (at five hours, $180 inference or $22.50 RunPod).
 It may interrupt active work at that boundary.
 Checkpoint often and return to the loop at useful milestones. Finalization is part
-of the same six-hour/$200/$25 envelope (TK(experiment-credits): plus the $25
-experiment allowance). Do not spend those reserves on exploration.
+of the same six-hour/$200 inference/$25 RunPod/$25 experiment envelope. Do not
+spend the time, inference or RunPod reserves on exploration. The shared experiment
+pool has no finalization reserve; exhausted or unavailable experiment credits
+pause new experiment calls while analysis and writing continue. Check it with
+`python -m crux_scaffold.experiment_api status` before planning a batch.

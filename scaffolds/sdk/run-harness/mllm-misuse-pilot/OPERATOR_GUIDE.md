@@ -35,10 +35,22 @@ records what the run is given and what changed from the contrastive RL pilot.
    run may need on that account first; the agents cannot. Record it as `HF_TOKEN`
    in `secrets.json`, and revoke it after the run.
 
-5. TK(experiment-credits): create a separate OpenRouter key with a $25 credit limit
-   for experimental model calls (target models, judges, data generation), distinct
-   from the agent's `OPENROUTER_API_KEY`. Record it as `EXPERIMENT_OPENROUTER_API_KEY`
-   in `secrets.json`; the experiment-credits PR may rename it and add measurement.
+5. Create a fresh, dedicated OpenRouter key with a **non-resetting $25 limit** for
+   experimental model calls (target models, evaluation judges, data generation),
+   distinct from the agent's `OPENROUTER_API_KEY`. Record it as
+   `OPENROUTER_EXPERIMENT_API_KEY` in `secrets.json`. Retain the example's
+   `OPENROUTER_EXPERIMENT_BUDGET_USD=25`, `OPENROUTER_EXPERIMENT_KEY_CAP_USD=25`,
+   `OPENROUTER_EXPERIMENT_BILLING_MODE=credits` and shared absolute
+   `OPENROUTER_EXPERIMENT_STATE_DIR=/srv/crux-run/state/experiments` values.
+   These settings pass through the run secrets bundle into the service environment.
+
+   This key must spend **OpenRouter credits, not BYOK**. Use an OpenRouter workspace
+   with no applicable BYOK credentials, or exclude the experiment key from every
+   BYOK credential using OpenRouter's [API key filters](https://openrouter.ai/docs/guides/overview/auth/byok#key-filters).
+   Do not change the agent-inference key's routing. The client checks billing mode
+   and rejects unexpected BYOK usage; setting `credits` alone does not change
+   account-side routing. Check routing before making a call. Keep the account funded;
+   a key limit does not reserve account funds. Never deliver a management key.
 
 ## Provisioning
 
@@ -79,7 +91,18 @@ sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
   -p EnvironmentFile=/etc/crux-run.env \
   /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold check \
   --drop-in /srv/crux-run/run-harness --state-dir /srv/crux-run/state
+sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
+  -p EnvironmentFile=/etc/crux-run.env \
+  -p WorkingDirectory=/srv/crux-run/run-harness/workspace \
+  /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold.experiment_api status
 ```
+
+Confirm experiment status reports `billing_mode=credits`, a $25 allocation and
+provider limit, zero BYOK usage, and fresh remaining credit before starting.
+`check` validates configuration without contacting the experiment provider; the
+separate `status` command verifies its key cap and usage. Record a small benign
+experiment smoke call and check its receipt before scaling up. Call output includes
+the answer: redirect it to a private file and inspect only a sanitized summary.
 
 3. Start the run and observe the logs.
 
@@ -89,6 +112,27 @@ journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 m
 ```
 
 You should see the agent report its initial milestone in the Slack channel within about ~20 minutes. You can also check OpenRouter for inference spending and Langfuse for streaming traces before then.
+
+`budget_status` exposes the shared experiment pool under `experiments`; experiment
+calls write receipts to `/srv/crux-run/state/experiments/receipts.sqlite3`, separate
+from inference tokens and priced Langfuse generations. Preserve this directory
+with run state on restart. Do not reset or rebind it to a different key, run slug,
+allocation or billing mode. Use the CLI's reconciled spend rather than adding
+provider usage to receipts. Experiment exhaustion or unavailable status pauses
+new experiment submissions while inference remains available for synthesis.
+There is no experiment finalization reserve or resource `limits` entry; the
+existing time, inference and RunPod reserves still apply. Concurrent requests and
+delayed settlement may overshoot the cooperative allowance; the provider key cap
+is the billing backstop.
+
+For an image-bearing experiment, select a vision-capable model/provider and append
+`--image-file PATH` to the CLI call for each local PNG, JPEG, WebP or GIF. Images
+are attached in order after the text, with a 20 MB encoded request cap (the selected
+provider may impose lower limits). Test a benign image in the smoke call and
+verify the receipt's `image_count`, `billing_mode=credits`, `upstream_cost_usd=0`
+and experiment spend. Keep the answer in a private file. The shared image-input
+client is stacked between PR 178 and this pilot; all modalities use the same
+credential, headroom checks and receipt store.
 
 ## Steering
 

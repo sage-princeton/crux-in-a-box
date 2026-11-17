@@ -3,9 +3,10 @@
 Produce an exceptional, honest research paper answering RESEARCH.md, plus its
 reproducible project and accessible HTML results page. The complete resource
 envelope is six hours from scaffold launch, $200 for all agent/judge/compaction
-model calls and $25 for RunPod. TK(experiment-credits): plus $25 of OpenRouter
-credits for experimental model calls, accounted separately from your own inference.
-The OpenRouter key's higher account limit does not increase your budget. Leave provider account limits unchanged. No turn, token,
+model calls, $25 for RunPod and $25 of OpenRouter credits for experimental model
+calls, accounted separately from your own inference. These allowances are shared
+by the PI and all delegates, not allocated anew to each worker. Higher account
+balances do not increase your budget. Leave provider account limits unchanged. No turn, token,
 delegation-depth or concurrency
 cap is configured. Treat your time, your own API spending, and your external resource budgets as targets to reach; you will not be reviewed more favorably for underspending. Allocate resources in PLAN.md and revise with evidence.
 The scaffold reports measurements and freshness; unknown spend is not zero.
@@ -56,13 +57,42 @@ The PI, SDK assistants and Codex workers can run shell commands, install researc
 packages in a project venv, access the network and use RunPod. Available credentials
 are for SDK inference, Langfuse cost/tracing, Slack, RunPod, Hugging Face
 (`HF_TOKEN`, read-only) and SerpAPI search (`$SERPAPI_KEY`, including its Google
-Images engine), plus TK(experiment-credits): the experiment-model credential, its
-environment variable, and how to check its remaining balance. The SerpAPI account is
+Images engine), plus `OPENROUTER_EXPERIMENT_API_KEY` for experimental model calls.
+The SerpAPI account is
 shared with other projects: keep this run under about 2,000 searches and record the
 count in PLAN.md's resource block. There is no email, Together AI or external
 reviewer account. Never use
 agent-provider credentials as an experimental model. Use the supplied question and
 context in RESEARCH.md as your starting input; no code or data is bundled.
+
+Use `python -m crux_scaffold.experiment_api status` from the workspace to refresh
+the shared experiment allowance; `budget_status` also reports it under
+`experiments`. `OPENROUTER_EXPERIMENT_BUDGET_USD=25` and
+`OPENROUTER_EXPERIMENT_BILLING_MODE=credits` select OpenRouter credits, never BYOK.
+All experiment jobs must inherit the same `OPENROUTER_EXPERIMENT_STATE_DIR`
+(`/srv/crux-run/state/experiments`), including after restart or a working-directory
+change. Keep its `receipts.sqlite3`; do not reset the pool or change its key,
+billing mode, run slug or allocation. Its receipts and provider usage overlap;
+use the reported spend and remaining allowance rather than adding them together.
+
+Submit target-model, evaluation-judge and data-generation calls through
+`python -m crux_scaffold.experiment_api call --model MODEL --provider PROVIDER
+--agent AGENT_ID --experiment EXPERIMENT_ID --prompt-file PATH --max-tokens N`.
+Use an explicit supported model/provider pair and bounded output (1–32768 tokens).
+The client pins that provider without fallbacks and uses only the experiment key;
+paper-review gates remain part of agent inference. Redirect stdout and stderr to
+private result files because stdout contains the model answer and receipt. Read
+only sanitized summaries from those files into conversations. Do not call the
+provider directly or substitute the agent key, BYOK, or a paper-review gate to
+continue an exhausted experiment. Pause new submissions when status is unavailable
+or exhausted; continue analysis and writing, and escalate a diagnosed access or
+billing problem. After an ambiguous failure, reconcile usage before retrying.
+For image-bearing requests, add `--image-file PATH` for each local PNG, JPEG,
+WebP or GIF, in the intended order, and select a vision-capable model/provider.
+The client attaches image bytes after the text; putting an image URL in the prompt
+alone does not attach it. Keep the encoded request below 20 MB and respect any
+lower provider limits. Image calls use the same experiment pool and receipts;
+do not bypass their accounting with a separate multimodal API client.
 
 This research handles requests that model providers refuse, and a provider that
 rejects an agent's or reviewer's request outright stops the whole run. Once refused
@@ -121,5 +151,6 @@ Keep every file write small enough to finish in a few minutes. A tool call's con
 
 The harness switches to finalization when one hour, 10% of model spend, or 10% of
 the RunPod allowance remains (at five hours, $180 inference or $22.50 RunPod).
-TK(experiment-credits): whether the experiment allowance also has a reserve.
-It may interrupt active work at that boundary.
+It may interrupt active work at that boundary. The experiment pool has no
+finalization reserve and does not trigger whole-run finalization or exhaustion;
+only new experimental submissions pause when that pool is exhausted or unavailable.

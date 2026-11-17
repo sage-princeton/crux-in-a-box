@@ -31,7 +31,8 @@ log as evidence. Produce results/index.html with semantic headings, image alt te
 readable contrast, keyboard-accessible links and links to the paper and code.
 
 Write COMPLETION_REPORT.md: final git SHA/tag, PDF path and SHA-256, the archived
-review path and its verdict as written, spend/freshness against all three caps,
+review path and its verdict as written, spend/freshness against time, inference,
+RunPod and the separate experiment allowance (including receipt paths),
 reproduction command/results, scientific limitations and what more time would buy.
 Do not author or edit review records. The gate reviews a changed final PDF afresh
 and may ask you to update the report with that exact hash and review path. Check

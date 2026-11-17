@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import io
+import json
 import shutil
 import zipfile
 from pathlib import Path
@@ -15,6 +16,8 @@ from crux_scaffold.telemetry import NullTelemetry
 
 PILOT = Path(__file__).resolve().parents[1] / "run-harness/mllm-misuse-pilot"
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "OPENROUTER_API_KEY": "test",
+       "OPENROUTER_EXPERIMENT_API_KEY": "test-experiments", "OPENROUTER_EXPERIMENT_BUDGET_USD": "25",
+       "OPENROUTER_EXPERIMENT_BILLING_MODE": "credits",
        "SLACK_BOT_TOKEN": "test", "RUN_SLUG": "mllm-misuse-test", "RUNPOD_API_KEY": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test"}
 
@@ -66,6 +69,8 @@ def test_pilot_assembles_with_its_budgets_and_the_shared_research_loop(scaffold)
     assert config.budget.max_wall_seconds == 21600
     assert config.budget.max_cost_usd == 200
     assert config.resources["gpu"]["limits"] == {"cost_usd": 25}
+    assert config.resources["experiments"]["type"] == "openrouter-experiments"
+    assert not scaffold.context.resources.providers["experiments"].options.limits
     assert scaffold.loop.type_name == "tabpfn_research"
     assert set(config.agents["pi"].delegates) == {f"worker_{letter}" for letter in "abcdefgh"} | {
         "research_assistant", "research_assistant_b", "research_assistant_c"}
@@ -86,3 +91,38 @@ def test_pilot_enters_finalization_at_its_spend_reserves(scaffold, resource, amo
     scaffold.context.resources._snapshots[resource] = ResourceSnapshot(
         as_of=scaffold.context.now(), metrics={"cost_usd": ResourceMetric(value=amount, unit="USD")})
     assert scaffold.loop.reserve_reason(scaffold.context) == reason
+
+
+@pytest.mark.parametrize("key", ["OPENROUTER_EXPERIMENT_API_KEY", "OPENROUTER_EXPERIMENT_BUDGET_USD"])
+def test_pilot_requires_separate_experiment_credentials_and_allocation(tmp_path, pilot_dir, key):
+    prepare(pilot_dir)
+    env = {name: value for name, value in ENV.items() if name != key}
+    with pytest.raises(InvalidDropInError, match="experiments require"):
+        Scaffold(DropInDirectory.load(pilot_dir), env, state_dir=tmp_path / "state", telemetry=NullTelemetry())
+
+
+def test_pilot_rejects_reusing_the_inference_key(tmp_path, pilot_dir):
+    prepare(pilot_dir)
+    env = dict(ENV, OPENROUTER_EXPERIMENT_API_KEY=ENV["OPENROUTER_API_KEY"])
+    with pytest.raises(InvalidDropInError, match="must be distinct"):
+        Scaffold(DropInDirectory.load(pilot_dir), env, state_dir=tmp_path / "state", telemetry=NullTelemetry())
+
+
+def test_exhausted_experiments_leave_inference_and_finalization_available(scaffold):
+    scaffold.context.usage.started_at = scaffold.context.now()
+    scaffold.context.resources._snapshots["experiments"] = ResourceSnapshot(
+        as_of=scaffold.context.now(), metrics={
+            "spent_usd": ResourceMetric(value=25, unit="USD"),
+            "remaining_usd": ResourceMetric(value=0, unit="USD"),
+        })
+    assert scaffold.loop.reserve_reason(scaffold.context) is None
+    assert not scaffold.context.budget_exhausted()
+
+
+def test_pilot_example_selects_credits_and_shared_persistent_receipts():
+    env = json.loads((PILOT / "secrets.json.example").read_text())
+    assert env["OPENROUTER_EXPERIMENT_BILLING_MODE"] == "credits"
+    assert env["OPENROUTER_EXPERIMENT_BUDGET_USD"] == "25"
+    assert env["OPENROUTER_EXPERIMENT_KEY_CAP_USD"] == "25"
+    assert env["OPENROUTER_EXPERIMENT_API_KEY"] != env["OPENROUTER_API_KEY"]
+    assert env["OPENROUTER_EXPERIMENT_STATE_DIR"] == "/srv/crux-run/state/experiments"

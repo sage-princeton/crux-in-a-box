@@ -39,10 +39,9 @@ type = "runpod"
 refresh_seconds = 30
 limits = { cost_usd = 25 }
 
-# TK(experiment-credits): a separate $25 OpenRouter allowance for experimental model
-# calls (target MLLMs, judges, data generation), outside the $200 agent budget above.
-# Its resource provider, limit and finalization reserve come with the experiment-credits
-# PR; until then nothing in this file measures or enforces it.
+[resources.experiments]
+type = "openrouter-experiments"
+refresh_seconds = 30
 
 [loop]
 type = "tabpfn_research"
