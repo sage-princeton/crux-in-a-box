@@ -13,7 +13,7 @@ def write_config(root, text):
 
 def test_defaults(tmp_path):
     config = load_config(write_config(tmp_path, SCAFFOLD_TOML))
-    assert config.runtime == {"type": "openai-agents"}
+    assert config.runtime == {}
     assert config.context == {"type": "persistent"}
     assert config.budget.max_total_tokens is None
     assert config.agents["reviewer"].max_turns == 4
@@ -64,7 +64,7 @@ def test_mutable_defaults_belong_to_each_config(tmp_path):
     config.mcp_servers["test"] = McpServerConfig(command="true")
 
     defaults = load_config(tmp_path)
-    assert defaults.runtime == {"type": "openai-agents"}
+    assert defaults.runtime == {}
     assert defaults.agents["reviewer"].context == []
     assert defaults.mcp_servers == {}
 

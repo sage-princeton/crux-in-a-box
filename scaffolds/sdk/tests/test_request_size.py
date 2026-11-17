@@ -14,8 +14,8 @@ from test_openrouter import say as response_text
 
 from crux_scaffold.context_strategies import Compaction
 from crux_scaffold.errors import ContextLimitExceededError, RequestSizeExceededError
-from crux_scaffold.openai_agents_sdk import model_connection as sdk
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk import model_connection
+from crux_scaffold.openai_agents_sdk import openai_agents_runtime as sdk
 from crux_scaffold.telemetry import NullTelemetry
 
 from drop_ins import edit
@@ -25,7 +25,7 @@ from scripted import ScriptedModel, call, say, tool_outputs
 @pytest.fixture
 def wire(monkeypatch):
     attempts, sent, clients, pending = [], [], [], deque()
-    default_http_client = sdk.DefaultAsyncHttpxClient
+    default_http_client = model_connection.DefaultAsyncHttpxClient
 
     def handle(request):
         sent.append(request)
@@ -55,14 +55,13 @@ def wire(monkeypatch):
         clients.append(result)
         return result
 
-    monkeypatch.setattr(sdk, 'DefaultAsyncHttpxClient', http_client)
-    monkeypatch.setattr(sdk, 'AsyncOpenAI', client)
+    monkeypatch.setattr(model_connection, 'DefaultAsyncHttpxClient', http_client)
+    monkeypatch.setattr('crux_scaffold.openai_agents_sdk.model_connection.AsyncOpenAI', client)
     return attempts, sent, clients, pending
 
 
 def configure(root, limit, *, direct=False):
-    config = PROVIDER_CONFIG.replace('type = "openai-agents"',
-                                    'type = "openai-agents"\ninteractive_delegates = true')
+    config = PROVIDER_CONFIG.replace('[runtime]\n', '[runtime]\ninteractive_delegates = true\n')
     if direct:
         config = config[:config.index('[runtime.model_provider]')] + '''[runtime.model_provider]
 type = "openai"
@@ -100,7 +99,7 @@ def test_checks_serialized_bytes_before_transport(wire, api, headroom):
 
     async def invoke(limit):
         settings = sdk.ModelProvider(**options, max_request_bytes=limit)
-        async with sdk._validate_and_get_client(settings, {'OPENAI_API_KEY': 'test-key'}) as client:
+        async with model_connection._validate_and_get_client(settings, {'OPENAI_API_KEY': 'test-key'}) as client:
             if api == 'responses':
                 return await client.responses.create(model='test', input=payload, tools=tools, extra_body=extra)
             return await client.chat.completions.create(model='test', messages=payload, tools=tools, extra_body=extra)
@@ -130,8 +129,8 @@ def test_all_sdk_call_paths_reject_without_retry(wire, drop_in_dir, assemble, ca
 
     async def run():
         if caller == 'probe':
-            return await OpenAIAgentsRuntime.probe(scaffold.context.env, 'probe', NullTelemetry(),
-                                                      options=scaffold.runtime.options)
+            return await sdk.probe_model(scaffold.context.env, 'probe', NullTelemetry(),
+                                                      model_provider=scaffold.runtime.model_provider)
         async with scaffold.runtime as runtime:
             if caller == 'pi':
                 return await runtime.run('request', workflow='test')

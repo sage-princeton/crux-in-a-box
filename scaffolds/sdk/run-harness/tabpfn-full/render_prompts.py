@@ -145,8 +145,8 @@ def scaffold_setup():
     PROMPTS.md can't show the {{...}} placeholders themselves: the drop-in refuses to load with any left unresolved.
     """
     with offline_scaffold(ENV) as scaffold:
-        pi = scaffold.assembly.instructions("pi").split("\n\n---\n\n", 1)[0]
-        ra = scaffold.assembly.instructions("research_assistant")
+        pi = scaffold._instructions("pi").split("\n\n---\n\n", 1)[0]
+        ra = scaffold._instructions("research_assistant")
         ra = ra.removeprefix(scaffold.drop_in.instructions("research_assistant")).strip()
     if not (pi.startswith("# Scaffold setup") and ra.startswith("# Scaffold setup")):
         raise ValueError("the scaffold's instruction layout changed; update scaffold_setup in render_prompts.py")
