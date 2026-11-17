@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import hashlib
+import io
 import json
 import math
 import os
@@ -17,12 +19,14 @@ import sqlite3
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Iterator, Mapping
+import warnings
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from PIL import Image
 from pydantic import Field
 
 from crux_scaffold.errors import InvalidDropInError
@@ -44,6 +48,7 @@ STATE = "OPENROUTER_EXPERIMENT_STATE_DIR"
 KEY_CAP = "OPENROUTER_EXPERIMENT_KEY_CAP_USD"
 BILLING = "OPENROUTER_EXPERIMENT_BILLING_MODE"
 BASE = "https://openrouter.ai/api/v1/"
+MAX_REQUEST_BYTES = 20_000_000
 
 
 class ExperimentError(ResourceReadError):
@@ -100,7 +105,10 @@ def _database(env: Mapping[str, str], root: Path | None = None) -> Iterator[sqli
 
 
 def _request(env: Mapping[str, str], path: str, payload: dict | None = None, *, timeout: float = 10) -> dict:
-    request = urllib.request.Request(BASE + path, data=json.dumps(payload).encode() if payload else None,
+    body = json.dumps(payload).encode() if payload else None
+    if body is not None and len(body) > MAX_REQUEST_BYTES:
+        raise ExperimentError("experiment request exceeds 20000000 bytes; reduce prompt or images")
+    request = urllib.request.Request(BASE + path, data=body,
                                      headers={"Authorization": f"Bearer {env[KEY]}",
                                               "Content-Type": "application/json"})
     for attempt in range(3 if payload else 1):
@@ -178,17 +186,47 @@ def record(env: Mapping[str, str], receipt: dict) -> None:
                          (receipt["generation_id"], number(receipt["cost_usd"]), json.dumps(receipt)))
 
 
+def _content(prompt: str, image_files: Sequence[Path]) -> str | list[dict]:
+    if not image_files:
+        return prompt
+    parts = [{"type": "text", "text": prompt}]
+    remaining = MAX_REQUEST_BYTES
+    for path in image_files:
+        try:
+            if not path.is_file():
+                raise ValueError
+            with path.open("rb") as stream:
+                data = stream.read(remaining + 1)
+            remaining -= len(data)
+            if remaining < 0:
+                raise ExperimentError("experiment images exceed request size; reduce images")
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", Image.DecompressionBombWarning)
+                with Image.open(io.BytesIO(data)) as picture:
+                    mime = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp",
+                            "GIF": "image/gif"}.get(picture.format)
+                    if mime is None:
+                        raise ValueError
+                    picture.verify()
+        except (OSError, ValueError, SyntaxError, Image.DecompressionBombError, Image.DecompressionBombWarning):
+            raise ExperimentError("experiment image unavailable or invalid; use local PNG, JPEG, WebP or GIF files") from None
+        parts.append({"type": "image_url", "image_url": {
+            "url": f"data:{mime};base64," + base64.b64encode(data).decode("ascii")}})
+    return parts
+
+
 def complete(env: Mapping[str, str], model: str, prompt: str, *, provider: str, max_tokens: int,
-             agent: str, experiment: str) -> dict:
-    current = status(env)
-    if current["remaining_usd"] <= 0:
-        raise ExperimentError("experiment credit exhausted; continue analysis and writing with agent inference")
+             agent: str, experiment: str, image_files: Sequence[Path] = ()) -> dict:
     if not 1 <= max_tokens <= 32768 or not prompt.strip():
         raise ExperimentError("experiment needs a nonempty prompt and max_tokens between 1 and 32768")
     if any(not re.fullmatch(r"[A-Za-z0-9_./:@-]{1,160}", v) for v in (model, provider, agent, experiment)):
         raise ExperimentError("experiment model, provider, agent and experiment identifiers are invalid")
+    content = _content(prompt, image_files)
+    current = status(env)
+    if current["remaining_usd"] <= 0:
+        raise ExperimentError("experiment credit exhausted; continue analysis and writing with agent inference")
     result = _request(env, "chat/completions", {
-        "model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": max_tokens,
+        "model": model, "messages": [{"role": "user", "content": content}], "max_tokens": max_tokens,
         "provider": {"only": [provider], "allow_fallbacks": False},
     }, timeout=180)
     identifier = result.get("id")
@@ -205,6 +243,7 @@ def complete(env: Mapping[str, str], model: str, prompt: str, *, provider: str, 
                "billing_mode": env.get(BILLING, "credits"),
                "experiment": experiment, "run_slug": env["RUN_SLUG"], "model": model, "provider": provider,
                "input_tokens": usage.get("prompt_tokens"), "output_tokens": usage.get("completion_tokens"),
+               "image_count": len(image_files),
                "purpose": "experiments", "as_of": datetime.now(UTC).isoformat()}
     record(env, receipt)
     try:
@@ -246,17 +285,19 @@ def main(argv: list[str] | None = None, env: Mapping[str, str] | None = None) ->
     for name in ("model", "provider", "agent", "experiment"):
         call.add_argument("--" + name, required=True)
     call.add_argument("--prompt-file", type=Path, required=True)
+    call.add_argument("--image-file", type=Path, action="append", default=[],
+                      help="local PNG/JPEG/WebP/GIF input; repeat for multiple images in order")
     call.add_argument("--max-tokens", type=int, required=True)
     args = parser.parse_args(argv)
     env = dict(os.environ) if env is None else env
     try:
         result = (status(env) if args.command == "status" else complete(
             env, args.model, args.prompt_file.read_text(), provider=args.provider, max_tokens=args.max_tokens,
-            agent=args.agent, experiment=args.experiment))
+            agent=args.agent, experiment=args.experiment, image_files=args.image_file))
     except (ExperimentError, InvalidDropInError) as error:
         print(str(error))
         return 2
-    except OSError:
+    except (OSError, UnicodeError):
         print("experiment input or state unavailable; check private workspace paths")
         return 2
     print(json.dumps(result, indent=2))
