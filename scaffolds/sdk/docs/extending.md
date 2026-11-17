@@ -413,6 +413,16 @@ Providers are separate from tools because they run deterministically without a m
 
 For `openrouter-experiments`, `OPENROUTER_EXPERIMENT_BILLING_MODE` explicitly selects `credits` (default) or `byok`. Credit mode rejects unexpected BYOK usage. BYOK mode requires `include_byok_in_limit`, meters credit charges plus upstream inference, and retains both receipt components. The mode is bound to persisted identity and printed in resource context. A returned route that differs from the declared mode fails; zero router charges never imply free upstream inference. A deliberate mode change needs a reconciled state binding, while lifetime provider usage continues to count.
 
+`experiment_api.complete(..., image_files=())` accepts an ordered sequence of local
+`Path` objects; the CLI exposes repeatable `call --image-file PATH`. PNG, JPEG,
+WebP and GIF inputs are validated from their bytes and attached after the prompt
+as `image_url` data-URL parts. Text-only content remains a string. Image input
+uses the existing experiment accounting path without a new resource or telemetry
+generation. Receipts add `image_count` (zero for text-only calls), with no input
+paths or image bytes. The encoded request is limited to 20,000,000 bytes; file
+reads are bounded and invalid inputs return fixed safe errors. Tests should
+inspect the HTTP body using the existing transport double, never a live model.
+
 To add refine.ink credits or another API, register a `ResourceProvider` in the drop-in's extension module and declare its type under `[resources.<name>]`. For example, report a `credits_used` metric with unit `credits`, then configure `limits = { credits_used = 100 }`. Its response automatically appears in every status block and participates in limit checks without changing the runtime or budget formatter. Tests should supply a fake provider, clock and HTTP/subprocess responses; never query a real account.
 
 ## Testing

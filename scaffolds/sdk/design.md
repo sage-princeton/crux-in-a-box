@@ -49,6 +49,9 @@ delivers both pools' status; the shell CLI refreshes experiments at submission,
 including for native coding children. Provider caps are financial backstops;
 cooperative per-run allowances do not reserve shared account funds. Experiment
 exhaustion stops sampling while synthesis continues.
+The same experiment call path accepts text plus local image inputs. Image bytes
+are validated and encoded inside the client, never stored in usage receipts or
+telemetry. Multimodal sampling preserves the credential and accounting boundary.
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 

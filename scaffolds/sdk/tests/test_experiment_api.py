@@ -1,6 +1,7 @@
 """Experiment spending is shared and independent of scaffold inference."""
 
 import asyncio
+import base64
 import io
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from urllib.error import HTTPError
 
 import pytest
+from PIL import Image
 
 from crux_scaffold import experiment_api as api
 from crux_scaffold.errors import InvalidDropInError
@@ -182,3 +184,88 @@ def test_missing_usage_is_unknown_not_a_free_request(monkeypatch, tmp_path):
     with pytest.raises(api.ExperimentError, match="usage"):
         api.complete(environment(tmp_path), "openai/model", "Q", provider="openai", max_tokens=64,
                      agent="a", experiment="e")
+
+
+@pytest.mark.parametrize("format,mime", [("PNG", "image/png"), ("JPEG", "image/jpeg"),
+                                       ("WEBP", "image/webp"), ("GIF", "image/gif")])
+def test_images_use_the_same_isolated_call_and_receipt(monkeypatch, tmp_path, format, mime):
+    path = tmp_path / "image.bin"
+    Image.new("RGB", (2, 2), "red").save(path, format=format)
+    requests = transport(monkeypatch, [key(), response()])
+    result = api.complete(environment(tmp_path), "openai/model", "Describe this image.", provider="openai",
+                          max_tokens=64, agent="a", experiment="vision", image_files=[path])
+    payload = json.loads(requests[1].data)
+    assert payload["messages"] == [{"role": "user", "content": [
+        {"type": "text", "text": "Describe this image."},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64," +
+                                          base64.b64encode(path.read_bytes()).decode("ascii")}},
+    ]}]
+    assert payload["provider"] == {"only": ["openai"], "allow_fallbacks": False}
+    assert result["receipt"]["cost_usd"] == 0.1
+    assert result["receipt"]["billing_mode"] == "credits"
+    assert result["receipt"]["image_count"] == 1
+    assert "image.bin" not in json.dumps(result)
+    with api._database(environment(tmp_path)) as db:
+        assert db.execute("SELECT SUM(cost) FROM receipts").fetchone()[0] == 0.1
+
+
+def test_cli_accepts_multiple_images_in_order(monkeypatch, tmp_path, capsys):
+    images = [tmp_path / f"{color}.png" for color in ("red", "blue")]
+    for path, color in zip(images, ("red", "blue"), strict=True):
+        Image.new("RGB", (2, 2), color).save(path)
+    prompt = tmp_path / "prompt.txt"
+    prompt.write_text("Compare the images.")
+    requests = transport(monkeypatch, [key(), response()])
+    assert api.main(["call", "--model", "openai/model", "--provider", "openai", "--agent", "a",
+                     "--experiment", "vision", "--max-tokens", "64", "--prompt-file", str(prompt),
+                     "--image-file", str(images[0]), "--image-file", str(images[1])],
+                    env=environment(tmp_path)) == 0
+    content = json.loads(requests[1].data)["messages"][0]["content"]
+    assert [base64.b64decode(part["image_url"]["url"].split(",", 1)[1]) for part in content[1:]] == [
+        path.read_bytes() for path in images]
+    assert json.loads(capsys.readouterr().out)["receipt"]["image_count"] == 2
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "invalid", "unsupported", "oversized"])
+def test_invalid_images_fail_without_network_or_content_leaks(monkeypatch, tmp_path, kind):
+    path = tmp_path / "private-input"
+    if kind == "directory":
+        path.mkdir()
+    elif kind == "invalid":
+        path.write_bytes(b"private image payload")
+    elif kind == "unsupported":
+        Image.new("RGB", (2, 2)).save(path, format="BMP")
+    elif kind == "oversized":
+        monkeypatch.setattr(api, "MAX_REQUEST_BYTES", 128)
+        path.write_bytes(b"x" * 129)
+    requests = transport(monkeypatch, [])
+    with pytest.raises(api.ExperimentError) as error:
+        api.complete(environment(tmp_path), "openai/model", "private prompt", provider="openai",
+                     max_tokens=64, agent="a", experiment="vision", image_files=[path])
+    assert "private" not in str(error.value)
+    assert not requests
+
+
+def test_encoded_request_size_is_bounded_before_submission(monkeypatch, tmp_path):
+    path = tmp_path / "image.png"
+    Image.new("RGB", (2, 2)).save(path)
+    monkeypatch.setattr(api, "MAX_REQUEST_BYTES", 512)
+    requests = transport(monkeypatch, [key()])
+    with pytest.raises(api.ExperimentError, match="request exceeds"):
+        api.complete(environment(tmp_path), "openai/model", "Q" * 512, provider="openai",
+                     max_tokens=64, agent="a", experiment="vision", image_files=[path])
+    assert all(request.data is None for request in requests)
+
+
+def test_images_cannot_bypass_exhaustion_or_billing_mode(monkeypatch, tmp_path):
+    path = tmp_path / "image.png"
+    Image.new("RGB", (2, 2)).save(path)
+    requests = transport(monkeypatch, [key(usage=4, remaining=0)])
+    with pytest.raises(api.ExperimentError, match="exhausted"):
+        api.complete(environment(tmp_path), "openai/model", "Q", provider="openai",
+                     max_tokens=64, agent="a", experiment="vision", image_files=[path])
+    assert len(requests) == 1
+    transport(monkeypatch, [key(), response(is_byok=True)])
+    with pytest.raises(api.ExperimentError, match="billing mode"):
+        api.complete(environment(tmp_path), "openai/model", "Q", provider="openai",
+                     max_tokens=64, agent="a", experiment="vision", image_files=[path])

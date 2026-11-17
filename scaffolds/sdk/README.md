@@ -29,6 +29,11 @@ Experimental subject-model calls can use a dedicated OpenRouter credential and
 shared spending pool. The experiment CLI and `openrouter-experiments` resource
 keep their accounting separate from agent inference; see
 [configuration](configuration.md#separate-experiment-api-credits).
+For image experiments, `call --image-file PATH` attaches a local PNG, JPEG, WebP
+or GIF; repeat it for multiple images. Use a vision-capable model/provider and
+keep the encoded request below 20 MB. Text and image calls share the same isolated
+experiment allowance and receipts. Redirect call output to a private file when
+answers should not enter agent conversations.
 
 Set `runtime.model_provider.max_request_bytes` to reject oversized SDK requests
 before sending them. The PI receives delegate failures through the existing

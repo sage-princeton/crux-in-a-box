@@ -412,6 +412,26 @@ one shared `OPENROUTER_EXPERIMENT_STATE_DIR` for experiment jobs. No management
 key is delivered. Use `python -m crux_scaffold.experiment_api status` or `call`
 from worker shells; `call --help` lists required attribution and request bounds.
 
+For a vision-capable model/provider, append `--image-file PATH` to `call`; repeat
+it to attach multiple local PNG, JPEG, WebP or GIF files in order. The client
+validates the image format from its bytes and sends the original bytes as base64
+data URLs after the text from `--prompt-file`, using the same Chat Completions
+endpoint, experiment credential, headroom check and receipt accounting. Text-only
+calls retain their string content. No remote image URL is fetched by the client.
+The full serialized request, including base64 images, is capped at 20,000,000
+bytes; individual model/provider image limits can be lower. Receipts include
+`image_count`, never image data or input file paths. Output still includes the
+model answer: redirect it to a private file when input/output must stay out of
+agent conversation and tool logs.
+
+```bash
+python -m crux_scaffold.experiment_api call --model MODEL --provider PROVIDER \
+  --agent worker_a --experiment vision-pilot --max-tokens 256 \
+  --prompt-file inputs/question.txt --image-file inputs/photo.png > results/call.json
+```
+
+The content format follows OpenRouter's [Chat Completions schema](https://openrouter.ai/docs/api/reference/overview#completions-request-format).
+
 The dedicated experiment key must have a non-resetting provider cap. By default
 it cannot exceed the declared allocation. `OPENROUTER_EXPERIMENT_KEY_CAP_USD`
 allows an explicitly larger provider backstop when testing with a smaller run
