@@ -19,4 +19,4 @@ class Command(Tool):
         return self.options.description
 
     async def invoke(self, ctx: RunContext, args: Arguments) -> str:
-        return ctx.workspace.run_shell(self.options.command, self.options.timeout_seconds)
+        return await ctx.workspace.run_shell_async(self.options.command, self.options.timeout_seconds)

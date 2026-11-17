@@ -63,6 +63,23 @@ def test_command_tool_runs_its_declared_command(tmp_path):
     assert asyncio.run(tool.invoke(context(tmp_path, []), Arguments())) == "exit_code=0\nchecked\n"
 
 
+def test_command_tool_allows_other_async_work_to_finish(tmp_path):
+    ctx = context(tmp_path, [])
+    tool = TOOLS.create("check", {"type": "command", "description": "Wait for another task.",
+                                  "command": "while [ ! -f ready ]; do sleep 0.01; done; echo checked",
+                                  "timeout_seconds": 2})
+
+    async def make_ready():
+        await asyncio.sleep(0)
+        ctx.workspace.write_file("ready", "ready")
+
+    async def run():
+        output, _ = await asyncio.gather(tool.invoke(ctx, Arguments()), make_ready())
+        return output
+
+    assert asyncio.run(run()) == "exit_code=0\nchecked\n"
+
+
 def test_run_shell_runs_the_agents_command_with_the_declared_timeout(tmp_path):
     tool = TOOLS.create("run_shell", {"timeout_seconds": 1})
     ctx = context(tmp_path, [])
