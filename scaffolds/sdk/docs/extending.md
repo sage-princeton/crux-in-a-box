@@ -39,7 +39,7 @@ Built-in components register themselves when their module is imported. `scaffold
 
 **`scaffold.py` is the composition root.** It is the only place components are constructed and wired together. A new dependency between components is passed in there, as a constructor keyword or through `Assembly`; components do not build one another.
 
-**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
+**Agent SDKs stay at the edges.** `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools/`, `usage.py` and `workspace.py` never import an agent SDK. The OpenAI Agents SDK is confined to `openai_agents_sdk/` and `context_strategies.py`, and Codex to `coding_agents.py`. A new SDK gets its own module.
 
 **Error behavior:**
 
@@ -76,7 +76,9 @@ tail of the text both see the timeout. `ReviewWorkspace` rejects both, and
 
 ## Tools (`Tool`)
 
-`tools.py`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate`, `restart_context`. `restart_context(handoff)` is the orchestrator's deliberate context reset: it returns the handoff behind the `RESTARTED` marker, and the runtime then drops the orchestrator's conversation before that call (see Context below). Listing it for a delegate or a gate fails validation.
+`tools/`, registry `TOOLS`. Built-ins: `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate`, `restart_context`. `restart_context(handoff)` is the orchestrator's deliberate context reset: it returns the handoff behind the `RESTARTED` marker, and the runtime then drops the orchestrator's conversation before that call (see Context below). Listing it for a delegate or a gate fails validation.
+
+Implementations, argument schemas and options each have their own module. Import shared tool types and built-ins from `crux_scaffold.tools`; the package exports them and registers the built-ins.
 
 `run_shell(command, background)` lets the agent supply a Bash command. Its `timeout_seconds` option defaults to 600,
 and its description states the configured value.
@@ -275,7 +277,9 @@ in-flight work if it disables turn limits; `phased` only checks between iteratio
 
 ## Agent runtimes (`AgentRuntime`)
 
-`agent_runtimes/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `agent_runtimes/openai_agents_sdk.py`.
+`openai_agents_sdk/base.py`, registry `RUNTIMES`. Built-in: `openai-agents`, in `openai_agents_sdk/openai_agents_runtime.py`.
+
+Runtime support types, configuration schemas, usage hooks and steering adapters each have their own module under `openai_agents_sdk/`. The `base` and `openai_agents_runtime` modules export their associated types.
 
 A runtime is constructed with an `Assembly`: the drop-in, the `RunContext`, the built tools and coding agents, and the context strategy. `runtime_overrides` add further keyword arguments, such as the test models that `openai-agents` takes. A new runtime module must be imported by `scaffold.py` so it registers. Its SDK stays inside that module.
 

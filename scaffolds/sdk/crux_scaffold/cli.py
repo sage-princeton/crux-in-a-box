@@ -11,12 +11,12 @@ from collections.abc import Coroutine, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from crux_scaffold.agent_runtimes.base import RUNTIMES
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.components import Options
 from crux_scaffold.config import load_config
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import ContextLimitExceededError, InvalidDropInError, ModelRequestError
+from crux_scaffold.openai_agents_sdk.base import RUNTIMES
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import LangfuseTelemetry, RunIdentity, Telemetry, telemetry_from_env
 from crux_scaffold.usage import Budget, UsageLedger

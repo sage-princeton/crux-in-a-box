@@ -2,10 +2,10 @@ import asyncio
 
 import pytest
 
-from crux_scaffold.agent_runtimes.base import Verdict
-from crux_scaffold.agent_runtimes.openai_agents_sdk import OpenAIAgentsOptions
 from crux_scaffold.config import AgentConfig, PhaseConfig
 from crux_scaffold.gates import JudgeOptions
+from crux_scaffold.openai_agents_sdk.base import Verdict
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsOptions
 
 from drop_ins import edit
 from scripted import ScriptedModel, call, say, tool_outputs
