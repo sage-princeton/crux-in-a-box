@@ -32,8 +32,8 @@ Don't add special cases for one drop-in to the package. Don't add an extension p
 
 - **`scaffold.py` is the only composition root.** Components receive their dependencies and never build one another.
 - **Agent SDKs stay in their modules.**
-  - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools.py`, `usage.py` and `workspace.py` never import an agent SDK.
-  - The OpenAI Agents SDK stays in `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`.
+  - `config.py`, `drop_in.py`, `loop.py`, `gates.py`, `tools/`, `usage.py` and `workspace.py` never import an agent SDK.
+  - The OpenAI Agents SDK stays in `openai_agents_sdk/` and `context_strategies.py`.
   - Codex stays in `coding_agents.py`.
 - **Configuration is declarative and strict.**
   - Options models forbid unknown keys.

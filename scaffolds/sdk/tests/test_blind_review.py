@@ -4,9 +4,9 @@ import os
 
 import pytest
 
-from crux_scaffold.agent_runtimes.base import Verdict
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import GATES, GateContext
+from crux_scaffold.openai_agents_sdk.base import Verdict
 from crux_scaffold.telemetry import NullTelemetry
 from crux_scaffold.workspace import ReviewWorkspace
 

@@ -53,7 +53,7 @@ The same experiment call path accepts text plus local image inputs. Image bytes
 are validated and encoded inside the client, never stored in usage receipts or
 telemetry. Multimodal sampling preserves the credential and accounting boundary.
 
-`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
+`scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools/` never import an agent SDK. The OpenAI Agents SDK is confined to `openai_agents_sdk/` and `context_strategies.py`, and Codex to `coding_agents.py`.
 
 The orchestrator receives a generated setup before its persona and static context. It describes the scaffold, phases and gates, available delegates/tools, steering, configured limits, context policy and restart behavior. These instructions are assembled once. Delegates get their own scoped setup and static files. Current phase, iteration, gate outcomes, research state and remaining resources belong in the dynamic user context. MCP launch arguments and environment values are excluded.
 
