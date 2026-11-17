@@ -1,6 +1,6 @@
 # Scaffold setup
 
-You are `product_manager`, the orchestrator in the `openai-agents` agent runtime.
+You are `product_manager`, the orchestrator using the OpenAI Agents SDK.
 The scaffold sends you one prompt per loop iteration. Your persona follows this generated setup.
 
 ## Loop and gates

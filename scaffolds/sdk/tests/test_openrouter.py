@@ -17,15 +17,14 @@ from crux_scaffold.cli import main
 from crux_scaffold.context_strategies import estimate_tokens
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
-from crux_scaffold.openai_agents_sdk.base import RUNTIMES
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import probe_model
+from crux_scaffold.openai_agents_sdk.runtime_config import RuntimeConfig
 from crux_scaffold.telemetry import NullTelemetry, RunIdentity, telemetry_from_env
 
 ENV = {"CRUX_MODEL": "google/gemini-4-argon", "CRUX_REASONING_EFFORT": "low",
        "OPENROUTER_API_KEY": "test-key"}
 PROVIDER_CONFIG = '''
 [runtime]
-type = "openai-agents"
 
 [runtime.model_provider]
 type = "openai-compatible"
@@ -131,9 +130,9 @@ def test_the_orchestrator_history_survives_a_restart(router, drop_in_dir, assemb
 def test_the_same_provider_settings_apply_to_the_probe(router, drop_in_dir):
     requests, pending, _ = router
     pending.append(response(say("SCAFFOLD-PROBE")))
-    _, options = RUNTIMES.resolve("runtime", DropInDirectory.load(drop_in_dir).config.runtime)
-    assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "Say SCAFFOLD-PROBE", NullTelemetry(),
-                                               options=options)) == "SCAFFOLD-PROBE"
+    options = RuntimeConfig.from_config(DropInDirectory.load(drop_in_dir).config.runtime)
+    assert asyncio.run(probe_model(ENV, "Say SCAFFOLD-PROBE", NullTelemetry(),
+                                               model_provider=options.model_provider)) == "SCAFFOLD-PROBE"
     assert requests[0]["provider"]["only"] == ["google-vertex"] and requests[0]["store"] is False
 
 
@@ -177,8 +176,8 @@ def test_preset_reaches_agents_judges_and_probe_without_request_overrides(router
         async with scaffold.runtime as runtime:
             await runtime.run("Start.", workflow="test")
             verdict = await runtime.judge("quality", "Check the evidence.", "Evidence.", tools=[], max_turns=1)
-        assert await OpenAIAgentsRuntime.probe(env, "Say SCAFFOLD-PROBE", NullTelemetry(),
-                                             options=scaffold.runtime.options) == "SCAFFOLD-PROBE"
+        assert await probe_model(env, "Say SCAFFOLD-PROBE", NullTelemetry(),
+                                 model_provider=scaffold.runtime.model_provider) == "SCAFFOLD-PROBE"
         return verdict
 
     assert asyncio.run(run()).passed

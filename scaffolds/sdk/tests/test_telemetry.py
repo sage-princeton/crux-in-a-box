@@ -16,7 +16,8 @@ from crux_scaffold import cli
 from crux_scaffold.cli import main
 from crux_scaffold.coding_agents import CODING_AGENTS
 from crux_scaffold.context_strategies import CONTEXT_STRATEGIES
-from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
+from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import probe_model
 from crux_scaffold.telemetry import (
     LangfuseTelemetry,
     NullTelemetry,
@@ -464,7 +465,8 @@ def test_probe_sets_auto_reasoning_summary_mode(monkeypatch):
         return type("Result", (), {"final_output": "ok"})()
 
     monkeypatch.setattr(Runner, "run", run)
-    assert asyncio.run(OpenAIAgentsRuntime.probe(ENV, "prompt", NullTelemetry())) == "ok"
+    assert asyncio.run(probe_model(ENV, "prompt", NullTelemetry(),
+                                   model_provider=ModelProvider(type="openai", api="responses"))) == "ok"
     assert captured["agent"].model_settings.reasoning.summary == "auto"
 
 

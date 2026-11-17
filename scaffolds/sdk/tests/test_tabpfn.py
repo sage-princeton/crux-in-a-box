@@ -16,7 +16,7 @@ from test_blind_review import submission_pdf
 
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.gates import GateContext, GateResult
-from crux_scaffold.openai_agents_sdk.base import TurnOutcome, Verdict
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import TurnOutcome, Verdict
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 
@@ -215,7 +215,7 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     assert status["verdict"]["passed"] is False and status["verdict"]["feedback"].count(feedback) == 3
     assert json.loads(workspace.read_file(status["review_path"]))["verdict"] == status["verdict"]
     workspace.write_file("PLAN.md", "Old plan. " * 10000)
-    research = scaffold.assembly.research_context("pi")
+    research = scaffold._research_context("pi")
     assert json.dumps(status, indent=2) in research
     assert "truncated" in research
 

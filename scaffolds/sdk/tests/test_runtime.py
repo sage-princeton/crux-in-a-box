@@ -4,7 +4,7 @@ import json
 import pytest
 
 from crux_scaffold.errors import InvalidDropInError
-from crux_scaffold.openai_agents_sdk.base import Verdict
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import Verdict
 
 from drop_ins import add_fake_slack, edit
 from scripted import ScriptedModel, call, current_task, say, tool_outputs
@@ -112,8 +112,8 @@ def test_a_run_without_crux_model_is_a_config_error(drop_in_dir, assemble):
     ("max_turns = 4", 'reasoning_effort = "high"'),
     ('type = "scripted"', 'model = "gpt-other"'),
     ('type = "scripted"', 'reasoning_effort = "high"'),
-    ('orchestrator = "pm"', '[runtime]\ntype = "openai-agents"\nmodel = "gpt-other"'),
-    ('orchestrator = "pm"', '[runtime]\ntype = "openai-agents"\nreasoning_effort = "high"'),
+    ('orchestrator = "pm"', '[runtime]\nmodel = "gpt-other"'),
+    ('orchestrator = "pm"', '[runtime]\nreasoning_effort = "high"'),
 ])
 def test_a_drop_in_cannot_set_a_model_or_effort(drop_in_dir, assemble, anchor, setting):
     if anchor.startswith("orchestrator"):
@@ -169,4 +169,4 @@ def test_the_scaffold_builds_the_tools_a_judge_names(drop_in_dir, assemble):
     (drop_in_dir / "rubric.md").write_text("Judge it.")
     with (drop_in_dir / "scaffold.toml").open("a") as toml:
         toml.write('\n[gates.review]\ntype = "llm_judge"\nrubric = "rubric.md"\ntools = ["list_files"]\n')
-    assert "list_files" in assemble(drop_in_dir).runtime.assembly.tools
+    assert "list_files" in assemble(drop_in_dir).tools

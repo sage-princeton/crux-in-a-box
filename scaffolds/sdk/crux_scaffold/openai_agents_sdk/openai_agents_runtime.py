@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from dataclasses import replace
@@ -14,7 +14,6 @@ from typing import Any, Literal, Self
 
 from agents import Agent, FunctionTool, RunConfig, RunContextWrapper, Runner, set_tracing_disabled
 from agents.exceptions import MaxTurnsExceeded
-from agents.models.interface import Model
 from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool_context import ToolContext
@@ -23,22 +22,19 @@ from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from pydantic import ValidationError
 
-from crux_scaffold.components import count_limit
-from crux_scaffold.context_strategies import is_standing_context, since_restart
+from crux_scaffold.components import CountLimit, count_limit
+from crux_scaffold.context_strategies import ContextStrategy, is_standing_context, since_restart
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
 from crux_scaffold.errors import InvalidDropInError, ModelRequestError
 from crux_scaffold.openai_agents_sdk.agent_builder import AgentBuilder
-from crux_scaffold.openai_agents_sdk.agent_tools import AgentTools
-from crux_scaffold.openai_agents_sdk.base import RUNTIMES, AgentRuntime, Assembly
 from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
 from crux_scaffold.openai_agents_sdk.coding_tasks import CodingTasks
+from crux_scaffold.openai_agents_sdk.delegation_limiter import DelegationLimiter
 from crux_scaffold.openai_agents_sdk.inbox_arguments import InboxArguments
 from crux_scaffold.openai_agents_sdk.message_arguments import MessageArguments
 from crux_scaffold.openai_agents_sdk.model_connection import ModelConnection
 from crux_scaffold.openai_agents_sdk.model_provider import ModelProvider
-from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
-from crux_scaffold.openai_agents_sdk.sdk_resources import SdkResources
 from crux_scaffold.openai_agents_sdk.send_arguments import SendArguments
 from crux_scaffold.openai_agents_sdk.task_arguments import TaskArguments
 from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
@@ -52,41 +48,35 @@ from crux_scaffold.workspace import ReviewWorkspace
 JUDGE = "judge"
 
 
-@RUNTIMES.register
-class OpenAIAgentsRuntime(AgentRuntime):
+class OpenAIAgentsRuntime:
     """Run orchestrator turns and isolated judges using assembled SDK agents and managed resources."""
 
-    type_name = "openai-agents"
-    Options = OpenAIAgentsOptions
-
-    def __init__(self, name: str, options: OpenAIAgentsOptions, *, assembly: Assembly,
-                 models: Mapping[str, Model] | None = None) -> None:
-        super().__init__(name, options, assembly=assembly)
-        self.context_strategy = assembly.context_strategy
-        self.max_turns = options.max_turns
-        self.research_context = assembly.research_context
-        self.interactive_delegates = options.interactive_delegates
-        self.coding_result_wait_seconds = options.coding_result_wait_seconds
-        self._coding_tasks = CodingTasks(
-            assembly.context, self._delegation, starts_in_background=options.background_coding,
-            wait_seconds=None if options.coding_result_wait_seconds == "unlimited" else options.coding_result_wait_seconds)
-        tools = AgentTools(assembly.tools, assembly.coding_agents, self._coding_tasks, self._delegation)
-        connection = ModelConnection(options.model_provider, assembly.context.env, models)
-        resources = SdkResources(assembly.drop_in, assembly.context, connection)
-        self._builder = AgentBuilder(resources, tools, assembly.instructions)
+    def __init__(
+        self,
+        builder: AgentBuilder,
+        context_strategy: ContextStrategy,
+        coding_tasks: CodingTasks,
+        max_turns: CountLimit = 50,
+        *,
+        delegation: DelegationLimiter,
+        research_context: Callable[[str], str],
+        interactive_delegates: bool = False,
+        coding_result_wait_seconds: float | Literal["unlimited"] = 1800,
+    ) -> None:
+        self._builder = builder
+        self.context_strategy = context_strategy
+        self._coding_tasks = coding_tasks
+        self.max_turns = max_turns
+        self._delegation = delegation
+        self.research_context = research_context
+        self.interactive_delegates = interactive_delegates
+        self.coding_result_wait_seconds = coding_result_wait_seconds
         self._initialize()
         self.delegates: DelegateTasks | None = None
         self._delegate_context: ContextVar[tuple[str, list[dict]] | None] = ContextVar("delegate_context", default=None)
-        if options.interactive_delegates:
+        if interactive_delegates:
             self.delegates = DelegateTasks(DelegateMailboxes(self.context.state_dir / "delegates.sqlite"),
                                            self._run_delegate, self.context.telemetry)
-
-    @classmethod
-    async def probe(cls, env: Mapping[str, str], prompt: str, telemetry: Telemetry, *,
-                    options: OpenAIAgentsOptions | None = None) -> str:
-        """Run the registry's provider probe through the shared model connection."""
-        options = options or OpenAIAgentsOptions()
-        return await probe_model(env, prompt, telemetry, model_provider=options.model_provider)
 
     def _initialize(self) -> None:
         self.context = self._builder.resources.context

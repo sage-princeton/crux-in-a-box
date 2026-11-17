@@ -71,7 +71,7 @@ def test_workflow_and_rest_changes_do_not_change_instructions(drop_in_dir, assem
     before = scaffold._instructions("pm")
     scaffold.state.iteration = 4
     scaffold.state.history.append(IterationRecord(phase="main", iteration=3, completed=True, gates=[]))
-    scaffold.assembly.tools["rest"].used_seconds = 30
+    scaffold.tools["rest"].used_seconds = 30
     assert scaffold._instructions("pm") == before
     state = scaffold._research_context("pm")
     assert "iteration 4" in state and "60s remaining" in state

@@ -14,7 +14,7 @@ from scripted import ScriptedModel, call, current_task, say, tool_outputs
 
 def background(root, *, max_turns=50):
     with (root / "scaffold.toml").open("a") as config:
-        config.write(f'\n[runtime]\ntype = "openai-agents"\nbackground_coding = true\nmax_turns = {max_turns}\n')
+        config.write(f'\n[runtime]\nbackground_coding = true\nmax_turns = {max_turns}\n')
 
 
 def test_default_parallel_rest_does_not_release_pi_before_coding_finishes(drop_in_dir, assemble):

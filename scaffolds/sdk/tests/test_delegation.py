@@ -111,7 +111,7 @@ def test_parents_reacquire_capacity_before_resuming(drop_in_dir, assemble, concu
             active -= 1
 
         async def branch(depth):
-            async with runtime.delegation_slot():
+            async with runtime._delegation.slot():
                 await step()
                 if depth:
                     await asyncio.gather(*(branch(depth - 1) for _ in range(3)))
@@ -132,10 +132,10 @@ def test_cancelling_a_queued_delegate_does_not_steal_capacity(drop_in_dir, assem
         entered = []
 
         async def queued(name):
-            async with runtime.delegation_slot():
+            async with runtime._delegation.slot():
                 entered.append(name)
 
-        async with runtime.delegation_slot():
+        async with runtime._delegation.slot():
             cancelled = asyncio.create_task(queued("cancelled"), context=Context())
             remaining = asyncio.create_task(queued("remaining"), context=Context())
             await asyncio.sleep(0)
@@ -349,7 +349,7 @@ def test_background_cleanup_releases_running_and_queued_slots(drop_in_dir, assem
         assert len(calls) == 1
         assert not scaffold.runtime._coding_tasks._tasks
         assert scaffold.runtime._delegation._active == 0
-        async with scaffold.runtime.delegation_slot():
+        async with scaffold.runtime._delegation.slot():
             assert scaffold.runtime._delegation._active == 1
 
     asyncio.run(asyncio.wait_for(exercise(), 2))

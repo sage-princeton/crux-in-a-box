@@ -11,7 +11,7 @@ from scripted import ScriptedModel, call, say
 def interactive(root):
     edit(root, 'scaffold.toml', 'delegates = ["engineer", "reviewer"]', 'delegates = ["reviewer"]')
     with (root / 'scaffold.toml').open('a') as config:
-        config.write('\n[runtime]\ntype = "openai-agents"\ninteractive_delegates = true\n')
+        config.write('\n[runtime]\ninteractive_delegates = true\n')
 
 
 def tool(runtime, agent, name):

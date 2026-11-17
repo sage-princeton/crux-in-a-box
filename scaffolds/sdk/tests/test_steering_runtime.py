@@ -37,7 +37,6 @@ def configured(root, tmp_path, *, extra="", agent_reads=False):
     with (root / "scaffold.toml").open("a") as config:
         config.write('''
 [runtime]
-type = "openai-agents"
 
 [runtime.steering]
 server = "slack"
@@ -100,7 +99,7 @@ def test_rest_wakes_for_steering_and_charges_only_waited_time(drop_in_dir, assem
     scaffold.context.sleep = sleep
     asyncio.run(scaffold.run())
     assert sleeps == [2]
-    assert scaffold.runtime.assembly.tools["rest"].used_seconds == 2
+    assert scaffold.tools["rest"].used_seconds == 2
     assert "steering" in tool_outputs(pm.inputs[1])[0]
     assert [m["text"] for m in messages(pm.inputs[1])] == ["Proceed now"]
     assert messages(pm.inputs[1])[0]["source"] == "U_OTHER"
@@ -113,7 +112,7 @@ def test_pending_steering_wakes_rest_without_sleep(drop_in_dir, assemble, tmp_pa
     scaffold = assemble(drop_in_dir, env=env)
     async def check():
         async with scaffold.runtime:
-            result = await scaffold.runtime.assembly.tools["rest"].invoke(
+            result = await scaffold.tools["rest"].invoke(
                 scaffold.context, RestArguments(seconds=30, reason="reply"))
             assert "Rested 0s" in result
     asyncio.run(check())
@@ -313,8 +312,8 @@ def test_escalate_without_steering_is_a_configuration_error(drop_in_dir, assembl
 def test_missing_transport_tool_fails_before_model_and_records_actionable_status(
         drop_in_dir, assemble, tmp_path, background):
     env = configured(drop_in_dir, tmp_path)
-    edit(drop_in_dir, "scaffold.toml", 'type = "openai-agents"',
-         f'type = "openai-agents"\nbackground_coding = {str(background).lower()}')
+    edit(drop_in_dir, "scaffold.toml", '[runtime]',
+         f'[runtime]\nbackground_coding = {str(background).lower()}')
     pm = ScriptedModel(say("must not be called"))
     scaffold = assemble(drop_in_dir, {"pm": pm}, env=env)
     scaffold.runtime._build()
@@ -372,8 +371,8 @@ def test_fixed_thread_steering_uses_replies_without_exposing_slack_tools(drop_in
 
 def test_steering_arrives_while_a_background_coding_task_keeps_working(drop_in_dir, assemble, tmp_path):
     env = configured(drop_in_dir, tmp_path)
-    edit(drop_in_dir, "scaffold.toml", 'type = "openai-agents"',
-         'type = "openai-agents"\nbackground_coding = true')
+    edit(drop_in_dir, "scaffold.toml", '[runtime]',
+         '[runtime]\nbackground_coding = true')
     pm = ScriptedModel(call("engineer", {"brief": "independent task"}, "code"),
                        call("write_file", {"path": "ack.txt", "content": "Operator reply received"}, "ack"),
                        call("engineer_result", {"wait": True}, "result"), say("done"))

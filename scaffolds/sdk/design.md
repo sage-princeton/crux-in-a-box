@@ -10,7 +10,7 @@ These terms follow the [repository terminology](../../README.md#concepts).
 | **Scaffold** | The execution environment and operator-message interface. A Harness combines a Scaffold, Agents, context and configuration for a Run on a Box. |
 | **Drop-in directory** | A CRUX's input to a scaffold: `scaffold.toml`, prompts, personas, standing context, extensions and the workspace. On a run box it is staged at `/srv/crux-run/run-harness`. |
 | **Workspace** | The directory the agents work in, inside the drop-in directory. |
-| **Agent runtime** | The agent SDK that runs the declared agents: OpenAI Agents SDK now, Claude Agent SDK later. |
+| **Agent runtime** | The concrete OpenAI Agents SDK integration that runs the declared agents. |
 | **Model provider** | The endpoint and API adapter the runtime uses to query models. Declared in `scaffold.toml`; the model and effort still come from the run environment. |
 | **Agent**, **orchestrator** | An LLM agent declared with a persona, standing context and tools. The orchestrator is the agent that receives the loop's prompts. |
 | **Coding agent** | A non-interactive coding-agent SDK session (Codex now, Claude Code later) that agents delegate implementation to. It runs the full coding harness as a subprocess, with its own tools, sandbox and context management, so it is far more capable at changing code than an agent. Declare an agent for planning, coordination and talking to people, and a coding agent for code changes. |
@@ -28,18 +28,18 @@ These terms follow the [repository terminology](../../README.md#concepts).
 
 ## Design
 
-Each scaffold responsibility in the team's design has one interface. Built-in implementations register themselves under a type name; a drop-in adds its own through `extensions`. A drop-in can also declare an isolated judge gate.
+Agents run directly on the OpenAI Agents SDK. Pluggable components register themselves under a type name; a drop-in adds its own through `extensions`. A drop-in can also declare an isolated judge gate.
 
 | Responsibility | Interface (registry) | Built-in types |
 |---|---|---|
-| Agent orchestration, model configuration, optional background coding | `AgentRuntime` (`RUNTIMES`) | `openai-agents`; OpenAI and compatible Responses/Chat Completions providers |
+| Agent orchestration, model configuration, optional background coding | `OpenAIAgentsRuntime` (direct integration) | OpenAI and compatible Responses/Chat Completions providers |
 | Agent loop: phases and gating criteria | `Loop` (`LOOPS`), `Gate` (`GATES`) | `phased`; `command`, `llm_judge` (one judge or a majority-vote panel of models) |
 | Conversation retention and compaction | `ContextStrategy` (`CONTEXT_STRATEGIES`) | `persistent`, `trim_recent`, `compaction` |
 | Toolkit | `Tool` (`TOOLS`) | `read_file`, `write_file`, `list_files`, `read_pdf`, `run_shell`, `command`, `rest`, `budget_status`, `escalate`, `restart_context` |
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox accepting any person in the configured channel/thread, with durable delivery; agents' Slack listings start at the run boundary; `escalate` outbox |
 | Observability | `Telemetry` | Langfuse, or off |
-| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `AgentRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`, `openrouter-experiments`; delegation concurrency and depth limits |
+| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `DelegationLimiter.slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`, `openrouter-experiments`; delegation concurrency and depth limits |
 
 Experiment API calls have their own dedicated credential, provider-backed shared
 pool and persistent usage receipts. They do not enter the agent-inference token

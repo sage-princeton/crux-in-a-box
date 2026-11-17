@@ -7,7 +7,7 @@ from abc import abstractmethod
 from collections.abc import Mapping
 from pathlib import Path
 from string import Template
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import AwareDatetime, BaseModel, Field
 
@@ -16,9 +16,11 @@ from crux_scaffold.config import PhaseConfig
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import Gate, GateContext, GateResult
-from crux_scaffold.openai_agents_sdk.base import AgentRuntime
 from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import RunContext
+
+if TYPE_CHECKING:
+    from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
 
 
 class IterationRecord(BaseModel):
@@ -72,7 +74,7 @@ class Loop(Component):
         self.gates = gates
 
     @abstractmethod
-    async def run(self, runtime: AgentRuntime, drop_in: DropInDirectory, ctx: RunContext, state: RunState,
+    async def run(self, runtime: OpenAIAgentsRuntime, drop_in: DropInDirectory, ctx: RunContext, state: RunState,
                   store: StateFile) -> LoopOutcome: ...
 
     @abstractmethod
@@ -103,7 +105,7 @@ class PhasedLoop(Loop):
             if missing:
                 raise InvalidDropInError(f"phase '{phase.name}' uses undefined gate(s): {', '.join(missing)}")
 
-    async def run(self, runtime: AgentRuntime, drop_in: DropInDirectory, ctx: RunContext, state: RunState,
+    async def run(self, runtime: OpenAIAgentsRuntime, drop_in: DropInDirectory, ctx: RunContext, state: RunState,
                   store: StateFile) -> LoopOutcome:
         phases = self.options.phases
         last_output = ""
