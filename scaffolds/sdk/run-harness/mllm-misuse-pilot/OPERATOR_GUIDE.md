@@ -113,27 +113,6 @@ journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 m
 
 You should see the agent report its initial milestone in the Slack channel within about ~20 minutes. You can also check OpenRouter for inference spending and Langfuse for streaming traces before then.
 
-`budget_status` exposes the shared experiment pool under `experiments`; experiment
-calls write receipts to `/srv/crux-run/state/experiments/receipts.sqlite3`, separate
-from inference tokens and priced Langfuse generations. Preserve this directory
-with run state on restart. Do not reset or rebind it to a different key, run slug,
-allocation or billing mode. Use the CLI's reconciled spend rather than adding
-provider usage to receipts. Experiment exhaustion or unavailable status pauses
-new experiment submissions while inference remains available for synthesis.
-There is no experiment finalization reserve or resource `limits` entry; the
-existing time, inference and RunPod reserves still apply. Concurrent requests and
-delayed settlement may overshoot the cooperative allowance; the provider key cap
-is the billing backstop.
-
-For an image-bearing experiment, select a vision-capable model/provider and append
-`--image-file PATH` to the CLI call for each local PNG, JPEG, WebP or GIF. Images
-are attached in order after the text, with a 20 MB encoded request cap (the selected
-provider may impose lower limits). Test a benign image in the smoke call and
-verify the receipt's `image_count`, `billing_mode=credits`, `upstream_cost_usd=0`
-and experiment spend. Keep the answer in a private file. The shared image-input
-client is stacked between PR 178 and this pilot; all modalities use the same
-credential, headroom checks and receipt store.
-
 ## Steering
 
 Steering messages can be sent to the principal investigator agent through the configured Slack channel. The agent will not react or respond to the steering messages, so use Langfuse to assess whether the agent acknowledged the message.
