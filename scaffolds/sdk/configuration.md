@@ -323,7 +323,10 @@ them by Slack timestamp and adds identified operator instructions to its durable
 conversation. Newer instructions take precedence over conflicting workflow prompts,
 agent plans and older operator instructions, within system/developer and configured
 resource/tool constraints. Any person in the configured channel can steer the run;
-posts marked by the Slack MCP server with `BotName`, or without a `UserID`, are ignored. In channel mode, replies must be new top-level posts; in fixed-thread
+posts marked by the Slack MCP server with `BotName`, posts from Slack's reserved
+`USLACKBOT` sender (even without `BotName`), and posts without a `UserID` are ignored.
+Ignored posts still advance the scan cursor; later human instructions remain eligible.
+In channel mode, replies must be new top-level posts; in fixed-thread
 mode, reply in that thread. Post a new message to correct an earlier one; edits are
 not redelivered. Delegates retain their isolated brief; the orchestrator passes on
 relevant steering when it next delegates.

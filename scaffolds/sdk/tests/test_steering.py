@@ -250,12 +250,35 @@ def test_unrecognized_message_listings_are_withheld(text):
         within_run("conversations_history", text, "1.000000")
 
 
-@pytest.mark.parametrize("user,bot_name", [("U_BOT", "research-bot"), ("", ""), ("", "webhook")])
+@pytest.mark.parametrize("user,bot_name", [
+    ("U_BOT", "research-bot"), ("USLACKBOT", ""), ("", ""), ("", "webhook"),
+])
 def test_bot_or_authorless_posts_are_not_steering_but_advance_cursor(tmp_path, user, bot_name):
     steering = make(tmp_path, Transport(response(("2.000000", user, "ignore"), bot_name=bot_name)))
     asyncio.run(steering.poll())
     assert steering.pending() == []
     assert steering.state["cursor"] == "2.000000"
+
+
+@pytest.mark.parametrize("thread", [None, "2.000000"])
+@pytest.mark.parametrize("notice", ["A new member was added to this channel", "A workspace reminder"])
+def test_slackbot_is_skipped_across_restart_without_blocking_human_steering(tmp_path, thread, notice):
+    telemetry = Recorder()
+    transport = Transport(response(("3.000000", "USLACKBOT", notice), thread=thread or ""))
+    steering = make(tmp_path, transport, telemetry, thread_ts=thread)
+    asyncio.run(steering.poll())
+    assert steering.state["inbox"] == []
+    assert steering.state["cursor"] == "3.000000"
+    assert telemetry.events == []
+
+    human_text = "Slackbot said someone joined; continue the current experiment."
+    transport = Transport(response(("4.000000", "U_NEW_MEMBER", human_text),
+                                   ("3.000000", "USLACKBOT", notice), thread=thread or ""))
+    restarted = make(tmp_path, transport, telemetry, thread_ts=thread)
+    asyncio.run(restarted.poll())
+    assert [(m["user"], m["text"]) for m in restarted.pending()] == [("U_NEW_MEMBER", human_text)]
+    assert restarted.state["cursor"] == "4.000000"
+    assert [event[2]["message_id"] for event in telemetry.events] == ["4.000000"]
 
 
 @pytest.mark.parametrize("thread_ts,accepted", [(None, False), ("2.000000", True), ("9.000000", False)])

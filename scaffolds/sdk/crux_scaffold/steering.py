@@ -231,6 +231,7 @@ def _parse_page(text: str) -> tuple[list[dict], str]:
         if None in row or any(value is None for value in row.values()) or not re.fullmatch(TIMESTAMP, row["MsgID"]):
             raise ValueError("invalid Slack MCP message")
         messages.append({"ts": row["MsgID"], "user": row["UserID"], "text": row["Text"],
-                         "thread": row.get("ThreadTs", ""), "bot": bool(row.get("BotName", ""))})
+                         "thread": row.get("ThreadTs", ""),
+                         "bot": row["UserID"] == "USLACKBOT" or bool(row.get("BotName", ""))})
         cursor = row["Cursor"]
     return messages, cursor

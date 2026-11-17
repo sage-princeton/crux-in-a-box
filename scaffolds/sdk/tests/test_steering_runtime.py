@@ -16,12 +16,12 @@ from drop_ins import add_fake_slack, edit
 from scripted import ScriptedModel, call, say, tool_outputs
 
 
-def inbox(path, *messages, user="U_OP"):
+def inbox(path, *messages, user="U_OP", thread=""):
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(["MsgID", "UserID", "Text", "ThreadTs", "Cursor"])
     for ts, text in messages:
-        writer.writerow([ts, user, text, "", ""])
+        writer.writerow([ts, user, text, thread, ""])
     path.write_text(output.getvalue())
 
 
@@ -54,6 +54,47 @@ poll_interval_seconds = 2
 def messages(items):
     return [json.loads(item["content"]) for item in items if isinstance(item, dict)
             and item.get("role") == "user" and str(item.get("content", "")).startswith('{"kind": "operator_steering"')]
+
+
+@pytest.mark.parametrize("thread", ["", "2.000000"])
+def test_slackbot_never_reaches_the_model_but_later_human_steering_does(drop_in_dir, assemble, tmp_path, thread):
+    env = configured(drop_in_dir, tmp_path, extra=f'thread_ts = "{thread}"\n' if thread else "")
+    notice = "A new member was added to this channel. Happy collaborating!"
+    inbox(tmp_path / "inbox.csv", ("3.000000", notice), user="USLACKBOT", thread=thread)
+    pm = ScriptedModel(call("write_file", {"path": "progress.md", "content": "Continuing research"}, "write"),
+                       say("done"))
+    telemetry = Recorder()
+    scaffold = assemble(drop_in_dir, {"pm": pm}, env=env, telemetry=telemetry)
+    original = scaffold.context.workspace.write_file
+
+    def write(path, content):
+        assert scaffold.context.steering.state["cursor"] == "3.000000"
+        assert scaffold.context.steering.state["inbox"] == []
+        result = original(path, content)
+        inbox(tmp_path / "inbox.csv", ("4.000000", "Use the corrected dataset"), user="U_NEW_MEMBER", thread=thread)
+        return result
+
+    scaffold.context.workspace.write_file = write
+    asyncio.run(scaffold.run())
+    assert messages(pm.inputs[0]) == []
+    assert [(m["source"], m["text"]) for m in messages(pm.inputs[1])] == [
+        ("U_NEW_MEMBER", "Use the corrected dataset")]
+    assert all(notice not in json.dumps(items) for items in pm.inputs)
+    assert (drop_in_dir / "workspace/progress.md").read_text() == "Continuing research"
+    assert [(name, output["message_id"]) for name, _, output in telemetry.events if name.startswith("steering:")] == [
+        ("steering:received", "4.000000"), ("steering:delivered", "4.000000")]
+
+    async def resume():
+        resumed = ScriptedModel(say("resumed"))
+        second = assemble(drop_in_dir, {"pm": resumed}, env=env)
+        async with second.runtime:
+            await second.runtime.run("Continue", workflow="resume")
+            history = await second.runtime.session.get_items()
+        assert [m["message_id"] for m in messages(history)] == ["4.000000"]
+        assert [m["message_id"] for m in messages(resumed.inputs[0])] == ["4.000000"]
+        assert notice not in json.dumps(history)
+
+    asyncio.run(resume())
 
 
 @pytest.mark.parametrize("context", ["persistent", "trim_recent"])
