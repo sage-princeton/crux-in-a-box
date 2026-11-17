@@ -8,6 +8,8 @@ from crux_scaffold.workspace import RunContext
 
 @TOOLS.register
 class BudgetStatus(Tool):
+    """Refresh and report the run's budget and external resource measurements."""
+
     type_name = "budget_status"
     description = "Refresh the run's token, dollar, time and external resource usage against its budgets."
 
