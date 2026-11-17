@@ -1,7 +1,7 @@
-from __future__ import annotations
-
-from crux_scaffold.tools import Arguments
+from crux_scaffold.tools.arguments import Arguments
 
 
 class TaskArguments(Arguments):
+    """Arguments for the delegate task tool."""
+
     task_id: str
