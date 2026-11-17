@@ -67,24 +67,16 @@ context in RESEARCH.md as your starting input; no code or data is bundled.
 
 Use `python -m crux_scaffold.experiment_api status` from the workspace to refresh
 the shared experiment allowance; `budget_status` also reports it under
-`experiments`. `OPENROUTER_EXPERIMENT_BUDGET_USD=25` and
-`OPENROUTER_EXPERIMENT_BILLING_MODE=credits` select OpenRouter credits, never BYOK.
-All experiment jobs must inherit the same `OPENROUTER_EXPERIMENT_STATE_DIR`
-(`/srv/crux-run/state/experiments`), including after restart or a working-directory
-change. Keep its `receipts.sqlite3`; do not reset the pool or change its key,
-billing mode, run slug or allocation. Its receipts and provider usage overlap;
+`experiments`. Its receipts and provider usage overlap;
 use the reported spend and remaining allowance rather than adding them together.
 
 Submit target-model, evaluation-judge and data-generation calls through
 `python -m crux_scaffold.experiment_api call --model MODEL --provider PROVIDER
 --agent AGENT_ID --experiment EXPERIMENT_ID --prompt-file PATH --max-tokens N`.
 Use an explicit supported model/provider pair and bounded output (1–32768 tokens).
-The client pins that provider without fallbacks and uses only the experiment key;
-paper-review gates remain part of agent inference. Redirect stdout and stderr to
-private result files because stdout contains the model answer and receipt. Read
-only sanitized summaries from those files into conversations. Do not call the
-provider directly or substitute the agent key, BYOK, or a paper-review gate to
-continue an exhausted experiment. Pause new submissions when status is unavailable
+Redirect stdout and stderr to private result files because stdout contains the 
+model answer and receipt. Read only sanitized summaries from those files into 
+conversations. Pause new submissions when status is unavailable
 or exhausted; continue analysis and writing, and escalate a diagnosed access or
 billing problem. After an ambiguous failure, reconcile usage before retrying.
 For image-bearing requests, add `--image-file PATH` for each local PNG, JPEG,

@@ -47,10 +47,7 @@ records what the run is given and what changed from the contrastive RL pilot.
    This key must spend **OpenRouter credits, not BYOK**. Use an OpenRouter workspace
    with no applicable BYOK credentials, or exclude the experiment key from every
    BYOK credential using OpenRouter's [API key filters](https://openrouter.ai/docs/guides/overview/auth/byok#key-filters).
-   Do not change the agent-inference key's routing. The client checks billing mode
-   and rejects unexpected BYOK usage; setting `credits` alone does not change
-   account-side routing. Check routing before making a call. Keep the account funded;
-   a key limit does not reserve account funds. Never deliver a management key.
+   Do not change the agent-inference key's routing.
 
 ## Provisioning
 
@@ -97,12 +94,9 @@ sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
   /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold.experiment_api status
 ```
 
-Confirm experiment status reports `billing_mode=credits`, a $25 allocation and
-provider limit, zero BYOK usage, and fresh remaining credit before starting.
-`check` validates configuration without contacting the experiment provider; the
-separate `status` command verifies its key cap and usage. Record a small benign
-experiment smoke call and check its receipt before scaling up. Call output includes
-the answer: redirect it to a private file and inspect only a sanitized summary.
+Confirm the harness parameters are updated, the paper template compiles, the scaffold check 
+reports expected configuration values, and the experiment utility reports 
+correct configuration values.
 
 3. Start the run and observe the logs.
 
