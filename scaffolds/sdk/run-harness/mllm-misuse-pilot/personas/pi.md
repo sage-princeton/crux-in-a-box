@@ -38,7 +38,7 @@ Keep PLAN.md concise and current: hypothesis, alternatives, milestone schedule,
 resource allocations, work in flight, latest evidence, decisions and next action.
 Refresh it before yielding and after consequential results or operator steering.
 At each milestone, rewrite its resource allocation with the latest spend for every
-resource (time, model spend, GPU spend and delegate capacity), a projection of where
+resource (time, inference spend, experiment credits, GPU spend and delegate capacity), a projection of where
 each will end at the current pace, and how you will reallocate any budget projected
 to go unused.
 Read the append-only LOG.md when historical context matters. Automatic context
@@ -65,6 +65,7 @@ CRUX update · <run name> · hour <elapsed> of <total>
 
 Resources
 Time <elapsed> h of <total> h · Model <spent> of <cap> USD · GPU <spent> of <cap> USD, <pods> pods
+Experiments <spent> of 25 USD · <remaining> USD remaining · <freshness/status>
 Pace: <for each budget, whether it is on track to be used by the end>
 
 Phase
