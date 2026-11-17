@@ -39,7 +39,16 @@ Each scaffold responsibility in the team's design has one interface. Built-in im
 | Coding subagents | `CodingAgent` (`CODING_AGENTS`) | `codex` |
 | Communication (steering) | MCP servers in `[mcp_servers]`; `[runtime.steering]` | Slack/MCP inbox accepting any person in the configured channel/thread, with durable delivery; agents' Slack listings start at the run boundary; `escalate` outbox |
 | Observability | `Telemetry` | Langfuse, or off |
-| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `AgentRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`; delegation concurrency and depth limits |
+| Resource management | `Budget`, `ResourceProvider` (`RESOURCE_PROVIDERS`), `budget_status`, `AgentRuntime.delegation_slot` | token, model-dollar and time limits; `langfuse`, `aws-compute`, `runpod`, `openrouter-experiments`; delegation concurrency and depth limits |
+
+Experiment API calls have their own dedicated credential, provider-backed shared
+pool and persistent usage receipts. They do not enter the agent-inference token
+ledger or priced generations. This purpose boundary keeps subject-model sampling
+from consuming the PI's reasoning allocation. The existing resource interface
+delivers both pools' status; the shell CLI refreshes experiments at submission,
+including for native coding children. Provider caps are financial backstops;
+cooperative per-run allowances do not reserve shared account funds. Experiment
+exhaustion stops sampling while synthesis continues.
 
 `scaffold.py` is the composition root: it is the only place components are built and wired together. `config.py`, `drop_in.py`, `loop.py`, `gates.py` and `tools.py` never import an agent SDK. The OpenAI Agents SDK is confined to `agent_runtimes/openai_agents_sdk.py` and `context_strategies.py`, and Codex to `coding_agents.py`.
 

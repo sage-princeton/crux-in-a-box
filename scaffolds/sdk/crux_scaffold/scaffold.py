@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import crux_scaffold.agent_runtimes.openai_agents_sdk
+import crux_scaffold.experiment_api  # registers experiment-credit provider
 import crux_scaffold.external_resources  # noqa: F401  registers compute resource providers
 from crux_scaffold.agent_runtimes.base import RUNTIMES, Assembly
 from crux_scaffold.coding_agents import CODING_AGENTS, CodingAgent

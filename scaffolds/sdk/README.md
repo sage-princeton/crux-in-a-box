@@ -25,6 +25,11 @@ workers in both blocking and background mode. Worker usage reaches Langfuse and
 the local ledger while a brief runs; its final summary adds no duplicate usage.
 Tracing requires the Langfuse settings in the configuration reference.
 
+Experimental subject-model calls can use a dedicated OpenRouter credential and
+shared spending pool. The experiment CLI and `openrouter-experiments` resource
+keep their accounting separate from agent inference; see
+[configuration](configuration.md#separate-experiment-api-credits).
+
 Set `runtime.model_provider.max_request_bytes` to reject oversized SDK requests
 before sending them. The PI receives delegate failures through the existing
 result tools. Compaction retries smaller complete exchanges; ordinary PI/judge

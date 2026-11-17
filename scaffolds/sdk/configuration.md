@@ -402,6 +402,35 @@ python -m crux_scaffold probe --drop-in DIR           # probe the drop-in's conf
 
 ## Budgets and resource context
 
+### Separate experiment API credits
+
+Declare `[resources.experiments]` with `type = "openrouter-experiments"` for a
+second OpenRouter allocation. Keep `runtime.model_provider.api_key_env` and
+`CRUX_CODEX_API_KEY_ENV` on `OPENROUTER_API_KEY` for agent inference. Set a distinct
+`OPENROUTER_EXPERIMENT_API_KEY`, `OPENROUTER_EXPERIMENT_BUDGET_USD`, `RUN_SLUG`, and
+one shared `OPENROUTER_EXPERIMENT_STATE_DIR` for experiment jobs. No management
+key is delivered. Use `python -m crux_scaffold.experiment_api status` or `call`
+from worker shells; `call --help` lists required attribution and request bounds.
+
+The dedicated experiment key must have a non-resetting provider cap. By default
+it cannot exceed the declared allocation. `OPENROUTER_EXPERIMENT_KEY_CAP_USD`
+allows an explicitly larger provider backstop when testing with a smaller run
+allowance. In-flight work and reporting delays can overshoot that cooperative
+allowance. Separate keys share account funding constraints. The resource reports
+unknown account funds and unattributed usage truthfully. Experimental tokens and
+receipts are kept separate from agent inference and its Langfuse cost query.
+Do not set resource `limits`: exhausted experiment credit stops submissions,
+leaving the PI able to synthesize.
+
+`OPENROUTER_EXPERIMENT_BILLING_MODE` defaults to `credits` and rejects BYOK.
+Explicit `byok` mode requires the key's provider cap to include BYOK. It meters
+OpenRouter charges plus upstream inference, retaining both receipt components.
+Billing mode is bound into persistent identity and appears in resource context;
+a mismatched response fails rather than silently switching credit pools. Provider
+meters are not a substitute for invoice reconciliation.
+
+### Agent inference and other resources
+
 Every orchestrator and delegated SDK model call receives a fresh resource-status
 block after context selection. It includes tokens, elapsed time, model spend,
 remaining configured budgets, and each declared external resource. The block is
