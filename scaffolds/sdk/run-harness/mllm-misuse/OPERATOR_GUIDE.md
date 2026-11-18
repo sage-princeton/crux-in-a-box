@@ -52,8 +52,8 @@ records what the run is given and what changed from the contrastive RL pilot.
 3. From the repository root, choose a unique run slug and run:
     ```bash
     ./devops/ec2-workspaces/make-new-workspace.sh mllm-misuse-<unique-suffix> \
-    --base-config scaffolds/sdk/run-harness/mllm-misuse-pilot/placeholders.txt \
-    --base-secrets scaffolds/sdk/run-harness/mllm-misuse-pilot/secrets.json --dry-run
+    --base-config scaffolds/sdk/run-harness/mllm-misuse/placeholders.txt \
+    --base-secrets scaffolds/sdk/run-harness/mllm-misuse/secrets.json --dry-run
     ```
 4. Repeat without `--dry-run` to provision.
 

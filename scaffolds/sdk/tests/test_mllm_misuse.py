@@ -14,7 +14,7 @@ from crux_scaffold.resources import ResourceMetric, ResourceSnapshot
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 
-PILOT = Path(__file__).resolve().parents[1] / "run-harness/mllm-misuse-pilot"
+PILOT = Path(__file__).resolve().parents[1] / "run-harness/mllm-misuse"
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "OPENROUTER_API_KEY": "test",
        "OPENROUTER_EXPERIMENT_API_KEY": "test-experiments", "OPENROUTER_EXPERIMENT_BUDGET_USD": "25",
        "OPENROUTER_EXPERIMENT_BILLING_MODE": "credits",
