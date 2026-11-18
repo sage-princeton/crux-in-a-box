@@ -12,4 +12,4 @@ MODEL_PROVIDER=openrouter
 # max_tokens=65536 and service_tier=priority for both SDK agents and Codex workers.
 OPENAI_AGENTS_MODEL=google/gemini-4-carbon@preset/ai-studio-priority
 OPENAI_AGENTS_REASONING_EFFORT=high
-DROP_IN_PATH=scaffolds/sdk/run-harness/mllm-misuse-pilot
+DROP_IN_PATH=scaffolds/sdk/run-harness/mllm-misuse
