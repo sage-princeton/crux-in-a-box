@@ -11,6 +11,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from contextlib import suppress
+from datetime import UTC, datetime
 
 import pypdfium2 as pdfium
 from pydantic import Field, model_validator
@@ -215,6 +216,44 @@ def package_problem(workspace, digest, review_path):
     return None
 
 
+SCORE_FIELDS = ("quality", "clarity", "significance", "originality", "overall", "confidence")
+SCORES = re.compile(r"^\W*SCORES\b(.*)$", re.MULTILINE | re.IGNORECASE)
+
+
+def reviewer_scores(feedback):
+    """Each reviewer's scores from the SCORES line the rubric asks for; a missing line or field stays None."""
+    sections = re.split(r"^## Reviewer \d+ \([^)\n]*\)$", feedback, flags=re.MULTILINE)[1:] or [feedback]
+    rows = []
+    for section in sections:
+        lines = SCORES.findall(section)
+        fields = dict(re.findall(r"(\w+)\s*=\s*(\w+)", lines[-1])) if lines else {}
+        fields = {key.lower(): value.lower() for key, value in fields.items()}
+        row = {key: int(fields[key]) if fields.get(key, "").isdigit() else None for key in SCORE_FIELDS}
+        row["path"] = fields.get("path") if fields.get("path") in ("revise", "rethink") else None
+        rows.append(row)
+    return rows
+
+
+def history_table(history):
+    """REVIEW_HISTORY.md: one row per distinct review, oldest first, without reviewer model names."""
+    def column(entry, key):
+        return ", ".join("?" if row[key] is None else str(row[key]) for row in entry["reviewers"])
+
+    lines = ["# Review history", "",
+             ("Written by the review gate after every review; do not edit. Scores are per reviewer, in panel order "
+              "(Q/C/S/O = quality, clarity, significance, originality; ? = not stated). Full text: Review file."), "",
+             "| # | Time (UTC) | Phase | Direction | PDF | Accepted | Overall | Q / C / S / O | Path forward | Review |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
+    for number, entry in enumerate(history, 1):
+        quality = " / ".join(column(entry, key) for key in SCORE_FIELDS[:4])
+        paths = ", ".join(row["path"] or "?" for row in entry["reviewers"])
+        direction = entry["direction"].replace("|", "/")
+        lines.append(f"| {number} | {entry['time']} | {entry['phase']} | {direction} | "
+                     f"{entry['paper_sha256'][:12]} | {'yes' if entry['passed'] else 'no'} | "
+                     f"{column(entry, 'overall')} | {quality} | {paths} | {entry['review_path']} |")
+    return "\n".join(lines) + "\n"
+
+
 # TODO(AE-317): Move shared PaperReview logic into the research-gates library.
 # https://linear.app/agent-evals/issue/AE-317
 @GATES.register
@@ -242,7 +281,8 @@ class PaperReview(LlmJudgeGate):
             panel_models = "".join(f"\n{model}" for model in self.options.models)
             key = hashlib.sha256((digest + rubric + panel_models).encode()).hexdigest()
             canonical = ctx.run.state_dir / "tabpfn/reviews" / f"{key}.json"
-            if canonical.exists():
+            fresh = not canonical.exists()
+            if not fresh:
                 record = json.loads(canonical.read_text())
             else:
                 verdict, panel = await self.review(ctx, rubric, self.evidence(ctx), snapshot)
@@ -257,6 +297,7 @@ class PaperReview(LlmJudgeGate):
             published = {"paper_sha256": record["paper_sha256"], "verdict": record["verdict"]}
             workspace.write_file(review_path, json.dumps(published, indent=2) + "\n")
             workspace.write_file("REVIEW_STATUS.json", json.dumps({**published, "review_path": review_path}, indent=2))
+            self.record_history(ctx, key, record, review_path, fresh)
             verdict = record["verdict"]
             if hashlib.sha256(workspace.read_bytes("paper/paper.pdf")).hexdigest() != digest:
                 return result(False, "The PDF changed during review; collect writers and submit the current PDF.")
@@ -286,3 +327,24 @@ class PaperReview(LlmJudgeGate):
         except (ToolError, OSError, ValueError, KeyError, TypeError, pdfium.PdfiumError):
             return result(False, "Submission incomplete or invalid. Build the paper and submit REVIEW_REQUEST.json; "
                           "finalization also needs the README, reproduction command, HTML, evidence manifest and report.")
+
+    def record_history(self, ctx, key, record, review_path, fresh):
+        """Keep one history entry per distinct review in the state directory and render it for the PI. A fresh
+        review replaces an earlier entry for the same key (a panel that lost a reviewer is reviewed again)."""
+        path = ctx.run.state_dir / "tabpfn/review_history.json"
+        history = json.loads(path.read_text()) if path.exists() else []
+        if fresh or all(entry["key"] != key for entry in history):
+            try:
+                request = json.loads(ctx.run.workspace.read_file("REVIEW_REQUEST.json"))
+            except (ToolError, OSError, ValueError):
+                request = None
+            direction = request.get("direction") if isinstance(request, dict) else None
+            history = [entry for entry in history if entry["key"] != key] + [{
+                "key": key, "time": datetime.now(UTC).strftime("%m-%d %H:%M"),
+                "phase": "final" if self.options.final else "research",
+                "direction": " ".join(direction.split())[:80] if isinstance(direction, str) and direction.strip()
+                else "unlabeled",
+                "paper_sha256": record["paper_sha256"], "review_path": review_path,
+                "passed": record["verdict"]["passed"], "reviewers": reviewer_scores(record["verdict"]["feedback"])}]
+            save_json(path, history)
+        ctx.run.workspace.write_file("REVIEW_HISTORY.md", history_table(history))

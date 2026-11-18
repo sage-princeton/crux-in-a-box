@@ -94,4 +94,6 @@ As the questions above indicate, originality does not necessarily require introd
 
 ---
 
+End your feedback with one line in exactly this form, filled with your scores: `SCORES quality=<1-4> clarity=<1-4> significance=<1-4> originality=<1-4> overall=<1-6> confidence=<1-5> path=<revise|rethink>`.
+
 Put your complete review in feedback. Set passed=true exactly when Overall is 5 or 6. Set next_prompt=null; the authors receive your complete feedback verbatim.

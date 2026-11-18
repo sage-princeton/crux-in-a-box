@@ -81,7 +81,7 @@ models = ["google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-
 [agents.pi]
 persona = "personas/pi.md"
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
-workspace_context = ["REVIEW_STATUS.json", "PLAN.md"]
+workspace_context = ["REVIEW_HISTORY.md", "REVIEW_STATUS.json", "PLAN.md"]
 workspace_context_max_chars = 120000
 tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest", "escalate"]
 mcp_servers = ["slack"]
