@@ -26,8 +26,8 @@ the local ledger while a brief runs; its final summary adds no duplicate usage.
 Tracing requires the Langfuse settings in the configuration reference.
 
 [Verifier-Free Test Time Scaling](run-harness/vftts/OPERATOR_GUIDE.md) supplies a
-research drop-in and a bounded local Linux smoke profile with separate OpenRouter
-credentials for agent inference and experimental subjects. The experiment CLI
+seven-day research drop-in with separate OpenRouter credentials for agent inference
+and experimental subjects. The experiment CLI
 and `openrouter-experiments` resource keep their accounting independent; see
 [configuration](configuration.md#separate-experiment-api-credits).
 For image experiments, `call --image-file PATH` attaches a local PNG, JPEG, WebP
