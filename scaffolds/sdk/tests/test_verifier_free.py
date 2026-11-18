@@ -1,103 +1,116 @@
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 
 import pytest
 
 from crux_scaffold.cli import main
+from crux_scaffold.drop_in import DropInDirectory
+from crux_scaffold.errors import InvalidDropInError
+from crux_scaffold.resources import ResourceMetric, ResourceSnapshot
+from crux_scaffold.scaffold import Scaffold
+from crux_scaffold.telemetry import NullTelemetry
 
 ROOT = Path(__file__).resolve().parents[1] / "run-harness" / "vftts"
-SMOKE = ROOT / "smoke"
+ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "OPENROUTER_API_KEY": "fixture-agent",
+       "OPENROUTER_EXPERIMENT_API_KEY": "fixture-experiment", "OPENROUTER_EXPERIMENT_BUDGET_USD": "3000",
+       "OPENROUTER_EXPERIMENT_BILLING_MODE": "credits", "SLACK_BOT_TOKEN": "fixture", "RUN_SLUG": "fixture",
+       "COST_TRACKER_URL": "https://cost.example/cost", "COST_TRACKER_TOKEN": "fixture"}
 
 
-def load(name):
-    spec = importlib.util.spec_from_file_location(name, ROOT / "workspace" / (name + ".py"))
+@pytest.fixture
+def full(tmp_path):
+    """A staged copy of the full profile with its Slack placeholders resolved, as prepare.py does before launch."""
+    root = shutil.copytree(ROOT, tmp_path / "vftts",
+                           ignore=shutil.ignore_patterns("placeholders.txt", "secrets.json", "__pycache__"))
+    spec = importlib.util.spec_from_file_location("vftts_prepare", root / "prepare.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module
+    module.prepare(root, "CTEST", "1.000000")
+    return root
 
 
-def test_both_profiles_assemble_without_network(tmp_path, capsys):
-    env = {"CRUX_MODEL": "openai/gpt-6.1-sol", "OPENROUTER_API_KEY": "fixture-agent",
-           "OPENROUTER_EXPERIMENT_API_KEY": "fixture-experiment", "OPENROUTER_EXPERIMENT_BUDGET_USD": "4",
-           "RUN_SLUG": "fixture", "COST_TRACKER_URL": "https://cost.example/cost", "COST_TRACKER_TOKEN": "fixture"}
-    for profile in (ROOT, SMOKE):
-        assert main(["check", "--drop-in", str(profile), "--state-dir", str(tmp_path / profile.name)], env=env) == 0
+@pytest.fixture
+def scaffold(tmp_path, full):
+    return Scaffold(DropInDirectory.load(full), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
+
+
+def test_full_profile_requires_preparation():
+    with pytest.raises(InvalidDropInError, match="unresolved placeholders"):
+        DropInDirectory.load(ROOT)
+
+
+def test_full_profile_assembles_without_network(tmp_path, capsys, full):
+    assert main(["check", "--drop-in", str(full), "--state-dir", str(tmp_path / "state")], env=ENV) == 0
     assert "openrouter-experiments" in capsys.readouterr().out
 
 
-def test_budget_profiles_do_not_spend_full_research_allocation_in_smoke():
+def test_full_profile_has_seven_day_budgets_and_an_unlimited_experiment_resource():
     import tomllib
     full = tomllib.loads((ROOT / "scaffold.toml").read_text())
-    smoke = tomllib.loads((SMOKE / "scaffold.toml").read_text())
     assert full["budget"]["max_cost_usd"] == 15000
-    assert smoke["budget"]["max_cost_usd"] == 8
-    assert smoke["budget"]["max_wall_seconds"] == 1200
+    assert full["budget"]["max_wall_seconds"] == 604800
     assert "limits" not in full["resources"]["experiments"]
 
 
-def test_failed_review_feedback_reaches_every_phase_continuation():
+def test_full_profile_uses_the_shared_research_loop_team_and_review_panel(scaffold):
+    config = scaffold.drop_in.config
+    assert scaffold.loop.type_name == "tabpfn_research"
+    assert "gpu" not in config.resources
+    assert config.resources["experiments"]["type"] == "openrouter-experiments"
+    assert not scaffold.context.resources.providers["experiments"].options.limits
+    assert set(config.agents["pi"].delegates) == {f"worker_{letter}" for letter in "abcdefgh"} | {
+        "research_assistant", "research_assistant_b", "research_assistant_c"}
+    assert "restart_context" in config.agents["pi"].tools
+    assert config.runtime["steering"]["channel_id"] == "CTEST"
+    scaffold.runtime.describe()
+
+
+def test_full_profile_enters_finalization_at_its_seven_day_reserves(scaffold):
+    scaffold.context.usage.started_at = scaffold.context.now()
+    assert scaffold.loop.options.reserve_wall_seconds == 60480
+    scaffold.context.resources._snapshots["models"] = ResourceSnapshot(
+        as_of=scaffold.context.now(), metrics={"cost_usd": ResourceMetric(value=13500, unit="USD")})
+    assert scaffold.loop.reserve_reason(scaffold.context) == "model spend reserve"
+
+
+def test_exhausted_experiments_leave_inference_and_finalization_available(scaffold):
+    scaffold.context.usage.started_at = scaffold.context.now()
+    scaffold.context.resources._snapshots["experiments"] = ResourceSnapshot(
+        as_of=scaffold.context.now(), metrics={"spent_usd": ResourceMetric(value=3000, unit="USD"),
+                                               "remaining_usd": ResourceMetric(value=0, unit="USD")})
+    assert scaffold.loop.reserve_reason(scaffold.context) is None
+    assert not scaffold.context.budget_exhausted()
+
+
+def test_full_example_needs_no_gpu_or_search_credentials():
+    env = json.loads((ROOT / "secrets.json.example").read_text())
+    assert not {"RUNPOD_API_KEY", "SERPAPI_KEY"} & env.keys()
+    assert {"HF_TOKEN", "OPENROUTER_EXPERIMENT_API_KEY", "SLACK_BOT_TOKEN"} <= env.keys()
+    assert env["OPENROUTER_EXPERIMENT_BUDGET_USD"] == env["OPENROUTER_EXPERIMENT_KEY_CAP_USD"] == "3000"
+    assert env["OPENROUTER_EXPERIMENT_BILLING_MODE"] == "credits"
+    assert env["OPENROUTER_EXPERIMENT_STATE_DIR"] == "/srv/crux-run/state/experiments"
+
+
+def test_failed_review_feedback_reaches_every_phase_continuation(full):
     import tomllib
 
     from crux_scaffold.config import PhaseConfig
-    from crux_scaffold.drop_in import DropInDirectory
     from crux_scaffold.gates import GateResult
     from crux_scaffold.loop import PhasedLoop, PhasedOptions
 
     feedback = "Fixture correction: report the actual experimental receipt cost."
-    for profile in (ROOT, SMOKE):
-        drop_in = DropInDirectory.load(profile)
-        for raw in tomllib.loads((profile / "scaffold.toml").read_text())["loop"]["phases"]:
-            phase = PhaseConfig.model_validate({**raw, "gates": []})
-            loop = PhasedLoop("fixture", PhasedOptions(phases=[phase]), gates={})
-            prompt = loop.continuation(drop_in, phase, 1, [GateResult(gate="review", passed=False, feedback=feedback)])
-            assert feedback in prompt
+    drop_in = DropInDirectory.load(full)
+    for raw in tomllib.loads((full / "scaffold.toml").read_text())["loop"]["phases"]:
+        phase = PhaseConfig.model_validate({**raw, "gates": []})
+        loop = PhasedLoop("fixture", PhasedOptions(phases=[phase]), gates={})
+        prompt = loop.continuation(drop_in, phase, 1, [GateResult(gate="review", passed=False, feedback=feedback)])
+        assert feedback in prompt
 
 
-def test_aggregation_is_label_free_and_can_overturn_shared_wrong_majority():
-    aggregate = load("baselines").aggregate
-    samples = [{"answer": "A", "prediction": {"A": .9, "B": .1}, "confidence": .7},
-               {"answer": "A", "prediction": {"A": .9, "B": .1}, "confidence": .8},
-               {"answer": "B", "prediction": {"A": .8, "B": .2}, "confidence": .9}]
-    result = aggregate(samples, ["A", "B"])
-    assert result["majority"] == "A"
-    assert result["sp_gap"] == result["sp_ratio"] == result["best_of_n_confidence"] == "B"
-    with pytest.raises(ValueError):
-        aggregate([{**samples[0], "prediction": {"A": .2, "B": .1}}], ["A", "B"])
-
-
-def test_gpqa_shuffle_and_prompt_do_not_leak_labels():
-    prepare = load("prepare_data")
-    row = {"Question": "Private fixture question", "Correct Answer": "Right", "Incorrect Answer 1": "Wrong1",
-           "Incorrect Answer 2": "Wrong2", "Incorrect Answer 3": "Wrong3"}
-    public, label = prepare.gpqa(row)
-    assert public == prepare.gpqa(row)[0]
-    assert public["choices"][label] == "Right"
-    assert not {"label", "answer", "rationale", "Correct Answer"} & public.keys()
-
-
-def test_hle_subset_excludes_uncertain_images_and_non_mc():
-    prepare = load("prepare_data")
-    row = {"id": "fixture", "Verified_Classes": "Gold subset", "question": "Fixture\nAnswer Choices:\nA. x\nB. y",
-           "answer": "B", "json": json.dumps({"answer_type": "multipleChoice", "image": ""})}
-    public, label = prepare.hle(row)
-    assert public["id"] == "fixture" and label == "B"
-    for changes in ({"Verified_Classes": "Uncertain subset"},
-                    {"json": json.dumps({"answer_type": "exactMatch"})},
-                    {"json": json.dumps({"answer_type": "multipleChoice", "image": "base64-fixture"})}):
-        assert prepare.hle({**row, **changes}) is None
-
-
-def test_dataset_redirects_strip_cross_host_credentials_and_reject_http():
-    from urllib.error import HTTPError
-    from urllib.request import Request
-
-    prepare = load("prepare_data")
-    handler = prepare.DatasetRedirect()
-    request = Request("https://huggingface.co/datasets/fixture", headers={"Authorization": "Bearer fixture-hf"})
-    for target, expected in [("https://huggingface.co/redirect", "Bearer fixture-hf"),
-                             ("https://cdn.example/fixture", None)]:
-        redirected = handler.redirect_request(request, None, 302, "Found", {}, target)
-        assert redirected.get_header("Authorization") == expected
-    with pytest.raises(HTTPError):
-        handler.redirect_request(request, None, 302, "Found", {}, "http://cdn.example/fixture")
+def test_full_profile_bundles_only_the_question_and_scaffold_files():
+    workspace = {path.relative_to(ROOT / "workspace").as_posix()
+                 for path in (ROOT / "workspace").rglob("*") if path.is_file() and "__pycache__" not in path.parts}
+    assert workspace == {".gitignore", "AGENTS.md", "LOG.md", "PLAN.md", "RESEARCH.md", "paper/abstract.txt",
+                         "paper/checklist.tex", "paper/neurips_2026.sty", "paper/paper.tex"}

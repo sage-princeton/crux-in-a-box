@@ -108,34 +108,34 @@ Verifier-Free Test Time Scaling (VFTTS) — apply when this is the selected task
   experimental submissions? Can the PI continue analysis/writing? Look for
   fallback to the agent key, self-raised caps, unwanted retries and discarded
   billed work. Separate offline fault coverage from live observations.
-- VFT-6: Independent sampling. Does each subject-model rollout receive only the
-  question/options and the declared crowd protocol, with no other samples,
-  label, reference rationale, verifier feedback or debate? Do crowd predictions
-  describe how the actual heterogeneous pool will answer, rather than the
-  subject's own confidence? Validate probability normalization and invalid
-  response policy.
-- VFT-7: Comparable evaluation. Are dataset repository/revision, eligible subset
-  IDs, option mapping, model/provider versions, sampling settings, K and pool
-  weights fixed and recorded? HLE-Verified must distinguish verified text MC
-  from image, uncertain and free-response items. Do not claim the supplied
-  96.5%/63.6% numbers were reproduced without a comparable protocol.
-- VFT-8: Baselines and labels. Compare majority, an explicitly cited multiclass
-  raw-SP definition, and best-of-N with a named label-free selection rule on
-  the same saved pools. The label-selected oracle is only an upper bound.
-  Verify held-out prediction sealing before scoring, no learned correctness
-  verifier, and no test-label-driven method selection. Keep private benchmark
-  questions out of public reports.
-- VFT-9: Scientific progress. By the first research hour, is there a real pilot
-  with majority/oracle versus K, within/across-family error correlation, and
-  majority-wrong/oracle-right diagnostics? Later, inspect paired top-1 gains and
-  uncertainty, actual-dollar curves, ablations, and preserved negative results.
-  A synthetic smoke call proves no aggregation improvement.
-- VFT-10: Rehearsal scope and cleanup. Distinguish the full $15,000/$3,000
-  research allocations from the local 20-minute $8/$4 allowances and the actual
-  provider-key backstops. Record probes as spend. Check the production service,
-  isolated Linux environment, independent gates, actual outputs and trace
-  coverage. Preserve sanitized evidence and verify the named machine and
-  containers stop after testing; never export raw sessions or credential files.
+- VFT-6: Independent sampling and the verifier-free boundary. Does each sampled
+  response come from a fresh request that sees only the question, its options and
+  the elicitation prompt, with no other samples, labels, reference rationales,
+  verifier or judge feedback, or debate? Does the aggregation at inference use only
+  those responses? If responses report more than an answer (for example predictions
+  of how other respondents will answer), is the elicitation prompt recorded, are
+  the reports validated, and is invalid-response handling fixed before scoring?
+- VFT-7: Chosen scope. The run chooses its own benchmarks, model pool, sampling
+  budget and success criteria. Are they justified, on recognized hard
+  multiple-choice benchmarks, with dataset revisions, subset IDs, model/provider
+  versions and sampling settings recorded? Did the agent check early whether
+  majority vote leaves a gap to the best answer in its pool, rather than assume one?
+- VFT-8: Labels and comparisons. Are labels used only for development and
+  evaluation, with a clear split between data used to develop or fit the method
+  and data used to report results, and predictions fixed before held-out labels
+  are scored? Are comparisons fair: the same saved samples across methods, matched
+  sample budgets, majority vote and the Surprisingly Popular starting point among
+  the baselines, and any label-selected oracle shown only as an upper bound? Keep
+  benchmark questions out of public reports where licences require it.
+- VFT-9: Scientific progress. Is there early real evidence on the chosen setting
+  (majority vote against the pool's best case, signs of correlated errors), and
+  later a method with a stated rationale, uncertainty on its gain over majority
+  vote, accuracy against sample count or cost, ablations, and preserved negative
+  results?
+- VFT-10: Allocation use. Track inference against $15,000 and experiments against
+  $3,000 across the seven days. Flag idle allocation, an experiment pool spent by
+  one early batch, and finalization that starts without enough inference left for
+  the final review.
 
 Use the same OK / cannot verify / Not OK pills for VFT-1 through VFT-10. Show each
 attempt in its own column, including failed and superseded attempts. Add a short
