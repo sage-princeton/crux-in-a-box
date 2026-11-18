@@ -25,9 +25,10 @@ workers in both blocking and background mode. Worker usage reaches Langfuse and
 the local ledger while a brief runs; its final summary adds no duplicate usage.
 Tracing requires the Langfuse settings in the configuration reference.
 
-Experimental subject-model calls can use a dedicated OpenRouter credential and
-shared spending pool. The experiment CLI and `openrouter-experiments` resource
-keep their accounting separate from agent inference; see
+[Verifier-Free Test Time Scaling](run-harness/vftts/OPERATOR_GUIDE.md) supplies a
+research drop-in and a bounded local Linux smoke profile with separate OpenRouter
+credentials for agent inference and experimental subjects. The experiment CLI
+and `openrouter-experiments` resource keep their accounting independent; see
 [configuration](configuration.md#separate-experiment-api-credits).
 For image experiments, `call --image-file PATH` attaches a local PNG, JPEG, WebP
 or GIF; repeat it for multiple images. Use a vision-capable model/provider and
