@@ -142,4 +142,3 @@ To resume the run:
 sudo systemctl start crux-sdk-run
 journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 minutes
 ```
-
