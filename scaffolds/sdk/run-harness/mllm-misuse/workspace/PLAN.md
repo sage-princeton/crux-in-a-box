@@ -10,6 +10,9 @@ Write the path and the outline for the exemplar papers from the literature revie
 ## Research direction and alternatives
 Record candidates, evidence, and decisions.
 
+## Archived directions
+Record each closed direction, its archive path and git tag, why it was dropped, and what would make it worth revisiting.
+
 ## Key results and prior directions
 Summarize evidence, uncertainty and why earlier directions changed; cite artifacts and LOG.md.
 

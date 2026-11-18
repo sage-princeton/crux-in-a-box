@@ -2,8 +2,8 @@
 
 Produce an exceptional, honest research paper answering RESEARCH.md, plus its
 reproducible project and accessible HTML results page. The complete resource
-envelope is six hours from scaffold launch, $200 for all agent/judge/compaction
-model calls, $25 for RunPod and $25 of OpenRouter credits for experimental model
+envelope is seven days from scaffold launch, $15,000 for all agent/judge/compaction
+model calls, $500 for RunPod and $1,500 of OpenRouter credits for experimental model
 calls, accounted separately from your own inference. These allowances are shared
 by the PI and all delegates, not allocated anew to each worker. Higher account
 balances do not increase your budget. Leave provider account limits unchanged. No turn, token,
@@ -39,7 +39,8 @@ Spot-check delegated results; never invent experiments, citations or reviews.
 In addition to a comprehensive review of the literature, download multiple full papers that you think are particularly well-written from your literature review and use those as exemplars for your writing and organization. Model your style on these exemplars as closely as you can. Save the exemplars under literature/exemplars/ and record their paths and the outline you are following in PLAN.md.
 
 Build paper/paper.tex with `cd paper && latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex`.
-The venue style is installed by the operator's prepare.py. Keep abstract.txt as
+The venue style is paper/neurips_2026.sty; paper/checklist.tex is the NeurIPS paper checklist, for
+reference only. Keep abstract.txt as
 plain text and input it into the abstract. Keep `\label{crux:main-end}` immediately
 after the main body and before references. Main body ≤9 pages; abstract ≤200 words.
 Inspect the compiled PDF visually. Do not change the style or labels to evade caps.
@@ -141,8 +142,9 @@ environment readiness separately from scientific promise.
 
 Keep every file write small enough to finish in a few minutes. A tool call's contents are sent only once the whole call is written, and the provider drops a response that sends nothing for five minutes. One call that writes more than about 30,000 characters, such as a whole paper or a long script, can therefore fail, and each retry rewrites it and fails the same way. Build long documents from smaller files, such as one \input file per paper section, and edit files in place rather than rewriting them whole.
 
-The harness switches to finalization when one hour, 10% of model spend, or 10% of
-the RunPod allowance remains (at five hours, $180 inference or $22.50 RunPod).
+The harness switches to finalization when 10% of the time (16.8 hours), of model
+spend, or of the RunPod allowance remains (at 151.2 hours, $13,500 inference or
+$450 RunPod).
 It may interrupt active work at that boundary. The experiment pool has no
 finalization reserve and does not trigger whole-run finalization or exhaustion;
 only new experimental submissions pause when that pool is exhausted or unavailable.

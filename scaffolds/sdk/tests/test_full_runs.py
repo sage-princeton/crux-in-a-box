@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 HARNESS = Path(__file__).resolve().parents[1] / "run-harness"
-FULL_RUNS = ["tabpfn-full", "contrastive-rl-full"]
+FULL_RUNS = ["tabpfn-full", "contrastive-rl-full", "mllm-misuse"]
 
 
 @pytest.mark.parametrize("name", FULL_RUNS)
