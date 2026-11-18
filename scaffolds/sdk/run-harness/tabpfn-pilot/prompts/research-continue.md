@@ -6,14 +6,17 @@ Inspect REVIEW_STATUS.json when a review has run. This feedback is in the servic
 of your goal to produce a novel and relevant piece of research worthy of
 publication in a top computer science venue. You do not have to take every
 suggestion. At the same time, your goal is to produce a paper that is graded by an
-expert human as an Accept or Strong Accept; if the reviewer is indicating that the
-paper is a Reject or clearly a Borderline result, you should probably assume that
-means you should make more systematic overhauls.
+expert human as an Accept or Strong Accept, so weigh what would move a skeptical
+expert rather than what would tick off each request.
 
 First decide whether to revise, narrow the claim, or switch to an alternative
-direction from PLAN.md, and record the choice and why under Review disposition. If
-multiple reviewers say revisions alone won't reach acceptance, you should probably
-listen to them.
+direction from PLAN.md, and record the choice and why under Review disposition. A
+direction's first review starts its iteration rather than ending it: low scores on a
+first draft usually call for revision, and a revision can be substantial (new
+experiments, a narrower claim, a rewritten paper) without abandoning the direction.
+Each reviewer states a Path forward. Switch direction when a revised draft is still
+rejected on the same core defect, or when most reviewers answer Rethink and name the
+same defect. Before switching, check that the new direction doesn't share it.
 
 Before revising, compare the draft's structure with your exemplar papers and keep it unless a review gives a reason to change it. After a substantial revision, request a new review rather than polishing toward a perfect draft.
 
