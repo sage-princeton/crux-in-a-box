@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "apt_packages": ["poppler-utils", "texlive-latex-base", "texlive-latex-extra", "latexmk"],
+  "checks": [{"name": "pdf-text", "argv": ["pdftotext", "-v"]}, {"name": "latex", "argv": ["latexmk", "--version"]}]
+}

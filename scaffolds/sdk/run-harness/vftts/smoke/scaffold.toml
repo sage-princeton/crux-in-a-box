@@ -1,0 +1,81 @@
+orchestrator = "pi"
+
+[runtime]
+type = "openai-agents"
+max_turns = 25
+interactive_delegates = true
+
+[runtime.model_provider]
+type = "openai-compatible"
+api = "responses"
+base_url = "https://openrouter.ai/api/v1"
+api_key_env = "OPENROUTER_API_KEY"
+
+[context]
+type = "compaction"
+context_window_tokens = 1050000
+trigger_tokens = 500000
+keep_recent_items = 10
+
+[budget]
+max_wall_seconds = 1200
+max_cost_usd = 8
+
+[resources.models]
+type = "langfuse"
+refresh_seconds = 5
+
+[resources.experiments]
+type = "openrouter-experiments"
+refresh_seconds = 5
+
+[loop]
+type = "phased"
+
+[[loop.phases]]
+name = "smoke"
+prompt = "PROMPT.md"
+continue_prompt = "prompts/continue.md"
+gates = ["receipts", "independent_read"]
+max_iterations = 2
+
+[gates.receipts]
+type = "command"
+command = "python verify_smoke.py"
+
+[gates.independent_read]
+type = "llm_judge"
+rubric = "prompts/review.md"
+blind = true
+artifacts = { "SMOKE.md" = "SMOKE.md" }
+tools = ["read_file"]
+max_turns = 4
+
+[agents.pi]
+persona = "personas/pi.md"
+context = ["workspace/AGENTS.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "budget_status", "rest"]
+delegates = ["research_assistant", "worker"]
+max_turns = 25
+
+[agents.research_assistant]
+persona = "personas/ra.md"
+description = "Run one experimental subject-model call and report its receipt."
+context = ["workspace/AGENTS.md"]
+tools = ["run_shell", "read_file", "write_file", "budget_status"]
+max_turns = 10
+
+[coding_agents.worker]
+type = "codex"
+system_prompt = "personas/ra.md"
+description = "Run a tiny independent experiment and exercise a native child if supported."
+context = ["workspace/AGENTS.md"]
+sandbox = "full-access"
+
+[tools.run_shell]
+timeout_seconds = 240
+
+[tools.rest]
+min_seconds = 1
+max_seconds = 30
+total_seconds = 900

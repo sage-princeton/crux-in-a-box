@@ -440,7 +440,7 @@ allowance. Separate keys share account funding constraints. The resource reports
 unknown account funds and unattributed usage truthfully. Experimental tokens and
 receipts are kept separate from agent inference and its Langfuse cost query.
 Do not set resource `limits`: exhausted experiment credit stops submissions,
-leaving the PI able to synthesize.
+leaving the PI able to synthesize. See the [VFTTS guide](run-harness/vftts/OPERATOR_GUIDE.md).
 
 `OPENROUTER_EXPERIMENT_BILLING_MODE` defaults to `credits` and rejects BYOK.
 Explicit `byok` mode requires the key's provider cap to include BYOK. It meters
