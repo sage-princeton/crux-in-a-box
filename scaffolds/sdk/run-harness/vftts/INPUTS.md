@@ -13,11 +13,12 @@
   `contrastive-rl-full` does. Its pod cleanup does nothing without a RunPod key.
 - Model: `google/gemini-4-carbon@preset/ai-studio-priority`, high effort, for the
   PI, research assistants and Codex workers; the review panel is unchanged.
-- Resource caps: 604800 seconds, $15,000 total agent/delegate/review inference,
+- Run allowances: 604800 seconds, $15,000 total agent/delegate/review inference,
   and a separate shared $3,000 OpenRouter allowance for experimental model calls.
   Finalization starts when 10% of the time (16.8 hours) or of inference remains;
-  experiments have no finalization reserve or whole-run stop. A dedicated
-  non-resetting $3,000 key cap is the provider billing backstop.
+  experiments have no finalization reserve or whole-run stop. Dedicated
+  non-resetting OpenRouter key caps of $30,000 for inference and $6,000 for
+  experiments are provider billing backstops; they do not increase the run allowances.
 - Changes from `tabpfn-full`: no RunPod/GPU or Prior Labs credentials; the
   separate experiment allowance, worded as in `mllm-misuse-pilot` (standing
   context, launch prompt, PI resource lines and Slack layout, Codex worker brief,

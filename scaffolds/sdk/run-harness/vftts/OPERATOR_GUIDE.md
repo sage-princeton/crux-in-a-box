@@ -5,6 +5,18 @@ For run configurations, see `./placeholders.txt`, `./secrets.json`, `./scaffold.
 and the referenced `.md` files in this directory and child directories. `INPUTS.md`
 records what the run is given and what changed from the TabPFN full run.
 
+The seven-day run has separate agent allowances and provider billing backstops:
+
+| Purpose | Agent/harness allowance | Non-resetting OpenRouter key cap |
+|---|---|---|
+| Inference (PI, delegates, reviews, compaction) | $15,000 | $30,000 |
+| Experiments | $3,000 | $6,000 |
+
+The higher key caps provide headroom for in-flight work and delayed accounting;
+they do not authorize the agents to spend beyond their run allowances. The inference
+allowance is `budget.max_cost_usd` in `scaffold.toml`; finalization starts at $13,500
+of measured inference spend or when 16.8 hours remain, whichever happens first.
+
 Every file in this directory is staged on the run machine at
 `/srv/crux-run/run-harness`, where the agents' shells can read it. Keep the source
 paper, its method and its results out of this directory.
@@ -30,10 +42,14 @@ paper, its method and its results out of this directory.
    need on that account first; the agents cannot. Record it as `HF_TOKEN` in
    `secrets.json`, and revoke it after the run.
 
-3. Create a fresh, dedicated OpenRouter key with a **non-resetting $3,000 limit** for
+3. Set the dedicated inference key's OpenRouter limit to a **non-resetting $30,000**
+   and record the key as `OPENROUTER_API_KEY` in `secrets.json`. Keep the harness's
+   inference allowance at $15,000 in `scaffold.toml`.
+
+4. Create a fresh, dedicated OpenRouter key with a **non-resetting $6,000 limit** for
    experimental model calls, distinct from the agent's `OPENROUTER_API_KEY`. Record it
    as `OPENROUTER_EXPERIMENT_API_KEY` in `secrets.json`. Retain the example's
-   `OPENROUTER_EXPERIMENT_BUDGET_USD=3000`, `OPENROUTER_EXPERIMENT_KEY_CAP_USD=3000`
+   `OPENROUTER_EXPERIMENT_BUDGET_USD=3000`, `OPENROUTER_EXPERIMENT_KEY_CAP_USD=6000`
    and shared absolute `OPENROUTER_EXPERIMENT_STATE_DIR=/srv/crux-run/state/experiments`
    values, and set `OPENROUTER_EXPERIMENT_BILLING_MODE` as described below; these also
    go in secrets.json so they get bundled into the service environment. The key's
@@ -108,8 +124,10 @@ sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
 ```
 
 Confirm the paper skeleton compiles, the scaffold check reports the expected
-configuration, and the experiment utility reports the $3,000 allowance with the
-intended billing mode.
+configuration with a $15,000 inference allowance, and the experiment utility reports
+`allocation_usd=3000`, `provider_limit_usd=6000` and the intended billing mode.
+Confirm the inference key's $30,000 cap in OpenRouter separately. Experiment
+submissions pause at the $3,000 run allowance even while the provider key has credit.
 
 3. Start the run and observe the logs.
 

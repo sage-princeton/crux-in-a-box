@@ -28,7 +28,7 @@ image_tokens = 1120  # Gemini 4 Carbon default for image inputs.
 
 [budget]
 max_wall_seconds = 604800
-max_cost_usd = 15000
+max_cost_usd = 15000  # Run allowance; the OpenRouter inference key has a $30,000 provider cap.
 
 [resources.models]
 type = "langfuse"
