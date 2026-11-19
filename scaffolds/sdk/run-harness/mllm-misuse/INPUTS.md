@@ -1,30 +1,26 @@
-# Pilot inputs and baseline
+# Full-run inputs and baseline
 
 - Question/context: supplied directly by the operator; preserved verbatim in
-  `workspace/RESEARCH.md`.
-- Reference paper: the operator's source paper is the comparison point for the
-  run's output, not an input. It is not bundled, committed or referenced in any
-  file the agents read.
-- Code and data: none bundled. The agents gather literature, models, images and
-  baselines themselves; images come from SerpAPI's Google Images engine
-  (`SERPAPI_KEY`, a shared account; the run is asked to stay under about 2,000
-  searches). Model weights come from Hugging Face with a read-only `HF_TOKEN`.
-- Scaffold baseline: the shared SDK research loop, review gate, resource reserves
-  and pod cleanup from `tabpfn-pilot/tabpfn_extensions.py`, loaded through
-  `research_extensions.py` exactly as `contrastive-rl-pilot` does.
-- Model: `google/gemini-4-carbon@preset/ai-studio-priority`, high effort, for the
-  PI, research assistants and Codex workers; the review panel is unchanged.
-- Resource caps: 21600 seconds, $200 total agent/delegate/review inference, $25
-  RunPod, and a separate shared $25 OpenRouter credits allowance for experimental
-  model calls. Last-hour/10% reserves apply to time, inference and RunPod;
-  experiments have no finalization reserve or whole-run stop. The experiment CLI
-  checks headroom before submissions, records shared receipts and rejects BYOK
-  usage. A dedicated non-resetting $25 key cap is the provider billing backstop.
-  AWS infrastructure is separate.
-- Changes from the contrastive RL pilot: task/context, budgets, no bundled
-  source, a SerpAPI key, a Hugging Face token, isolated experiment credentials and
-  resource tracking from PR 178 with the stacked image-input client, a standing-context paragraph on keeping refused
-  material out of agent conversations, and a reminder in OPERATOR_GUIDE.md about
-  provider rejections. Agent/delegate
-  topology, loop, reviewer rubric, venue template, review gate implementation and
-  cleanup implementation are reused.
+  `workspace/RESEARCH.md`. No source paper, code, data, benchmarks or prescribed
+  experimental protocol is bundled.
+- The agents gather literature, models, images and baselines themselves. Images
+  come from SerpAPI's Google Images engine (`SERPAPI_KEY`, a shared account capped
+  cooperatively at about 2,000 searches); model weights come from Hugging Face
+  with a read-only `HF_TOKEN`.
+- The shared SDK research loop, review gates and pod cleanup are loaded through
+  `research_extensions.py` from `tabpfn-pilot/tabpfn_extensions.py`. The seven-day
+  schedule, direction archival/context restart and committed NeurIPS 2026 style
+  and checklist follow `tabpfn-full`, as in the VFTTS rebuild. Compaction triggers
+  at 400,000 tokens. No shared scaffold implementation changes are required.
+- The PI, three SDK research assistants and eight Codex workers use
+  `google/gemini-4-carbon@preset/ai-studio-priority`, high effort. The existing
+  three-model blind review panel is retained.
+- Resource caps: 604800 seconds, $15,000 total agent/delegate/review/compaction
+  inference, $500 RunPod, and a separate shared $1,500 OpenRouter credits allowance
+  for experimental model calls. Finalization reserves 60480 seconds (16.8 hours)
+  and 10% of inference and RunPod. Experiments have no finalization reserve or
+  whole-run stop. A fresh dedicated non-resetting $1,500 experiment key cap is the
+  provider billing backstop; AWS infrastructure is separate.
+- MLLM-specific image input, experiment accounting, refusal handling and private
+  dataset instructions remain in the standing context. Experiment exhaustion
+  pauses new experimental submissions while analysis and writing continue.

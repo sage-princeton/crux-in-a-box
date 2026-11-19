@@ -1,10 +1,10 @@
-# MLLM misuse SDK pilot
+# MLLM misuse SDK research run
 
-This guide covers provisioning and running the six-hour pilot on curating
+This guide covers provisioning and running the seven-day run on curating
 vision-centric malicious-use requests for red-teaming multimodal models.
 For run configurations, see `./placeholders.txt`, `./secrets.json`, `./scaffold.toml`,
 and the referenced `.md` files in this directory and child directories. `INPUTS.md`
-records what the run is given and what changed from the contrastive RL pilot.
+records what the run is given and the shared full-run baseline.
 
 ## Dependencies
 
@@ -20,30 +20,34 @@ records what the run is given and what changed from the contrastive RL pilot.
    ```bash
    aws configure sso --use-device-code --profile crux-2-acct-admin-access
    ```
-   Alternatively, you could set the appropriate AWS environment variables for authentication to the CRUX operations and experiments account.
 
-2. Create a RunPod key that can list/create/delete pods and read billing. Record the key secret.
+2. Create a fresh OpenRouter inference key with a **non-resetting $15,000 limit**
+   for `OPENROUTER_API_KEY`. This covers PI, assistants, Codex workers, compaction
+   and blind reviewers. Keep it separate from the experiment key below.
 
-3. Copy the shared SerpAPI key (`SERPAPI_KEY` in the operator's `.env`) into
+3. Create a RunPod key that can list/create/delete pods and read billing. Record the key secret.
+
+4. Copy the shared SerpAPI key (`SERPAPI_KEY` in the operator's `.env`) into
    `secrets.json` as `SERPAPI_KEY`. The agents use its Google Images engine to find
    real-world photos; the account is shared, and the standing context asks the run
    to stay under about 2,000 searches.
 
-4. Create a Hugging Face token whose only permission is read access
+5. Create a Hugging Face token whose only permission is read access
    to public repos. Accept the licences of any gated models the
    run may need on that account first; the agents cannot. Record it as `HF_TOKEN`
    in `secrets.json`, and revoke it after the run.
 
-5. Create a fresh, dedicated OpenRouter key with a **non-resetting $25 limit** for
+6. Create a fresh, dedicated OpenRouter key with a **non-resetting $1,500 limit** for
    experimental model calls (target models, evaluation judges, data generation),
    distinct from the agent's `OPENROUTER_API_KEY`. Record it as
    `OPENROUTER_EXPERIMENT_API_KEY` in `secrets.json`. Retain the example's
-   `OPENROUTER_EXPERIMENT_BUDGET_USD=25`, `OPENROUTER_EXPERIMENT_KEY_CAP_USD=25`,
+   `OPENROUTER_EXPERIMENT_BUDGET_USD=1500`, `OPENROUTER_EXPERIMENT_KEY_CAP_USD=1500`,
    `OPENROUTER_EXPERIMENT_BILLING_MODE=credits` and shared absolute
    `OPENROUTER_EXPERIMENT_STATE_DIR=/srv/crux-run/state/experiments` values;
    these also go in secrets.json so they get bundled into the service environment.
 
-   NB: The OPENROUTER_EXPERIMENT_API_KEY key must spend **OpenRouter credits, not BYOK**.
+   The key's lifetime usage counts toward the allowance; never reuse the pilot's
+   key or receipts directory for a new run.
 
 ## Provisioning
 
@@ -57,7 +61,7 @@ records what the run is given and what changed from the contrastive RL pilot.
     ```
 4. Repeat without `--dry-run` to provision.
 
-Note: `provision.json` installs LaTeX/latexmk, PDF extraction/rendering, venv and transfer
+Note: `provision.json` installs LaTeX/latexmk, `cm-super` fonts, PDF extraction/rendering, venv and transfer
 utilities. The service's software checks run at provisioning and every start.
 The SDK/Codex probes use real inference. Provisioning installs `crux-sdk-run`
 without starting it.
@@ -69,7 +73,7 @@ without starting it.
 ssh mllm-misuse-<unique-suffix>
 ```
 
-2. Prepare the workspace by replacing some placeholders in prompts, fetching/compiling the NeurIPS LaTeX template, and validating run configuration:
+2. Prepare the workspace by replacing some placeholders in prompts, compiling the paper skeleton against the committed NeurIPS 2026 style (`workspace/paper/neurips_2026.sty`), and validating run configuration:
 
 ```bash
 cd /srv/crux-run/run-harness
@@ -112,7 +116,7 @@ Steering messages can be sent to the principal investigator agent through the co
 If you find an issue in the run that cannot be overcome with steering, consider pausing the run, making a fix and resuming later.
 
 > [!WARNING]
-> Paused downtime counts toward the six-hour time limit.
+> Paused downtime counts toward the seven-day time limit.
 > Pausing the harness will shut down any active RunPods and interrupt delegates (RAs, Codex workers). The PI is responsible for resuming both after the run is restarted.
 
 To pause the run, run this from the run workspace:

@@ -1,6 +1,6 @@
 # Copy to placeholders.txt beside this file.
-# Set the intended AWS_PROFILE before provisioning, or supply ambient credentials.
-AWS_PROFILE=
+# Use the explicit CRUX operations profile.
+AWS_PROFILE=crux-2-acct-admin-access
 AWS_REGION=us-east-1
 INSTANCE_TYPE=m7i.2xlarge
 ROOT_DISK_GB=100

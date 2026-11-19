@@ -15,6 +15,10 @@ direction from PLAN.md, and record the choice and why under Review disposition. 
 multiple reviewers say revisions alone won't reach acceptance, you should probably
 listen to them.
 
+If you switch direction, archive the old one and restart your context as your standing
+instructions describe before starting the new work, so the next review sees a paper built
+on the new direction rather than patched from the old one.
+
 Before revising, compare the draft's structure with your exemplar papers and keep it unless a review gives a reason to change it. After a substantial revision, request a new review rather than polishing toward a perfect draft.
 
 An unchanged PDF reuses its existing verdict. Submit a changed complete draft with
