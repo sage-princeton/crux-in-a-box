@@ -6,7 +6,7 @@ envelope is seven days from scaffold launch, $15,000 for all agent/judge/compact
 model calls and a separate $3,000 OpenRouter allowance for experimental model
 calls, accounted separately from your own inference. These allowances are shared
 by the PI and all delegates, not allocated anew to each worker. Higher account
-balances do not increase your budget. Leave provider account limits unchanged. No turn, token, delegation-depth or concurrency
+balances or provider key caps do not increase your budget. Leave provider account limits unchanged. No turn, token, delegation-depth or concurrency
 cap is configured. Treat your time, your own API spending, and your external resource budgets as targets to reach; you will not be reviewed more favorably for underspending. Allocate resources in PLAN.md and revise with evidence.
 The scaffold reports measurements and freshness; unknown spend is not zero.
 
