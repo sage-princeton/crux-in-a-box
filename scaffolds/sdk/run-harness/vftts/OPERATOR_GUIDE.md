@@ -1,135 +1,144 @@
-# Verifier-Free Test Time Scaling
+# VFTTS SDK research run
 
-The full research profile is `scaffold.toml`: seven days, $15,000 for PI/assistant/
-coding/review inference, and an independently supplied $3,000 experiment
-allocation. The separate `smoke/` profile rehearses the same credit distinction
-for 20 minutes with $8 inference and $4 experimental allowance. These local test
-allowances are cooperative; the supplied provider caps are the billing backstops.
+This guide covers provisioning and running the seven-day VFTTS research task.
+For run configurations, see `./placeholders.txt`, `./secrets.json`, `./scaffold.toml`,
+and the referenced `.md` files in this directory and child directories. `INPUTS.md`
+records what the run is given and what changed from the TabPFN full run.
 
-Use the local isolated OrbStack Ubuntu environment in `ciab-devenv`. No AWS
-deployment is part of this preparation. Its services, Langfuse and cost collector
-are local; inference and subject-model requests reach OpenRouter. Do not enable
-live cloud, Slack, email or production telemetry overrides for this rehearsal.
+Every file in this directory is staged on the run machine at
+`/srv/crux-run/run-harness`, where the agents' shells can read it. Keep the source
+paper, its method and its results out of this directory.
 
-## Private inputs
+## Dependencies
 
-Use a private JSON with `OPENROUTER_API_KEY` and
-`OPENROUTER_EXPERIMENT_API_KEY`, or the operator's two-line `vftts.temp` format
-(inference first, experiment second). Never add that file to Git or caller input
-snapshots. Verify each key's cap and billing route via OpenRouter before use.
-Two keys share account-funding constraints; reserve enough funds for both pools.
-The preparation performed on November 16 found fresh $150/$50 non-resetting keys;
-those are test credentials, not confirmation of full-run $15,000/$3,000 funding.
+**Prerequisites**:
+- Any changes you want to be included in the run are committed on `HEAD` (the deployment scripts deploy from `HEAD`).
+- The workspace fleet's Langfuse project secrets have already been configured in SSM. See [workspace provisioning](../../../../devops/ec2-workspaces/README.md). That same project will be used for tracing and cost tracking; confirm the selected model has pricing.
+- The shared [Langfuse cost Lambda](../../../../monitoring/costs/langfuse/README.md) is deployed and you have the associated `LANGFUSE_BASE_URL` and `COST_TRACKER_TOKEN`.
+- A [Slack app](https://api.slack.com/apps) has been created from `slack-app-manifest.yaml`, installed into a Slack workspace, and the `@crux-vftts` bot has been invited into a dedicated run channel. The channel ID has been recorded. Any person in that channel can steer the run.
 
-Run from the selected crux-in-a-box worktree, using an output directory outside
-all Git checkouts. The preparation helper copies only the smoke drop-in and
-writes credentials separately, mode 600:
+**Dependency setup:**
 
-```sh
-python3 scaffolds/sdk/run-harness/vftts/prepare_local.py \
-  --credentials /private/path/vftts.temp \
-  --output /private/tmp/vftts-rehearsal \
-  --experiment-provider-backstop-usd 50
+1. Authenticate AWS explicitly:
+   ```bash
+   aws configure sso --use-device-code --profile crux-2-acct-admin-access
+   ```
+   Alternatively, you could set the appropriate AWS environment variables for authentication to the CRUX operations and experiments account.
+
+2. Create a Hugging Face token whose only permission is read access to public
+   repos. Accept the access conditions of any gated datasets or models the run may
+   need on that account first; the agents cannot. Record it as `HF_TOKEN` in
+   `secrets.json`, and revoke it after the run.
+
+3. Create a fresh, dedicated OpenRouter key with a **non-resetting $3,000 limit** for
+   experimental model calls, distinct from the agent's `OPENROUTER_API_KEY`. Record it
+   as `OPENROUTER_EXPERIMENT_API_KEY` in `secrets.json`. Retain the example's
+   `OPENROUTER_EXPERIMENT_BUDGET_USD=3000`, `OPENROUTER_EXPERIMENT_KEY_CAP_USD=3000`
+   and shared absolute `OPENROUTER_EXPERIMENT_STATE_DIR=/srv/crux-run/state/experiments`
+   values, and set `OPENROUTER_EXPERIMENT_BILLING_MODE` as described below; these also
+   go in secrets.json so they get bundled into the service environment. The key's
+   lifetime usage counts toward the allowance, so never reuse a key from another run.
+
+### Experiment billing route
+
+The experiment client compares every response's billing route with
+`OPENROUTER_EXPERIMENT_BILLING_MODE` and refuses a mismatch:
+
+- `credits` (the example's value): every call must be paid from OpenRouter credits.
+  A call routed through a BYOK provider key fails, and once the experiment key shows
+  any BYOK usage the client refuses all further experiment calls.
+- `byok`: every call must route through a BYOK provider key, and the key's limit must
+  include BYOK usage (`include_byok_in_limit`). A call paid from credits fails.
+
+BYOK provider keys are configured per OpenRouter account or organization, so they
+apply to every key in it.
+Before launch, choose one route for every provider the run may call:
+
+- for `credits`, create the experiment key in an organization with no BYOK provider keys;
+- for `byok`, configure BYOK keys for every such provider in the key's organization.
+
+In `byok` mode the client paces spend on the key's OpenRouter meter, which values
+BYOK calls at OpenRouter's list price. Where a provider currently charges less than
+that list price, the allowance buys proportionally fewer calls than its face value.
+OpenRouter's BYOK fee is charged to account credits on top.
+
+## Provisioning
+
+1. Copy `placeholders.txt.example` to `placeholders.txt`.
+2. Copy `secrets.json.example` to `secrets.json` and fill its values from the values recorded during prerequisite/dependency setup.
+3. From the repository root, choose a unique run slug and run:
+    ```bash
+    ./devops/ec2-workspaces/make-new-workspace.sh vftts-<unique-suffix> \
+    --base-config scaffolds/sdk/run-harness/vftts/placeholders.txt \
+    --base-secrets scaffolds/sdk/run-harness/vftts/secrets.json --dry-run
+    ```
+4. Repeat without `--dry-run` to provision.
+
+Note: `provision.json` installs LaTeX/latexmk, PDF extraction/rendering, venv and transfer
+utilities. The service's software checks run at provisioning and every start.
+The SDK/Codex probes use real inference. Provisioning installs `crux-sdk-run`
+without starting it.
+
+## Prepare and start
+
+1. SSH to the workspace as `ubuntu` using the run slug:
+```bash
+ssh vftts-<unique-suffix>
 ```
 
-The supplied test keys were observed routing OpenAI through BYOK, with BYOK
-included in both key caps. For those keys add `--experiment-billing byok` to the
-preparation command. The default `credits` mode rejects unexpected BYOK. BYOK
-mode requires an inclusive provider cap and counts upstream inference separately
-from OpenRouter charges; zero router credit usage is not a free request. Returned
-billing must match the explicit mode. Neither mode automatically falls back.
+2. Prepare the workspace by replacing some placeholders in prompts, compiling the paper skeleton against the committed NeurIPS 2026 style (`workspace/paper/neurips_2026.sty`), and validating run configuration and the experiment allowance:
 
-For a full run, fill `secrets.json.example` in a private directory. Set a dedicated
-experiment key cap at or below $3,000, non-resetting. The default experiment client
-requires that relationship; local tests may explicitly declare a larger provider
-backstop with `OPENROUTER_EXPERIMENT_KEY_CAP_USD`, keeping the smaller cooperative
-run allowance. Management keys and AWS credentials never belong in run secrets.
-Use one stable absolute `OPENROUTER_EXPERIMENT_STATE_DIR` shared by all workers.
-
-## Local Linux rehearsal
-
-Use one named ciab-devenv environment and the isolated feature worktree. Start
-with `status` and `doctor`, then configure/provision; do not combine unrelated PR
-stacks. The local environment must support the current `devops/`, `scaffolds/`
-and `monitoring/` layout and explicit SDK OpenRouter selection. New source files
-must be in the Git index because source staging copies tracked files, including
-edits. Caller inputs are copied from the private prepared directory above.
-
-```sh
-cd /path/to/ciab-devenv
-export CIAB_STATE_ROOT=/private/tmp/ciab-vftts-state
-export CRUX_MODEL=openai/gpt-6.1-sol CRUX_REASONING_EFFORT=low
-./devctl --name vftts status
-./devctl --name vftts doctor
-./devctl --name vftts bootstrap --source /path/to/crux-worktree \
-  --scaffold sdk --provider openrouter --port 23800 \
-  --drop-in /private/tmp/vftts-rehearsal/drop-in \
-  --secrets-json /private/tmp/vftts-rehearsal/run-secrets.json
-./devctl --name vftts check
-./devctl --name vftts run --timeout 1200
-./devctl --name vftts report RUN_ID --output /private/tmp/vftts-evidence
-./devctl --name vftts down
-./devctl --name vftts machine status
+```bash
+cd /srv/crux-run/run-harness
+# --channel is the run channel's ID. Any person in the channel can steer.
+# --after-ts marks the run start: steering and the agent's Slack tools ignore earlier channel messages.
+python3 prepare.py --channel <channel-id> \
+  --after-ts "$(date +%s).000000"
+cd workspace/paper
+latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex
+cd /srv/crux-run/run-harness
+sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
+  -p EnvironmentFile=/etc/crux-run.env \
+  /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold check \
+  --drop-in /srv/crux-run/run-harness --state-dir /srv/crux-run/state
+sudo systemd-run --quiet --wait --pipe --collect --uid=ubuntu \
+  -p EnvironmentFile=/etc/crux-run.env \
+  -p WorkingDirectory=/srv/crux-run/run-harness/workspace \
+  /opt/crux-sdk-scaffold/.venv/bin/python -m crux_scaffold.experiment_api status
 ```
 
-Provisioning performs billed inference probes before the 20-minute run; include
-them in spending. The bounded run starts the production systemd unit and stops it
-at timeout. Keep the named environment shut down between tests. Preserve reports
-and state. Reprovision after source, model, dependencies or overrides change.
+Confirm the paper skeleton compiles, the scaffold check reports the expected
+configuration, and the experiment utility reports the $3,000 allowance with the
+intended billing mode.
 
-Acceptance requires evidence beyond a model's success claim: PI, SDK assistant
-and Codex worker must each invoke the experiment client, generating separately
-attributed receipts, while their reasoning remains on the inference key. Exercise
-a native child when supported and report unsupported coverage. Compare both
-provider keys' before/after usage with experiment receipts, persisted inference
-usage and local Langfuse; allow for ingestion/settlement delay and do not add
-overlapping measurements. Inspect refreshed SDK resource context and experiment
-submission status. The launch brief does not prove every native Codex inner turn
-has current status (AE-276).
+3. Start the run and observe the logs.
 
-Offline tests cover invalid keys, limits, restart binding, concurrency/deduplication,
-stale status and exhaustion without stopping inference. Use those fixtures for
-faults rather than deliberately consuming a $50 provider cap. Record the live
-rehearsal's exact branch/commit/edits, model/provider/effort, service locality,
-commands, duration, report/trace/artifact paths, failures and remaining gaps.
-Export only sanitized evidence, never raw sessions or credential files.
+```bash
+sudo systemctl start crux-sdk-run
+journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 minutes
+```
 
-The November 16 local rerun passed its receipt and independent-review gates:
-four experimental receipts reconciled to $0.005826 of upstream BYOK usage,
-separate from $0.2275181 on the inference key. Native-child inference accounting
-remains unresolved: the child session reported 32,815 tokens while the saved
-worker ledger matched the parent session's 43,955 tokens. Do not treat the
-parent ledger as complete child accounting. Prefer scaffold SDK assistants for
-delegation until native-thread usage is reconciled. This two-minute synthetic
-smoke did not validate benchmark results, compaction or a full research budget.
+You should see the agent report its initial milestone in the Slack channel within about ~20 minutes. You can also check OpenRouter for inference spending and Langfuse for streaming traces before then.
 
-## Research inputs and outputs
+## Steering
 
-`workspace/evaluation.json` pins official dataset revisions and an initial
-three-family model pool. From the run workspace, install
-`requirements.txt`, then run `python prepare_data.py gpqa_diamond` and
-`python prepare_data.py hle_verified_text_mc`. GPQA requires authorized HF access;
-do not substitute a mirror. The loader writes private questions and labels to
-separate files with a revision/hash/ID manifest and deterministic development/test
-split. It excludes uncertain, image and non-MC HLE items. Report this subset's
-identity and count; it is not the complete benchmark. The 96.5%/63.6% motivation
-is unverified for this exact pool/subset and is not a required result.
+Steering messages can be sent to the principal investigator agent through the configured Slack channel. The agent will not react or respond to the steering messages, so use Langfuse to assess whether the agent acknowledged the message.
 
-Baselines include majority, explicitly defined SP starting variants and
-confidence-selected best-of-N. Reconcile their multiclass formulation with the
-original Prelec paper before reporting raw-SP results. Held-out labels are for
-offline scoring after predictions are sealed. The oracle is an upper bound.
-ARC-AGI 2 and BuilderBench are deferred. Review prompts reject verifiers, debate,
-label leakage, unreported selection, and claims without comparable evidence.
+## Pausing and restarting
 
-The research loop preserves 10% of inference and two hours for finalization.
-Mechanical artifact checks and an isolated paper reviewer check the paper and
-reproducibility package. Experiment exhaustion never triggers the whole-run stop.
-Collect `paper/paper.pdf`, code, `RESULTS.md`, `reproduce.sh`,
-`COMPLETION_REPORT.md`, private data manifests, receipts and run state.
+If you find an issue in the run that cannot be overcome with steering, consider pausing the run, making a fix and resuming later.
 
-Primary sources: [Prelec et al.](https://doi.org/10.1038/nature21054),
-[official GPQA](https://huggingface.co/datasets/Idavidrein/gpqa),
-[HLE-Verified](https://huggingface.co/datasets/skylenage-ai/HLE-Verified),
-[OpenRouter key metadata](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key),
-[usage receipts](https://openrouter.ai/docs/cookbook/administration/usage-accounting).
+> [!WARNING]
+> Paused downtime counts toward the seven-day time limit.
+> Pausing the harness will interrupt delegates (RAs, Codex workers). The PI is responsible for resuming them after the run is restarted.
+
+To pause the run, run this from the run workspace:
+```bash
+sudo systemctl stop crux-sdk-run
+```
+
+To resume the run:
+```bash
+sudo systemctl start crux-sdk-run
+journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 minutes
+```

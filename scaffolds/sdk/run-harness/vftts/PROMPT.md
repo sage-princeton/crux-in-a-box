@@ -1,18 +1,17 @@
-# Verifier-Free Test Time Scaling
+Start the seven-day research run described in your standing context. Verify the
+paper build, Hugging Face access, experiment-model access, Slack, and resource
+measurements immediately. Initialize local git history and PLAN.md. Record each check and its result in PLAN.md, and fix or escalate anything broken before relying on it. Begin by closely reading all of the related literature, identify multiple distinct novel and creative research directions, and scale them in parallel. Keep a compiling paper from the start.
 
-Read your standing research and resource context. Within the first hour, build a
-small real benchmark pilot comparing majority vote, Surprisingly Popular and the
-pool oracle. Investigate whether shared errors explain any observed gap. A pilot
-that contradicts the motivating diagnosis is evidence; preserve it.
+Use the scaffold's delegate tools for substantial work. Request a blind review of
+the first completed draft and then following any substantial revision by writing REVIEW_REQUEST.json with the compiled PDF's SHA-256,
+then finish this iteration. The gate runs an independent, tool-using reviewer.
+An Accept advances to finalization; a rejection returns evidence to work on.
 
-Use the supplied independent-rollout, heterogeneous-model protocol and the
-separate experiment client. Delegate self-contained work. Start from Prelec et al.
-and preserve a verifier-free aggregation boundary. Do not train a verifier or run
-debate. Plan a research contribution, test it against the frozen baselines, and
-produce a reproducible paper. Read current shared budgets before scaling a batch;
-the experiment allocation belongs to every worker collectively. Persist methods,
-data/model revisions, results, and decisions so compaction cannot erase them.
-
-When experiment credit is exhausted, continue analysis and writing. Spend the
-remaining research resources where they can improve the evidence. A negative
-result with sound comparisons is preferable to an unsupported positive claim.
+The harness switches to finalization when 10% of the time (16.8 hours) or of model
+spend remains. It may interrupt active work at that boundary.
+Checkpoint often and return to the loop at useful milestones. Finalization is part
+of the same seven-day/$15,000 inference/$3,000 experiment envelope. Do not spend those
+reserves on exploration. The shared experiment
+pool has no finalization reserve; exhausted or unavailable experiment credits
+pause new experiment calls while analysis and writing continue. Check it with
+`python -m crux_scaffold.experiment_api status` before planning a batch.

@@ -1,4 +1,10 @@
-data/
-.experiment-api/
-private-*.txt
+.venv/
 __pycache__/
+*.pyc
+*.aux
+*.out
+*.fls
+*.fdb_latexmk
+.env*
+data/
+checkpoints/

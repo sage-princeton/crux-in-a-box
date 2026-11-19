@@ -1,14 +1,30 @@
-# Verifier-Free Test Time Scaling
+# Plan
 
-| Milestone | Evidence | Status |
-| --- | --- | --- |
-| First-hour diagnosis | Pinned subset IDs, real pilot samples, majority/oracle K curve and error-correlation analysis | Pending |
-| Baselines | Same-pool majority, raw SP definitions and label-free best-of-N | Pending |
-| Research method | Literature-grounded motivation, implementation, ablations and frozen settings | Pending |
-| Held-out evaluation | Sealed predictions, paired accuracy gains/intervals, K/cost curves | Pending |
-| Paper and reproducibility | Reviewed paper, reproducible code, private data map and separate resource totals | Pending |
+## Current position
+At launch: verify resources, paper build and experiment-model access.
+Write the actual schedule and allocations here; the resource block is authoritative.
 
-Update with concrete artifact paths, decisions, actual two-pool spending, and
-remaining work. Reserve inference and time for writing. A result that fails to
-beat majority remains a research result to explain, not a reason to change the
-test set. Report inaccessible benchmarks without substituting an unpinned mirror.
+## Exemplars
+Write the path and the outline for the exemplar papers from the literature review process whose structure you are following.
+
+## Research direction and alternatives
+Record candidates, evidence, and decisions.
+
+## Key results and prior directions
+Summarize evidence, uncertainty and why earlier directions changed; cite artifacts and LOG.md.
+
+## Review disposition
+No review yet. After review, record addressed, deferred or rejected points and reasons.
+Cite REVIEW_STATUS.json and the archived review for full feedback.
+
+## Resource allocation
+This is where you track the current projections and usage for all of your
+resources; fill these in early but update them regularly after committing. This
+should include your own API usage, your time, and any experimental resource
+utilization, like your experiment credits. Bucket these by intuitive categories of your research process.
+
+## Work in flight
+Track owner, scope, artifact paths, process IDs, expected completion and cleanup.
+
+## Next action
+The scope of the next large body of work being conducted.
