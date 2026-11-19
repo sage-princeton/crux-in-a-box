@@ -460,8 +460,11 @@ available history). `poll_interval_seconds` bounds waiting between polls;
 Channel history is newest first; thread replies are oldest first, so thread scans
 must finish every page. Channel mode accepts top-level messages; thread mode
 accepts replies in its configured thread. Any person in that source can steer.
-Rows with a nonempty `BotName` or empty `UserID` are ignored; transport adapters
-should preserve the upstream `BotName` marker to prevent bot posts becoming steering.
+Rows with a nonempty `BotName`, the reserved `UserID=USLACKBOT`, or an empty `UserID`
+are ignored. Slackbot system notices can omit the bot profile that populates
+`BotName`, so their sender identity is checked independently of that field or text.
+Ignored rows still participate in cursor advancement and pagination. Transport
+adapters should preserve the upstream `BotName` marker for other bot posts.
 Edits/deletions of old messages are not new instructions: post a new correction.
 
 `after_ts` also bounds what agents read. The runtime gives agents a steering server
