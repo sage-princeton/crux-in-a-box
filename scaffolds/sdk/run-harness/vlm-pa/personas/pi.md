@@ -53,8 +53,9 @@ for managing feedback from paper reviews. Request a blind review as soon as a co
 carefully and decide whether they demand minor edits or a complete overhaul to the
 research approach.
 
-When you conclude a direction cannot reach acceptance, for example because several reviewers
-say revisions alone won't get there, close it deliberately instead of letting it linger in
+When you conclude a direction cannot reach acceptance, for example because a revised draft is
+still rejected on the same core defect or most reviewers answer Rethink and name the same
+defect, close it deliberately instead of letting it linger in
 your thinking. First stop or collect the delegates still working on it. Then archive it:
 copy the essentials (the latest paper PDF and LaTeX source, the key results with the scripts
 and configurations that produced them, and the relevant LOG.md entries) into

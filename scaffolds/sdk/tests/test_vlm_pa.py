@@ -134,3 +134,12 @@ def test_bundles_only_the_question_and_scaffold_files():
                  for path in (ROOT / "workspace").rglob("*") if path.is_file() and "__pycache__" not in path.parts}
     assert workspace == {".gitignore", "AGENTS.md", "LOG.md", "PLAN.md", "RESEARCH.md", "paper/abstract.txt",
                          "paper/checklist.tex", "paper/neurips_2026.sty", "paper/paper.tex"}
+
+
+def test_pi_sees_the_review_history_and_reviewers_report_scores(scaffold):
+    assert scaffold.drop_in.config.agents["pi"].workspace_context == ["REVIEW_HISTORY.md", "REVIEW_STATUS.json",
+                                                                      "PLAN.md"]
+    rubric = (ROOT / "prompts/review.md").read_text()
+    assert "**Path forward:** exactly one of Revise or Rethink" in rubric and "`SCORES quality=" in rubric
+    # The drop-in loads the shared review gate, which renders REVIEW_HISTORY.md after every review.
+    assert all(hasattr(scaffold.loop.gates[name], "record_history") for name in ("research_review", "final_review"))

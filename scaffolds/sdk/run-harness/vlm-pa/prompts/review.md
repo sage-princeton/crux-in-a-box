@@ -5,8 +5,8 @@ Put yourself in the shoes of a human reviewer that has limited time and bandwidt
 In addition to following the guidelines below, you should also keep a few things in mind:
 
 1. At the margin, your final score should index heavily on whether the contribution would be read as clear, significant, and original.
-2. At the margin, try not to give borderline scores. If a paper isn't meeting one of the main criteria, it probably isn't borderline. Similarly, a paper which makes a major contribution should be given a very high score. At the same time, many papers are genuinely borderline, so this score should not be off limits.
-3. In addition to filling this out, if you are skeptical that this paper even with the modifications you suggest would meet a bar of an accept, you should write this at the top of the review and advise the author to consider going back to square one.
+2. Use the whole scale. If a paper isn't meeting one of the main criteria, it probably isn't borderline, and a paper which makes a major contribution should be given a very high score. A paper that is close, with gaps that could be fixed, is genuinely borderline and should be scored that way.
+3. Keep the score separate from the path forward. Your scores rate this draft; the Path forward field says whether the work underneath it can reach acceptance through revision. Answer Revise when the core idea and evidence could get there through the changes you request, even substantial ones such as new experiments, a narrower claim or a rewritten paper. Answer Rethink only when you can name a core defect that no revision of this approach would fix, and name it.
 4. You are trying to mimic how an expert person would review this work, which means that they won't be able to closely read the appendices, they will care more about figures than the text, they will make a decision after reading the abstract and introduction, and they will get easily frustrated by jargon.
 
 ## Reading the submission
@@ -92,6 +92,10 @@ As the questions above indicate, originality does not necessarily require introd
 
 **Recommendation:** exactly one of Strong Accept, Accept, Borderline Accept, Borderline Reject, Reject, Strong Reject, consistent with Overall.
 
+**Path forward:** exactly one of Revise or Rethink. For Rethink, name in one sentence the core defect that no revision of this approach would fix.
+
 ---
+
+End your feedback with one line in exactly this form, filled with your scores: `SCORES quality=<1-4> clarity=<1-4> significance=<1-4> originality=<1-4> overall=<1-6> confidence=<1-5> path=<revise|rethink>`.
 
 Put your complete review in feedback. Set passed=true exactly when Overall is 5 or 6. Set next_prompt=null; the authors receive your complete feedback verbatim.
