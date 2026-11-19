@@ -49,24 +49,6 @@ records what the run is given and the shared full-run baseline.
    The key's lifetime usage counts toward the allowance; never reuse the pilot's
    key or receipts directory for a new run.
 
-### Experiment billing route
-
-This run allocates **$1,500 of OpenRouter credits** to experiments. Keep
-`OPENROUTER_EXPERIMENT_BILLING_MODE=credits` and use a dedicated experiment key
-in an OpenRouter organization with no BYOK provider keys for the requested
-providers. The client checks the billing route on every response and pauses
-submissions if it detects BYOK usage; a new API key alone does not isolate it
-from the organization's provider routing. Resolve a route mismatch before launch.
-The shared client also supports `byok`, but that changes the billing source and
-requires an explicit operator decision and a key limit that includes BYOK usage.
-
-The inference, experiment and RunPod allowances are separate. The $500 RunPod
-limit includes the run's pod charges; AWS infrastructure is separate. The final
-16.8 hours, $1,500 inference and $50 RunPod are reserved for finalization. Exhausted
-experiment credits pause new experiment calls while analysis and writing continue.
-Concurrent calls and delayed billing can overshoot cooperative limits; the
-non-resetting OpenRouter key caps are the provider billing backstops.
-
 ## Provisioning
 
 1. Copy `placeholders.txt.example` to `placeholders.txt` and set `AWS_PROFILE`.
