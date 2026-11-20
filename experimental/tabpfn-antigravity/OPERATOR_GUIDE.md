@@ -33,7 +33,7 @@ The default EC2 host is an m7i.8xlarge running Ubuntu 24.04 with a 512 GiB encry
    sudo -u tabpfn-research -H sh -c 'cd /home/tabpfn-research/research/paper && latexmk -pdf -interaction=nonstopmode -halt-on-error paper.tex'
    ```
 
-2. Execute the printed `sudo python3 …/host.py start` command. The defaults are seven days, $15,000 for inference and $1,000 for RunPod. To override them, append `--seconds SECONDS --usd INFERENCE_USD --runpod-usd GPU_USD` on this first start. The inference cap covers research and external review. The GPU cap tracks run-owned pods separately. At 90% of a confirmed ceiling the study enters final reserve, and at 100% it stops model work. In-flight calls and delayed billing can carry spend past a threshold.
+2. Execute the printed `sudo python3 …/host.py start` command. The defaults are five days, $25,000 for inference and $1,500 for RunPod. To override them, append `--seconds SECONDS --usd INFERENCE_USD --runpod-usd GPU_USD` on this first start. The inference cap covers research and external review. The GPU cap tracks run-owned pods separately. At 90% of a confirmed ceiling the study enters final reserve, and at 100% it stops model work. In-flight calls and delayed billing can carry spend past a threshold.
 
 3. Follow the services and inspect the published budget on the box.
 

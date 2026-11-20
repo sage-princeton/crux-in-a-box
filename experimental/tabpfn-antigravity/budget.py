@@ -12,7 +12,15 @@ from pathlib import Path
 from render import render
 from telemetry import Ledger
 
-DEFAULT_RUNPOD_USD = 1000
+
+def add_start_limits(parser: argparse.ArgumentParser) -> None:
+    """Register optional overrides shared by the host and budget start commands.
+
+    :param parser: Parser for the applicable start subcommand.
+    """
+    parser.add_argument("--seconds", type=int, help="Wall-clock limit for a fresh study")
+    parser.add_argument("--usd", type=float, help="Combined research and review inference budget in USD")
+    parser.add_argument("--runpod-usd", type=float, help="Separate RunPod budget in USD")
 
 
 def publish_text(path: Path, text: str, mode: int = 0o644) -> None:
@@ -62,22 +70,26 @@ class Budget:
         self.ledger = Ledger(state / "traces.db")
 
     @classmethod
-    def start(cls, state: Path, seconds: int = 604800, limit: float = 15000, *, runpod_limit: float = DEFAULT_RUNPOD_USD, now: float | None = None):
-        """Initialize the clock once, preserving its original start on a service restart.
+    def start(cls, state: Path, seconds: int | None = None, limit: float | None = None, *,
+              runpod_limit: float | None = None, now: float | None = None):
+        """Create the study envelope or resume the one already committed to disk.
 
         :param state: Trusted service-owned run directory.
-        :param seconds: Full study wall time, including finalization.
-        :param limit: Combined research and independent review model costs, in USD.
-        :param runpod_limit: Independent RunPod ceiling in USD.
-        :param now: Override for the current UTC epoch time in tests.
-        :returns: Budget opened against the persisted clock.
+        :param seconds: Optional wall time in seconds, including finalization.
+        :param limit: Optional combined research and independent review ceiling in USD.
+        :param runpod_limit: Optional separate RunPod ceiling in USD.
+        :param now: Override for the initial UTC epoch time in tests.
+        :returns: Budget opened against the immutable study clock.
+        :raises ValueError: An explicit limit is invalid or conflicts with a saved limit.
         """
-        if seconds <= 0 or not all(math.isfinite(v) and v > 0 for v in (limit, runpod_limit)):
+        overrides = {"wall_seconds": seconds, "limit_usd": limit, "runpod_limit_usd": runpod_limit}
+        explicit = {name: value for name, value in overrides.items() if value is not None}
+        if any(not math.isfinite(value) or value <= 0 for value in explicit.values()):
             raise ValueError("Budget limits must be positive and finite")
         state.mkdir(parents=True, exist_ok=True)
         path = state / "budget.json"
-        config = {"started_at": time.time() if now is None else now, "wall_seconds": seconds, "limit_usd": limit,
-                  "runpod_limit_usd": runpod_limit}
+        config = {"started_at": time.time() if now is None else now, "wall_seconds": 5 * 24 * 60 * 60,
+                  "limit_usd": 25_000, "runpod_limit_usd": 1_500, **explicit}
         with tempfile.NamedTemporaryFile(dir=state, mode="w") as fresh:
             json.dump(config, fresh)
             fresh.flush()
@@ -87,7 +99,8 @@ class Budget:
             except FileExistsError:
                 pass
         budget = cls(state)
-        if (budget.seconds, budget.ceiling, budget.runpod_ceiling) != (seconds, limit, runpod_limit):
+        actual = {"wall_seconds": budget.seconds, "limit_usd": budget.ceiling, "runpod_limit_usd": budget.runpod_ceiling}
+        if any(actual[name] != value for name, value in explicit.items()):
             raise ValueError("Existing run has different limits")
         return budget
 
@@ -191,9 +204,7 @@ def main() -> None:
     actions = parser.add_subparsers(dest="action", required=True)
     start = actions.add_parser("start")
     start.add_argument("state", type=Path)
-    start.add_argument("--seconds", type=int, default=604800)
-    start.add_argument("--usd", type=float, default=15000)
-    start.add_argument("--runpod-usd", type=float, default=DEFAULT_RUNPOD_USD)
+    add_start_limits(start)
     watch = actions.add_parser("watch")
     watch.add_argument("state", type=Path)
     watch.add_argument("public", type=Path)
