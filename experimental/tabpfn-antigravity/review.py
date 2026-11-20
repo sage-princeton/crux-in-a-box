@@ -165,21 +165,28 @@ class BlindPanel:
         archive = f"reviews/{key}.json"
         if not report.exists():
             started = directory / "in-flight"
-            if started.exists() and not retry:
+            partial = directory / "partial.json"
+            if started.exists() and not retry and (not partial.exists() or time.time() - partial.stat().st_mtime < 60):
                 return
             meta = ReviewWorkspace.snapshot(self.workspace, {p: p for p in ["paper/abstract.txt", "paper/paper.aux"]})
             if problem := paper_problem(meta, paper):
                 publish(self.public / "REVIEW_STATUS.json", {"complete": False, "paper_sha256": digest, "feedback": problem})
                 return
             publish(self.public / "REVIEW_STATUS.json", {"complete": False, "paper_sha256": digest, "passed": False,
-                    "feedback": "Blind review pending. An interrupted panel can be resumed by the operator."})
+                    "pending": True, "feedback": "Blind review pending. An interrupted panel can be resumed by the operator."})
             started.touch()
-            verdict, members = await self.vote(paper, directory, key, budget)
+            try:
+                verdict, members = await self.vote(paper, directory, key, budget)
+            except Exception as exc:
+                failure = {"complete": False, "passed": False, "paper_sha256": digest,
+                           "feedback": f"Panel interrupted ({type(exc).__name__}). Completed reviewers are cached."}
+                publish(partial, failure, 0o600)
+                publish(self.public / "REVIEW_STATUS.json", failure)
+                raise
             record = {"paper_sha256": digest, "complete": all(member["completed"] for member in members),
                       "passed": verdict["passed"], "feedback": verdict["feedback"], "review_path": archive}
             publish(directory / "members.json", {"members": members}, 0o600)
-            if record["complete"]:
-                publish(report, record, 0o600)
+            publish(report if record["complete"] else partial, record, 0o600)
         else:
             record = json.loads(report.read_text())
         (self.public / "reviews").mkdir(exist_ok=True, mode=0o755)

@@ -114,6 +114,9 @@ class Budget:
         while True:
             snapshot = self.status()
             publish(public, snapshot)
+            if (public.parent / "RUN_OUTCOME.json").is_file():
+                subprocess.run(["systemctl", "stop", *units], check=True)
+                return
             if snapshot["phase"] == "stopped":
                 publish(self.state / "stop.json", snapshot, 0o600)
                 subprocess.run(["systemctl", "stop", *units], check=True)
