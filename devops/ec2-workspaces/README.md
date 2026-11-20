@@ -21,7 +21,8 @@ are documented in [provisioning.md](provisioning.md).
 
 For an SDK task that must avoid particular paper URLs, the optional
 [network proxy](network-proxy.md) loads a TOML blacklist and enforces agent
-egress through an HTTPS inspection proxy. Install it explicitly before launch.
+egress through an HTTPS inspection proxy, which can also block search results
+that show the paper. Install it explicitly before launch.
 
 ## Development
 

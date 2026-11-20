@@ -4,7 +4,9 @@ set -euo pipefail
 
 die() { echo "$*" >&2; exit 1; }
 [ "$(id -u)" = 0 ] || die "Run as root on the run box."
-[ "$#" = 1 ] || die "Usage: install-network-proxy.sh /operator/path/network-policy.toml"
+DIRECT_TCP=0
+if [ "${1:-}" = --allow-direct-tcp ]; then DIRECT_TCP=1; shift; fi
+[ "$#" = 1 ] || die "Usage: install-network-proxy.sh [--allow-direct-tcp] /operator/path/network-policy.toml"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 POLICY="$(realpath "$1")"
 SERVICE=crux-sdk-run.service
@@ -34,6 +36,15 @@ chown -R crux-proxy:crux-proxy /var/lib/crux-proxy
 install -m 644 /var/lib/crux-proxy/mitmproxy-ca-cert.pem /usr/local/share/ca-certificates/crux-network-proxy.crt
 update-ca-certificates >/dev/null
 
+# With --allow-direct-tcp, SSH, rsync and other non-web TCP connect directly (for example to GPU pods),
+# and DNS resolves through the box's resolver. HTTP(S) on ports 80 and 443 must still use the policy proxy.
+DIRECT_RULES=""
+if [ "$DIRECT_TCP" = 1 ]; then
+    DIRECT_RULES="meta skuid $RUN_UID tcp dport { 80, 443 } counter reject
+        meta skuid $RUN_UID udp dport 53 accept
+        meta skuid $RUN_UID meta l4proto tcp accept"
+fi
+
 # The entire replacement is one nft transaction; existing unrelated tables are preserved.
 cat > /etc/crux-network.nft <<RULES
 add table inet crux_network
@@ -42,6 +53,7 @@ table inet crux_network {
     chain output {
         type filter hook output priority -10; policy accept;
         meta skuid $RUN_UID ip daddr 127.0.0.1 tcp dport 18080 accept
+        $DIRECT_RULES
         meta skuid $RUN_UID counter reject
     }
 }
@@ -114,4 +126,6 @@ systemctl enable crux-network-proxy.service >/dev/null
 systemctl is-active --quiet crux-network-firewall.service crux-network-proxy.service
 curl --fail --silent --show-error --retry 10 --retry-connrefused --retry-delay 1 \
     --retry-max-time 15 --max-time 2 --proxy http://127.0.0.1:18080 http://crux-proxy.invalid/healthz
-echo "Network policy installed. SDK run remains stopped; launch it normally."
+DIRECT_STATE=blocked
+if [ "$DIRECT_TCP" = 1 ]; then DIRECT_STATE=allowed; fi
+echo "Network policy installed; direct non-web TCP is $DIRECT_STATE. SDK run remains stopped; launch it normally."
