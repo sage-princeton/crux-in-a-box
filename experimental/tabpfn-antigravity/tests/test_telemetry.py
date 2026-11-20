@@ -40,3 +40,12 @@ class TraceTests(unittest.TestCase):
         ob = Observation.from_step("study", "conv", {"type": "PLANNER_RESPONSE", "step_index": 0,
                                   "status": "DONE", "created_at": "2026-11-20T00:00:00Z"})
         self.assertIsNone(ob.cost)
+
+    def test_cached_prompt_can_exceed_uncached_input(self):
+        """Preserve the separate token buckets observed in a live multi-call Neon session."""
+        ob = Observation.from_step("run", "conversation", {"step_index": 15, "type": "PLANNER_RESPONSE",
+            "status": "DONE", "created_at": "2026-11-20T00:00:00Z", "model": "gemini-4-neon-xhigh",
+            "input_tokens": 3228, "cache_read_tokens": 9646, "output_tokens": 411})
+        attrs = {v["key"]: v["value"]["stringValue"] for v in ob.span["attributes"]}
+        self.assertEqual(json.loads(attrs["langfuse.observation.usage_details"]),
+                         {"input": 3228, "input_cached_tokens": 9646, "output": 411})
