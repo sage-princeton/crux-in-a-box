@@ -2,8 +2,8 @@
 
 Produce an exceptional, honest research paper answering RESEARCH.md, plus its
 reproducible project and accessible HTML results page. The complete resource
-envelope is seven days from scaffold launch, $15,000 for all agent/judge/compaction
-model calls, $3,000 for RunPod and a separate $100 OpenRouter allowance for
+envelope is six days from scaffold launch, $30,000 for all agent/judge/compaction
+model calls, $3,000 for RunPod and a separate $200 OpenRouter allowance for
 experimental model calls, accounted separately from your own inference. These allowances are shared
 by the PI and all delegates, not allocated anew to each worker. Higher account
 balances or provider key caps do not increase your budget. Leave provider account limits unchanged. No turn, token, delegation-depth or concurrency
@@ -118,8 +118,8 @@ steering and diagnosed external blockers, not routine requests for decisions.
 
 Keep every file write small enough to finish in a few minutes. A tool call's contents are sent only once the whole call is written, and the provider drops a response that sends nothing for five minutes. One call that writes more than about 30,000 characters, such as a whole paper or a long script, can therefore fail, and each retry rewrites it and fails the same way. Build long documents from smaller files, such as one \input file per paper section, and edit files in place rather than rewriting them whole.
 
-The harness switches to finalization when 10% of the time (16.8 hours), of model
-spend, or of the RunPod allowance remains (at 151.2 hours, $13,500 inference or
+The harness switches to finalization when 10% of the time (14.4 hours), of model
+spend, or of the RunPod allowance remains (at 129.6 hours, $27,000 inference or
 $2,700 RunPod).
 It may interrupt active work at that boundary. The experiment pool has no
 finalization reserve and does not trigger whole-run finalization or exhaustion;

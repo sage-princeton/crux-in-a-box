@@ -16,10 +16,12 @@ from crux_scaffold.telemetry import NullTelemetry
 
 ROOT = Path(__file__).resolve().parents[1] / "run-harness" / "vlm-pa"
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "OPENROUTER_API_KEY": "fixture-agent",
-       "OPENROUTER_EXPERIMENT_API_KEY": "fixture-experiment", "OPENROUTER_EXPERIMENT_BUDGET_USD": "100",
-       "OPENROUTER_EXPERIMENT_KEY_CAP_USD": "200", "OPENROUTER_EXPERIMENT_BILLING_MODE": "credits",
+       "OPENROUTER_EXPERIMENT_API_KEY": "fixture-experiment", "OPENROUTER_EXPERIMENT_BUDGET_USD": "200",
+       "OPENROUTER_EXPERIMENT_KEY_CAP_USD": "400", "OPENROUTER_EXPERIMENT_BILLING_MODE": "credits",
        "SLACK_BOT_TOKEN": "fixture", "RUN_SLUG": "fixture", "RUNPOD_API_KEY": "fixture",
        "COST_TRACKER_URL": "https://cost.example/cost", "COST_TRACKER_TOKEN": "fixture"}
+ASSISTANTS = ["research_assistant"] + [f"research_assistant_{letter}" for letter in "bcdef"]
+WORKERS = [f"worker_{letter}" for letter in "abcdefghijklmnopqrst"]
 
 
 @pytest.fixture
@@ -56,28 +58,28 @@ def test_assembles_without_network(tmp_path, capsys, full):
     assert "openrouter-experiments" in out and "runpod" in out
 
 
-def test_uses_the_seven_day_budgets_shared_loop_team_and_review_panel(scaffold):
+def test_uses_the_six_day_budgets_shared_loop_team_and_review_panel(scaffold):
     config = scaffold.drop_in.config
-    assert config.budget.max_wall_seconds == 604800
-    assert config.budget.max_cost_usd == 15000
+    assert config.budget.max_wall_seconds == 518400
+    assert config.budget.max_cost_usd == 30000
     assert config.resources["gpu"]["type"] == "runpod"
     assert config.resources["gpu"]["limits"] == {"cost_usd": 3000}
     assert config.resources["experiments"]["type"] == "openrouter-experiments"
     assert not scaffold.context.resources.providers["experiments"].options.limits
     assert scaffold.loop.type_name == "tabpfn_research"
-    assert config.loop["reserve_wall_seconds"] == 60480
+    assert config.loop["reserve_wall_seconds"] == 51840
     assert config.context["trigger_tokens"] == 400000
-    assert config.tools["rest"]["total_seconds"] == 604800
+    assert config.tools["rest"]["total_seconds"] == 518400
     assert "restart_context" in config.agents["pi"].tools
-    assert set(config.agents["pi"].delegates) == {f"worker_{letter}" for letter in "abcdefgh"} | {
-        "research_assistant", "research_assistant_b", "research_assistant_c"}
+    assert set(config.agents["pi"].delegates) == set(WORKERS) | set(ASSISTANTS)
+    assert set(config.coding_agents) == set(WORKERS) and set(ASSISTANTS) <= set(config.agents)
     panel = ["google/gemini-4-carbon@preset/ai-studio-priority", "anthropic/claude-opus-5.5", "openai/gpt-6-astra"]
     assert config.gates["research_review"]["models"] == config.gates["final_review"]["models"] == panel
     assert config.runtime["steering"]["channel_id"] == "CTEST"
     scaffold.runtime.describe()
 
 
-@pytest.mark.parametrize("resource, below, at, reason", [("models", 13499, 13500, "model spend reserve"),
+@pytest.mark.parametrize("resource, below, at, reason", [("models", 26999, 27000, "model spend reserve"),
                                                          ("gpu", 2699, 2700, "gpu reserve")])
 def test_enters_finalization_at_its_spend_reserves(scaffold, resource, below, at, reason):
     scaffold.context.usage.started_at = scaffold.context.now()
@@ -87,10 +89,10 @@ def test_enters_finalization_at_its_spend_reserves(scaffold, resource, below, at
     assert scaffold.loop.reserve_reason(scaffold.context) == reason
 
 
-def test_reserves_the_final_tenth_of_the_week(scaffold):
+def test_reserves_the_final_tenth_of_the_run(scaffold):
     now = scaffold.context.now()
     scaffold.context.now = lambda: now
-    scaffold.context.usage.started_at = now - timedelta(seconds=544319)
+    scaffold.context.usage.started_at = now - timedelta(seconds=466559)
     assert scaffold.loop.reserve_reason(scaffold.context) is None
     scaffold.context.usage.started_at -= timedelta(seconds=1)
     assert scaffold.loop.reserve_reason(scaffold.context) == "time reserve"
@@ -98,7 +100,7 @@ def test_reserves_the_final_tenth_of_the_week(scaffold):
 
 def test_exhausted_experiments_leave_inference_and_finalization_available(scaffold):
     scaffold.context.usage.started_at = scaffold.context.now()
-    snapshot(scaffold, "experiments", spent_usd=100, remaining_usd=0)
+    snapshot(scaffold, "experiments", spent_usd=200, remaining_usd=0)
     assert scaffold.loop.reserve_reason(scaffold.context) is None
     assert not scaffold.context.budget_exhausted()
 
@@ -107,21 +109,21 @@ def test_example_lists_gpu_hugging_face_and_experiment_credentials():
     env = json.loads((ROOT / "secrets.json.example").read_text())
     assert {"RUNPOD_API_KEY", "HF_TOKEN", "OPENROUTER_EXPERIMENT_API_KEY", "SLACK_BOT_TOKEN"} <= env.keys()
     assert not {"SERPAPI_KEY", "TABPFN_TOKEN"} & env.keys()
-    assert env["OPENROUTER_EXPERIMENT_BUDGET_USD"] == "100"
-    assert env["OPENROUTER_EXPERIMENT_KEY_CAP_USD"] == "200"
+    assert env["OPENROUTER_EXPERIMENT_BUDGET_USD"] == "200"
+    assert env["OPENROUTER_EXPERIMENT_KEY_CAP_USD"] == "400"
     assert env["OPENROUTER_EXPERIMENT_BILLING_MODE"] == "credits"
     assert env["OPENROUTER_EXPERIMENT_STATE_DIR"] == "/srv/crux-run/state/experiments"
 
 
-@pytest.mark.parametrize("spent, expected_remaining", [(0, 100), (40, 60), (100, 0)])
+@pytest.mark.parametrize("spent, expected_remaining", [(0, 200), (40, 160), (200, 0)])
 def test_experiments_use_the_run_allowance_under_a_larger_provider_cap(monkeypatch, tmp_path, spent,
                                                                     expected_remaining):
     env = {**ENV, "OPENROUTER_EXPERIMENT_STATE_DIR": str(tmp_path / "experiments")}
     monkeypatch.setattr(experiment_api, "_request", lambda *args, **kwargs: {"data": {
-        "usage": spent, "limit": 200, "limit_remaining": 200 - spent, "limit_reset": None, "byok_usage": 0}})
+        "usage": spent, "limit": 400, "limit_remaining": 400 - spent, "limit_reset": None, "byok_usage": 0}})
     status = experiment_api.status(env)
-    assert status["allocation_usd"] == 100
-    assert status["provider_limit_usd"] == 200
+    assert status["allocation_usd"] == 200
+    assert status["provider_limit_usd"] == 400
     assert status["remaining_usd"] == expected_remaining
     if not expected_remaining:
         with pytest.raises(experiment_api.ExperimentError, match="exhausted"):
@@ -143,3 +145,13 @@ def test_pi_sees_the_review_history_and_reviewers_report_scores(scaffold):
     assert "**Path forward:** exactly one of Revise or Rethink" in rubric and "`SCORES quality=" in rubric
     # The drop-in loads the shared review gate, which renders REVIEW_HISTORY.md after every review.
     assert all(hasattr(scaffold.loop.gates[name], "record_history") for name in ("research_review", "final_review"))
+
+
+def test_the_pi_persona_names_the_whole_team_and_its_pace():
+    # The persona's team paragraph, Slack layout and pace follow scaffold.toml's delegates and budget.
+    persona = (ROOT / "personas/pi.md").read_text()
+    assert (len(ASSISTANTS), len(WORKERS)) == (6, 20)
+    assert "six SDK research assistants" in persona and "twenty Codex workers" in persona
+    assert f"`{ASSISTANTS[-1]}`" in persona and f"`{WORKERS[-1]}`" in persona
+    assert "of 26 busy" in persona
+    assert "$30,000 over six days" in persona and "$27,000 finalization" in persona

@@ -1,7 +1,7 @@
 # Copy to placeholders.txt beside this file.
 AWS_PROFILE=crux-2-acct-admin-access
 AWS_REGION=us-east-1
-INSTANCE_TYPE=m7i.2xlarge
+INSTANCE_TYPE=m7i.8xlarge
 ROOT_DISK_GB=100
 USE_ELASTIC_IP=false
 KEY_NAME=crux-acp
