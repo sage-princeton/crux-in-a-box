@@ -74,7 +74,7 @@ class TeamworkTerminal:
             receipt = self.workspace / ".teamwork-submitted"
             if receipt.exists():
                 raise RuntimeError("Submission previously attempted. Inspect the terminal before resuming.")
-            if not re.search(r"(?m)^>\s*$", self.screen()):
+            if not re.search(r"(?m)^>[ \t]*(?:Auto mode: edits & safe commands auto-approved \(shift\+tab to cycle\))?[ \t]*$", self.screen()):
                 raise RuntimeError("Attach and finish onboarding, authentication and project trust at the empty prompt.")
             self.keys("/teamwo", literal=True)
             for _ in range(30):
