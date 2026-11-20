@@ -8,7 +8,6 @@ import os
 import pwd
 import signal
 import sqlite3
-import stat
 import subprocess
 import time
 from pathlib import Path
@@ -16,6 +15,7 @@ from uuid import UUID
 
 from budget import Budget, publish
 from prepare import VERSION
+from regular_files import open_regular
 from render import render
 from resources import research_resources
 
@@ -28,7 +28,7 @@ def cli_command(prompt: str, seconds: int) -> list[str]:
     :returns: Headless CLI argument vector.
     """
     return ["agy", "--settings", '{"modelProvider":"gemini"}', "--model", "gemini-4-neon-xhigh",
-            "--effort", "xhigh", "--dangerously-skip-permissions", "--output-format", "json",
+            "--effort", "xhigh", "--dangerously-skip-permissions", "--output-format", "stream-json",
             "--print-timeout", f"{seconds}s", "--print", prompt]
 
 
@@ -47,6 +47,8 @@ class Journal:
         self.db.row_factory = sqlite3.Row
         self.db.execute("""CREATE TABLE IF NOT EXISTS iterations(
             number INTEGER PRIMARY KEY, phase TEXT, status TEXT, started REAL, ended REAL)""")
+        if "streamed" not in {row[1] for row in self.db.execute("PRAGMA table_info(iterations)")}:
+            self.db.execute("ALTER TABLE iterations ADD COLUMN streamed INTEGER NOT NULL DEFAULT 0")
 
     def recover(self) -> None:
         """Mark interrupted invocations after systemd has reaped the old service cgroup.
@@ -63,7 +65,7 @@ class Journal:
         :returns: New iteration number.
         """
         with self.db:
-            return self.db.execute("INSERT INTO iterations(phase,status,started) VALUES(?,'running',?)",
+            return self.db.execute("INSERT INTO iterations(phase,status,started,streamed) VALUES(?,'running',?,1)",
                                    (phase, time.time())).lastrowid
 
     def finish(self, number: int, status: str) -> None:
@@ -96,27 +98,13 @@ class ResearchFiles:
         """
         self.root = workspace
 
-    @contextlib.contextmanager
     def open(self, relative: str):
-        """Open a file through directory descriptors and reject devices, FIFOs and symlinks.
+        """Open a regular workspace artifact without following links.
 
-        :param relative: Workspace-relative regular file path.
-        :returns: Context manager yielding a binary stream.
+        :param relative: Workspace-relative artifact name.
+        :returns: Managed binary stream.
         """
-        path = Path(relative)
-        if path.is_absolute() or ".." in path.parts or not path.parts:
-            raise ValueError("Invalid artifact path")
-        with contextlib.ExitStack() as stack:
-            directory = os.open(self.root, os.O_DIRECTORY | os.O_NOFOLLOW)
-            stack.callback(os.close, directory)
-            for part in path.parts[:-1]:
-                directory = os.open(part, os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
-                stack.callback(os.close, directory)
-            fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
-            stream = stack.enter_context(os.fdopen(fd, "rb"))
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ValueError("Expected a regular artifact")
-            yield stream
+        return open_regular(self.root, relative)
 
     def text(self, name: str, limit: int = 128_000) -> str:
         """Read bounded UTF-8 research notes or a small machine-readable manifest.
@@ -295,7 +283,7 @@ class ResearchLoop:
                 prompt = render("iteration.md", brief=brief, continuation=continuation, phase=phase, iteration=number,
                                 **{"remaining-seconds": remaining, "spent-usd": f"{b['metered_usd']:.4f}",
                                    "limit-usd": f"{b['limit_usd']:.2f}"})
-                log = f"iteration-{number:06d}.json"
+                log = f"iteration-{number:06d}.jsonl"
                 seconds = min(self.turn_seconds, remaining)
                 if phase == "research":
                     reserve_at = self.budget.start_time + 0.9 * self.budget.seconds
@@ -304,8 +292,13 @@ class ResearchLoop:
                 success = False
                 if code == 0:
                     try:
-                        envelope = json.loads((self.state / log).read_bytes())
-                        success = (envelope.get("status") or (envelope.get("result") or {}).get("status")) == "SUCCESS"
+                        with (self.state / log).open("rb") as stream:
+                            envelope = {}
+                            for line in stream:
+                                event = json.loads(line)
+                                if event.get("event") == "result":
+                                    envelope = event["result"]
+                        success = envelope.get("status") == "SUCCESS"
                         if success:
                             conversation = str(UUID(envelope["conversation_id"]))
                             brain = Path(self.process.account.pw_dir) / ".gemini/antigravity-cli/brain"

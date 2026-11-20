@@ -1,103 +1,25 @@
 """Export completed CLI steps to Langfuse while research is running, with a durable usage ledger."""
 import argparse
 import base64
-import hashlib
 import json
 import logging
 import math
 import os
-import re
 import sqlite3
 import sys
 import time
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
-from uuid import UUID
 
+from iteration_traces import IterationTraces, Scrubber
+from observations import Observation
 from prepare import HERE
 
 sys.path.insert(0, str(HERE.parents[1] / "monitoring/tracing/codex"))
 from live_trace.sinks import LangfuseOtlpSink
 
 LOG = logging.getLogger(__name__)
-
-
-@dataclass(frozen=True)
-class Observation:
-    """A scrubbed CLI observation and its cost estimate, when the model reports usage.
-
-    :ivar span: Scrubbed OTLP span.
-    """
-
-    span: dict
-    cost: float | None
-    generation: bool
-
-    @classmethod
-    def record(cls, run: str, conversation: str, key: str, name: str, stamp: float,
-               model: str | None = None, usage: dict | None = None, costs: dict | None = None,
-               generation: bool = False,
-               status: str = "DONE"):
-        """Create a stable OTLP span for a CLI step or an external review request.
-
-        :param run: Run identifier used for Langfuse sessions and cost aggregation.
-        :param conversation: Native conversation or independent review identifier.
-        :param key: Stable observation identity inside this conversation.
-        :param stamp: UTC creation time, in seconds since the epoch.
-        :param name: File or event name.
-        :param model: Provider model identifier.
-        :param usage: Exclusive token buckets.
-        :param costs: Optional costs reported by the upstream provider, in USD.
-        :param generation: Whether this event is a model call.
-        :param status: Terminal event or iteration status.
-        :returns: Scrubbed, deterministically identified observation.
-        """
-        trace = hashlib.sha256(f"{run}/{conversation}".encode()).hexdigest()[:32]
-        identifier = hashlib.sha256(f"{trace}/{key}".encode()).hexdigest()[:16]
-        attrs = {"langfuse.session.id": run, "langfuse.environment": run, "langfuse.trace.name": conversation,
-                 "langfuse.observation.type": "generation" if generation else "event",
-                 "langfuse.observation.metadata.step": key, "langfuse.observation.metadata.status": status}
-        if model:
-            attrs["langfuse.observation.model.name"] = model
-        if usage is not None:
-            attrs["langfuse.observation.usage_details"] = json.dumps(usage)
-        if costs is not None:
-            attrs["langfuse.observation.cost_details"] = json.dumps({**costs, "total": sum(costs.values())})
-        nanos = str(int(stamp * 1e9))
-        span = {"traceId": trace, "spanId": identifier, "name": name, "kind": 1,
-                "startTimeUnixNano": nanos, "endTimeUnixNano": nanos,
-                "status": {"code": 2 if status == "ERROR" else 1},
-                "attributes": [{"key": k, "value": {"stringValue": v}} for k, v in attrs.items()]}
-        return cls(span, sum(costs.values()) if costs is not None else None, generation)
-
-    @classmethod
-    def from_step(cls, run: str, conversation: str, row: dict):
-        """Read only typed metering and event metadata from a terminal transcript row.
-
-        :param row: A completed step from Antigravity's per-conversation transcript.
-        :param run: Stable study identifier.
-        :param conversation: Native conversation or blind submission ID.
-        :returns: Observation with the reported usage buckets.
-        """
-        kind = row["type"]
-        if not re.fullmatch(r"[A-Z_0-9]{1,80}", kind) or type(row["step_index"]) is not int:
-            raise ValueError("Invalid CLI event")
-        stamp = datetime.fromisoformat(row["created_at"]).timestamp()
-        model = row.get("model")
-        if not isinstance(model, str) or not re.fullmatch(r"[a-zA-Z0-9./:_-]{1,100}", model):
-            model = None
-        generation = kind == "PLANNER_RESPONSE" or model is not None
-        counts = [row.get("input_tokens"), row.get("cache_read_tokens", 0), row.get("output_tokens")]
-        usage = None
-        if all(type(value) is int and value >= 0 for value in counts):
-            prompt, cached, output = counts
-            usage = {"input": prompt, "input_cached_tokens": cached, "output": output}
-        return cls.record(run, conversation, str(row["step_index"]), kind, stamp, model,
-                          usage, generation=generation, status=row["status"])
-
 
 
 class Ledger:
@@ -111,6 +33,18 @@ class Ledger:
 
         :param path: Database shared by the trusted run services.
         """
+        # The controller and reviewer share the service-owned ledger. Research tools must
+        # only see the public budget, including on installations with a legacy 0644 ledger.
+        for suffix in ("", "-wal", "-shm"):
+            flags = os.O_RDWR | os.O_NOFOLLOW
+            try:
+                fd = os.open(str(path) + suffix, flags if suffix else flags | os.O_CREAT, 0o600)
+            except FileNotFoundError:
+                continue
+            try:
+                os.fchmod(fd, 0o600)
+            finally:
+                os.close(fd)
         self.db = sqlite3.connect(path, timeout=15)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("""CREATE TABLE IF NOT EXISTS spans(
@@ -246,49 +180,6 @@ class LangfuseCosts:
                 ledger.set_price(span, cost)
 
 
-class TranscriptReader:
-    """Poll the dedicated research account's parent and child conversation files.
-
-    :ivar brain: Native conversation directory.
-    """
-
-    def __init__(self, brain: Path, run: str, since: float):
-        """Bind the reader to a single run and its fixed start timestamp.
-
-        :param brain: Research account conversation directory.
-        :param run: Stable study identifier.
-        :param since: Study start time in UTC epoch seconds.
-        """
-        self.brain, self.run, self.since = brain, run, since
-        self.seen = {}
-
-    def collect(self, ledger: Ledger) -> None:
-        """Ingest finalized steps even while the terminal and the parent turn remain open.
-
-        :param ledger: Shared durable usage and delivery ledger.
-        """
-        for path in self.brain.glob("*/.system_generated/logs/transcript.jsonl"):
-            try:
-                conversation = str(UUID(path.parents[2].name))
-                stat = path.stat()
-                signature = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
-                if self.seen.get(path) == signature or stat.st_mtime < self.since:
-                    continue
-                with path.open("rb") as source:
-                    for line in source:
-                        if not line.endswith(b"\n"):
-                            break
-                        row = json.loads(line)
-                        if row.get("status") not in {"DONE", "ERROR", "CANCELLED"}:
-                            continue
-                        item = Observation.from_step(self.run, conversation, row)
-                        if int(item.span["startTimeUnixNano"]) >= int(self.since * 1e9):
-                            ledger.put(item)
-                self.seen[path] = signature
-            except (ValueError, KeyError, TypeError, OSError) as exc:
-                LOG.warning("Unable to read a CLI transcript (%s)", type(exc).__name__)
-
-
 def main() -> None:
     """Poll the CLI transcript store and deliver acknowledged OTLP batches every two seconds.
 
@@ -307,7 +198,8 @@ def main() -> None:
     sink = LangfuseOtlpSink(url, os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"], "antigravity")
     prices = LangfuseCosts(url, os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
     ledger = Ledger(args.db)
-    reader = TranscriptReader(args.brain, args.run, args.since)
+    scrubber = Scrubber.from_credentials(Path(os.environ["CREDENTIALS_DIRECTORY"]))
+    reader = IterationTraces(args.db.parent, args.brain, args.run, args.since, scrubber)
     while True:
         reader.collect(ledger)
         try:
