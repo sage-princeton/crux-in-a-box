@@ -60,6 +60,10 @@ class ResearchInputs:
         :param workspace: Dedicated destination directory outside the source checkout.
         """
         if (workspace / self.marker).is_file():
+            current = workspace / "AGENTS.md"
+            previous = {'afa940e9c31aed37f5a26dce03f0b48ad07249c1ac9ff393338e4689d56fe4e7'}
+            if current.is_file() and not current.is_symlink() and hashlib.sha256(current.read_bytes()).hexdigest() in previous:
+                shutil.copyfile(HERE / "workspace/AGENTS.md", current)
             return
         if workspace.exists():
             raise FileExistsError(f"Unrecognized existing workspace: {workspace}")
