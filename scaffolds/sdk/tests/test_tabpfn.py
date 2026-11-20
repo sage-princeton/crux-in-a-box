@@ -114,7 +114,9 @@ def script_panel(scaffold, *passed, rounds=1):
     """One scripted judge per panel model: each reads page 1, then returns its verdict."""
     judges = {}
     for model, accept in zip(PANEL, passed, strict=True):
-        verdict = Verdict(passed=accept, feedback=f"Overall: {5 if accept else 2}", next_prompt=None)
+        overall = 5 if accept else 2
+        verdict = Verdict(passed=accept, next_prompt=None, feedback=f"Overall: {overall}\n\nSCORES quality=3 "
+                          f"clarity=2 significance=3 originality=3 overall={overall} confidence=4 path=revise")
         turns = [call("read_pdf", {"path": "submission.pdf", "page": 1}, "pdf"), say(verdict.model_dump_json())]
         judges[model] = ScriptedModel(*turns * rounds)
     scaffold.runtime.models.update(judges)
@@ -128,6 +130,8 @@ def test_both_review_gates_use_the_three_model_panel(scaffold):
 
 def test_review_is_a_blind_archived_cached_panel_bound_to_pdf(scaffold):
     digest = submit(scaffold)
+    workspace = scaffold.context.workspace
+    workspace.write_file("REVIEW_REQUEST.json", json.dumps({"paper_sha256": digest, "direction": "dir1 | test"}))
     judges = script_panel(scaffold, True, False, True)
     gate = scaffold.loop.gates["research_review"]
     result = asyncio.run(gate.check(gate_context(scaffold)))
@@ -144,11 +148,17 @@ def test_review_is_a_blind_archived_cached_panel_bound_to_pdf(scaffold):
     assert record["panel"] == [{"reviewer": number, "model": model, "completed": True, "passed": accept}
                                for number, (model, accept) in enumerate(zip(PANEL, (True, False, True)), 1)]
     # The authors see every review; which model wrote which stays in the state directory.
-    workspace = scaffold.context.workspace
     published = json.loads(workspace.read_file(f"reviews/{archived[0].name}"))
     assert published == {"paper_sha256": digest, "verdict": record["verdict"]}
     status = workspace.read_file("REVIEW_STATUS.json")
     assert not any(model in status for model in PANEL) and "panel" not in json.loads(status)
+    # One history row per distinct review, kept in the state directory and rendered for the PI.
+    history = json.loads((scaffold.context.state_dir / "tabpfn/review_history.json").read_text())
+    assert len(history) == 1 and history[0]["direction"] == "dir1 | test"
+    assert history[0]["reviewers"][1] == {"quality": 3, "clarity": 2, "significance": 3, "originality": 3,
+                                          "overall": 2, "confidence": 4, "path": "revise"}
+    table = workspace.read_file("REVIEW_HISTORY.md")
+    assert "dir1 / test" in table and "5, 2, 5" in table and not any(model in table for model in PANEL)
     workspace.write_file("REVIEW_REQUEST.json", json.dumps({"paper_sha256": "old"}))
     assert not asyncio.run(gate.check(gate_context(scaffold))).passed
 

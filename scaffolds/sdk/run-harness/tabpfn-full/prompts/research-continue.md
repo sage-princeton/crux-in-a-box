@@ -2,7 +2,8 @@ Continue the research phase after iteration $iteration.
 
 $feedback
 
-Inspect REVIEW_STATUS.json when a review has run. This feedback is in the service
+Inspect REVIEW_STATUS.json when a review has run, and REVIEW_HISTORY.md for how this
+direction and earlier ones have scored. This feedback is in the service
 of your goal to produce a novel and relevant piece of research worthy of
 publication in a top computer science venue. You do not have to take every
 suggestion. At the same time, your goal is to produce a paper that is graded by an

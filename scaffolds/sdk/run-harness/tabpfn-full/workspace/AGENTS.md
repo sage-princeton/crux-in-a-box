@@ -42,11 +42,13 @@ after the main body and before references. Main body ≤9 pages; abstract ≤200
 Inspect the compiled PDF visually. Do not change the style or labels to evade caps.
 
 To request blind review, finish writing the PDF, compute its SHA-256, write
-REVIEW_REQUEST.json as `{"paper_sha256": "the actual digest"}`, and yield the PI
-iteration. The scaffold snapshots only the PDF as submission.pdf; the reviewer
+REVIEW_REQUEST.json as `{"paper_sha256": "the actual digest", "direction": "short
+direction name"}`, and yield the PI iteration. The scaffold snapshots only the PDF as submission.pdf; the reviewer
 receives no plan, conversation, previous verdict or author metadata. Keep the
 manuscript anonymous and free of revision cues. Reviews are archived automatically
-and surfaced in REVIEW_STATUS.json. Never edit those files. An unchanged PDF and
+and surfaced in REVIEW_STATUS.json. REVIEW_HISTORY.md lists every review so far with
+its direction and per-reviewer scores, and stays in your context across restarts; reuse
+one direction name for every draft of a direction. Never edit those files. An unchanged PDF and
 rubric reuse the same verdict, including after restart. A changed final PDF is
 reviewed again. Acceptance is Overall ≥5/6, not an author certification.
 
