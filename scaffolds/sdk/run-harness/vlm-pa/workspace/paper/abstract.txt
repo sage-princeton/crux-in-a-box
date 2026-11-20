@@ -1,0 +1,2 @@
+This scaffold will become a paper answering the research question in RESEARCH.md.
+No empirical or theoretical result is claimed at launch.
