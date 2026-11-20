@@ -6,7 +6,7 @@ import math
 import os
 import re
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from uuid import UUID
@@ -32,6 +32,27 @@ class Iteration:
         return f"iteration-{self.number:06d}"
 
 
+@dataclass
+class AgentMessages:
+    """User-visible inputs and reported work for a native conversation."""
+
+    request: str = ""
+    response: str = ""
+    reports: dict[int, str] = field(default_factory=dict)
+
+    def output(self) -> dict:
+        """Return the latest public reply and recent authored board posts in board order.
+
+        :returns: Display fields with content. Earlier posts keep their individual observations.
+        """
+        output = {}
+        if self.reports:
+            output["board_posts"] = [self.reports[key] for key in sorted(self.reports)[-8:]]
+        if self.response:
+            output["response"] = self.response
+        return output
+
+
 class IterationTraces:
     """Project the controller journal, native roster, board, pre-tool events and terminal steps."""
 
@@ -53,6 +74,12 @@ class IterationTraces:
         self.root_status = {}
         self.rosters = {}
         self.layouts = {}
+        self.messages = {}
+        self.prompts = {}
+        self.final_responses = {}
+        self.actors = {}
+        self.delegations = {}
+        self.displayed = {}
 
     def iterations(self) -> list[Iteration]:
         """Read streamed attempts including interrupted attempts; leave legacy traces intact.
@@ -110,7 +137,7 @@ class IterationTraces:
             return
 
     def event(self, ledger, iteration, conversation, key, name, stamp, parent=None,
-              kind="event", status="DONE", **fields) -> str:
+              kind="event", status="DONE", *, snapshot=False, **fields) -> str:
         """Persist one deterministic node or event independent of the parent's lifetime.
 
         :param ledger: Shared delivery outbox.
@@ -122,12 +149,20 @@ class IterationTraces:
         :param parent: Parent span ID.
         :param kind: Langfuse observation type.
         :param status: Event status.
+        :param snapshot: Skip unchanged live summaries already published by this collector.
         :param fields: Native IO and metadata.
         :returns: Stable span ID.
         """
+        if snapshot:
+            identity = (conversation, key)
+            version = (name, stamp, parent, kind, status, fields)
+            if self.displayed.get(identity) == version:
+                return span_id(self.run, conversation, key)
         item = Observation.record(self.run, conversation, key, name, stamp, scope=iteration.scope,
                                   parent=parent, observation_type=kind, fields=fields, status=status)
         ledger.put(item)
+        if snapshot:
+            self.displayed[identity] = version
         return item.span["spanId"]
 
     def calls(self, conversation: str) -> dict:
@@ -167,7 +202,8 @@ class IterationTraces:
         if previous and previous[0] == layout_version:
             _, handles, agents = previous
         else:
-            agents = {coordinator: self.event(ledger, it, coordinator, "agent", "coordinator", it.started, root, "agent")}
+            agents = {coordinator: span_id(self.run, coordinator, "agent")}
+            self.actors[coordinator] = ("coordinator", it.started, root, {})
             spawns = {}
             for step, call in calls.items():
                 args = call["args"]
@@ -188,8 +224,9 @@ class IterationTraces:
                     step, call = spawns[handle]
                     parent, stamp = span_id(self.run, coordinator, f"tool-{step}"), call["time"]
                     fields["input"] = call["args"].get("brief", "")
-                agents[child] = self.event(ledger, it, child, "agent", handle, stamp, parent,
-                                           "agent", **fields)
+                    self.delegations[(coordinator, step)] = child
+                self.actors[child] = (handle, stamp, parent, fields)
+                agents[child] = span_id(self.run, child, "agent")
             self.layouts[coordinator] = layout_version, handles, agents
         for row in self.rows(f"{directory}/board.jsonl", context=tuple(sorted(handles.items()))):
             author, body = row.get("agent"), row.get("text")
@@ -205,6 +242,11 @@ class IterationTraces:
                 stamp = datetime.fromisoformat(row["time"]).timestamp()
             except (KeyError, TypeError, ValueError):
                 continue
+            if not brief:
+                messages = self.messages.setdefault(owner, AgentMessages())
+                messages.reports[row["seq"]] = fields["output"]
+                if len(messages.reports) > 8:
+                    del messages.reports[min(messages.reports)]
             self.event(ledger, it, coordinator, f"board-{row['seq']}", "worker.brief" if brief else "board.post",
                        stamp, agents[owner], **fields)
         return agents
@@ -222,6 +264,8 @@ class IterationTraces:
         version = (self.seen.get(hook_path), parent)
         if it and self.emitted_calls.get(conversation) != version:
             for step, call in calls.items():
+                if (conversation, step) in self.delegations:
+                    continue
                 self.event(ledger, it, conversation, f"tool-{step}", call["name"],
                            call["time"], parent, "tool", "STARTED", input=call["args"])
             self.emitted_calls[conversation] = version
@@ -236,6 +280,17 @@ class IterationTraces:
                 location = {"scope": it.scope, "parent": parent} if it else {}
                 ledger.put(Observation.from_step(self.run, conversation, row, **location))
                 step = row["step_index"]
+                content = row.get("content")
+                if it and conversation in self.actors and isinstance(content, str) and content.strip():
+                    messages = self.messages.setdefault(conversation, AgentMessages())
+                    if row["type"] == "PLANNER_RESPONSE":
+                        messages.response = content
+                    if row["type"] == "USER_INPUT" and not messages.request:
+                        # Older controllers only have the native envelope. Require both boundaries
+                        # before publishing it so CLI-added settings are never mistaken for user input.
+                        match = re.match(r"\s*<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", content, re.DOTALL)
+                        if match:
+                            messages.request = match[1]
                 if it and step in calls and row["type"] == "GENERIC" and isinstance(row.get("content"), str):
                     output = row["content"]
                     tool = span_id(self.run, conversation, f"tool-{step}")
@@ -302,8 +357,6 @@ class IterationTraces:
         for it in iterations:
             root = span_id(self.run, it.scope, "start")
             if self.root_status.get(it.number) != it.status:
-                self.event(ledger, it, it.scope, "start", it.scope, it.started, status="STARTED",
-                           **{"metadata.phase": it.phase})
                 if it.ended:
                     self.event(ledger, it, it.scope, "end", "iteration.finished", it.ended, root, status=it.status)
                 self.root_status[it.number] = it.status
@@ -323,7 +376,77 @@ class IterationTraces:
                     it = iterations[index]
                     parent = span_id(self.run, it.scope, "start")
             self.conversation(ledger, conversation, it, parent, self.calls(conversation) if it else {})
+        for it in iterations:
+            self.publish_messages(ledger, it)
         self.task_output(ledger)
+
+    def final_response(self, it: Iteration) -> str:
+        """Read the public response from a returned CLI, including text clipped in its transcript.
+
+        :param it: Controller attempt associated with a native conversation.
+        :returns: Public CLI response or an empty string for an unfinished or failed attempt.
+        """
+        if it.status != "returned" or not it.coordinator:
+            return ""
+        if it.number not in self.final_responses:
+            try:
+                with open_regular(self.state, it.scope + ".jsonl") as stream:
+                    for line in stream:
+                        if not line.endswith(b"\n"):
+                            continue
+                        envelope = json.loads(line)
+                        result = envelope.get("result") or {}
+                        if (envelope.get("event") == "result" and result.get("conversation_id") == it.coordinator
+                                and isinstance(result.get("response"), str)):
+                            self.final_responses[it.number] = result["response"]
+                    self.final_responses.setdefault(it.number, "")
+            except (ValueError, OSError):
+                pass
+        return self.final_responses.get(it.number, "")
+
+    def publish_messages(self, ledger, it: Iteration) -> None:
+        """Update the iteration, agent and delegate call with their own current input and output.
+
+        :param ledger: Durable outbox shared with live metering.
+        :param it: Controller iteration whose agent tree has just been collected.
+        """
+        if it.number not in self.prompts:
+            try:
+                with open_regular(self.state, it.scope + ".prompt") as stream:
+                    self.prompts[it.number] = stream.read().decode()
+            except (OSError, UnicodeError):
+                pass
+        coordinator = self.messages.get(it.coordinator, AgentMessages())
+        prompt = self.prompts.get(it.number) or coordinator.request
+        fields = {}
+        if prompt:
+            fields["input"] = prompt
+        output = coordinator.output()
+        if final := self.final_response(it):
+            output["response"] = final
+        if output:
+            fields["output"] = output
+        self.event(ledger, it, it.scope, "start", it.scope, it.started, status="STARTED",
+                   snapshot=True, **fields, **{"metadata.phase": it.phase})
+        if it.coordinator not in self.actors:
+            return
+        _, _, agents = self.layouts[it.coordinator]
+        for conversation in agents:
+            name, stamp, parent, initial = self.actors[conversation]
+            data = dict(fields) if conversation == it.coordinator else dict(initial)
+            output = self.messages.get(conversation, AgentMessages()).output()
+            if conversation != it.coordinator and output:
+                data["output"] = output
+            self.event(ledger, it, conversation, "agent", name, stamp, parent, "agent", snapshot=True, **data)
+        for step, call in self.starts.get(it.coordinator, {}).items():
+            child = self.delegations.get((it.coordinator, step))
+            if child is None:
+                continue
+            data = {"input": call["args"]}
+            if output := self.messages.get(child, AgentMessages()).output():
+                data["output"] = output
+            self.event(ledger, it, it.coordinator, f"tool-{step}", "swarm", call["time"],
+                       agents[it.coordinator], "tool", "STARTED", snapshot=True, **data)
 
     def first_step(self, conversation: str) -> float:
         """Read the first native timestamp for otherwise unattributed metering.

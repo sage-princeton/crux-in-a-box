@@ -68,7 +68,10 @@ class Observation:
                  "langfuse.observation.type": "generation" if generation else (observation_type or "event"),
                  "langfuse.observation.metadata.step": key, "langfuse.observation.metadata.status": status}
         for field, value in (fields or {}).items():
-            attrs["langfuse.observation." + field] = value if isinstance(value, str) else json.dumps(value)
+            value = value if isinstance(value, str) else json.dumps(value)
+            attrs["langfuse.observation." + field] = value
+            if parent is None and field in {"input", "output"}:
+                attrs["langfuse.trace." + field] = value
         if model:
             attrs["langfuse.observation.model.name"] = model
         if usage is not None:

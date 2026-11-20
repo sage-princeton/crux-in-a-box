@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from uuid import UUID
 
-from budget import Budget, publish, runpod_note
+from budget import Budget, publish, publish_text, runpod_note
 from prepare import VERSION
 from regular_files import open_regular
 from render import render
@@ -283,6 +283,7 @@ class ResearchLoop:
                 prompt = render("iteration.md", brief=brief, continuation=continuation, phase=phase, iteration=number,
                                 **{"remaining-seconds": remaining, "spent-usd": f"{b['metered_usd']:.4f}",
                                    "limit-usd": f"{b['limit_usd']:.2f}", "runpod-budget": runpod_note(b)})
+                publish_text(self.state / f"iteration-{number:06d}.prompt", prompt, 0o600)
                 log = f"iteration-{number:06d}.jsonl"
                 seconds = min(self.turn_seconds, remaining)
                 if phase == "research":

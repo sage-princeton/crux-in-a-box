@@ -94,6 +94,73 @@ class LiveTraceTests(unittest.TestCase):
         self.assertEqual([o["name"] for o in self.ledger.pending()], ["iteration.finished"])
         self.assertEqual(self.ledger.total(), 0.12)
 
+    def test_agent_io_on_root_coordinator_delegate_and_worker(self):
+        """Expose the rendered prompt and public replies in the rows operators select.
+
+        Check a live update, repeat collection after restart, and exclude the private reasoning
+        field and the CLI's appended metadata from every observation.
+        """
+        prompt = "/swarm Research milestone. " + self.secret
+        (self.root / (self.scope + ".prompt")).write_text(prompt)
+        self.append(self.logs[self.coord] / "tabpfn-tool-starts.jsonl", {
+            "step": 2, "time": self.stamp, "name": "swarm",
+            "args": {"action": "add", "name": "analyst", "brief": "Compute the estimate"}})
+        (self.swarm / "members.json").write_text(json.dumps({"members": {"analyst": {"conversation_id": self.child}}}))
+        self.reader.collect(self.ledger)
+        ids = {s["name"]: s["spanId"] for s in self.ledger.pending()}
+        self.ledger.ack(self.ledger.pending())
+        stamp = datetime.fromtimestamp(self.stamp, UTC).isoformat()
+        for source, response in [(self.child, "I verified the estimate"), (self.coord, "I submitted the paper")]:
+            self.append(self.logs[source] / "transcript.jsonl", {
+                "step_index": 7, "type": "PLANNER_RESPONSE", "status": "DONE", "created_at": stamp,
+                "content": response, "thinking": "private deliberation", "model": "neon"})
+        self.append(self.swarm / "board.jsonl", {"agent": "analyst", "text": "Computed: " + self.secret,
+                                                 "seq": 3, "time": stamp})
+        self.reader.collect(self.ledger)
+        updates = {s["name"]: s for s in self.ledger.pending()}
+        for name in (self.scope, "coordinator", "analyst", "swarm"):
+            row = updates[name]
+            self.assertEqual(row["spanId"], ids[name])
+            attrs = {k["key"]: k["value"]["stringValue"] for k in row["attributes"]}
+            if name in (self.scope, "coordinator"):
+                self.assertEqual(attrs["langfuse.observation.input"], "/swarm Research milestone. " + self.secret)
+                self.assertEqual(json.loads(attrs["langfuse.observation.output"])["response"], "I submitted the paper")
+                if name == self.scope:
+                    self.assertEqual(attrs["langfuse.trace.input"], attrs["langfuse.observation.input"])
+                    self.assertEqual(attrs["langfuse.trace.output"], attrs["langfuse.observation.output"])
+            else:
+                self.assertIn("Compute the estimate", attrs["langfuse.observation.input"])
+                self.assertEqual(json.loads(attrs["langfuse.observation.output"]),
+                                 {"response": "I verified the estimate", "board_posts": ["Computed: " + self.secret]})
+        self.assertNotIn("private deliberation", json.dumps(updates))
+        self.assertIn(self.secret, json.dumps(updates))
+        self.ledger.ack(self.ledger.pending())
+        self.fresh_reader().collect(self.ledger)
+        self.assertEqual(self.ledger.pending(), [])
+
+    def test_terminal_reply_supersedes_transcript_preview(self):
+        """Publish the complete matching CLI result on the same coordinator and iteration IDs."""
+        self.journal.finish(1, "returned")
+        self.append(self.root / (self.scope + ".jsonl"), {"event": "result", "result": {
+            "conversation_id": self.coord, "response": "Returned manuscript " + self.secret}})
+        self.reader.collect(self.ledger)
+        for row in self.ledger.pending():
+            if row["name"] in (self.scope, "coordinator"):
+                attrs = {a["key"]: a["value"]["stringValue"] for a in row["attributes"]}
+                self.assertEqual(json.loads(attrs["langfuse.observation.output"])["response"],
+                                 "Returned manuscript " + self.secret)
+
+    def test_legacy_prompt_excludes_native_envelope(self):
+        """Recover a delimited historical user request and omit CLI-generated settings."""
+        self.append(self.logs[self.coord] / "transcript.jsonl", {
+            "step_index": 1, "type": "USER_INPUT", "status": "DONE",
+            "created_at": datetime.fromtimestamp(self.stamp, UTC).isoformat(),
+            "content": "<USER_REQUEST> draft it </USER_REQUEST><ADDITIONAL_METADATA>private setting"})
+        self.reader.collect(self.ledger)
+        rows = {row["name"]: row for row in self.ledger.pending()}
+        self.assertIn("draft it", str(rows["coordinator"]))
+        self.assertNotIn("private setting", str(rows))
+
     def test_late_tool_and_partial_record(self):
         """Revisit an already metered result after its pre-tool file arrives."""
         stamp = datetime.fromtimestamp(self.stamp, UTC).isoformat()
