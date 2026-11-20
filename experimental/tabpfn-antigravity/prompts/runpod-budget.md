@@ -1,0 +1,1 @@
+RunPod billing is <status>. Last confirmed pod charges <billed> against $<ceiling>. Latest live rate <rate> across <pods> running pods. Provider charges can lag. While billing is initializing, pending, stale or unavailable, defer new GPU allocations and retrieve results from active pods.

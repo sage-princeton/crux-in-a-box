@@ -23,7 +23,7 @@ Verify the instance's SSH host key through your AWS operator channel and record 
 | Environment variable | Destination |
 | --- | --- |
 | AI_STUDIO_API_DEV_KEY | Antigravity CLI as GEMINI_API_KEY |
-| RUNPOD_API_KEY (optional) | Run-owned GPU pods for research and reproduction |
+| RUNPOD_API_KEY (optional) | Run-owned GPU pods for research, reproduction and billing |
 | HF_TOKEN (optional) | Hugging Face checkpoint access |
 | PRIOR_LABS_API_KEY (optional) | Prior Labs access, also exposed to the client as TABPFN_TOKEN |
 | OPENROUTER_API_KEY | Independent paper reviewer |
@@ -34,13 +34,13 @@ Verify the instance's SSH host key through your AWS operator channel and record 
 ./deploy.sh
 ```
 
-Configure prints the absolute start command for the installed revision. Run it on the verified host when ready to start the study clock. The target resumes on reboot. The default clock is seven days with a $15,000 model budget. To run a short study, pass `--seconds SECONDS --usd USD` to `host.py start` on the **first** start. A restart retains the original limits and start time.
+Configure prints the absolute start command for the installed revision. Run it on the verified host when ready to start the study clock. The target resumes on reboot. The default clock is seven days with a $15,000 model budget. To run a short study, pass `--seconds SECONDS --usd USD --runpod-usd USD` to `host.py start` on the **first** start. A restart retains the original limits and start time.
 
 ## Research and review
 
 The controller gives every fresh session the study brief, phase instructions, and the current resource envelope. The question, standings, paper and research ledger live in `/home/tabpfn-research/research`. The CLI runs as the unprivileged research user. Autonomous shell commands are enabled inside this dedicated instance. Research requires network access to public literature, datasets and any licensed PFN weights selected for the study. Create a workspace virtual environment with python3 -m venv .venv for extra dependencies.
 
-The CPU host can submit GPU jobs when the operator supplies a RunPod key. The separate $1,000 GPU allowance is tracked by the researchers in PLAN.md. Retrieve artifacts and terminate pods tagged for this run before shutdown.
+The CPU host can submit GPU jobs when the operator supplies a RunPod key. The separate RunPod ceiling defaults to $1,000. Give every dedicated pod the environment variable `CRUX_RUN_SLUG=$RUN_SLUG`. The meter discovers matching pods every 30 seconds and retains discovered IDs after termination. Before terminating a short job, verify its ID appears in BUDGET.json under `runpod.tracked_pod_ids`. The iteration prompt and budget hook report the last confirmed total, hourly rate and live pod count. The provider's hour-bucketed total covers GPU, CPU and pod disk and can lag. Pending or stale readings ask the researchers to defer new GPU allocations. A confirmed bill reaching 90% enters the final reserve and reaching 100% stops model work. Retrieve artifacts before shutdown. On completion or a hard stop, the meter terminates remaining run-tagged pods and records `public/RUNPOD_CLEANUP.json`. Manual stops preserve pods for resumption. Separate network volumes are outside pod billing. [RunPod billing API](https://docs.runpod.io/api-reference-v2/billing/get-pod-billing-history)
 
 The research model uses the dedicated AI Studio key only. The CLI's xhigh setting controls reasoning effort. Google separately controls per-request Priority service. The pinned CLI does not expose a verified Priority selector or return the served tier through the transcript. Configure the matching Neon model definition and its input, input_cached_tokens and output prices in the Langfuse project. The exporter sends exclusive token counts and reads back the server-calculated USD cost. Allow up to one minute for indexing. If costs remain unresolved, the controller suspends new model calls. Configure pricing before launch; historical generations may need reprocessing in Langfuse after a tariff correction. Reviews use the charges reported by OpenRouter. Both sources update the budget published to the swarm. [Google Priority inference](https://ai.google.dev/gemini-api/docs/priority-inference)
 
@@ -51,7 +51,7 @@ The first 90% of the envelope is for research. Acceptance or entry into the fina
 ## Operate the box
 
 ```bash
-systemctl status tabpfn-research tabpfn-budget tabpfn-review tabpfn-traces
+systemctl status tabpfn-research tabpfn-budget tabpfn-runpod tabpfn-review tabpfn-traces
 sudo journalctl -u tabpfn-research -u tabpfn-review -u tabpfn-traces -f
 cat /var/lib/tabpfn-study/public/BUDGET.json
 sudo systemctl stop tabpfn-study.target

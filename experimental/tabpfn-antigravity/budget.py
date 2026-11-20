@@ -6,10 +6,13 @@ import os
 import subprocess
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 from render import render
 from telemetry import Ledger
+
+DEFAULT_RUNPOD_USD = 1000
 
 
 def publish_text(path: Path, text: str, mode: int = 0o644) -> None:
@@ -55,23 +58,26 @@ class Budget:
         self.start_time = config["started_at"]
         self.seconds = config["wall_seconds"]
         self.ceiling = config["limit_usd"]
+        self.runpod_ceiling = config.get("runpod_limit_usd", 1000)  # Historical runs predate the persisted GPU limit.
         self.ledger = Ledger(state / "traces.db")
 
     @classmethod
-    def start(cls, state: Path, seconds: int = 604800, limit: float = 15000, *, now: float | None = None):
+    def start(cls, state: Path, seconds: int = 604800, limit: float = 15000, *, runpod_limit: float = DEFAULT_RUNPOD_USD, now: float | None = None):
         """Initialize the clock once, preserving its original start on a service restart.
 
         :param state: Trusted service-owned run directory.
         :param seconds: Full study wall time, including finalization.
         :param limit: Combined research and independent review model costs, in USD.
+        :param runpod_limit: Independent RunPod ceiling in USD.
         :param now: Override for the current UTC epoch time in tests.
         :returns: Budget opened against the persisted clock.
         """
-        if seconds <= 0 or not math.isfinite(limit) or limit <= 0:
+        if seconds <= 0 or not all(math.isfinite(v) and v > 0 for v in (limit, runpod_limit)):
             raise ValueError("Budget limits must be positive and finite")
         state.mkdir(parents=True, exist_ok=True)
         path = state / "budget.json"
-        config = {"started_at": time.time() if now is None else now, "wall_seconds": seconds, "limit_usd": limit}
+        config = {"started_at": time.time() if now is None else now, "wall_seconds": seconds, "limit_usd": limit,
+                  "runpod_limit_usd": runpod_limit}
         with tempfile.NamedTemporaryFile(dir=state, mode="w") as fresh:
             json.dump(config, fresh)
             fresh.flush()
@@ -81,23 +87,24 @@ class Budget:
             except FileExistsError:
                 pass
         budget = cls(state)
-        if (budget.seconds, budget.ceiling) != (seconds, limit):
+        if (budget.seconds, budget.ceiling, budget.runpod_ceiling) != (seconds, limit, runpod_limit):
             raise ValueError("Existing run has different limits")
         return budget
 
-    def phase(self, elapsed: float, spend: float, unpriced: int) -> str:
+    def phase(self, elapsed: float, spend: float, unpriced: int, runpod_spend: float | None = None) -> str:
         """Select the operating phase from time and cost across all conversations.
 
         :param elapsed: Elapsed study seconds.
         :param spend: Metered model charges in USD.
+        :param runpod_spend: Most recent known run-owned pod bill, when available.
         :param unpriced: Count of generations awaiting trustworthy pricing.
         :returns: Current operating phase.
         """
-        if elapsed >= self.seconds or spend >= self.ceiling:
+        if elapsed >= self.seconds or spend >= self.ceiling or (runpod_spend or 0) >= self.runpod_ceiling:
             return "stopped"
         if unpriced:
             return "accounting-hold"
-        if elapsed >= 0.9 * self.seconds or spend >= 0.9 * self.ceiling:
+        if elapsed >= 0.9 * self.seconds or spend >= 0.9 * self.ceiling or (runpod_spend or 0) >= 0.9 * self.runpod_ceiling:
             return "finalize"
         return "research"
 
@@ -110,7 +117,14 @@ class Budget:
         now = time.time() if now is None else now
         spend, unpriced = self.ledger.total(), self.ledger.unpriced()
         elapsed = max(0, now - self.start_time)
-        return {"phase": self.phase(elapsed, spend, self.ledger.overdue(now)), "as_of": now, "started_at": self.start_time,
+        try:
+            gpu = json.loads((self.state / "runpod.json").read_text())
+        except FileNotFoundError:
+            gpu = {"status": "initializing"}
+        if gpu["status"] != "disabled" and now - gpu.get("checked_at", now) > 75:
+            gpu["status"] = "stale"
+        phase = self.phase(elapsed, spend, self.ledger.overdue(now), gpu.get("billed_usd"))
+        return {"phase": phase, "runpod": gpu, "runpod_limit_usd": self.runpod_ceiling, "as_of": now, "started_at": self.start_time,
                 "deadline": self.start_time + self.seconds, "remaining_seconds": max(0, self.seconds - elapsed),
                 "limit_usd": self.ceiling, "metered_usd": spend, "unpriced_generations": unpriced}
 
@@ -123,14 +137,31 @@ class Budget:
         while True:
             snapshot = self.status()
             publish(public, snapshot)
-            if (public.parent / "RUN_OUTCOME.json").is_file():
-                subprocess.run(["systemctl", "stop", *units], check=True)
-                return
-            if snapshot["phase"] == "stopped":
+            finished = (public.parent / "RUN_OUTCOME.json").is_file()
+            if not finished and snapshot["phase"] == "stopped":
                 publish(self.state / "stop.json", snapshot, 0o600)
+            if finished or snapshot["phase"] == "stopped":
                 subprocess.run(["systemctl", "stop", *units], check=True)
+                (self.state / "runpod-cleanup-ready").touch()
                 return
             time.sleep(min(2, snapshot["remaining_seconds"]))
+
+
+def runpod_note(snapshot: dict) -> str:
+    """Render lag-aware RunPod billing separately from the inference allowance.
+
+    :param snapshot: Trusted budget snapshot with the most recent provider measurement.
+    :returns: Resource context for both fresh and in-flight conversations.
+    """
+    gpu = snapshot["runpod"]
+    if gpu["status"] == "disabled" and gpu.get("billed_usd") is None:
+        return render("runpod-disabled.md")
+    billed = gpu.get("billed_usd")
+    measured = gpu.get("billed_at")
+    amount = "unknown" if billed is None else f"${billed:.4f} as of {datetime.fromtimestamp(measured, UTC):%H:%M UTC %Y-%m-%d}"
+    rate, pods = gpu.get("hourly_usd"), gpu.get("running_pods")
+    return render("runpod-budget.md", status=gpu["status"], billed=amount, ceiling=f"{snapshot['runpod_limit_usd']:.2f}",
+                  rate="unknown" if rate is None else f"${rate:.4f}/hour", pods="unknown" if pods is None else pods)
 
 
 def hook_response(snapshot: dict) -> dict:
@@ -145,6 +176,7 @@ def hook_response(snapshot: dict) -> dict:
                 render("budget-hold.md", phase=phase)}]}
     note = render("budget-note.md", phase=phase, **{"remaining-seconds": round(snapshot["remaining_seconds"]),
                   "spent-usd": f"{snapshot['metered_usd']:.4f}", "limit-usd": f"{snapshot['limit_usd']:.2f}"})
+    note += " " + runpod_note(snapshot)
     if phase == "finalize":
         note += " " + render("budget-final.md")
     return {"injectSteps": [{"ephemeralMessage": note}]}
@@ -161,6 +193,7 @@ def main() -> None:
     start.add_argument("state", type=Path)
     start.add_argument("--seconds", type=int, default=604800)
     start.add_argument("--usd", type=float, default=15000)
+    start.add_argument("--runpod-usd", type=float, default=DEFAULT_RUNPOD_USD)
     watch = actions.add_parser("watch")
     watch.add_argument("state", type=Path)
     watch.add_argument("public", type=Path)
@@ -169,7 +202,7 @@ def main() -> None:
     hook.add_argument("public", type=Path)
     args = parser.parse_args()
     if args.action == "start":
-        print(Budget.start(args.state, args.seconds, args.usd).start_time)
+        print(Budget.start(args.state, args.seconds, args.usd, runpod_limit=args.runpod_usd).start_time)
     elif args.action == "watch":
         Budget(args.state).watch(args.public, args.units)
     else:

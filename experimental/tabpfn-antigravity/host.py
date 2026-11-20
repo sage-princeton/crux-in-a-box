@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from budget import DEFAULT_RUNPOD_USD
 from prepare import HERE, VERSION, install_cli
 from resources import OPTIONAL
 
@@ -63,6 +64,17 @@ WorkingDirectory={HERE}
     units = {}
     units["tabpfn-budget.service"] = common + f"""ExecStart=/usr/bin/python3 {HERE}/budget.py watch {STUDY} {PUBLIC}/BUDGET.json tabpfn-research.service tabpfn-review.service
 """
+    units["tabpfn-runpod.service"] = common + f"""User={CONTROL}
+EnvironmentFile={CONF}/runpod.env
+Environment=RUN_SLUG={slug}
+Environment=PYTHONPATH={SDK}:{SDK}/run-harness/tabpfn-full
+ExecStart={VENV}/bin/python {HERE}/runpod_meter.py {STUDY}
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+InaccessiblePaths={CONF}
+ReadWritePaths={STUDY}
+"""
     units["tabpfn-traces.service"] = common + f"""EnvironmentFile={CONF}/langfuse.env
 ExecStart=/usr/bin/python3 {HERE}/host.py trace {slug}
 ProtectSystem=strict
@@ -98,7 +110,7 @@ PrivateTmp=true
 """
     units["tabpfn-study.target"] = """[Unit]
 Description=TabPFN Antigravity research experiment
-Wants=network-online.target tabpfn-budget.service tabpfn-traces.service tabpfn-review.service tabpfn-research.service
+Wants=network-online.target tabpfn-runpod.service tabpfn-budget.service tabpfn-traces.service tabpfn-review.service tabpfn-research.service
 [Install]
 WantedBy=multi-user.target
 """
@@ -166,6 +178,7 @@ def credentials(values: dict) -> None:
     required = {key for keys in groups.values() for key in keys}
     if not required.issubset(values) or set(values) - required - set(OPTIONAL):
         raise ValueError("Missing required or unexpected study credential fields")
+    groups["runpod"] = ["RUNPOD_API_KEY"] if "RUNPOD_API_KEY" in values else []
     groups["research"].extend(key for key in OPTIONAL if key in values)
     if not all(isinstance(s, str) and s and all(c.isprintable() for c in s) for s in values.values()):
         raise ValueError("Invalid environment field")
@@ -190,6 +203,7 @@ def main() -> None:
     start = actions.add_parser("start")
     start.add_argument("--seconds", type=int, default=604800)
     start.add_argument("--usd", type=float, default=15000)
+    start.add_argument("--runpod-usd", type=float, default=DEFAULT_RUNPOD_USD)
     actions.add_parser("trace").add_argument("slug")
     args = parser.parse_args()
     if args.action == "install":
@@ -197,10 +211,10 @@ def main() -> None:
     elif args.action == "credentials":
         credentials(json.load(sys.stdin))
     elif args.action == "start":
-        if any(not (CONF / name).is_file() for name in ("research.env", "review.env", "langfuse.env")):
+        if any(not (CONF / name).is_file() for name in ("research.env", "review.env", "langfuse.env", "runpod.env")):
             raise ValueError("Configure study credentials before starting")
         run("runuser", "-u", CONTROL, "--", "python3", HERE / "budget.py", "start", STUDY,
-            "--seconds", args.seconds, "--usd", args.usd)
+            "--seconds", args.seconds, "--usd", args.usd, "--runpod-usd", args.runpod_usd)
         run("systemctl", "enable", "--now", "tabpfn-study.target")
     else:
         epoch = json.loads((STUDY / "budget.json").read_text())["started_at"]
