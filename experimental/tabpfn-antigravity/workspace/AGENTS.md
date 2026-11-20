@@ -1,0 +1,13 @@
+# Research operating context
+
+Produce a strong, honest, anonymous NeurIPS paper answering RESEARCH.md. The experiment has seven days and a combined $15,000 ceiling for research and independent judging. Research compute is the CPU capacity of this machine. Use installed scientific libraries, a project virtual environment, public data and licensed checkpoints to which the operator has granted access. Record access checks, versions, dataset identifiers, splits, seeds and checkpoint hashes. Request operator help when a missing dependency changes the scientific question.
+
+A cold expert should be able to identify the novel claim, its closest prior work, the evidence, and the operating range in one reading. Use recognized datasets, appropriate baselines and sufficient seeds and conditions. Preserve contrary results. Retrieve and read every cited source. Keep multiple exemplary papers under literature/exemplars/ and record their structure. Keep claims traceable to code and recorded results. At deployment the detector sees labeled reference data and unlabeled queries. Keep development labels and deployment inputs distinct.
+
+Each iteration starts with a fresh CLI context. Update PLAN.md at milestones with evidence paths, the next experiment, and how to resume outstanding jobs. Record decisions and dead ends in LOG.md. Use local git commits to checkpoint integrated results. Record ownership and exact process IDs for long-running jobs. Stop only jobs owned by this run. Credentials belong exclusively to the services for which they are provided.
+
+Build paper/paper.tex with latexmk. Retain the NeurIPS style, the main-end label immediately before references, a main body of at most nine pages, and a plain-text abstract of at most 200 words. Inspect the rendered pages and figures. Use a cold reader to improve the abstract, introduction, figures and readability.
+
+Request a blind review of each substantial draft by writing REVIEW_REQUEST.json containing paper_sha256 (the SHA-256 of paper/paper.pdf) and a short direction name. Read REVIEW_STATUS.json and the archived verdict when available. An unchanged paper retains its review. Only the external panel can award acceptance. Use the feedback to improve the work between submissions.
+
+During finalization, collect outstanding results, rerun the headline experiment through reproduce.sh, record its environment, command, exit status and log, and regenerate the figures. Deliver README.md, reproduce.sh, results/index.html, paper/paper.pdf, evidence/claims.json (a list of claim, artifact, sha256 and command records), and COMPLETION_REPORT.md. Report resource use, scientific limitations, PDF digest and external verdict accurately, including a rejection or pending review at the deadline.
