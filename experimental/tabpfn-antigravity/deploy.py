@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from prepare import HERE
+from resources import OPTIONAL
 
 CANONICAL_AMI = "/aws/service/canonical/ubuntu/server/noble/stable/current/amd64/hvm/ebs-gp3/ami-id"
 SOURCE = HERE.parents[1]
@@ -121,6 +122,7 @@ class Deployment:
         values = {"GEMINI_API_KEY": os.environ["AI_STUDIO_API_DEV_KEY"]}
         values.update({k: os.environ[k] for k in ("OPENROUTER_API_KEY", "LANGFUSE_BASE_URL",
                                                   "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY")})
+        values.update({k: os.environ[k] for k in OPTIONAL if os.environ.get(k)})
         instance = self.instance(slug)
         if not instance or instance["State"]["Name"] != "running":
             raise ValueError("The tagged study instance must be running")

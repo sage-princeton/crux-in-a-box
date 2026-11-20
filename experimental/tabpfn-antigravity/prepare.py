@@ -61,7 +61,7 @@ class ResearchInputs:
         """
         if (workspace / self.marker).is_file():
             current = workspace / "AGENTS.md"
-            previous = {'afa940e9c31aed37f5a26dce03f0b48ad07249c1ac9ff393338e4689d56fe4e7'}
+            previous = {'afa940e9c31aed37f5a26dce03f0b48ad07249c1ac9ff393338e4689d56fe4e7', 'e807dd963c26c2b82e2d45ac14f9701fd6f522980ed2bbe6dd70e447465d00c0'}
             if current.is_file() and not current.is_symlink() and hashlib.sha256(current.read_bytes()).hexdigest() in previous:
                 shutil.copyfile(HERE / "workspace/AGENTS.md", current)
             return

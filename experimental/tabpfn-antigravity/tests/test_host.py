@@ -8,7 +8,7 @@ class HostTests(unittest.TestCase):
     """Check the research, judge and exporter units have isolated environment files."""
 
     def test_credentials_are_scoped_to_one_service(self):
-        """The research model receives only the Google key and the blind panel only the review key."""
+        """Research and the blind panel receive their own environment files."""
         units = service_files("tabpfn-check")
         self.assertIn("research.env", units["tabpfn-research.service"])
         self.assertNotIn("review.env", units["tabpfn-research.service"])

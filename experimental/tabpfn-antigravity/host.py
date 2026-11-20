@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from prepare import HERE, VERSION, install_cli
+from resources import OPTIONAL
 
 STUDY = Path("/var/lib/tabpfn-study")
 PUBLIC = STUDY / "public"
@@ -88,6 +89,7 @@ UMask=0022
 ConditionPathExists=!{PUBLIC}/RUN_OUTCOME.json
 ConditionPathExists=!{STUDY}/stop.json
 [Service]""") + f"""EnvironmentFile={CONF}/research.env
+Environment=RUN_SLUG={slug}
 ExecStart=/usr/bin/python3 {HERE}/loop.py --state {STUDY} --workspace {WORK} --user {ACCOUNT}
 ProtectSystem=full
 NoNewPrivileges=true
@@ -159,8 +161,10 @@ def credentials(values: dict) -> None:
     directory(CONF, "root", 0o700)
     groups = {"research": ["GEMINI_API_KEY"], "review": ["OPENROUTER_API_KEY"],
               "langfuse": ["LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"]}
-    if set(values) != {key for keys in groups.values() for key in keys}:
-        raise ValueError("Supply all five study credential fields")
+    required = {key for keys in groups.values() for key in keys}
+    if not required.issubset(values) or set(values) - required - set(OPTIONAL):
+        raise ValueError("Missing required or unexpected study credential fields")
+    groups["research"].extend(key for key in OPTIONAL if key in values)
     if not all(isinstance(s, str) and s and all(c.isprintable() for c in s) for s in values.values()):
         raise ValueError("Invalid environment field")
     for group, keys in groups.items():

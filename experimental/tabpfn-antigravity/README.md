@@ -23,6 +23,9 @@ Verify the instance's SSH host key through your AWS operator channel and record 
 | Environment variable | Destination |
 | --- | --- |
 | AI_STUDIO_API_DEV_KEY | Antigravity CLI as GEMINI_API_KEY |
+| RUNPOD_API_KEY (optional) | Run-owned GPU pods for research and reproduction |
+| HF_TOKEN (optional) | Hugging Face checkpoint access |
+| PRIOR_LABS_API_KEY (optional) | Prior Labs access, also exposed to the client as TABPFN_TOKEN |
 | OPENROUTER_API_KEY | Independent paper reviewer |
 | LANGFUSE_BASE_URL | Trace exporter, HTTPS |
 | LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY | Trace exporter project |
@@ -36,6 +39,8 @@ Configure prints the absolute start command for the installed revision. Run it o
 ## Research and review
 
 The controller gives every fresh session the study brief, phase instructions, and the current resource envelope. The question, standings, paper and research ledger live in `/home/tabpfn-research/research`. The CLI runs as the unprivileged research user. Autonomous shell commands are enabled inside this dedicated instance. Research requires network access to public literature, datasets and any licensed PFN weights selected for the study. Create a workspace virtual environment with python3 -m venv .venv for extra dependencies.
+
+The CPU host can submit GPU jobs when the operator supplies a RunPod key. The separate $1,000 GPU allowance is tracked by the researchers in PLAN.md. Retrieve artifacts and terminate pods tagged for this run before shutdown.
 
 The research model uses the dedicated AI Studio key only. The CLI's xhigh setting controls reasoning effort. Google separately controls per-request Priority service. The pinned CLI does not expose a verified Priority selector or return the served tier through the transcript. Configure the matching Neon model definition and its input, input_cached_tokens and output prices in the Langfuse project. The exporter sends exclusive token counts and reads back the server-calculated USD cost. Allow up to one minute for indexing. If costs remain unresolved, the controller suspends new model calls. Configure pricing before launch; historical generations may need reprocessing in Langfuse after a tariff correction. Reviews use the charges reported by OpenRouter. Both sources update the budget published to the swarm. [Google Priority inference](https://ai.google.dev/gemini-api/docs/priority-inference)
 
@@ -65,7 +70,10 @@ flowchart TD
     P -->|Research| C[Fresh Antigravity CLI /swarm]
     P -->|Final 10% or accepted| C
     C --> W[Neon xhigh workers and verifier]
+    W -.->|Optional GPU experiments| G[RunPod]
     W --> A[Persistent plan, evidence and paper]
+    G -.->|Retrieved results| A
+    A -->|Next milestone| P
     A -->|Changed PDF plus digest| J[Blind OpenRouter panel: Carbon, Claude, GPT]
     J --> D{Two accept votes?}
     D -->|Revise in research| P
