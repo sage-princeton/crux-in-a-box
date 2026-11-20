@@ -28,3 +28,6 @@ Before revising, compare the draft's structure with your exemplar papers and kee
 An unchanged PDF reuses its existing verdict. Submit a changed complete draft with
 an updated SHA-256 request. If no complete draft is ready, continue useful work and
 update PLAN.md.
+
+Before you continue, compare `budget_status` with your spending pace and give any
+idle names work from your PLAN.md backlog.

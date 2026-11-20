@@ -13,14 +13,20 @@
   `contrastive-rl-full` does.
 - Model: `google/gemini-4-carbon@preset/ai-studio-priority`, high effort, for the
   PI, research assistants and Codex workers; the review panel is unchanged.
-- Run allowances: 604800 seconds, $15,000 total agent/delegate/review inference,
-  $3,000 of RunPod GPU, and a separate shared $100 OpenRouter allowance for
-  experimental model calls. Finalization starts when 10% of the time (16.8 hours),
-  of inference or of RunPod remains; experiments have no finalization reserve or
-  whole-run stop. Dedicated non-resetting OpenRouter key caps of $30,000 for
-  inference and $200 for experiments are provider billing backstops; they do not
+- Run allowances: 518400 seconds (six days), $30,000 total agent/delegate/review
+  inference, $3,000 of RunPod GPU, and a separate shared $200 OpenRouter allowance
+  for experimental model calls. Finalization starts when 10% of the time (14.4
+  hours), of inference or of RunPod remains; experiments have no finalization
+  reserve or whole-run stop. Dedicated non-resetting OpenRouter key caps of $65,000
+  for inference and $400 for experiments are provider billing backstops; they do not
   increase the run allowances.
-- Changes from `tabpfn-full`: no Prior Labs credentials; a $3,000 RunPod
-  allowance; the separate experiment allowance, worded as in `vftts`, with the
-  image-attachment instructions from `mllm-misuse`; compaction at 400,000 tokens
-  instead of 650,000, as in the latest runs; and a topic-neutral paper skeleton.
+- Team: six SDK research assistants and twenty Codex workers, which the PI organizes
+  into small teams of assistants and workers, one per line of work.
+- Changes from `tabpfn-full`: six days and $30,000 instead of seven days and
+  $15,000; six research assistants and twenty Codex workers instead of three and
+  eight; PI guidance on spending pace, idle delegates, teams of delegates and enforcing
+  per-brief allocations (`personas/pi.md`, `prompts/research-continue.md`); no Prior
+  Labs credentials; a $3,000 RunPod allowance; the separate experiment allowance,
+  worded as in `vftts`, with the image-attachment instructions from `mllm-misuse`;
+  compaction at 400,000 tokens instead of 650,000, as in the latest runs; a
+  topic-neutral paper skeleton; and an m7i.8xlarge run machine for the larger team.

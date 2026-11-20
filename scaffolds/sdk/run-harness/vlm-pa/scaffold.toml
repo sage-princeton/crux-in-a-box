@@ -27,8 +27,8 @@ keep_recent_items = 20
 image_tokens = 1120  # Gemini 4 Carbon default for image inputs.
 
 [budget]
-max_wall_seconds = 604800
-max_cost_usd = 15000  # Run allowance; the OpenRouter inference key has a $30,000 provider cap.
+max_wall_seconds = 518400
+max_cost_usd = 30000  # Run allowance; the OpenRouter inference key has a $65,000 provider cap.
 
 [resources.models]
 type = "langfuse"
@@ -45,7 +45,7 @@ refresh_seconds = 30
 
 [loop]
 type = "tabpfn_research"
-reserve_wall_seconds = 60480  # 10% of the seven-day run
+reserve_wall_seconds = 51840  # 10% of the six-day run
 reserve_fraction = 0.1
 poll_seconds = 15
 
@@ -92,7 +92,9 @@ tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budg
 mcp_servers = ["slack"]
 delegates = [
     "research_assistant", "research_assistant_b", "research_assistant_c",
-    "worker_a", "worker_b", "worker_c", "worker_d", "worker_e", "worker_f", "worker_g", "worker_h",
+    "research_assistant_d", "research_assistant_e", "research_assistant_f",
+    "worker_a", "worker_b", "worker_c", "worker_d", "worker_e", "worker_f", "worker_g", "worker_h", "worker_i", "worker_j",
+    "worker_k", "worker_l", "worker_m", "worker_n", "worker_o", "worker_p", "worker_q", "worker_r", "worker_s", "worker_t",
 ]
 max_turns = "unlimited"
 
@@ -113,6 +115,30 @@ tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budg
 max_turns = "unlimited"
 
 [agents.research_assistant_c]
+persona = "personas/ra.md"
+description = "Research assistant for a self-contained literature, theory, implementation, or analysis brief. One outstanding conversation; steer or resume it with send_message."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
+max_turns = "unlimited"
+
+[agents.research_assistant_d]
+persona = "personas/ra.md"
+description = "Research assistant for a self-contained literature, theory, implementation, or analysis brief. One outstanding conversation; steer or resume it with send_message."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
+max_turns = "unlimited"
+
+[agents.research_assistant_e]
+persona = "personas/ra.md"
+description = "Research assistant for a self-contained literature, theory, implementation, or analysis brief. One outstanding conversation; steer or resume it with send_message."
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
+workspace_context = ["PLAN.md"]
+tools = ["run_shell", "read_file", "write_file", "list_files", "read_pdf", "budget_status", "rest"]
+max_turns = "unlimited"
+
+[agents.research_assistant_f]
 persona = "personas/ra.md"
 description = "Research assistant for a self-contained literature, theory, implementation, or analysis brief. One outstanding conversation; steer or resume it with send_message."
 context = ["workspace/AGENTS.md", "workspace/RESEARCH.md"]
@@ -186,13 +212,109 @@ context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
 workspace_context = ["PLAN.md"]
 sandbox = "full-access"
 
+[coding_agents.worker_i]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_j]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_k]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_l]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_m]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_n]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_o]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_p]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_q]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_r]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_s]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
+[coding_agents.worker_t]
+type = "codex"
+description = "Independent full Codex research assistant, with the same capabilities as worker_a."
+system_prompt = "prompts/codex-worker.md"
+context = ["workspace/AGENTS.md", "workspace/RESEARCH.md", "personas/ra.md"]
+workspace_context = ["PLAN.md"]
+sandbox = "full-access"
+
 [tools.run_shell]
 timeout_seconds = 600
 
 [tools.rest]
 min_seconds = 1
 max_seconds = 300
-total_seconds = 604800
+total_seconds = 518400
 
 [mcp_servers.slack]
 command = "npx"
