@@ -136,7 +136,7 @@ def install(slug: str) -> None:
     run("runuser", "-u", ACCOUNT, "--", "git", "-C", WORK, "init", "-q")
     for key, value in (("user.name", "Anonymous Researcher"), ("user.email", "research@localhost")):
         run("runuser", "-u", ACCOUNT, "--", "git", "-C", WORK, "config", key, value)
-    for name in ("REVIEW_STATUS.json", "REPRODUCTION_STATUS.json", "RUN_OUTCOME.json", "reviews", "BUDGET.json"):
+    for name in ("REVIEW_STATUS.json", "REVIEW_HISTORY.md", "REPRODUCTION_STATUS.json", "RUN_OUTCOME.json", "reviews", "BUDGET.json"):
         path = WORK / name
         if not path.is_symlink() and not path.exists():
             run("runuser", "-u", ACCOUNT, "--", "ln", "-s", PUBLIC / name, path)

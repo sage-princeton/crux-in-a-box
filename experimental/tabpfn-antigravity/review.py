@@ -8,15 +8,16 @@ import logging
 import math
 import os
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 from agents import OpenAIProvider, set_tracing_disabled
-from budget import Budget, publish
+from budget import Budget, publish, publish_text
 from openai import AsyncOpenAI
 from prepare import HERE
 from render import render
-from tabpfn_extensions import paper_problem
+from tabpfn_extensions import history_table, paper_problem, reviewer_scores
 from telemetry import Observation
 
 from crux_scaffold.agent_runtimes.base import Assembly, Verdict
@@ -151,9 +152,15 @@ class BlindPanel:
         if limits["phase"] in {"stopped", "accounting-hold"}:
             return
         final = limits["phase"] == "finalize" or (self.state / "finalizing").exists()
-        if not final:
-            request = ReviewWorkspace.snapshot(self.workspace, {"request": "REVIEW_REQUEST.json"})
-            requested = json.loads(request.read_file("request"))["paper_sha256"]
+        try:
+            snapshot = ReviewWorkspace.snapshot(self.workspace, {"request": "REVIEW_REQUEST.json"})
+            request = json.loads(snapshot.read_file("request"))
+        except (ValueError, ToolError):
+            request = {}
+        request = request if isinstance(request, dict) else {}
+        requested = request.get("paper_sha256")
+        if not final and not requested:
+            return
         paper = ReviewWorkspace.snapshot(self.workspace, {"submission.pdf": "paper/paper.pdf"})
         digest = hashlib.sha256(paper.read_bytes("submission.pdf")).hexdigest()
         if not final and digest != requested:
@@ -185,13 +192,37 @@ class BlindPanel:
                 raise
             record = {"paper_sha256": digest, "complete": all(member["completed"] for member in members),
                       "passed": verdict["passed"], "feedback": verdict["feedback"], "review_path": archive}
+            direction = request.get("direction") if requested == digest else None
+            record.update(reviewed_at=time.time(), phase="final" if final else "research",
+                          direction=" ".join(direction.split())[:80] if isinstance(direction, str) and direction.strip() else "unlabeled")
             publish(directory / "members.json", {"members": members}, 0o600)
             publish(report if record["complete"] else partial, record, 0o600)
         else:
             record = json.loads(report.read_text())
         (self.public / "reviews").mkdir(exist_ok=True, mode=0o755)
-        publish(self.public / archive, record)
+        archived = self.public / archive
+        if not archived.is_file() or json.loads(archived.read_text()) != record:
+            publish(archived, record)
+        self.history()
         publish(self.public / "REVIEW_STATUS.json", record)
+
+    def history(self) -> None:
+        """Render every distinct archived review, including entries from an earlier installation.
+
+        :returns: None after publishing the review table if it changed.
+        """
+        entries = []
+        for path in (self.public / "reviews").glob("*.json"):
+            record = json.loads(path.read_text())
+            stamp = record.get("reviewed_at", path.stat().st_mtime)
+            entries.append((stamp, path.name, {**record, "phase": record.get("phase", "unknown"),
+                            "time": datetime.fromtimestamp(stamp, UTC).strftime("%m-%d %H:%M"),
+                            "direction": record.get("direction", "unlabeled"),
+                            "reviewers": reviewer_scores(record["feedback"])}))
+        table = history_table([row for _, _, row in sorted(entries)])
+        path = self.public / "REVIEW_HISTORY.md"
+        if not path.is_file() or path.read_text() != table:
+            publish_text(path, table)
 
     async def vote(self, paper: ReviewWorkspace, cache: Path, key: str, budget: Budget) -> tuple[dict, list]:
         """Use the SDK's blind judge implementation, PDF tools, rubric and majority aggregation.
