@@ -19,6 +19,10 @@ Before teardown, preserve the Run's results, then follow the teardown command in
 [operations.md](operations.md#teardown-a-workspace). SDK Run software declarations
 are documented in [provisioning.md](provisioning.md).
 
+For an SDK task that must avoid particular paper URLs, the optional
+[network proxy](network-proxy.md) loads a TOML blacklist and enforces agent
+egress through an HTTPS inspection proxy. Install it explicitly before launch.
+
 ## Development
 
 After installing the [shared check tools](../../README.md#development), run from
