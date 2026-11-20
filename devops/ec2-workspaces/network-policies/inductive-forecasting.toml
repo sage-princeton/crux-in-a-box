@@ -1,5 +1,5 @@
 # Operator-side policy for "Can Language Models Forecast Inductively?"
-# Sources supplied by the operator, updated 2026-11-17:
+# Sources supplied by the operator, updated 2026-11-17 and 2026-11-20:
 # https://openreview.net/forum?id=nzHvoaCYuB
 # https://openreview.net/pdf?id=nzHvoaCYuB
 # https://neurips.cc/virtual/2026/loc/atlanta/176526
@@ -8,11 +8,16 @@
 # https://openreview.net/forum?id=E6Pjxklgz0
 # https://openreview.net/pdf/25027531449c279ad833b0181f0b08366346f003.pdf
 # https://openreview.net/pdf/8d032d99237dbddaec10dcb43c59c8e6bc89752d.pdf
+# https://github.com/liv-daliberti/social_sim (added 2026-11-20; the author's other repositories stay open)
 #
 # Regexes match the repeatedly URL-decoded complete request URL.
 # The OpenReview resource ID also covers API, attachment, and embedded fetch URLs.
 # The anonymous repository ID covers its public pages, API and archive routes.
-# Title searches and unknown mirrors remain available for the discovery test.
+# Responses from inspect_hosts and their subdomains are checked against every
+# blacklist rule plus content_blacklist, so a search whose results show the paper's
+# title, OpenReview IDs, NeurIPS page or repositories returns the same 403. Keep
+# content rules to identifiers: a phrase the agents might type would also match
+# the query a results page echoes. Other hosts' responses are not checked.
 [network]
 blacklist = [
     '(?i)nzHvoaCYuB',
@@ -22,4 +27,15 @@ blacklist = [
     '(?i)E6Pjxklgz0',
     '(?i)25027531449c279ad833b0181f0b08366346f003',
     '(?i)8d032d99237dbddaec10dcb43c59c8e6bc89752d',
+    '(?i)liv-daliberti/social_sim',
+]
+inspect_hosts = [
+    "bing.com", "duckduckgo.com", "google.com", "search.brave.com", "search.yahoo.com",
+    "yandex.com", "startpage.com", "mojeek.com", "ecosia.org", "qwant.com", "jina.ai",
+    "github.com", "openreview.net", "neurips.cc",
+    "arxiv.org", "api.openalex.org", "api.crossref.org", "api.semanticscholar.org",
+]
+content_blacklist = [
+    '(?i)language\s+models\s+forecast\s+inductively',
+    '(?i)neurips\.cc/virtual/2026/(?:loc/atlanta/)?(?:poster/)?176526(?![0-9])',
 ]
