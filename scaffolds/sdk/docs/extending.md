@@ -134,7 +134,7 @@ Allowance is mutable state on the shared tool instance, not persisted run state.
 `[mcp_servers.<name>]` in `scaffold.toml`, with `McpServerConfig` in `config.py`. These are not components. Any stdio MCP server becomes a set of tools for the agents whose `mcp_servers` list names it. A channel such as the demo's Slack integration normally needs no scaffold code. Automatic delivery additionally uses `[runtime.steering]`; exposing read tools alone does not ingest messages.
 
 - `command`, `args` and `timeout_seconds` start the server.
-- The server receives only its declared `env`, plus a minimal `PATH` and `HOME`. A `${VAR}` reference is filled from the scaffold's environment. A missing variable is a `InvalidDropInError`, and the value is never echoed.
+- The stdio transport supplies a minimal process environment including `PATH` and `HOME`. Use `inherit_env` to list additional variables to copy from the run when present. Explicit `env` entries take precedence. Their `${VAR}` references require a nonempty run variable and raise `InvalidDropInError` if it is missing. Errors report variable names only.
 - Restrict a server with its own settings, as the demo does with `SLACK_MCP_ADD_MESSAGE_TOOL`, rather than trusting the persona to stay within limits.
 
 ## Gates (`Gate`)

@@ -58,6 +58,16 @@ def test_assembles_without_network(tmp_path, capsys, full):
     assert "openrouter-experiments" in out and "runpod" in out
 
 
+def test_slack_receives_only_its_declared_settings_with_and_without_the_policy_proxy(scaffold):
+    slack = scaffold.drop_in.config.mcp_servers["slack"]
+    bot = {"SLACK_MCP_XOXB_TOKEN": "fixture", "SLACK_MCP_ADD_MESSAGE_TOOL": "CTEST"}
+    assert slack.resolved_env("slack", ENV) == bot
+    proxy = "http://127.0.0.1:18080"
+    transport = {"HTTPS_PROXY": proxy, "https_proxy": proxy, "NO_PROXY": "",
+                 "NODE_EXTRA_CA_CERTS": "/etc/ssl/certs/ca-certificates.crt", "SLACK_MCP_PROXY": proxy}
+    assert slack.resolved_env("slack", ENV | transport) == bot | transport
+
+
 def test_uses_the_five_day_budgets_shared_loop_team_and_review_panel(scaffold):
     config = scaffold.drop_in.config
     assert config.budget.max_wall_seconds == 432000

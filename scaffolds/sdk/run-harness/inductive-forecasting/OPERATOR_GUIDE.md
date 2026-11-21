@@ -206,6 +206,8 @@ journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 m
 
 You should see the agent report its initial milestone in the Slack channel within about ~20 minutes. You can also check OpenRouter for inference spending and Langfuse for streaming traces before then.
 
+If startup fails while npm fetches `slack-mcp-server` on a previously deployed box, follow the [staged-run proxy recovery instructions](../../../../devops/ec2-workspaces/network-proxy.md#observe-and-change-the-policy) and resume with the existing state directory.
+
 During the first hour, confirm that the first Slack update arrives (the Slack server
 works through the proxy), that Langfuse shows Codex worker generations (Codex
 reaches OpenRouter through the proxy), and that

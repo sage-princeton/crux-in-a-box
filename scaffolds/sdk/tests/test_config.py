@@ -102,8 +102,10 @@ def test_invalid_configs_name_the_problem(tmp_path, old, new, message):
 
 
 def test_mcp_env_is_filled_from_the_environment():
-    server = McpServerConfig(command="npx", env={"TOKEN": "${SLACK_BOT_TOKEN}", "MODE": "bot"})
-    assert server.resolved_env("slack", {"SLACK_BOT_TOKEN": "xoxb-1"}) == {"TOKEN": "xoxb-1", "MODE": "bot"}
+    server = McpServerConfig(command="npx", env={"TOKEN": "${SLACK_BOT_TOKEN}", "MODE": "bot"},
+                             inherit_env=["MODE", "OPTIONAL"])
+    assert server.resolved_env("slack", {"SLACK_BOT_TOKEN": "xoxb-1", "MODE": "other"}) == {
+        "TOKEN": "xoxb-1", "MODE": "bot"}
 
 
 def test_missing_mcp_env_names_the_variable_without_values():

@@ -596,7 +596,7 @@ only the required credentials/profile into the scaffold process or container.
 | `COST_TRACKER_URL`, `COST_TRACKER_TOKEN` | HTTPS endpoint and bearer credential for a declared `langfuse` resource provider; `RUN_SLUG` is also required. |
 | `AWS_PROFILE` | Required explicit profile for `aws-compute`; the profile and AWS CLI must be available in the scaffold's environment. |
 | `RUNPOD_API_KEY` | List access to pods (including their ownership environment marker) and read access to pod billing for `runpod`. |
-| Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives only its declared `env` and a minimal `PATH`/`HOME` environment. |
+| Variables that `[mcp_servers]` reference | For example `SLACK_BOT_TOKEN`. An MCP server receives a minimal process environment plus variables named in its optional `inherit_env` list when present. Explicit `env` values override inherited ones. |
 
 ## Model providers and GCP-hosted Argon
 
