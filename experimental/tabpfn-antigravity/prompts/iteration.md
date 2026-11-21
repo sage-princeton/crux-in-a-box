@@ -1,6 +1,6 @@
 /swarm <brief>
 
-Phase <phase>, iteration <iteration>. Read AGENTS.md, RESEARCH.md, PLAN.md, LOG.md and the available review feedback.
+Phase <phase>, iteration <iteration>. Read AGENTS.md, RESEARCH.md, PLAN.md, LOG.md, OPERATOR_INBOX.md and the available review feedback.
 <continuation>
 
 Remaining time: <remaining-seconds> seconds. Research and external review spend: USD <spent-usd> of <limit-usd>.

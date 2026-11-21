@@ -48,7 +48,26 @@ If a reviewer was interrupted mid-request, inspect the submission under `/var/li
 
 ## Steering
 
-The headless controller reads `BRIEF.md` at startup and directs each new swarm to the persistent `PLAN.md`. For an operator intervention, pause the target, update the workspace as `tabpfn-research`, record the change in `LOG.md`, and resume. The next swarm can pick up those instructions.
+The headless controller reads `BRIEF.md` at startup and sends it to every swarm as the milestone contract. Until an iteration returns successfully, the swarm also receives the one-time startup instructions in [prompts/start.md](prompts/start.md); later iterations continue from the persistent `PLAN.md`. For an operator intervention, pause the target, update the workspace as `tabpfn-research`, record the change in `LOG.md`, and resume. The next swarm can pick up those instructions.
+
+### Operator inbox
+
+The coordinator reports diagnosed external blockers, imminent resource breaches and missing dependencies in `/home/tabpfn-research/research/OPERATOR_INBOX.md`, one entry per heading with the UTC time and iteration. Poll it from the operator machine, for example with a scheduled local agent, after setting `ADDRESS` to the host's verified address:
+
+```bash
+ssh -i "$SSH_KEY" -o UserKnownHostsFile="$VERIFIED_HOSTS" "ubuntu@$ADDRESS" \
+  sudo cat /home/tabpfn-research/research/OPERATOR_INBOX.md
+```
+
+To reply, append beneath the entry as the research user. Every iteration reads the inbox, so a reply reaches the next swarm without a pause. Keep credentials out of replies and supply them through the service environment instead.
+
+```bash
+ssh -i "$SSH_KEY" -o UserKnownHostsFile="$VERIFIED_HOSTS" "ubuntu@$ADDRESS" \
+  sudo -u tabpfn-research tee -a /home/tabpfn-research/research/OPERATOR_INBOX.md <<'EOF'
+
+Operator reply (2026-11-21T09:00Z): ...
+EOF
+```
 
 ## Pausing and restarting
 

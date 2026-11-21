@@ -84,6 +84,27 @@ class Journal:
         """
         return self.db.execute("SELECT * FROM iterations ORDER BY number").fetchall()
 
+    def returned(self) -> bool:
+        """Report whether any iteration has handed the workspace back successfully.
+
+        :returns: True once a CLI iteration has returned.
+        """
+        return self.db.execute("SELECT 1 FROM iterations WHERE status='returned' LIMIT 1").fetchone() is not None
+
+
+def continuation_prompt(phase: str, iteration: int, feedback: str, started: bool) -> str:
+    """Send the startup instructions until an iteration returns, then the current phase's continuation.
+
+    :param phase: Current study phase.
+    :param iteration: Journal iteration number.
+    :param feedback: Handoff or failure note from the previous iteration.
+    :param started: Whether any earlier iteration has returned successfully.
+    :returns: Rendered phase instructions for this iteration.
+    """
+    if phase == "research" and not started:
+        return render("start.md")
+    return render(f"{phase}-continue.md", iteration=iteration, phase=phase, feedback=feedback)
+
 
 class ResearchFiles:
     """Read regular artifacts beneath the research workspace without following writable links.
@@ -279,7 +300,7 @@ class ResearchLoop:
                         if not feedback:
                             return
                 number = self.journal.begin(phase)
-                continuation = render(f"{phase}-continue.md", iteration=number, phase=phase, feedback=feedback)
+                continuation = continuation_prompt(phase, number, feedback, self.journal.returned())
                 prompt = render("iteration.md", brief=brief, continuation=continuation, phase=phase, iteration=number,
                                 **{"remaining-seconds": remaining, "spent-usd": f"{b['metered_usd']:.4f}",
                                    "limit-usd": f"{b['limit_usd']:.2f}", "runpod-budget": runpod_note(b)})

@@ -1,6 +1,6 @@
 # TabPFN with Antigravity CLI
 
-This experiment runs the TabPFN harmful-shift study on EC2 with Google's Antigravity CLI. Each Ralph iteration starts a fresh native `/swarm` using the dedicated AI Studio key and Neon at xhigh effort. The research brief, phase instructions and remaining budget accompany the new session. Workers share a persistent research workspace and can use RunPod for GPU experiments.
+This experiment runs the TabPFN harmful-shift study on EC2 with Google's Antigravity CLI. Each Ralph iteration starts a fresh native `/swarm` using the dedicated AI Studio key and Neon at xhigh effort. The research brief, phase instructions and remaining budget accompany the new session. Workers share a persistent research workspace and can use RunPod for GPU experiments. The coordinator reports external blockers in the workspace's `OPERATOR_INBOX.md`, which the operator polls and answers.
 
 For prerequisites, deployment, monitoring and recovery, see the [operator guide](OPERATOR_GUIDE.md).
 
