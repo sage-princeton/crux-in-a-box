@@ -158,7 +158,7 @@ def runpod_note(snapshot: dict) -> str:
         return render("runpod-disabled.md")
     billed = gpu.get("billed_usd")
     measured = gpu.get("billed_at")
-    amount = "unknown" if billed is None else f"${billed:.4f} as of {datetime.fromtimestamp(measured, UTC):%H:%M UTC %Y-%m-%d}"
+    amount = "unknown" if billed is None else f"${billed:.4f} (checked {datetime.fromtimestamp(measured, UTC):%H:%M UTC %Y-%m-%d})"
     rate, pods = gpu.get("hourly_usd"), gpu.get("running_pods")
     return render("runpod-budget.md", status=gpu["status"], billed=amount, ceiling=f"{snapshot['runpod_limit_usd']:.2f}",
                   rate="unknown" if rate is None else f"${rate:.4f}/hour", pods="unknown" if pods is None else pods)
