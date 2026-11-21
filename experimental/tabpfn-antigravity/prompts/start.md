@@ -1,0 +1,1 @@
+Start the study. Begin by building the anonymous paper, verifying white-box access to a published checkpoint, and closely reading the related literature. Record which scientific dependencies are available. Develop several distinct hypotheses and assess them before selecting a direction. If an earlier attempt left work in the workspace, continue from it.

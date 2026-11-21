@@ -68,14 +68,22 @@ class ResearchInputs:
                     "afa940e9c31aed37f5a26dce03f0b48ad07249c1ac9ff393338e4689d56fe4e7",
                     "e807dd963c26c2b82e2d45ac14f9701fd6f522980ed2bbe6dd70e447465d00c0",
                     "f3e981ab877aef5aefaf6b63db340d6c59a295820d8b580e3971a5ff8b10e016",
+                    "42d2db344759463433245fc327ab29ede520777de86cf43aa4bf4b72e7195704",
                 },
-                "BRIEF.md": {"f04628f9d9fd1a83aeeaf343e89ba46e263867a6aa32fb71362eb8f715efd50a"},
+                "BRIEF.md": {
+                    "f04628f9d9fd1a83aeeaf343e89ba46e263867a6aa32fb71362eb8f715efd50a",
+                    "61fd3bd086eba3fcfa8600060a60bcc1fb75cfe904620e8e6906b91116a08f8c",
+                },
             }
             for name, hashes in previous.items():
                 current = workspace / name
                 if (not current.is_symlink() and current.is_file()
                         and hashlib.sha256(current.read_bytes()).hexdigest() in hashes):
                     shutil.copyfile(HERE / "workspace" / name, current)
+            inbox = workspace / "OPERATOR_INBOX.md"
+            if not inbox.is_symlink() and not inbox.exists():
+                # Workspaces seeded before the operator inbox existed gain it without touching research files.
+                shutil.copyfile(HERE / "workspace" / inbox.name, inbox)
             return
         if workspace.exists():
             raise FileExistsError(f"Unrecognized existing workspace: {workspace}")
@@ -86,7 +94,7 @@ class ResearchInputs:
             for name in ("LOG.md", ".gitignore", "paper/paper.tex", "paper/abstract.txt",
                          "paper/checklist.tex", "paper/neurips_2026.sty"):
                 shutil.copyfile(self.original / name, staged / name)
-            for name in ("AGENTS.md", "RESEARCH.md", "PLAN.md", "BRIEF.md"):
+            for name in ("AGENTS.md", "RESEARCH.md", "PLAN.md", "BRIEF.md", "OPERATOR_INBOX.md"):
                 shutil.copyfile(HERE / "workspace" / name, staged / name)
             (staged / self.marker).touch()
             staged.rename(workspace)
