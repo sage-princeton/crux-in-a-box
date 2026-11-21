@@ -44,6 +44,7 @@ checks. CI scans complete PR commit ranges with TruffleHog.
 | [devops/](devops/README.md) | Shared environment provisioning and operations. |
 | [scaffolds/](scaffolds/README.md) | Agent execution environments and environment-specific experiment inputs. |
 | [monitoring/](monitoring/README.md) | Run observation, costs, status, and incident assessment. |
+| [experimental/](experimental/) | Testbed for quickly developed prototypes and vendor assessments before adoption as common patterns elsewhere in the codebase. |
 | [utilities/](utilities/README.md) | Support tools used independently of deployment. |
 
 ## System design
