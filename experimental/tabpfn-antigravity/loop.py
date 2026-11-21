@@ -271,6 +271,15 @@ class ResearchLoop:
                 phase = b["phase"]
                 review_path = self.public / "REVIEW_STATUS.json"
                 verdict = json.loads(review_path.read_text()) if review_path.is_file() else {}
+                if verdict.get("pending"):
+                    # Allow the external panel to finish reading the submitted revision.
+                    try:
+                        same_paper = self.files.digest("paper/paper.pdf") == verdict.get("paper_sha256")
+                    except (ValueError, OSError):
+                        same_paper = False
+                    if same_paper:
+                        time.sleep(min(5, remaining))
+                        continue
                 if verdict.get("passed") or (self.state / "finalizing").exists():
                     phase = "finalize"
                 if phase == "finalize":
@@ -286,6 +295,9 @@ class ResearchLoop:
                                    "limit-usd": f"{b['limit_usd']:.2f}"})
                 log = f"iteration-{number:06d}.json"
                 seconds = min(self.turn_seconds, remaining)
+                if phase == "research":
+                    reserve_at = self.budget.start_time + 0.9 * self.budget.seconds
+                    seconds = max(1, min(seconds, int(reserve_at - time.time())))
                 code = self.process.run(cli_command(prompt, seconds), log, seconds, inference=True)
                 success = False
                 if code == 0:
