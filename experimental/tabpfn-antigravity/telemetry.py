@@ -94,9 +94,7 @@ class Observation:
         usage = None
         if all(type(value) is int and value >= 0 for value in counts):
             prompt, cached, output = counts
-            usage = {"input": prompt, "output": output}
-            if cached:
-                usage["input_cached_tokens"] = cached
+            usage = {"input": prompt, "input_cached_tokens": cached, "output": output}
         return cls.record(run, conversation, str(row["step_index"]), kind, stamp, model,
                           usage, generation=generation, status=row["status"])
 
