@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
 
-from iteration_traces import IterationTraces, Scrubber
+from iteration_traces import IterationTraces
 from observations import Observation
 from prepare import HERE
 
@@ -33,35 +33,18 @@ class Ledger:
 
         :param path: Database shared by the trusted run services.
         """
-        # The controller and reviewer share the service-owned ledger. Research tools must
-        # only see the public budget, including on installations with a legacy 0644 ledger.
-        for suffix in ("", "-wal", "-shm"):
-            flags = os.O_RDWR | os.O_NOFOLLOW
-            try:
-                fd = os.open(str(path) + suffix, flags if suffix else flags | os.O_CREAT, 0o600)
-            except FileNotFoundError:
-                continue
-            try:
-                os.fchmod(fd, 0o600)
-            finally:
-                os.close(fd)
+        # SQLite creates its WAL and shared-memory files with the database's permissions.
+        os.close(os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600))
         self.db = sqlite3.connect(path, timeout=15)
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("""CREATE TABLE IF NOT EXISTS spans(
-          id TEXT PRIMARY KEY, span TEXT NOT NULL, cost REAL, generation INTEGER NOT NULL, sent INTEGER DEFAULT 0)""")
-        # Old outboxes predate server-side price reconciliation.
-        with self.db:
-            self.db.execute("BEGIN IMMEDIATE")
-            columns = {r[1] for r in self.db.execute("PRAGMA table_info(spans)")}
-            if "recorded" not in columns:
-                self.db.execute("ALTER TABLE spans ADD COLUMN recorded REAL NOT NULL DEFAULT 0")
-            if "checked" not in columns:
-                self.db.execute("ALTER TABLE spans ADD COLUMN checked REAL DEFAULT 0")
+          id TEXT PRIMARY KEY, span TEXT NOT NULL, cost REAL, generation INTEGER NOT NULL,
+          sent INTEGER DEFAULT 0, recorded REAL NOT NULL DEFAULT 0, checked REAL DEFAULT 0)""")
 
     def put(self, item: Observation) -> None:
         """Persist a new or revised observation before acknowledging its source.
 
-        :param item: Scrubbed observation to enqueue.
+        :param item: Observation to enqueue.
         """
         span = json.dumps(item.span, sort_keys=True)
         with self.db:
@@ -198,8 +181,7 @@ def main() -> None:
     sink = LangfuseOtlpSink(url, os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"], "antigravity")
     prices = LangfuseCosts(url, os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])
     ledger = Ledger(args.db)
-    scrubber = Scrubber.from_credentials(Path(os.environ["CREDENTIALS_DIRECTORY"]))
-    reader = IterationTraces(args.db.parent, args.brain, args.run, args.since, scrubber)
+    reader = IterationTraces(args.db.parent, args.brain, args.run, args.since)
     while True:
         reader.collect(ledger)
         try:

@@ -64,7 +64,6 @@ WorkingDirectory={HERE}
     units["tabpfn-budget.service"] = common + f"""ExecStart=/usr/bin/python3 {HERE}/budget.py watch {STUDY} {PUBLIC}/BUDGET.json tabpfn-research.service tabpfn-review.service
 """
     units["tabpfn-traces.service"] = common + f"""EnvironmentFile={CONF}/langfuse.env
-LoadCredential=research.env:{CONF}/research.env
 ExecStart=/usr/bin/python3 {HERE}/host.py trace {slug}
 ProtectSystem=strict
 ProtectHome=tmpfs

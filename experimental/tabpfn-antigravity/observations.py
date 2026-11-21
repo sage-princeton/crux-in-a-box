@@ -29,9 +29,9 @@ def span_id(run: str, conversation: str, key: str) -> str:
 
 @dataclass(frozen=True)
 class Observation:
-    """A scrubbed CLI observation and its cost estimate, when the model reports usage.
+    """A CLI observation and its cost estimate, when the model reports usage.
 
-    :ivar span: Scrubbed OTLP span.
+    :ivar span: OTLP span.
     """
 
     span: dict
@@ -59,8 +59,8 @@ class Observation:
         :param scope: Iteration trace name or the legacy per-conversation scope.
         :param parent: Parent observation ID within the trace.
         :param observation_type: Langfuse type for non-generation records.
-        :param fields: Additional scrubbed Langfuse observation attributes.
-        :returns: Scrubbed, deterministically identified observation.
+        :param fields: Additional Langfuse observation attributes.
+        :returns: Deterministically identified observation.
         """
         trace = trace_id(run, scope or conversation)
         identifier = span_id(run, conversation, key)

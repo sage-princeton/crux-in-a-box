@@ -1,4 +1,4 @@
-"""Regression coverage for live delegation, redaction, delayed sources and replay."""
+"""Regression coverage for live delegation, content fidelity, delayed sources and replay."""
 import json
 import os
 import tempfile
@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
-from iteration_traces import IterationTraces, Scrubber
+from iteration_traces import IterationTraces
 from loop import Journal
 from observations import span_id, trace_id
 from telemetry import Ledger
@@ -41,7 +41,7 @@ class LiveTraceTests(unittest.TestCase):
 
     def fresh_reader(self):
         """Return a collector with no in-memory cursors, as after a service restart."""
-        return IterationTraces(self.root, self.brain, "study", 0, Scrubber(["fixture-value-without-provider-prefix"]))
+        return IterationTraces(self.root, self.brain, "study", 0)
 
     @staticmethod
     def append(path, row):
@@ -84,8 +84,8 @@ class LiveTraceTests(unittest.TestCase):
         pending = self.ledger.pending()
         result = next(o for o in pending if o["name"] == "tool.result")
         self.assertEqual(result["parentSpanId"], spans["run_command"]["spanId"])
-        self.assertIn("elapsed=3s [REDACTED]", json.dumps(result))
-        self.assertNotIn(self.secret, json.dumps(pending))
+        self.assertIn("elapsed=3s " + self.secret, json.dumps(result))
+        self.assertIn(self.secret, json.dumps(pending))
         self.assertNotIn("private deliberation", json.dumps(pending))
         self.ledger.ack(pending)
         self.ledger.set_price(next(o for o in pending if o["name"] == "PLANNER_RESPONSE"), 0.12)
@@ -109,17 +109,36 @@ class LiveTraceTests(unittest.TestCase):
         result = next(r for r in self.ledger.pending() if r["name"] == "tool.result")
         self.assertEqual(result["parentSpanId"], span_id("study", self.coord, "tool-4"))
 
-    def test_scrubbing_and_symlink(self):
-        """Block symlinked native inputs and scrub nested keys, headers and truncated output."""
-        cleaner = self.reader.scrubber
-        value = cleaner.arguments({"nested": [{"Authorization": "opaque"}], "command": "curl -H 'Authorization: Bearer private'"})
-        self.assertNotIn("private", str(value))
-        self.assertNotIn("opaque", str(value))
-        self.assertNotIn("fixture-value", cleaner.text("z" * 8190 + self.secret))
-        self.assertIn("[truncated]", cleaner.text("z" * 8300))
+    def test_unmodified_tool_input_and_private_outbox(self):
+        """Preserve nested argument names and full text while ignoring files outside the brain."""
+        args = {"nested": [{"Authorization": "Bearer example"}], "api_key": self.secret,
+                "command": "x" * 9000 + self.secret}
+        self.append(self.logs[self.coord] / "tabpfn-tool-starts.jsonl", {**self.start, "args": args})
+        self.reader.collect(self.ledger)
+        tool = next(row for row in self.ledger.pending() if row["name"] == "run_command")
+        attrs = {a["key"]: a["value"]["stringValue"] for a in tool["attributes"]}
+        self.assertEqual(json.loads(attrs["langfuse.observation.input"]), args)
+        self.ledger.ack(self.ledger.pending())
+        (self.logs[self.coord] / "tabpfn-tool-starts.jsonl").unlink()
         source = self.root / "private"
         self.append(source, self.start)
         (self.logs[self.coord] / "tabpfn-tool-starts.jsonl").symlink_to(source)
         self.reader.collect(self.ledger)
         self.assertNotIn("run_command", [r["name"] for r in self.ledger.pending()])
-        self.assertEqual(os.stat(self.root / "traces.db").st_mode & 0o777, 0o600)
+        for suffix in ("", "-wal", "-shm"):
+            self.assertEqual(os.stat(self.root / ("traces.db" + suffix)).st_mode & 0o777, 0o600)
+
+    def test_background_output_round_trips_across_chunks(self):
+        """Recover long Unicode command output exactly, including CRLF and credential-like text."""
+        scope, step = self.scope, 4
+        task = self.logs[self.child].parent / "tasks" / f"task-{step}.log"
+        task.parent.mkdir()
+        output = "z" * 32_767 + "é\r\nAuthorization: Bearer example"
+        task.write_bytes(output.encode())
+        self.reader.jobs.add((self.child, step, scope, "parent"))
+        self.reader.task_output(self.ledger)
+        chunks = {}
+        for row in self.ledger.pending():
+            attrs = {a["key"]: a["value"]["stringValue"] for a in row["attributes"]}
+            chunks[int(attrs["langfuse.observation.metadata.chunk_index"])] = attrs["langfuse.observation.output"]
+        self.assertEqual("".join(chunks[i] for i in sorted(chunks)), output)

@@ -1,6 +1,6 @@
 """Join live native swarm work to its controller iteration before exporting selected fields."""
-import base64
 import bisect
+import io
 import json
 import math
 import os
@@ -9,66 +9,10 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote
 from uuid import UUID
 
 from observations import Observation, span_id
 from regular_files import open_regular
-
-
-class Scrubber:
-    """Scrub configured credentials and common secret shapes before the shared outbox."""
-
-    labeled = re.compile(r"""(?ix)(?:\b(?:authorization|cookie|set-cookie)["']?\s*[:=]\s*["']?[^\r\n"']+|
-        \b(?:bearer|basic)\s+[^\s"']+|
-        (?:api[_-]?key|password|secret|token|authorization)["']?\s*[:=]\s*["']?[^\s"',;}]+|
-        -----BEGIN\ [\w\ ]*PRIVATE\ KEY-----.*?(?:-----END\ [\w\ ]*PRIVATE\ KEY-----|\Z)|
-        (?:sk-|ghp_|github_pat_|hf_|AIza|ya29\.)[\w.-]{16,})""", re.DOTALL)
-    private_field = re.compile(r"(?i)(?:key|token|secret|password|authorization|cookie)$")
-    limit = 8192
-
-    def __init__(self, values: list[str]):
-        """Prepare longest-first exact matches, including common encoded forms.
-
-        :param values: Deployed study credentials.
-        """
-        literals = {form for v in values if v for form in (v, quote(v, safe=""), base64.b64encode(v.encode()).decode())}
-        self.literals = sorted(literals, key=len, reverse=True)
-
-    @classmethod
-    def from_credentials(cls, directory: Path):
-        """Read systemd's private copy of the provisioned research environment.
-
-        :param directory: Systemd credential directory for the trusted exporter.
-        :returns: Scrubber covering research resources and exporter credentials.
-        """
-        lines = (directory / "research.env").read_text().splitlines()
-        values = [json.loads(line.split("=", 1)[1]) for line in lines]
-        return cls(values + [os.environ["LANGFUSE_SECRET_KEY"], os.environ["LANGFUSE_PUBLIC_KEY"]])
-
-    def text(self, value: str) -> str:
-        """Remove secrets before truncating free text.
-
-        :param value: Native argument, result or board text.
-        :returns: Bounded text with omissions marked.
-        """
-        for literal in self.literals:
-            value = value.replace(literal, "[REDACTED]")
-        value = self.labeled.sub("[REDACTED]", value)
-        return value if len(value) <= self.limit else value[:self.limit] + " [truncated]"
-
-    def arguments(self, value):
-        """Redact sensitive object fields and preserve the structure of tool inputs.
-
-        :param value: JSON-compatible argument value.
-        :returns: Scrubbed structured input.
-        """
-        if isinstance(value, dict):
-            return {self.text(k): "[REDACTED]" if self.private_field.search(k) else self.arguments(v)
-                    for k, v in value.items()}
-        if isinstance(value, list):
-            return [self.arguments(v) for v in value]
-        return self.text(value) if isinstance(value, str) else value
 
 
 @dataclass(frozen=True)
@@ -91,20 +35,19 @@ class Iteration:
 class IterationTraces:
     """Project the controller journal, native roster, board, pre-tool events and terminal steps."""
 
-    def __init__(self, state: Path, brain: Path, run: str, since: float, scrubber: Scrubber):
+    def __init__(self, state: Path, brain: Path, run: str, since: float):
         """Bind collection to one dedicated guest and run.
 
         :param state: Trusted journal, stdout and outbox directory.
         :param brain: Unprivileged native conversation directory.
         :param run: Langfuse session identifier.
         :param since: Earliest admitted event time.
-        :param scrubber: Redaction policy for model-authored data.
         """
         self.state, self.brain, self.run, self.since = state, brain, run, since
-        self.scrubber = scrubber
         self.seen = {}
         self.coordinators = {}
         self.jobs = set()
+        self.task_offsets = {}
         self.starts = {}
         self.emitted_calls = {}
         self.root_status = {}
@@ -179,7 +122,7 @@ class IterationTraces:
         :param parent: Parent span ID.
         :param kind: Langfuse observation type.
         :param status: Event status.
-        :param fields: Scrubbed IO and metadata.
+        :param fields: Native IO and metadata.
         :returns: Stable span ID.
         """
         item = Observation.record(self.run, conversation, key, name, stamp, scope=iteration.scope,
@@ -197,7 +140,6 @@ class IterationTraces:
         for row in self.rows(f"{conversation}/.system_generated/logs/tabpfn-tool-starts.jsonl"):
             if (type(row.get("step")) is int and isinstance(row.get("time"), (float, int))
                     and math.isfinite(row["time"]) and isinstance(row.get("args"), dict) and isinstance(row.get("name"), str)):
-                row["args"] = self.scrubber.arguments(row["args"])
                 calls[row["step"]] = row
         return calls
 
@@ -245,8 +187,8 @@ class IterationTraces:
                 if handle in spawns:
                     step, call = spawns[handle]
                     parent, stamp = span_id(self.run, coordinator, f"tool-{step}"), call["time"]
-                    fields["input"] = self.scrubber.text(str(call["args"].get("brief", "")))
-                agents[child] = self.event(ledger, it, child, "agent", self.scrubber.text(handle), stamp, parent,
+                    fields["input"] = call["args"].get("brief", "")
+                agents[child] = self.event(ledger, it, child, "agent", handle, stamp, parent,
                                            "agent", **fields)
             self.layouts[coordinator] = layout_version, handles, agents
         for row in self.rows(f"{directory}/board.jsonl", context=tuple(sorted(handles.items()))):
@@ -257,8 +199,8 @@ class IterationTraces:
             recipient = target.group(1) if target else ""
             brief = row.get("kind") == "brief"
             owner = handles.get(recipient, coordinator) if brief else handles[author]
-            fields = {"metadata.sender": self.scrubber.text(author), "metadata.recipient": self.scrubber.text(recipient),
-                      "input" if brief else "output": self.scrubber.text(body)}
+            fields = {"metadata.sender": author, "metadata.recipient": recipient,
+                      "input" if brief else "output": body}
             try:
                 stamp = datetime.fromisoformat(row["time"]).timestamp()
             except (KeyError, TypeError, ValueError):
@@ -280,7 +222,7 @@ class IterationTraces:
         version = (self.seen.get(hook_path), parent)
         if it and self.emitted_calls.get(conversation) != version:
             for step, call in calls.items():
-                self.event(ledger, it, conversation, f"tool-{step}", self.scrubber.text(call["name"]),
+                self.event(ledger, it, conversation, f"tool-{step}", call["name"],
                            call["time"], parent, "tool", "STARTED", input=call["args"])
             self.emitted_calls[conversation] = version
         path = f"{conversation}/.system_generated/logs/transcript.jsonl"
@@ -304,7 +246,7 @@ class IterationTraces:
                         except ValueError:
                             pass
                     self.event(ledger, it, conversation, f"result-{step}", "tool.result", stamp, tool,
-                               status=row["status"], output=self.scrubber.text(output))
+                               status=row["status"], output=output)
                     if f"{conversation}/task-{step}" in output:
                         self.jobs.add((conversation, step, it.scope, tool))
             except (ValueError, TypeError, KeyError):
@@ -323,12 +265,28 @@ class IterationTraces:
                     signature = (stat.st_ino, stat.st_mtime_ns, stat.st_size)
                     if not stat.st_size or self.seen.get(path) == signature:
                         continue
-                    data = stream.read(self.scrubber.limit + max(map(len, self.scrubber.literals), default=0) + 1)
-                    content = self.scrubber.text(data.decode(errors="replace"))
-                    item = Observation.record(self.run, conversation, f"task-output-{step}", "task.output",
-                                              stat.st_mtime, scope=scope, parent=tool, fields={
-                                                  "output": content, "metadata.background": "true"})
-                    ledger.put(item)
+                    # Resume at the last complete chunk when the CLI appends to this file.
+                    # Re-emit its changing tail under the same span ID.
+                    previous, offset, index = self.task_offsets.get(path, (None, 0, 0))
+                    if previous is None or previous[0] != stat.st_ino or stat.st_size <= previous[2]:
+                        offset, index = 0, 0
+                    stamp = self.starts.get(conversation, {}).get(step, {}).get("time", stat.st_mtime)
+                    with io.TextIOWrapper(stream, encoding="utf-8", errors="replace", newline="") as output:
+                        output.seek(offset)
+                        while content := output.read(32_768):
+                            key = f"task-output-{step}" + (f"-{index}" if index else "")
+                            ledger.put(Observation.record(
+                                self.run, conversation, key, "task.output", stamp, scope=scope, parent=tool,
+                                fields={"output": content, "metadata.background": "true",
+                                        "metadata.chunk_index": str(index)}))
+                            if len(content) < 32_768:
+                                break
+                            next_offset = output.tell()
+                            if not output.read(1):
+                                break
+                            output.seek(next_offset)
+                            offset, index = next_offset, index + 1
+                    self.task_offsets[path] = signature, offset, index
                     self.seen[path] = signature
             except OSError:
                 continue
