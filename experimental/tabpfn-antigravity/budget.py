@@ -12,22 +12,31 @@ from render import render
 from telemetry import Ledger
 
 
-def publish(path: Path, value: dict, mode: int = 0o644) -> None:
-    """Atomically replace a JSON document under a service-owned directory.
+def publish_text(path: Path, text: str, mode: int = 0o644) -> None:
+    """Atomically replace a text document under a service-owned directory.
 
     :param path: Destination with an existing trusted parent directory.
     :param mode: Permissions for readers of the completed document.
-    :param value: JSON-serializable document.
+    :param text: UTF-8 document contents.
     """
     with tempfile.NamedTemporaryFile(dir=path.parent, mode="w", delete=False) as staging:
         try:
-            json.dump(value, staging)
-            staging.write("\n")
+            staging.write(text)
             staging.flush()
             os.fchmod(staging.fileno(), mode)
             os.replace(staging.name, path)
         finally:
             Path(staging.name).unlink(missing_ok=True)
+
+
+def publish(path: Path, value: dict, mode: int = 0o644) -> None:
+    """Atomically publish a JSON document for a trusted service or the researcher.
+
+    :param path: Filesystem destination.
+    :param value: JSON-serializable document.
+    :param mode: Unix permission bits.
+    """
+    publish_text(path, json.dumps(value) + "\n", mode)
 
 
 class Budget:

@@ -19,6 +19,26 @@ class PanelTests(unittest.TestCase):
             self.assertIn("Read every page", panel.rubric)
             self.assertNotEqual(panel.key("a"*64), panel.key("b"*64))
 
+    def test_history_is_anonymous_and_stable_on_replay(self):
+        """Make the original handoff table available to a fresh model context after review."""
+        with tempfile.TemporaryDirectory() as temp:
+            state = Path(temp)
+            archive = state / "public/reviews"
+            archive.mkdir(parents=True)
+            record = {"paper_sha256": "a"*64, "review_path": "reviews/a.json", "passed": False,
+                      "feedback": "SCORES overall=2 path=revise", "direction": "baseline"}
+            (archive / "a.json").write_text(json.dumps(record))
+            panel = BlindPanel(state, state, "test")
+            panel.history()
+            history = state / "public/REVIEW_HISTORY.md"
+            before = history.read_bytes()
+            self.assertIn(b"baseline", before)
+            self.assertIn(b"| unknown |", before)
+            self.assertIn(b"revise", before)
+            self.assertNotIn(b"google/", before)
+            panel.history()
+            self.assertEqual(history.read_bytes(), before)
+
 class ReviewerAccountingTests(unittest.IsolatedAsyncioTestCase):
     """Verify paid PDF tool turns reach the exporter and the budget used by the next iteration."""
 
