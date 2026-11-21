@@ -115,13 +115,13 @@ To update the list, stop the run between turns, edit the operator's TOML and
 rerun the installer. Reapply after ordinary reprovisioning, which restores
 workspace ownership and the base service configuration. This first installer
 targets the SDK service; ACP account/configuration migration is not implemented.
-The SDK's main shell and the bundled Slack MCP configurations use the policy proxy.
-The Slack declaration forwards the web proxy and Node CA settings for the initial
+The SDK's main shell uses the policy proxy. The inductive forecasting drop-in
+also forwards the web proxy and Node CA settings to its Slack MCP server for the initial
 `npx` download. The installed server uses `SLACK_MCP_PROXY` for Slack API calls
 and trusts the box's CA store. Other MCP clients and native worker sandboxes
 may require their own transport configuration.
 
-For an already staged run with the older SDK and installer, stop the SDK service
+For an already staged inductive forecasting run with the older SDK and installer, stop the SDK service
 and add these entries to the existing `[mcp_servers.slack]` inline `env` table in
 `/srv/crux-run/run-harness/scaffold.toml`, keeping the bot and channel entries:
 

@@ -11,8 +11,6 @@ This demo exercises the scaffold end to end, in two phases:
 - Install it to the workspace and copy the **Bot User OAuth Token** (`xoxb-…`) from **OAuth & Permissions**. Give it to the scaffold as `SLACK_BOT_TOKEN`.
 - Invite the bot to the request channel (`/invite @crux-pm`) and copy the channel's ID (`C…`) from its details.
 
-On an SDK box with the CRUX network policy installed, the Slack configuration forwards the proxy and trust settings for both the npm download and Slack API requests. [Network policy installation and recovery](../../../../devops/ec2-workspaces/network-proxy.md)
-
 ## 2. Resolve placeholders
 
 `PROMPT.md` is the `clarify` phase's first prompt and is sent to the agent verbatim, so operator notes stay in this guide.
