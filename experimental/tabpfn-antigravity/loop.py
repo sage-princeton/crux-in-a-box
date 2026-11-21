@@ -17,6 +17,7 @@ from uuid import UUID
 from budget import Budget, publish
 from prepare import VERSION
 from render import render
+from resources import research_resources
 
 
 def cli_command(prompt: str, seconds: int) -> list[str]:
@@ -189,6 +190,7 @@ class ResearchProcess:
         """
         env = {"HOME": self.account.pw_dir, "USER": self.account.pw_name,
                "PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+        env.update(research_resources())
         if inference:
             env["GEMINI_API_KEY"] = os.environ["GEMINI_API_KEY"]
         with (
