@@ -145,6 +145,8 @@ def install(slug: str) -> None:
     config = HOME_DIR / ".gemini/config/hooks.json"
     hook = {"tabpfn-budget": {"PreInvocation": [{"type": "command", "command":
             f"/usr/bin/python3 {HERE}/budget.py hook {PUBLIC}/BUDGET.json"}]}}
+    hook["tabpfn-tools"] = {"PreToolUse": [{"matcher": "", "hooks": [
+        {"type": "command", "command": f"/usr/bin/python3 {HERE}/tool_hook.py"}]}]}
     # Write workspace-owned paths as the research user, including when provisioning is retried.
     subprocess.run(["runuser", "-u", ACCOUNT, "--", "tee", str(config)], input=json.dumps(hook),
                    text=True, stdout=subprocess.DEVNULL, check=True)

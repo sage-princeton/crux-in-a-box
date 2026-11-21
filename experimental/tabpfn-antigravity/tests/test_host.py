@@ -14,4 +14,5 @@ class HostTests(unittest.TestCase):
         self.assertNotIn("review.env", units["tabpfn-research.service"])
         self.assertIn("review.env", units["tabpfn-review.service"])
         self.assertIn("langfuse.env", units["tabpfn-traces.service"])
+        self.assertNotIn("research.env", units["tabpfn-traces.service"])
         self.assertNotIn("EnvironmentFile", units["tabpfn-budget.service"])
