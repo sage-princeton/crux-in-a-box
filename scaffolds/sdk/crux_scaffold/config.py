@@ -41,19 +41,22 @@ class AgentConfig(StandingContextOptions):
 
 
 class McpServerConfig(Options):
-    """A stdio MCP server the agents that list it can use. It gets only the environment declared in `env`."""
+    """A stdio MCP server the agents that list it can use. The drop-in declares its environment."""
 
     command: str
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
+    inherit_env: list[str] = Field(default_factory=list)
     timeout_seconds: float = 30
 
     def resolved_env(self, name: str, env: Mapping[str, str]) -> dict[str, str]:
-        """`env` with ${VAR} references filled from the scaffold's environment; never echoes values."""
+        """Copy named variables when present, then apply explicit env with required ${VAR} references."""
         missing = sorted({var for value in self.env.values() for var in ENV_REF.findall(value) if not env.get(var)})
         if missing:
             raise InvalidDropInError(f"MCP server '{name}' needs environment variable(s): {', '.join(missing)}")
-        return {key: ENV_REF.sub(lambda match: env[match.group(1)], value) for key, value in self.env.items()}
+        inherited = {key: env[key] for key in self.inherit_env if key in env}
+        return inherited | {key: ENV_REF.sub(lambda match: env[match.group(1)], value)
+                            for key, value in self.env.items()}
 
 
 class PhaseConfig(Options):

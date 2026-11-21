@@ -91,6 +91,7 @@ HOME=/var/lib/crux-agent
 XDG_CACHE_HOME=/var/lib/crux-agent/cache
 HTTP_PROXY=http://127.0.0.1:18080
 HTTPS_PROXY=http://127.0.0.1:18080
+SLACK_MCP_PROXY=http://127.0.0.1:18080
 http_proxy=http://127.0.0.1:18080
 https_proxy=http://127.0.0.1:18080
 ALL_PROXY=http://127.0.0.1:18080

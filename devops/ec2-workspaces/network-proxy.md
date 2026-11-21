@@ -115,9 +115,23 @@ To update the list, stop the run between turns, edit the operator's TOML and
 rerun the installer. Reapply after ordinary reprovisioning, which restores
 workspace ownership and the base service configuration. This first installer
 targets the SDK service; ACP account/configuration migration is not implemented.
-The SDK's main shell is covered. Native worker sandboxes and MCP clients that
-do not inherit proxy/trust settings may fail to connect and require explicit
-transport configuration; they do not gain direct egress.
+The SDK's main shell and the bundled Slack MCP configurations use the policy proxy.
+The Slack declaration forwards the web proxy and Node CA settings for the initial
+`npx` download. The installed server uses `SLACK_MCP_PROXY` for Slack API calls
+and trusts the box's CA store. Other MCP clients and native worker sandboxes
+may require their own transport configuration.
+
+For an already staged run with the older SDK and installer, stop the SDK service
+and add these entries to the existing `[mcp_servers.slack]` inline `env` table in
+`/srv/crux-run/run-harness/scaffold.toml`, keeping the bot and channel entries:
+
+```toml
+HTTPS_PROXY = "${HTTPS_PROXY}", NODE_EXTRA_CA_CERTS = "${NODE_EXTRA_CA_CERTS}", SLACK_MCP_PROXY = "${HTTPS_PROXY}"
+```
+
+This uses the original policy installer's environment. Apply these required
+references only on a proxy-enabled run. Start the service with its existing
+state directory to resume.
 
 To restore ordinary SDK execution, stop the run between turns, remove
 `/etc/systemd/system/crux-sdk-run.service.d/zz-network.conf`, restore workspace
