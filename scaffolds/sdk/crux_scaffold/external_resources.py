@@ -241,13 +241,14 @@ class Runpod(ResourceProvider):
             raise InvalidDropInError("runpod requires a run slug of 1-128 letters, digits, dots, underscores or hyphens")
 
     async def read(self, ctx: RunContext) -> ResourceSnapshot:
-        return await asyncio.to_thread(self._read, ctx)
+        snapshot, _ = await asyncio.to_thread(self.collect, ctx.state_dir, ctx.env, *_window(ctx))
+        return snapshot
 
-    def _get(self, ctx: RunContext, deadline: float, path: str, query: dict | None = None) -> dict:
+    def _get(self, api_key: str, deadline: float, path: str, query: dict | None = None) -> dict:
         url = "https://api.runpod.io/v2/" + path
         if query:
             url += "?" + urllib.parse.urlencode(query)
-        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {ctx.env[self.options.api_key_env]}",
+        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}",
                                                       "Accept": "application/json"})
         try:
             with _HTTP.open(request, timeout=_remaining(deadline)) as response:
@@ -264,9 +265,9 @@ class Runpod(ResourceProvider):
             raise TypeError("invalid Runpod resource response")
         return body
 
-    def _inventory(self, ctx: RunContext, started: datetime, slug: str) -> tuple[Path, _RunpodInventory]:
+    def _inventory(self, state_dir: Path, started: datetime, slug: str) -> tuple[Path, _RunpodInventory]:
         key = hashlib.sha256(self.name.encode()).hexdigest()
-        path = ctx.state_dir / "resources" / f"runpod-{key}.json"
+        path = state_dir / "resources" / f"runpod-{key}.json"
         try:
             with path.open("rb") as stream:
                 raw = stream.read(MAX_BYTES + 1)
@@ -293,13 +294,13 @@ class Runpod(ResourceProvider):
             finally:
                 temporary.unlink(missing_ok=True)
 
-    def _discover(self, ctx: RunContext, deadline: float, path: Path,
+    def _discover(self, api_key: str, deadline: float, path: Path,
                   inventory: _RunpodInventory) -> tuple[set[str], dict[str, dict]]:
         known, live, seen, cursors = set(inventory.pod_ids), {}, set(), set()
         persisted = known.copy()
         query = {"includeClusterPods": "true", "limit": 100}
         for _ in range(MAX_PAGES):
-            body = self._get(ctx, deadline, "pods", query)
+            body = self._get(api_key, deadline, "pods", query)
             rows, pagination = body["pods"], body["pagination"]
             cursor, more = pagination["nextCursor"], pagination["hasNextPage"]
             if (not isinstance(rows, list) or type(more) is not bool
@@ -327,12 +328,24 @@ class Runpod(ResourceProvider):
             query["cursor"] = cursor
         raise ValueError("Runpod pod pagination limit reached")
 
-    def _read(self, ctx: RunContext) -> ResourceSnapshot:
-        started, now = _window(ctx)
+    def collect(self, state_dir: Path, env: Mapping[str, str], started: datetime,
+                now: datetime) -> tuple[ResourceSnapshot, list[str]]:
+        """Read the dedicated pods' live rates and provider-reported billing for a study.
+
+        :param state_dir: Trusted persistent state containing this provider's pod inventory.
+        :param env: Credential and run ownership slug, named by the provider options.
+        :param started: Immutable study start, timezone-aware.
+        :param now: End of this measurement, timezone-aware.
+        :returns: Measurements and tracked pod IDs. Cost is omitted until every pod has billing rows.
+        """
+        if started.utcoffset() is None or now.utcoffset() is None or now < started:
+            raise ValueError("invalid resource time window")
+        started, now = started.astimezone(UTC), now.astimezone(UTC)
+        api_key = env[self.options.api_key_env]
         deadline = time.monotonic() + self.options.timeout_seconds
-        slug = ctx.env[self.options.run_slug_env]
-        path, inventory = self._inventory(ctx, started, slug)
-        identifiers, live = self._discover(ctx, deadline, path, inventory)
+        slug = env[self.options.run_slug_env]
+        path, inventory = self._inventory(state_dir, started, slug)
+        identifiers, live = self._discover(api_key, deadline, path, inventory)
         start = started.replace(minute=0, second=0, microsecond=0)
         end = now.replace(minute=0, second=0, microsecond=0)
         if end < now or end == start:
@@ -343,7 +356,7 @@ class Runpod(ResourceProvider):
         for identifier in sorted(identifiers):
             query = {"podId": identifier, "startTime": _timestamp(start), "endTime": _timestamp(end),
                      "bucketSize": "hour"}
-            body = self._get(ctx, deadline, "billing/pods", query)
+            body = self._get(api_key, deadline, "billing/pods", query)
             records, metadata = body["records"], body["metadata"]
             returned = metadata["query"]
             if (not isinstance(records, list) or type(metadata["recordCount"]) is not int
@@ -385,4 +398,4 @@ class Runpod(ResourceProvider):
                 metrics[key] = ResourceMetric(value=totals[field], unit="USD")
         else:
             note += " Billing pending for one or more pods; total cost is unknown."
-        return ResourceSnapshot(as_of=now, metrics=metrics, note=note)
+        return ResourceSnapshot(as_of=now, metrics=metrics, note=note), sorted(identifiers)

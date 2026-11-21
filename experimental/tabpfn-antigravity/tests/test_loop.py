@@ -32,6 +32,6 @@ class IterationTests(unittest.TestCase):
         for phase in ("research", "finalize"):
             prompt = render("iteration.md", brief="test", phase=phase, iteration=1,
                             continuation=render(phase + "-continue.md", phase=phase, iteration=1, feedback="<brief>"),
-                            **{"remaining-seconds": 10, "spent-usd": 1, "limit-usd": 2})
+                            **{"remaining-seconds": 10, "spent-usd": 1, "limit-usd": 2, "runpod-budget": "RunPod disabled."})
             self.assertTrue(cli_command(prompt, 60)[-1].startswith("/swarm test"))
             self.assertIn("<brief>", prompt)
