@@ -22,6 +22,18 @@ class PreparationTests(unittest.TestCase):
             inputs.seed(workspace)
             self.assertEqual((workspace / "PLAN.md").read_text(), "active hypothesis")
 
+    def test_reseed_keeps_operator_brief(self):
+        """Preserve a validation brief or active research instructions across provisioning."""
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = Path(tmp) / "research"
+            inputs = ResearchInputs()
+            inputs.seed(workspace)
+            (workspace / "BRIEF.md").write_text("Bounded validation task")
+            (workspace / "AGENTS.md").write_text("Standing instructions for this run")
+            inputs.seed(workspace)
+            self.assertEqual((workspace / "BRIEF.md").read_text(), "Bounded validation task")
+            self.assertEqual((workspace / "AGENTS.md").read_text(), "Standing instructions for this run")
+
     def test_unrelated_directory_is_rejected(self):
         """Refuse to adopt another experiment's existing workspace."""
         with tempfile.TemporaryDirectory() as root, self.assertRaises(FileExistsError):

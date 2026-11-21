@@ -60,10 +60,22 @@ class ResearchInputs:
         :param workspace: Dedicated destination directory outside the source checkout.
         """
         if (workspace / self.marker).is_file():
-            current = workspace / "AGENTS.md"
-            previous = {'7039fd5485ab23fd3aa25f1bc947f77124fa471702cd0c7e21f47b7339f82cbf', 'f3e981ab877aef5aefaf6b63db340d6c59a295820d8b580e3971a5ff8b10e016', 'afa940e9c31aed37f5a26dce03f0b48ad07249c1ac9ff393338e4689d56fe4e7', 'e807dd963c26c2b82e2d45ac14f9701fd6f522980ed2bbe6dd70e447465d00c0'}
-            if current.is_file() and not current.is_symlink() and hashlib.sha256(current.read_bytes()).hexdigest() in previous:
-                shutil.copyfile(HERE / "workspace/AGENTS.md", current)
+            previous = {
+                "AGENTS.md": {
+                    "7b678cbda2aa2732904f17c9ae363995e22e87dd0c8e400526aa51cee911ccd0",
+                    "821dede41d8e8e36e4afdd9561dd4d98e7969dd9a532b7c457ab2639e66b10b6",
+                    "7039fd5485ab23fd3aa25f1bc947f77124fa471702cd0c7e21f47b7339f82cbf",
+                    "afa940e9c31aed37f5a26dce03f0b48ad07249c1ac9ff393338e4689d56fe4e7",
+                    "e807dd963c26c2b82e2d45ac14f9701fd6f522980ed2bbe6dd70e447465d00c0",
+                    "f3e981ab877aef5aefaf6b63db340d6c59a295820d8b580e3971a5ff8b10e016",
+                },
+                "BRIEF.md": {"f04628f9d9fd1a83aeeaf343e89ba46e263867a6aa32fb71362eb8f715efd50a"},
+            }
+            for name, hashes in previous.items():
+                current = workspace / name
+                if (not current.is_symlink() and current.is_file()
+                        and hashlib.sha256(current.read_bytes()).hexdigest() in hashes):
+                    shutil.copyfile(HERE / "workspace" / name, current)
             return
         if workspace.exists():
             raise FileExistsError(f"Unrecognized existing workspace: {workspace}")

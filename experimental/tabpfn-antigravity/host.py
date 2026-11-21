@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from budget import DEFAULT_RUNPOD_USD
+from budget import add_start_limits
 from prepare import HERE, VERSION, install_cli
 from resources import OPTIONAL
 
@@ -201,9 +201,7 @@ def main() -> None:
     actions.add_parser("install").add_argument("slug")
     actions.add_parser("credentials")
     start = actions.add_parser("start")
-    start.add_argument("--seconds", type=int, default=604800)
-    start.add_argument("--usd", type=float, default=15000)
-    start.add_argument("--runpod-usd", type=float, default=DEFAULT_RUNPOD_USD)
+    add_start_limits(start)
     actions.add_parser("trace").add_argument("slug")
     args = parser.parse_args()
     if args.action == "install":
@@ -213,8 +211,8 @@ def main() -> None:
     elif args.action == "start":
         if any(not (CONF / name).is_file() for name in ("research.env", "review.env", "langfuse.env", "runpod.env")):
             raise ValueError("Configure study credentials before starting")
-        run("runuser", "-u", CONTROL, "--", "python3", HERE / "budget.py", "start", STUDY,
-            "--seconds", args.seconds, "--usd", args.usd, "--runpod-usd", args.runpod_usd)
+        # Forward just the supplied flags so resuming preserves any earlier launch envelope.
+        run("runuser", "-u", CONTROL, "--", "python3", HERE / "budget.py", "start", STUDY, *sys.argv[2:])
         run("systemctl", "enable", "--now", "tabpfn-study.target")
     else:
         epoch = json.loads((STUDY / "budget.json").read_text())["started_at"]
