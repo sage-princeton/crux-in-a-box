@@ -183,8 +183,8 @@ def main() -> None:
     launch = actions.add_parser("launch")
     for arg in ("subnet", "security-group", "key-name"):
         launch.add_argument("--" + arg, required=True)
-    launch.add_argument("--instance-type", default="m7i.2xlarge")
-    launch.add_argument("--gib", type=int, default=160)
+    launch.add_argument("--instance-type", default="m7i.8xlarge")
+    launch.add_argument("--gib", type=int, default=512)
     launch.add_argument("--ami")
     launch.add_argument("--dry-run", action="store_true")
     configure = actions.add_parser("configure")

@@ -1,0 +1,26 @@
+# Copy to .envrc. Fill in missing values or inherit them from the operator shell.
+
+# Required for both the EC2 dry run and deployment.
+export AWS_PROFILE="${AWS_PROFILE:-crux-2-acct-admin-access}"
+export RUN_SLUG="${RUN_SLUG:-}"    # Unique study name, e.g. tabpfn-neon-01
+export SUBNET_ID="${SUBNET_ID:-}"
+export SG_ID="${SG_ID:-}"
+export KEY_NAME="${KEY_NAME:-}"    # Name of the EC2 key pair
+
+# Required to configure the host and start the study.
+export SSH_KEY="${SSH_KEY:-}"      # Local path to the matching private key
+export VERIFIED_HOSTS="${VERIFIED_HOSTS:-$HOME/.ssh/known_hosts}"
+export AI_STUDIO_API_DEV_KEY="${AI_STUDIO_API_DEV_KEY:-}"
+export OPENROUTER_API_KEY="${OPENROUTER_API_KEY:-}"
+export LANGFUSE_BASE_URL="${LANGFUSE_BASE_URL:-}"  # HTTPS project host
+export LANGFUSE_PUBLIC_KEY="${LANGFUSE_PUBLIC_KEY:-}"
+export LANGFUSE_SECRET_KEY="${LANGFUSE_SECRET_KEY:-}"
+
+# Optional deployment settings.
+export AWS_REGION="${AWS_REGION:-us-east-1}"
+export PYTHON="${PYTHON:-python3}"  # Interpreter with requirements.txt installed
+
+# Optional GPU and checkpoint access.
+export RUNPOD_API_KEY="${RUNPOD_API_KEY:-}"
+export HF_TOKEN="${HF_TOKEN:-}"
+export PRIOR_LABS_API_KEY="${PRIOR_LABS_API_KEY:-}"

@@ -64,6 +64,7 @@ monitoring/service/node_modules/
 **/.terraform/
 .envrc
 .envrc.*
+!/experimental/tabpfn-antigravity/.envrc.example
 .direnv/
 docs/superpowers/
 
