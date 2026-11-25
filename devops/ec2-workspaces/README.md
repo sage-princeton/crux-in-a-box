@@ -24,6 +24,11 @@ For an SDK task that must avoid particular paper URLs, the optional
 egress through an HTTPS inspection proxy, which can also block search results
 that show the paper. Install it explicitly before launch.
 
+For a workspace that needs auxiliary AWS access, set `ISOLATED_RUN_IDENTITY=1`
+in its base config before running `make-new-workspace.sh`. This creates a dedicated
+instance role and profile with the shared baseline SSM permission. After provisioning
+follow [the auxiliary AWS runbook](../../utilities/aux-aws/README.md).
+
 ## Development
 
 After installing the [shared check tools](../../README.md#development), run from
