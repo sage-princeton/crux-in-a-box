@@ -21,8 +21,8 @@ class CleanupError(Exception):
 def aws(profile, region, *args):
     """Call AWS with the explicit profile and region and decode its JSON result.
 
-    :param profile: Profile for this operation.
-    :param region: Region for this operation.
+    :param profile: Explicit AWS CLI profile for the account being accessed.
+    :param region: AWS region used for this request.
     :param args: Operation arguments.
     """
     try:
@@ -38,9 +38,9 @@ def aws(profile, region, *args):
 def delete_bucket(profile, seed_region, bucket, account):
     """Remove all object versions and delete markers, then delete the owned bucket.
 
-    :param profile: Profile for this operation.
+    :param profile: Explicit AWS CLI profile for the account being accessed.
     :param seed_region: Region used to discover the bucket’s actual location.
-    :param bucket: Bucket for this operation.
+    :param bucket: Name of the bucket to empty and remove.
     :param account: Expected owning AWS account ID, checked on each bucket request.
     """
     owner = ["--bucket", bucket, "--expected-bucket-owner", account]

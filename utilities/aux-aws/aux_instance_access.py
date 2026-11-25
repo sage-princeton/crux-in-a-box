@@ -39,8 +39,8 @@ def load_config(path):
 def aws(profile, region, *args):
     """Call AWS with the explicit profile and region and decode its JSON result.
 
-    :param profile: Profile for this operation.
-    :param region: Region for this operation.
+    :param profile: Explicit AWS CLI profile for the account being accessed.
+    :param region: AWS region used for this request.
     :param args: Operation arguments.
     """
     try:
@@ -56,7 +56,7 @@ def aws(profile, region, *args):
 def managed(rule):
     """Identify ingress rules owned by the CRUX auxiliary-access manager.
 
-    :param rule: Rule for this operation.
+    :param rule: EC2 security-group rule returned by describe-security-group-rules.
     """
     return re.fullmatch(re.escape(PREFIX) + r"[A-Za-z0-9-]+", rule.get("Description", "")) is not None
 
@@ -64,7 +64,7 @@ def managed(rule):
 def ssh_enabled(rule):
     """Return whether an ingress rule permits TCP port 22.
 
-    :param rule: Rule for this operation.
+    :param rule: EC2 security-group rule returned by describe-security-group-rules.
     """
     return not rule.get("IsEgress") and (rule.get("IpProtocol") == "-1" or (
         rule.get("IpProtocol") in ("tcp", "6") and rule.get("FromPort", 0) <= 22 <= rule.get("ToPort", 0)))
@@ -73,8 +73,8 @@ def ssh_enabled(rule):
 def exact_ssh(rule, cidr):
     """Match an IPv4 rule restricted to TCP port 22 and the given source CIDR.
 
-    :param rule: Rule for this operation.
-    :param cidr: Cidr for this operation.
+    :param rule: EC2 security-group rule returned by describe-security-group-rules.
+    :param cidr: IPv4 network allowed to reach the port.
     """
     return (ssh_enabled(rule) and rule.get("FromPort") == rule.get("ToPort") == 22
             and rule.get("CidrIpv4") == cidr)
@@ -84,8 +84,8 @@ def reconcile(config, mode, public_ip=None):
     """Grant this workspace SSH access or remove its managed ingress rules.
 
     :param config: Parsed workspace configuration.
-    :param mode: Mode for this operation.
-    :param public_ip: Public ip for this operation.
+    :param mode: Reconcile access for a running workspace or clean up its managed rules.
+    :param public_ip: Workspace public IPv4 address when reconciling ingress.
     """
     expected = config.get("AUX_RESOURCE_ACCOUNT_ID")
     enabled = config.get("PROVISION_EC2") == "1"

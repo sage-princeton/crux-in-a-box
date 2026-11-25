@@ -1,3 +1,5 @@
+"""Verify auxiliary teardown across regions, including retained ownership and incomplete inventory."""
+
 import json
 import os
 import subprocess
@@ -72,11 +74,11 @@ else: print(json.dumps(response))
 
 
 def execute(tmp_path, failure=None, owner="old"):
-    """Execute.
+    """Run the teardown script against a fake AWS CLI and return its exit result and final inventory.
 
-    :param tmp_path: Tmp path for this operation.
-    :param failure: Failure for this operation.
-    :param owner: Owner for this operation.
+    :param tmp_path: Temporary directory for the AWS CLI stub, config and inventory.
+    :param failure: Optional simulated AWS failure reported by the stub.
+    :param owner: Slug trusted by the simulated auxiliary role.
     """
     state = {"calls": [], "owner": f"arn:aws:iam::111111111111:role/crux-run-{owner}",
              "instances": {"us-east-2": ["i-cms"]},
@@ -105,7 +107,7 @@ def execute(tmp_path, failure=None, owner="old"):
 def test_standalone_teardown_cleans_other_regions_protected_db_and_versioned_bucket(tmp_path):
     """Verify standalone teardown cleans other regions protected db and versioned bucket.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Temporary directory for the AWS CLI stub, config and inventory.
     """
     result, state = execute(tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
@@ -124,7 +126,7 @@ def test_standalone_teardown_cleans_other_regions_protected_db_and_versioned_buc
 def test_inventory_failure_does_not_remove_roles_or_report_success(tmp_path):
     """Verify inventory failure does not remove roles or report success.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Temporary directory for the AWS CLI stub, config and inventory.
     """
     result, state = execute(tmp_path, failure="inventory")
     assert result.returncode != 0
@@ -136,7 +138,7 @@ def test_inventory_failure_does_not_remove_roles_or_report_success(tmp_path):
 def test_stale_owner_guard_precedes_all_regional_or_bucket_cleanup(tmp_path):
     """Verify stale owner guard precedes all regional or bucket cleanup.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Temporary directory for the AWS CLI stub, config and inventory.
     """
     result, state = execute(tmp_path, owner="successor")
     assert result.returncode == 0
@@ -147,7 +149,7 @@ def test_stale_owner_guard_precedes_all_regional_or_bucket_cleanup(tmp_path):
 def test_unreadable_ownership_fails_before_any_auxiliary_deletion(tmp_path):
     """Verify unreadable ownership fails before any auxiliary deletion.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Temporary directory for the AWS CLI stub, config and inventory.
     """
     result, state = execute(tmp_path, failure="iam")
     assert result.returncode != 0

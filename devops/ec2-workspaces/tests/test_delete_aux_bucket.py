@@ -1,3 +1,5 @@
+"""Verify owner checks and complete deletion of versioned auxiliary S3 buckets."""
+
 import importlib.util
 import json
 import subprocess
@@ -12,12 +14,14 @@ spec.loader.exec_module(cleanup)
 
 
 class BucketAPI:
-    def __init__(self, count=0, location="us-east-2", errors=False):
-        """Initialize explicit account, region and run identity for this operation.
+    """Emulate regional S3 version listings, delete markers and batch deletion errors."""
 
-        :param count: Count for this operation.
-        :param location: Location for this operation.
-        :param errors: Errors for this operation.
+    def __init__(self, count=0, location="us-east-2", errors=False):
+        """Seed the fake bucket with versioned objects and a delete marker.
+
+        :param count: Initial number of object versions.
+        :param location: S3 LocationConstraint returned for the bucket.
+        :param errors: Whether a batch deletion returns a per-object error.
         """
         self.location = location
         self.objects = [{"Key": f"media/{index}", "VersionId": f"v{index}"} for index in range(count)]
@@ -28,10 +32,10 @@ class BucketAPI:
         self.deleted = False
 
     def __call__(self, profile, region, *args):
-        """Call.
+        """Record the request and emulate S3 listing and deletion for the expected owner.
 
-        :param profile: Profile for this operation.
-        :param region: Region for this operation.
+        :param profile: Explicit AWS CLI profile for the account being accessed.
+        :param region: AWS region used for this request.
         :param args: Operation arguments.
         """
         assert profile == "aux"
@@ -68,7 +72,7 @@ class BucketAPI:
 def test_all_versions_and_markers_are_deleted_in_bounded_batches(monkeypatch):
     """Verify all versions and markers are deleted in bounded batches.
 
-    :param monkeypatch: Monkeypatch for this operation.
+    :param monkeypatch: Pytest fixture that replaces the AWS transport for this test.
     """
     api = BucketAPI(2501)
     monkeypatch.setattr(cleanup, "aws", api)
@@ -82,9 +86,9 @@ def test_all_versions_and_markers_are_deleted_in_bounded_batches(monkeypatch):
 def test_bucket_region_is_discovered_independently_of_config(monkeypatch, location, expected):
     """Verify bucket region is discovered independently of config.
 
-    :param monkeypatch: Monkeypatch for this operation.
-    :param location: Location for this operation.
-    :param expected: Expected for this operation.
+    :param monkeypatch: Pytest fixture that replaces the AWS transport for this test.
+    :param location: S3 LocationConstraint returned for the bucket.
+    :param expected: Region that should receive the deletion requests.
     """
     api = BucketAPI(location=location)
     monkeypatch.setattr(cleanup, "aws", api)
@@ -95,7 +99,7 @@ def test_bucket_region_is_discovered_independently_of_config(monkeypatch, locati
 def test_partial_delete_error_blocks_bucket_deletion_and_does_not_echo_keys(monkeypatch):
     """Verify partial delete error blocks bucket deletion and does not echo keys.
 
-    :param monkeypatch: Monkeypatch for this operation.
+    :param monkeypatch: Pytest fixture that replaces the AWS transport for this test.
     """
     api = BucketAPI(errors=True)
     monkeypatch.setattr(cleanup, "aws", api)
@@ -108,10 +112,10 @@ def test_partial_delete_error_blocks_bucket_deletion_and_does_not_echo_keys(monk
 def test_transport_errors_are_not_treated_as_empty_buckets(monkeypatch):
     """Verify transport errors are not treated as empty buckets.
 
-    :param monkeypatch: Monkeypatch for this operation.
+    :param monkeypatch: Pytest fixture that replaces the AWS transport for this test.
     """
     def failed(*args):
-        """Failed.
+        """Raise a transport error before returning any listing.
 
         :param args: Operation arguments.
         """
@@ -124,11 +128,11 @@ def test_transport_errors_are_not_treated_as_empty_buckets(monkeypatch):
 def test_aws_cli_always_uses_explicit_profile_and_parses_json(monkeypatch):
     """Verify aws cli always uses explicit profile and parses json.
 
-    :param monkeypatch: Monkeypatch for this operation.
+    :param monkeypatch: Pytest fixture that replaces the AWS transport for this test.
     """
     calls = []
     def completed(args, **kwargs):
-        """Completed.
+        """Record the CLI command and return an empty successful JSON response.
 
         :param args: Operation arguments.
         :param kwargs: Additional subprocess options.

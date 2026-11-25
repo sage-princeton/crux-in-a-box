@@ -1,3 +1,5 @@
+"""Exercise auxiliary SSH access reconciliation and ownership changes with simulated EC2 and IAM."""
+
 import copy
 import importlib.util
 import ipaddress
@@ -16,13 +18,13 @@ SPEC.loader.exec_module(access)
 
 
 def rule(identifier, group="sg-cms", cidr="192.0.2.10/32", description="operator", port=22):
-    """Rule.
+    """Build one EC2 TCP ingress rule for the regional inventory.
 
-    :param identifier: Identifier for this operation.
-    :param group: Group for this operation.
-    :param cidr: Cidr for this operation.
-    :param description: Description for this operation.
-    :param port: Port for this operation.
+    :param identifier: AWS security-group rule ID.
+    :param group: ID of the security group containing the rule.
+    :param cidr: Source IPv4 CIDR.
+    :param description: EC2 rule description used to distinguish operator and managed rules.
+    :param port: TCP destination port.
     """
     return {"SecurityGroupRuleId": identifier, "GroupId": group, "IsEgress": False,
             "IpProtocol": "tcp", "FromPort": port, "ToPort": port,
@@ -30,8 +32,10 @@ def rule(identifier, group="sg-cms", cidr="192.0.2.10/32", description="operator
 
 
 class AwsFixture:
+    """Record AWS CLI requests and model regional EC2 rules and IAM trust."""
+
     def __init__(self):
-        """Initialize explicit account, region and run identity for this operation."""
+        """Seed two regions with retained hosts, existing rules and a current IAM owner."""
         self.calls = []
         self.account = "222222222222"
         self.owner = "arn:aws:iam::111111111111:role/crux-run-new"
@@ -45,10 +49,10 @@ class AwsFixture:
         self.suppress_authorization = False
 
     def __call__(self, profile, region, *args):
-        """Call.
+        """Record an AWS request and update the simulated IAM or EC2 inventory.
 
-        :param profile: Profile for this operation.
-        :param region: Region for this operation.
+        :param profile: Explicit AWS CLI profile for the account being accessed.
+        :param region: AWS region used for this request.
         :param args: Operation arguments.
         """
         self.calls.append((profile, region, *args))
@@ -85,11 +89,13 @@ class AwsFixture:
         raise AssertionError((service, action))
 
     def mutations(self):
-        """Mutations."""
+        """Return only ingress authorizations and revocations from the request log."""
         return [c for c in self.calls if c[3] in {"authorize-security-group-ingress", "revoke-security-group-ingress"}]
 
 
 class AuxInstanceAccessTests(unittest.TestCase):
+    """Verify grant, handoff and cleanup against isolated region and ownership fixtures."""
+
     def setUp(self):
         """Create isolated fixture state for each regression case."""
         self.aws = AwsFixture()
@@ -98,10 +104,10 @@ class AuxInstanceAccessTests(unittest.TestCase):
                        "PROVISION_EC2": "1"}
 
     def run_access(self, mode="reconcile", ip="198.51.100.42"):
-        """Run access.
+        """Invoke reconciliation with the simulated accounts and workspace address.
 
-        :param mode: Mode for this operation.
-        :param ip: Ip for this operation.
+        :param mode: Reconcile or clean up the workspace ingress rules.
+        :param ip: Simulated public IPv4 address of the workspace.
         """
         with patch.object(access, "aws", side_effect=self.aws):
             access.reconcile(self.config, mode, ip)
