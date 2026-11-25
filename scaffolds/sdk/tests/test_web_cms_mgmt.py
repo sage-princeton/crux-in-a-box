@@ -192,6 +192,23 @@ def test_thread_approval_is_verified_via_transport_and_logged(tmp_path):
         asyncio.run(tool.invoke(ctx,args.model_copy(update={"message_ts":"100.000002"})))
 
 
+@pytest.mark.parametrize("message_ts", ["99.999999", "100.000000"])
+def test_approval_rejects_messages_at_or_before_run_start(message_ts):
+    """Reject stale messages before contacting Slack or writing an approval.
+
+    :param message_ts: Slack message timestamp at the steering cutoff or earlier.
+    """
+    module = extension()
+    tool = module.MaintenanceApproval("approval", module.ApprovalOptions(operator_ids=["U123"]))
+    steering = SimpleNamespace(options=SimpleNamespace(after_ts="100.000000"))
+    args = module.ApprovalArguments(
+        request_id="r1", purpose="publish", thread_ts="99.000000", revision="v2",
+        message_ts=message_ts, rationale="The operator reviewed the preview.",
+    )
+    with pytest.raises(ToolError, match="newer than"):
+        asyncio.run(tool.invoke(SimpleNamespace(steering=steering), args))
+
+
 @pytest.mark.parametrize("missing", ["before", "during", "after", "publish", "implement", None])
 def test_completed_proactive_fix_requires_visual_evidence_and_both_approvals(tmp_path, missing):
     """Verify completed proactive fix requires visual evidence and both approvals.
