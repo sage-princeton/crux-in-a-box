@@ -445,7 +445,7 @@ archive_id = os.environ["ARCHIVE_ID"]
 restored = Path(os.environ["RESTORED"])
 manifest = json.loads((restored / "manifest.json").read_text())
 assert receipt["restoration_verified"] and receipt["run_slug"] == "crux-web-pilot4"
-assert receipt["manifest"] == manifest
+assert receipt["sha256"] == archive_id, "Receipt belongs to a different archive"
 source = manifest["repositories"]["run/run-harness/workspace"]
 assert source["revision"], "Archive lacks a source revision"
 text = f"""# crux-web-mgmt-pilot1 maintenance handoff
