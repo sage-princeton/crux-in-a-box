@@ -1,0 +1,52 @@
+{
+  "plan_version": 1,
+  "portable_symlinks": true,
+  "required_paths": [
+    "run-harness/scaffold.toml",
+    "run-harness/PROMPT.md",
+    "run-harness/personas",
+    "run-harness/prompts",
+    "run-harness/workspace/.git/HEAD",
+    "run-harness/workspace/AGENTS.md",
+    "run-harness/workspace/RESEARCH.md",
+    "run-harness/workspace/PLAN.md",
+    "run-harness/workspace/LOG.md",
+    "run-harness/workspace/paper/paper.tex",
+    "run-harness/workspace/paper/paper.pdf",
+    "state/state.json",
+    "state/delegates.sqlite",
+    "state/codex"
+  ],
+  "excluded_paths": [
+    "run-harness/workspace/.venv",
+    "run-harness/workspace/.cache/huggingface",
+    "run-harness/workspace/data/hf_cache",
+    "run-harness/workspace/data/hf_datasets",
+    "run-harness/workspace/data/openml",
+    "run-harness/workspace/data/openml_dir*",
+    "run-harness/workspace/data/openml_cache",
+    "run-harness/workspace/data/openml_sklearn_cache",
+    "run-harness/workspace/data/*/openml_cache",
+    "run-harness/workspace/experiments/*/.openml_discovery_cache",
+    "run-harness/workspace/experiments/*/openml_cache",
+    "run-harness/workspace/data/folktables/*/*/*.csv",
+    "run-harness/workspace/data/tabred/*/*.csv",
+    "run-harness/workspace/data/uci/*.csv",
+    "run-harness/workspace/data/uci/*.data",
+    "run-harness/workspace/data/processed_npz/*.npz",
+    "run-harness/workspace/data/processed_cache/*.npz",
+    "run-harness/workspace/data/*/_raw_uci/*.zip",
+    "run-harness/workspace/data/*/raw_parquet/*.parquet",
+    "state/codex/.tmp",
+    "state/codex/tmp",
+    "state/codex/*/.tmp",
+    "state/codex/*/tmp"
+  ],
+  "restore_checks": [
+    "git -C run-harness/workspace fsck --full",
+    "git -C run-harness/workspace log --all --oneline -- paper/",
+    "python3 -m json.tool state/state.json >/dev/null",
+    "sqlite3 -readonly state/delegates.sqlite 'PRAGMA integrity_check;'",
+    "cd run-harness/workspace && if test -f evidence/claims.json; then jq -r '.[] | [.sha256, .artifact] | join(\"  \")' evidence/claims.json | shasum -a 256 -c; fi"
+  ]
+}

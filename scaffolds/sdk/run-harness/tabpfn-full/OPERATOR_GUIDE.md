@@ -103,3 +103,23 @@ To resume the run:
 sudo systemctl start crux-sdk-run
 journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 minutes
 ```
+
+## Archive a stopped run
+
+Finish the active turn, stop the service and any other writers, and keep the Box available until upload verifies the restore. On your laptop, install the [archive prerequisites](../../../../devops/ec2-workspaces/archival/README.md#prerequisites). From the repository root, set `slug` to the Box's SSH alias and use a fresh private stage outside Git.
+
+```bash
+slug=YOUR_RUN_SLUG
+config="devops/ec2-workspaces/placeholders-$slug.txt"
+archive=devops/ec2-workspaces/archival/archive_workspace.py
+stage="$HOME/crux-archives/$slug"
+umask 077
+mkdir -p "$HOME/crux-archives"
+python "$archive" copy "$config" "$stage" --plan scaffolds/sdk/run-harness/tabpfn-full/archive.json
+mkdir -p "$stage/run/operator-evidence"
+ssh "$slug" 'journalctl -u crux-sdk-run -u crux-codex-live-trace --utc --no-pager -o short-iso-precise' > "$stage/run/operator-evidence/services.log"
+```
+
+Add the run's Langfuse session export (traces **and observations**) and available OpenRouter and RunPod usage exports to `operator-evidence/`. Record the observation cutoff and any missing sources there. The [archive plan](archive.json) keeps Git history, manuscript drafts, research outputs, reviews, delegate mail, Codex rollouts and dataset manifests. It skips downloaded datasets, processed input arrays, the Python environment and worker scratch directories.
+
+Run `python "$archive" upload "$config" "$stage"` and save the verified receipt URI before teardown. If the scan flags a secret, run `python "$archive" redact "$config" "$stage"`, review the edits, then retry the upload. The [archive guide](../../../../devops/ec2-workspaces/archival/README.md) covers Git-history findings and verifying the receipt.

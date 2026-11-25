@@ -85,6 +85,37 @@ class ArchiveTests(WorkspaceFixture):
         with self.assertRaises(archive.ArchiveError):
             archive.snapshot(self.root, Path(self.temp.name) / "payload", self.plan)
 
+    def test_portable_links_preserve_shard_views_and_missing_draft_sources(self) -> None:
+        """Retain internal link targets across relocation and keep required files mandatory."""
+        project = self.root / "project"
+        (project / "view").symlink_to("/srv/crux-run/project/ignored.txt")
+        (project / "draft").symlink_to("retired.bib")
+        controller.make_links_relative(self.root, Path("/srv/crux-run"))
+        self.assertEqual((project / "view").readlink(), Path("ignored.txt"))
+        with self.assertRaisesRegex(archive.ArchiveError, "Broken symlink"):
+            archive.inventory(self.root)
+        self.plan["portable_symlinks"] = True
+        payload = Path(self.temp.name) / "payload"
+        archive.snapshot(self.root, payload, self.plan)
+        self.assertGreater(archive.verify_tree(payload), 0)
+        self.assertEqual((payload / "run/project/draft").readlink(), Path("retired.bib"))
+        self.plan["required_paths"] = ["project/draft"]
+        with self.assertRaisesRegex(archive.ArchiveError, "missing"):
+            archive.validate_plan(self.root, self.plan)
+
+    def test_portable_links_still_reject_external_targets(self) -> None:
+        """Preserve the Run boundary for absolute, traversal and chained links."""
+        project = self.root / "project"
+        for target in ("/etc/passwd", "/srv/crux-run/../../etc/passwd", "../../outside"):
+            with self.subTest(target=target):
+                (project / "outside").symlink_to(target)
+                (project / "view").symlink_to("/srv/crux-run/project/outside")
+                controller.make_links_relative(self.root, Path("/srv/crux-run"))
+                with self.assertRaisesRegex(archive.ArchiveError, "escapes"):
+                    archive.inventory(self.root, allow_dangling=True)
+                (project / "view").unlink()
+                (project / "outside").unlink()
+
     def test_operational_credentials_are_excluded_and_cannot_be_required(self) -> None:
         """Verify operational credentials are excluded and cannot be required."""
         (self.root / ".mcp.json").write_text("credential file")
@@ -94,6 +125,20 @@ class ArchiveTests(WorkspaceFixture):
         self.plan["required_paths"] = [".mcp.json"]
         (self.root / "ARCHIVE.json").write_text(json.dumps(self.plan))
         with self.assertRaises(archive.ArchiveError):
+            archive.snapshot(self.root, Path(self.temp.name) / "second", self.plan)
+
+    def test_staged_exclusions_spare_sidecars_and_reject_reintroduced_payloads(self) -> None:
+        """Enforce the transfer selection again before scanning or accepting restored contents."""
+        self.plan["excluded_paths"] = ["project/*/*.npz"]
+        data = self.root / "project/data"
+        data.mkdir()
+        (data / "split.json").write_text("{}")
+        (self.root / "project/results.npz").write_bytes(b"scientific result")
+        payload = Path(self.temp.name) / "payload"
+        archive.snapshot(self.root, payload, self.plan)
+        self.assertGreater(archive.verify_tree(payload), 0)
+        (data / "split.npz").write_bytes(b"raw input")
+        with self.assertRaisesRegex(archive.ArchiveError, "Excluded path is present"):
             archive.snapshot(self.root, Path(self.temp.name) / "second", self.plan)
 
     def test_changed_content_fails_restore_verification(self) -> None:
@@ -363,6 +408,30 @@ class ArchiveStageTests(unittest.TestCase):
         store.assert_not_called()
         self.copy_fixture()
         self.assertEqual(self.stage.read_plan()["status"], "copied")
+
+    def test_plan_filters_copy_and_rejects_changed_selection_on_resume(self) -> None:
+        """Copy with anchored exclusions and bind the stage to the same selection on retry."""
+        original = self.input_plan.read_text()
+        plan = json.loads(original)
+        plan["excluded_paths"] = ["project/data"]
+        self.input_plan.write_text(json.dumps(plan))
+        with patch.object(controller, "command") as transfer:
+            self.stage.copy(self.input_plan)
+        self.assertIn("--exclude=/project/data", transfer.call_args.args[0])
+        self.assertEqual(self.stage.read_plan()["excluded_paths"], ["project/data"])
+        self.input_plan.write_text(original)
+        with self.assertRaisesRegex(archive.ArchiveError, "different plan"):
+            self.stage.copy(self.input_plan)
+
+    def test_invalid_exclusions_fail_before_transfer(self) -> None:
+        """Reject unsafe, unsupported or conflicting patterns before invoking SSH."""
+        plan = json.loads(self.input_plan.read_text())
+        for invalid in ("data", [3], ["../data"], ["/data"], ["."], ["project/**"], ["project/.git/objects"], ["tr*"]):
+            with self.subTest(invalid=invalid), patch.object(controller, "command") as transfer:
+                self.input_plan.write_text(json.dumps({**plan, "excluded_paths": invalid}))
+                with self.assertRaises(archive.ArchiveError):
+                    self.stage.copy(self.input_plan)
+                transfer.assert_not_called()
 
     @unittest.skipUnless(shutil.which("trufflehog"), "install the official TruffleHog CLI")
     def test_shared_finding_blocks_storage_and_redacted_retry_rescans(self) -> None:

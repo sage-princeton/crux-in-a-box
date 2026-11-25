@@ -39,6 +39,8 @@ Pass a JSON object to `copy --plan`. Paths are relative to the Run root (`/srv/c
 | `plan_version` | Yes | Integer. Use `1`. |
 | `required_paths` | Yes | Nonempty array of path strings. Each file or directory must exist and be nonempty. Other eligible files are copied too. |
 | `restore_checks` | Yes | Nonempty array of shell command strings. Saved in the manifest for the operator to review and run from the restored `run/` directory. |
+| `excluded_paths` | No | Array of file or directory patterns to skip in the working tree. Default `[]`. Patterns start at the Run root, and `*` matches within one path component. Patterns must spare required paths and Git metadata. Committed copies remain in Git history. |
+| `portable_symlinks` | No | Boolean, default `false`. Set `true` to rewrite absolute links within the Run as relative and allow dangling in-Run links. Required paths must still resolve. External links are rejected. |
 
 ## Steps to Archive the Run
 
