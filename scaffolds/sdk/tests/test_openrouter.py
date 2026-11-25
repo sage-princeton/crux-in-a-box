@@ -76,7 +76,7 @@ def router(monkeypatch, drop_in_dir):
         configs.append(kwargs)
         return AsyncOpenAI(**kwargs, max_retries=0, http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)))
 
-    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.openai_agents_runtime.AsyncOpenAI", client)
+    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.model_connection.AsyncOpenAI", client)
     return requests, pending, configs
 
 
@@ -235,7 +235,7 @@ def test_judge_cache_boundaries_follow_its_model_override(router, drop_in_dir, a
 def test_missing_provider_credentials_fail_before_any_request(router, drop_in_dir, assemble):
     requests, _, _ = router
     with pytest.raises(InvalidDropInError, match="OPENROUTER_API_KEY"):
-        assemble(drop_in_dir, env={"CRUX_MODEL": "gemini-test"}).runtime.build()
+        assemble(drop_in_dir, env={"CRUX_MODEL": "gemini-test"}).runtime._build()
     assert requests == []
 
 
@@ -267,7 +267,7 @@ def test_invalid_provider_settings_are_rejected(router, drop_in_dir, assemble, o
 def test_a_vertex_only_route_never_falls_back(router, drop_in_dir, assemble, monkeypatch):
     requests, pending, _ = router
     # An API error is retried on the same Vertex-only route, never through a direct or alternate provider.
-    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.openai_agents_runtime.MODEL_RETRIES", 1)
+    monkeypatch.setattr("crux_scaffold.openai_agents_sdk.model_connection.MODEL_RETRIES", 1)
     monkeypatch.setattr("agents.run_internal.model_retry._sleep_for_retry", lambda delay: asyncio.sleep(0))
     pending.extend([{"error": {"message": "No eligible Vertex endpoint", "code": "provider_unavailable"}}] * 2)
     with pytest.raises(APIStatusError, match="No eligible Vertex endpoint"):

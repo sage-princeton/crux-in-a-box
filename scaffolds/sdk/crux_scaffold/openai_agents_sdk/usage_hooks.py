@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from agents import (
-    Agent,
-    RunContextWrapper,
-    RunHooks,
-)
+from agents import Agent, RunContextWrapper, RunHooks
 from agents.items import ModelResponse
 
 from crux_scaffold.usage import UsageLedger
 
 
 class UsageHooks(RunHooks):
+    """Add every completed SDK model call's token usage to the run's usage ledger.
+
+    Calls are charged to the agent's name unless `source` supplies a label, such as `judge:<gate>`.
+    """
+
     def __init__(self, ledger: UsageLedger, source: str | None = None) -> None:
         self.ledger = ledger
         self.source = source

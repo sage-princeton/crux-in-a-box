@@ -425,11 +425,11 @@ def test_compaction_cache_and_reasoning_usage_reach_langfuse_and_the_persisted_l
         return response
     model.get_response = metered
     scaffold = assemble(drop_in_dir, {"pm": model}, env=ENV, telemetry=telemetry)
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     with telemetry.trace("compaction test"):
         asyncio.run(CONTEXT_STRATEGIES.create("context", {"type": "compaction"})._summarize(
             [{"role": "user", "content": "Completed history"}],
-            ctx=scaffold.context, agent=scaffold.runtime.agents["pm"],
+            ctx=scaffold.context, agent=scaffold.runtime._builder.agents["pm"],
             model_provider=scaffold.runtime.run_config.model_provider,
             instructions="fixed", prepare_input=scaffold.runtime._cache_input))
     telemetry.flush()

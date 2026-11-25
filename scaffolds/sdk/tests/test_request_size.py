@@ -14,7 +14,8 @@ from test_openrouter import say as response_text
 
 from crux_scaffold.context_strategies import Compaction
 from crux_scaffold.errors import ContextLimitExceededError, RequestSizeExceededError
-from crux_scaffold.openai_agents_sdk import openai_agents_runtime as sdk
+from crux_scaffold.openai_agents_sdk import model_connection as sdk
+from crux_scaffold.openai_agents_sdk.openai_agents_runtime import OpenAIAgentsRuntime
 from crux_scaffold.telemetry import NullTelemetry
 
 from drop_ins import edit
@@ -76,7 +77,7 @@ api = "responses"
 @pytest.mark.parametrize('value', [0, -1, True, 1.5, '1000'])
 def test_limit_requires_a_positive_integer(value):
     with pytest.raises(ValidationError):
-        sdk.ModelProviderOptions(type='openai', api='responses', max_request_bytes=value)
+        sdk.ModelProvider(type='openai', api='responses', max_request_bytes=value)
 
 
 @pytest.mark.parametrize('api', ['responses', 'chat-completions'])
@@ -98,7 +99,7 @@ def test_checks_serialized_bytes_before_transport(wire, api, headroom):
     options = {'type': 'openai-compatible', 'api': api, 'base_url': 'https://provider.test/v1'}
 
     async def invoke(limit):
-        settings = sdk.ModelProviderOptions(**options, max_request_bytes=limit)
+        settings = sdk.ModelProvider(**options, max_request_bytes=limit)
         async with sdk._validate_and_get_client(settings, {'OPENAI_API_KEY': 'test-key'}) as client:
             if api == 'responses':
                 return await client.responses.create(model='test', input=payload, tools=tools, extra_body=extra)
@@ -129,7 +130,7 @@ def test_all_sdk_call_paths_reject_without_retry(wire, drop_in_dir, assemble, ca
 
     async def run():
         if caller == 'probe':
-            return await sdk.OpenAIAgentsRuntime.probe(scaffold.context.env, 'probe', NullTelemetry(),
+            return await OpenAIAgentsRuntime.probe(scaffold.context.env, 'probe', NullTelemetry(),
                                                       options=scaffold.runtime.options)
         async with scaffold.runtime as runtime:
             if caller == 'pi':
@@ -139,7 +140,7 @@ def test_all_sdk_call_paths_reject_without_retry(wire, drop_in_dir, assemble, ca
             strategy = Compaction('context', Compaction.Options())
             return await strategy._summarize(
                 [{'role': 'user', 'content': 'history'}], ctx=scaffold.context,
-                agent=runtime.agents['pm'], model_provider=runtime.run_config.model_provider,
+                agent=runtime._builder.agents['pm'], model_provider=runtime.run_config.model_provider,
                 instructions='instructions', prepare_input=lambda data: data,
             )
 
@@ -162,7 +163,7 @@ def test_compaction_shrinks_serialized_requests_and_preserves_reasoning(wire, dr
     async def run():
         async with scaffold.runtime as runtime:
             return await Compaction('context', Compaction.Options())._summarize(
-                history, ctx=scaffold.context, agent=runtime.agents['pm'],
+                history, ctx=scaffold.context, agent=runtime._builder.agents['pm'],
                 model_provider=runtime.run_config.model_provider, instructions='fixed',
                 prepare_input=lambda data: data)
 

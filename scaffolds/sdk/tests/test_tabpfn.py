@@ -71,13 +71,13 @@ def test_carbon_provider_and_context_build_without_openai_credentials(scaffold):
     description = scaffold.runtime.describe()
     assert description[0] == "model provider openai-compatible (responses)"
     assert scaffold.strategy.type_name == "compaction"
-    assert scaffold.runtime.provider is not None
+    assert scaffold.runtime._builder.resources.connection._provider is not None
     workers = {f"worker_{letter}" for letter in "abcdefgh"}
     assistants = {"research_assistant", "research_assistant_b", "research_assistant_c"}
     assert set(scaffold.coding_agents) == workers
     assert set(scaffold.drop_in.config.agents) == {"pi"} | assistants
     assert set(scaffold.drop_in.config.agents["pi"].delegates) == workers | assistants
-    tools = {tool.name for tool in scaffold.runtime.agents["pi"].tools}
+    tools = {tool.name for tool in scaffold.runtime._builder.agents["pi"].tools}
     assert workers | assistants | {'delegate_inbox'} <= tools
     assert not {f"{name}_result" for name in workers | assistants} & tools
     assert scaffold.context.model == "google/gemini-4-carbon@preset/ai-studio-priority"
@@ -119,7 +119,7 @@ def script_panel(scaffold, *passed, rounds=1):
                           f"clarity=2 significance=3 originality=3 overall={overall} confidence=4 path=revise")
         turns = [call("read_pdf", {"path": "submission.pdf", "page": 1}, "pdf"), say(verdict.model_dump_json())]
         judges[model] = ScriptedModel(*turns * rounds)
-    scaffold.runtime.models.update(judges)
+    scaffold.runtime._builder.resources.connection._models.update(judges)
     return judges
 
 

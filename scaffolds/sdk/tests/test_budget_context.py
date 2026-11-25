@@ -67,13 +67,13 @@ def test_context_trimming_cannot_remove_status_and_delegates_receive_it(drop_in_
 
 def test_changing_resources_appends_user_status_after_unchanged_prefix(drop_in_dir, assemble):
     scaffold = assemble(drop_in_dir)
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     history = [{"role": "developer", "content": "standing context"},
                {"role": "user", "content": "question"},
                {"type": "function_call", "name": "read_file", "arguments": "{}", "call_id": "c1"},
                {"type": "function_call_output", "call_id": "c1", "output": "evidence"}]
     data = CallModelData(ModelInputData(input=history, instructions="fixed instructions"),
-                         scaffold.runtime.agents["pm"], scaffold.context)
+                         scaffold.runtime._builder.agents["pm"], scaffold.context)
 
     async def check():
         first = await scaffold.runtime._select_input(data)
@@ -103,9 +103,9 @@ def test_unavailable_and_stale_measurements_reach_the_model(drop_in_dir, assembl
         return await read(ctx)
 
     provider.read = intermittent
-    scaffold.runtime.build()
+    scaffold.runtime._build()
     data = CallModelData(ModelInputData(input=[{"role": "user", "content": "question"}], instructions="fixed"),
-                         scaffold.runtime.agents["pm"], scaffold.context)
+                         scaffold.runtime._builder.agents["pm"], scaffold.context)
 
     async def check():
         unavailable = await scaffold.runtime._select_input(data)
