@@ -1,0 +1,2 @@
+trufflehog3==3.0.10
+trufflehog-redactor==0.1.0

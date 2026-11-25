@@ -6,12 +6,19 @@ import gzip
 import hashlib
 import json
 import os
+import re
 import shutil
+import subprocess
 import tarfile
 import tempfile
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
-from typing import TypedDict
+from typing import TYPE_CHECKING, NotRequired, TypedDict, cast
 
+if TYPE_CHECKING:
+    from trufflehog3.models import Issue, Pattern
+
+DETECTORS_FILE = Path(__file__).with_name("detectors.yml")
 EXCLUDED_NAMES = (".ssh", ".aws", ".mcp.json", "auth.json", ".credentials.json")
 EXCLUDED = (
     "state/sessions",
@@ -29,18 +36,30 @@ class ArchivePlan(TypedDict):
     restore_checks: list[str]
 
 
+class RepositoryState(TypedDict):
+    """Record the current Git revision and whether the working tree has changes."""
+
+    revision: str | None
+    dirty: bool
+
+
 class Manifest(TypedDict):
-    """Record the restore contract and file inventory for a snapshot."""
+    """Record the restore contract, file inventory, and repository state for a snapshot."""
 
     version: int
     excluded_operational_paths: list[str]
     handoff: ArchivePlan
     provenance: dict[str, object]
     files: dict[str, dict[str, str | int]]
+    repositories: NotRequired[dict[str, RepositoryState]]
 
 
 class ArchiveError(Exception):
     """Report an archive contract violation without including file contents."""
+
+
+class SecretsFound(ArchiveError):
+    """Signal a finding that requires operator redaction before upload."""
 
 
 def digest(path: Path) -> str:
@@ -213,6 +232,207 @@ def verify_tree(root: Path) -> int:
     return len(actual)
 
 
+def scan_repository(gitdir: Path, root: Path, inspect: Callable[[str, bytes], None]) -> RepositoryState:
+    """Inspect all Git objects using a private Git directory with no copied configuration.
+
+    :param gitdir: Self-contained metadata directory in the snapshot.
+    :param root: Snapshot root for diagnostic paths.
+    :param inspect: Callback that checks one object's name and bytes.
+    :returns: HEAD revision and whether the copied worktree has changes.
+    :raises ArchiveError: The repository depends on external metadata or an object cannot be read completely.
+    :raises SecretsFound: The inspection callback finds a secret. Other callback exceptions also propagate.
+    :raises subprocess.CalledProcessError: Git integrity or status checks fail.
+    :raises OSError: Git cannot start or the repository or temporary files cannot be accessed.
+    """
+    objects = gitdir / "objects"
+    if (
+        not objects.is_dir()
+        or (objects / "info/alternates").exists()
+        or (gitdir / "commondir").exists()
+        or any(p.is_symlink() for p in gitdir.rglob("*"))
+    ):
+        raise ArchiveError("Make Git metadata and objects self-contained before archiving.")
+    with tempfile.TemporaryDirectory(prefix="crux-archive-git-") as temp:
+        view = Path(temp)
+        (view / "objects").mkdir()
+        shutil.copytree(gitdir / "refs", view / "refs")
+        for name in ("HEAD", "packed-refs", "shallow", "index"):
+            if (gitdir / name).is_file():
+                shutil.copyfile(gitdir / name, view / name)
+        env = {
+            "PATH": os.environ["PATH"],
+            "HOME": temp,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_NO_REPLACE_OBJECTS": "1",
+            "GIT_OBJECT_DIRECTORY": str(objects.resolve()),
+        }
+        git = ["git", "--no-optional-locks", "--git-dir", temp, "--work-tree", str(gitdir.parent)]
+        subprocess.run([*git, "fsck", "--full", "--no-reflogs"], env=env, capture_output=True, check=True)
+        with subprocess.Popen(
+            [*git, "cat-file", "--batch-all-objects", "--batch"],
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        ) as proc:
+            assert proc.stdout is not None  # Opened with stdout=PIPE.
+            try:
+                for header in iter(proc.stdout.readline, b""):
+                    oid, _, size = header.split()
+                    data = proc.stdout.read(int(size))
+                    if len(data) != int(size) or proc.stdout.read(1) != b"\n":
+                        raise ArchiveError("Git object could not be read completely.")
+                    inspect(f"{gitdir.relative_to(root)}/{oid.decode('ascii')}", data)
+            finally:
+                proc.stdout.close()
+            if proc.wait():
+                raise ArchiveError("Git object scan failed.")
+        head = subprocess.run([*git, "rev-parse", "--verify", "HEAD"], env=env, capture_output=True, check=False)
+        status = subprocess.run(
+            [*git, "status", "--porcelain", "--ignore-submodules=all"], env=env, capture_output=True, check=True
+        )
+        return {"revision": head.stdout.decode().strip() or None, "dirty": bool(status.stdout)}
+
+
+def load_detector_rules() -> list[Pattern]:
+    """Add the shared archive patterns to trufflehog3's default patterns.
+
+    :returns: Combined rules accepted by the native search API.
+    :raises ArchiveError: The shared rules file is empty or contains a non-pattern rule.
+    :raises OSError: A rules file cannot be read.
+    :raises yaml.YAMLError: A rules file contains malformed YAML.
+    :raises TypeError: A rule has missing or unsupported fields.
+    :raises ValueError: A rule has an invalid field value.
+    :raises re.error: A pattern is not a valid regular expression.
+    """
+    from trufflehog3 import DEFAULT_RULES_FILE
+    from trufflehog3.core import load_rules
+    from trufflehog3.models import Pattern
+
+    rules = [rule for rule in load_rules(str(DEFAULT_RULES_FILE)) if isinstance(rule, Pattern)]
+    shared = list(load_rules(str(DETECTORS_FILE)))
+    if not shared:
+        raise ArchiveError("detectors.yml must contain trufflehog3 pattern rules.")
+    for rule in shared:
+        if not isinstance(rule, Pattern):
+            raise ArchiveError("detectors.yml must contain trufflehog3 pattern rules.")
+        rules.append(rule)
+    return rules
+
+
+def is_encoded_git_object(path: str) -> bool:
+    """Identify compressed object bytes inspected in decoded form by git cat-file.
+
+    :param path: Archive-relative POSIX path.
+    :returns: Whether the file is a loose object or pack in a worktree object store.
+    """
+    return (
+        re.search(r"(?:^|/)\.git/objects/(?:[a-f0-9]{2}/[a-f0-9]{38,62}|pack/pack-[0-9a-f]+\.pack)$", path) is not None
+    )
+
+
+def find_secrets(name: str, data: bytes, rules: Sequence[Pattern]) -> Iterator[Issue]:
+    """Yield native scanner findings for a named byte sequence, ignoring inline suppression.
+
+    :param name: Diagnostic path for the supplied data.
+    :param data: Contents of a file or Git object.
+    :param rules: Default, bundled and operator-selected patterns to test on each line.
+    :returns: Iterator of findings for this input.
+    """
+    from trufflehog3.models import File
+    from trufflehog3.search import searchiter
+
+    return searchiter(File(path=name, content=data.decode("utf-8", errors="replace")), rules, ignore_nosecret=True)
+
+
+def redact_files(root: Path) -> None:
+    """Pipe findings in staged working files to the operator's interactive redactor.
+
+    :param root: Local Run directory the operator may edit.
+    :raises ArchiveError: A rule, file or the redactor could not be used.
+    """
+    if root.is_symlink() or not root.is_dir():
+        raise ArchiveError("Expected a staged workspace directory.")
+    try:
+        rules = load_detector_rules()
+        with subprocess.Popen(["trufflehog-redactor"], stdin=subprocess.PIPE, text=True) as redactor:
+            assert redactor.stdin is not None  # Opened with stdin=PIPE.
+            try:
+                for path in root.rglob("*"):
+                    relative_path = path.relative_to(root)
+                    if (
+                        ".git" in relative_path.parts
+                        or is_excluded(str(relative_path))
+                        or path.is_symlink()
+                        or not path.is_file()
+                    ):
+                        continue
+                    for finding in find_secrets(str(path), path.read_bytes(), rules):
+                        record = {
+                            "Raw": finding.secret,
+                            "DetectorName": cast("Pattern", finding.rule).id,
+                            "SourceMetadata": {"Data": {"Filesystem": {"file": str(path)}}},
+                        }
+                        redactor.stdin.write(json.dumps(record) + "\n")
+            except BaseException:
+                redactor.terminate()
+                raise
+            finally:
+                redactor.stdin.close()
+            if redactor.wait():
+                raise ArchiveError("Redaction did not finish. Retry from a private interactive terminal.")
+    except ArchiveError:
+        raise
+    except Exception:  # noqa: BLE001 - keep raw scanner diagnostics out of operator logs.
+        raise ArchiveError(
+            "Cannot redact staged files. Check detectors.yml, file permissions and trufflehog-redactor installation."
+        ) from None
+
+
+def scan(root: Path) -> dict[str, RepositoryState]:
+    """Scan working files and Git objects using offline trufflehog3 pattern rules.
+
+    :param root: Private snapshot to inspect.
+    :returns: Revision and working-tree status for each self-contained repository.
+    :raises SecretsFound: A finding requires redaction.
+    :raises ArchiveError: A file, rule or Git object could not be inspected.
+    """
+    try:
+        rules = load_detector_rules()
+
+        def inspect(name: str, data: bytes) -> None:
+            """Raise on the first finding in the supplied bytes, reporting only a safe location.
+
+            :param name: Snapshot-relative filename or Git object identifier.
+            :param data: Raw bytes to scan.
+            :raises SecretsFound: A detector matches the supplied bytes.
+            """
+            if next(find_secrets(name, data, rules), None):
+                location = "a staged filename" if any(rule.findall(name) for rule in rules) else json.dumps(name)
+                raise SecretsFound(
+                    f"Secret detected in {location}. Run the redact command to review staged files with trufflehog-redactor, "
+                    "clean any affected Git history, then retry upload."
+                )
+
+        repositories = {}
+        for path in root.rglob("*"):
+            if path.name == ".git":
+                if not path.is_dir() or path.is_symlink():
+                    raise ArchiveError("Make the Git repository self-contained before archiving.")
+                repositories[str(path.parent.relative_to(root))] = scan_repository(path, root, inspect)
+            elif path.name == "objects" and path.parent.name != ".git" and (path.parent / "HEAD").is_file():
+                raise ArchiveError(
+                    "Convert bare or separate Git object stores to self-contained worktrees before archiving."
+                )
+            elif path.is_file() and not path.is_symlink() and not is_encoded_git_object(path.as_posix()):
+                inspect(path.relative_to(root).as_posix(), path.read_bytes())
+        return repositories
+    except ArchiveError:
+        raise
+    except Exception:  # noqa: BLE001 - scanner diagnostics may contain raw credentials.
+        raise ArchiveError("Secret scan failed. Check scanner installation, detectors.yml and Git objects.") from None
+
+
 def restore(bundle: Path, destination: Path) -> int:
     """Extract into a new directory after rejecting unsafe archive members.
 
@@ -251,20 +471,23 @@ def restore(bundle: Path, destination: Path) -> int:
 
 
 def create_bundle(root: Path, output: Path, plan: ArchivePlan, provenance: dict[str, object]) -> None:
-    """Package a private snapshot and test its restoration locally.
+    """Scan a private snapshot, package it and test its restoration locally.
 
-    :param root: Operator-reviewed staged workspace.
+    :param root: Staged workspace, including any operator redactions.
     :param output: New bundle file in private scratch storage.
     :param plan: Required paths and restore checks.
     :param provenance: Metadata collected during the copy.
-    :raises ArchiveError: Snapshot or restore verification fails.
+    :raises SecretsFound: A working file or Git object requires redaction.
+    :raises ArchiveError: Snapshot, scanner or restore verification fails.
     :raises OSError: The output already exists or required files cannot be read or written.
     :raises tarfile.TarError: The bundle cannot be written or extracted.
     :raises TypeError: Provenance contains a value that cannot be serialized to JSON.
     """
     with tempfile.TemporaryDirectory(prefix="crux-archive-") as temp:
         payload = Path(temp) / "payload"
-        snapshot(root, payload, plan, provenance)
+        metadata = snapshot(root, payload, plan, provenance)
+        metadata["repositories"] = scan(payload)
+        (payload / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")
         verify_tree(payload)
         with (
             output.open("xb") as stream,

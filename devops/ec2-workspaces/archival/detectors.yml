@@ -1,0 +1,16 @@
+- id: runpod.api-key
+  message: RunPod API key
+  pattern: '(?<![A-Za-z0-9])rpa?_[A-Za-z0-9_-]{20,}'
+  severity: HIGH
+- id: huggingface.token
+  message: Hugging Face token
+  pattern: '(?<![A-Za-z0-9])(?:hf_|api_org_)[A-Za-z0-9]{30,}'
+  severity: HIGH
+- id: together.api-key
+  message: Together AI API key
+  pattern: '(?<![A-Za-z0-9])tgp_v1_[A-Za-z0-9_-]{43,}'
+  severity: HIGH
+- id: together.legacy-key
+  message: Labeled legacy Together AI API key
+  pattern: '(?i)together(?:ai)?[_-]?(?:api[_-]?)?key["\x27]?\s*[:=]\s*["\x27]?[0-9a-f]{64}\b'
+  severity: HIGH
