@@ -142,3 +142,37 @@ receipt='s3://crux-run-archives-<ACCOUNT>-<REGION>/runs/<RUN-SLUG>/<DIGEST>/rece
 # Download the recorded S3 version and check its SHA-256, file manifest and required paths.
 python archive_workspace.py verify "$config" "$receipt"
 ```
+
+## Steps to Restore an Archive
+
+```sh
+# Restore the verified files to a new directory.
+destination=/private/archives/restored-RUN
+python archive_workspace.py restore "$config" "$receipt" "$destination"
+
+# Review "$destination/manifest.json", then run its restore_checks from this directory.
+cd "$destination/run"
+```
+
+A successor can use the same restore command. Set `RUN_SLUG` to the archived Run and `AWS_PROFILE` to a profile with read access to that archive.
+
+## Give a successor read access
+
+Prepare an EC2 instance profile and role both named `crux-run-SUCCESSOR` with read access to the shared system parameter. An existing successor Box must already use that profile.
+
+In the successor’s workspace config, list the exact archive directories, separated by commas.
+
+```text
+ARCHIVE_READ_URIS=s3://crux-run-archives-<ACCOUNT>-<REGION>/runs/<RUN-SLUG>/<DIGEST>/
+```
+
+```sh
+# Put any credentials the successor needs in its private secrets file.
+successor_config=/path/to/placeholders-SUCCESSOR.txt
+../provision-workspace-aws-resources.sh --secrets /private/runtime-secrets.json "$successor_config"
+```
+
+```sh
+# To revoke archive access, set ARCHIVE_READ_URIS= in that config, then run:
+python archive_workspace.py grant-read "$successor_config"
+```
