@@ -18,7 +18,7 @@ from dataclasses import replace
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Any, Self
 
 from agents import (
     Agent,
@@ -27,12 +27,10 @@ from agents import (
     OpenAIProvider,
     RunConfig,
     RunContextWrapper,
-    RunHooks,
     Runner,
     set_tracing_disabled,
 )
 from agents.exceptions import MaxTurnsExceeded, ModelBehaviorError
-from agents.items import ModelResponse
 from agents.mcp import MCPServerStdio
 from agents.models.interface import Model
 from agents.retry import ModelRetryBackoffSettings, ModelRetrySettings, RetryPolicyContext, retry_policies
@@ -40,118 +38,37 @@ from agents.run_config import CallModelData, ModelInputData
 from agents.strict_schema import ensure_strict_json_schema
 from agents.tool import ToolOutputImage, ToolOutputText
 from agents.tool_context import ToolContext
-from mcp.types import CallToolResult, TextContent
 from openai import AsyncOpenAI, BadRequestError, DefaultAsyncHttpxClient
 from openai.types.shared import Reasoning
 from openinference.instrumentation import TraceConfig
 from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
-from pydantic import Field, HttpUrl, ValidationError, model_validator
+from pydantic import ValidationError
 
-from crux_scaffold.agent_runtimes.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
 from crux_scaffold.coding_agents import CodingAgent, CodingResult
-from crux_scaffold.components import CountLimit, Options, count_limit
+from crux_scaffold.components import count_limit
 from crux_scaffold.config import McpServerConfig, delegation_order
 from crux_scaffold.context_strategies import is_standing_context, since_restart
 from crux_scaffold.delegate_mailboxes import DelegateMailboxes
 from crux_scaffold.delegate_tasks import DelegateTasks
 from crux_scaffold.errors import InvalidDropInError, ModelRequestError, RequestSizeExceededError, ToolError
-from crux_scaffold.steering import MESSAGE_TOOLS, WITHHELD, SteeringOptions, is_envelope, within_run
+from crux_scaffold.openai_agents_sdk._steering_server import _SteeringServer
+from crux_scaffold.openai_agents_sdk._unfiltered_calls import _UnfilteredCalls
+from crux_scaffold.openai_agents_sdk.base import RUNTIMES, AgentRuntime, Assembly, TurnOutcome, Verdict
+from crux_scaffold.openai_agents_sdk.brief_arguments import BriefArguments
+from crux_scaffold.openai_agents_sdk.coding_result_arguments import CodingResultArguments
+from crux_scaffold.openai_agents_sdk.inbox_arguments import InboxArguments
+from crux_scaffold.openai_agents_sdk.message_arguments import MessageArguments
+from crux_scaffold.openai_agents_sdk.model_provider_options import ModelProviderOptions
+from crux_scaffold.openai_agents_sdk.openai_agents_options import OpenAIAgentsOptions
+from crux_scaffold.openai_agents_sdk.send_arguments import SendArguments
+from crux_scaffold.openai_agents_sdk.task_arguments import TaskArguments
+from crux_scaffold.openai_agents_sdk.usage_hooks import UsageHooks
+from crux_scaffold.steering import is_envelope
 from crux_scaffold.telemetry import Telemetry
 from crux_scaffold.tools import Arguments, Tool, ToolImage, validate_review_tools
-from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import ReviewWorkspace, RunContext
 
 JUDGE = "judge"
-
-
-class ModelProviderOptions(Options):
-    """Configure the SDK's provider; model and effort still come only from the run environment."""
-
-    type: Literal["openai", "openai-compatible"]
-    api: Literal["responses", "chat-completions"]
-    base_url: HttpUrl | None = None
-    api_key_env: str = Field("OPENAI_API_KEY", pattern=r"^[A-Z_][A-Z0-9_]*$")
-    extra_body: dict[str, Any] = Field(default_factory=dict)
-    max_request_bytes: int | None = Field(None, gt=0, strict=True)
-
-    @model_validator(mode="after")
-    def validate_provider(self) -> Self:
-        if self.type == "openai-compatible" and self.base_url is None:
-            raise ValueError("openai-compatible model_provider requires base_url")
-        if self.type == "openai" and (
-            self.base_url or self.extra_body or self.api != "responses" or self.api_key_env != "OPENAI_API_KEY"
-        ):
-            raise ValueError("custom provider settings require type=openai-compatible")
-        if {
-            "model",
-            "models",
-            "input",
-            "messages",
-            "instructions",
-            "tools",
-            "store",
-            "stream",
-            "previous_response_id",
-            "conversation",
-            "reasoning",
-            "reasoning_effort",
-            "include",
-        } & self.extra_body.keys():
-            raise ValueError("extra_body cannot override the run model, context, tools, reasoning or session settings")
-        return self
-
-
-class OpenAIAgentsOptions(Options):
-    max_turns: CountLimit = 50
-    model_provider: ModelProviderOptions = ModelProviderOptions(type="openai", api="responses")
-    background_coding: bool = False
-    # TODO(AE-326): Make interactive delegates the only mode and remove the opt-in flag.
-    interactive_delegates: bool = False
-    coding_result_wait_seconds: Annotated[float, Field(gt=0, allow_inf_nan=False)] | Literal["unlimited"] = 1800
-    steering: SteeringOptions | None = None
-
-
-class BriefArguments(Arguments):
-    brief: str = Field(description="Everything the coding agent needs: the task, acceptance criteria and scope.")
-
-
-class CodingResultArguments(Arguments):
-    wait: bool = Field(description="Whether to await completion; false returns immediately if still running.")
-
-
-class TaskArguments(Arguments):
-    task_id: str
-
-
-class SendArguments(TaskArguments):
-    message: str
-    reply_to: str | None = None
-    interrupt: bool = False
-
-
-class MessageArguments(Arguments):
-    message: str
-
-
-class InboxArguments(Arguments):
-    wait_seconds: float = Field(0, ge=0, allow_inf_nan=False)
-
-
-class UsageHooks(RunHooks):
-    def __init__(self, ledger: UsageLedger, source: str | None = None) -> None:
-        self.ledger = ledger
-        self.source = source
-
-    async def on_llm_end(self, context: RunContextWrapper, agent: Agent, response: ModelResponse) -> None:
-        usage = response.usage
-        self.ledger.add(
-            self.source or agent.name,
-            usage.input_tokens,
-            usage.output_tokens,
-            cached_input_tokens=usage.input_tokens_details.cached_tokens,
-            cache_write_input_tokens=usage.input_tokens_details.cache_write_tokens,
-            reasoning_output_tokens=usage.output_tokens_details.reasoning_tokens,
-        )
 
 
 @RUNTIMES.register
@@ -888,39 +805,6 @@ def _mcp_server(name: str, config: McpServerConfig, env: Mapping[str, str], *,
                "name": name, "cache_tools_list": True, "client_session_timeout_seconds": config.timeout_seconds,
                "max_retry_attempts": 0}
     return MCPServerStdio(**options) if after_ts is None else _SteeringServer(after_ts=after_ts, **options)
-
-
-class _SteeringServer(MCPServerStdio):
-    """The steering MCP server: agents see only Slack messages posted after the run start (`after_ts`)."""
-
-    def __init__(self, *, after_ts: str, **options: Any) -> None:
-        super().__init__(**options)
-        self.after_ts = after_ts
-
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any] | None,
-                        meta: dict[str, Any] | None = None) -> CallToolResult:
-        result = await super().call_tool(tool_name, arguments, meta)
-        if result.is_error:
-            return result
-        text = "\n".join(block.text for block in result.content if block.type == "text")
-        try:
-            visible = within_run(tool_name, text, self.after_ts)
-        except ValueError:
-            return CallToolResult(content=[TextContent(type="text", text=WITHHELD)], is_error=True)
-        if visible is None and tool_name not in MESSAGE_TOOLS:
-            return result
-        # Message listings reach agents as filtered text only, never as other content blocks.
-        return CallToolResult(content=[TextContent(type="text", text=visible or "")])
-
-
-class _UnfilteredCalls:
-    """Steering's own reads and posts. Thread scans need every page and cursor; Steering applies `after_ts` itself."""
-
-    def __init__(self, server: MCPServerStdio) -> None:
-        self.server = server
-
-    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> CallToolResult:
-        return await MCPServerStdio.call_tool(self.server, tool_name, arguments)
 
 
 def _validate_and_get_client(options: ModelProviderOptions, env: Mapping[str, str]) -> AsyncOpenAI:

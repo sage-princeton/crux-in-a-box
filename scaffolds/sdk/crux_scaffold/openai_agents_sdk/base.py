@@ -5,59 +5,20 @@ from __future__ import annotations
 
 import asyncio
 from abc import abstractmethod
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Self
 
-from pydantic import BaseModel
-
-from crux_scaffold.coding_agents import CodingAgent
 from crux_scaffold.components import Component, Options, Registry
-from crux_scaffold.context_strategies import ContextStrategy
-from crux_scaffold.tools import Tool
-from crux_scaffold.workspace import ReviewWorkspace, RunContext
+from crux_scaffold.openai_agents_sdk._delegate_call import _DelegateCall
+from crux_scaffold.openai_agents_sdk.assembly import Assembly
+from crux_scaffold.openai_agents_sdk.turn_outcome import TurnOutcome
+from crux_scaffold.openai_agents_sdk.verdict import Verdict
+from crux_scaffold.workspace import ReviewWorkspace
 
 if TYPE_CHECKING:
-    from crux_scaffold.drop_in import DropInDirectory
     from crux_scaffold.telemetry import Telemetry
-
-
-@dataclass
-class Assembly:
-    """What the scaffold built from the drop-in directory, for the runtime to wire into its SDK."""
-
-    drop_in: DropInDirectory
-    context: RunContext
-    tools: Mapping[str, Tool]
-    coding_agents: Mapping[str, CodingAgent]
-    context_strategy: ContextStrategy
-    instructions: Callable[[str], str]
-    research_context: Callable[[str], str] = lambda name: ""
-
-
-class TurnOutcome(BaseModel):
-    """The orchestrator's answer to one prompt; `completed` is false when it ran out of turns."""
-
-    final_output: str
-    completed: bool
-
-
-class Verdict(BaseModel):
-    """A judge's structured answer."""
-
-    passed: bool
-    feedback: str
-    next_prompt: str | None
-
-
-@dataclass
-class _DelegateCall:
-    task: asyncio.Task
-    active: bool = False
-    children: int = 0
-    closed: bool = False
 
 
 class AgentRuntime(Component):

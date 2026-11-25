@@ -11,12 +11,12 @@ from typing import Literal
 
 from pydantic import AwareDatetime, BaseModel, Field
 
-from crux_scaffold.agent_runtimes.base import AgentRuntime
 from crux_scaffold.components import Component, Options, Registry
 from crux_scaffold.config import PhaseConfig
 from crux_scaffold.drop_in import DropInDirectory
 from crux_scaffold.errors import InvalidDropInError
 from crux_scaffold.gates import Gate, GateContext, GateResult
+from crux_scaffold.openai_agents_sdk.base import AgentRuntime
 from crux_scaffold.usage import UsageLedger
 from crux_scaffold.workspace import RunContext
 
