@@ -217,6 +217,23 @@ if [ -n "$ELASTIC_IP_ADDRESS" ] && [ -z "$PUT_SYSTEM_SECRETS" ] && [ "$DRY_RUN" 
   ok "Elastic IP address $ELASTIC_IP_ADDRESS (allocation $ELASTIC_IP_OVERRIDE_ALLOC_ID) is available for $SLUG"
 fi
 
+# Older per-workspace configs record the auxiliary account after initial setup.
+AUX_ACCOUNT="${CFG[AUX_RESOURCE_ACCOUNT_ID]:-}"
+AUX_ROLE_ARN="${CFG[AUX_RESOURCE_ROLE_ARN]:-}"
+if [[ -n "$AUX_ACCOUNT$AUX_ROLE_ARN" ]]; then
+  [[ "$AUX_ACCOUNT" =~ ^[0-9]{12}$ && "$AUX_ROLE_ARN" = "arn:aws:iam::${AUX_ACCOUNT}:role/crux-agent-devops" ]] \
+    || die "Invalid recorded auxiliary account identity"
+fi
+ISOLATED_IDENTITY="${CFG[ISOLATED_RUN_IDENTITY]:-0}"
+[[ -z "$AUX_ROLE_ARN" ]] || ISOLATED_IDENTITY=1
+RUN_PROFILE="$SYSTEM_IAM_PROFILE"
+case "$ISOLATED_IDENTITY" in
+  0) ;;
+  1) [[ -n "$PROFILE" ]] || die "ISOLATED_RUN_IDENTITY requires AWS_PROFILE"
+     RUN_PROFILE="crux-run-$SLUG" ;;
+  *) die "ISOLATED_RUN_IDENTITY must be 0 or 1" ;;
+esac
+
 # ====== WHERE IS THE CONTROL BOX? ======
 # Look up the controller private IP from AWS. Pattern-based ec2.internal
 # DNS resolution can return an address with no running instance.
@@ -320,7 +337,7 @@ if [ "$DRY_RUN" = 1 ]; then
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
-  instance profile  $SYSTEM_IAM_PROFILE      shared; read-only on $SYSTEM_SSM_PARAM
+  instance profile  $RUN_PROFILE      baseline read on $SYSTEM_SSM_PARAM
                                              (must exist: --put-system-secrets creates it)
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
@@ -405,6 +422,10 @@ ok "$RUN_SG_ID"
 # (verified in preflight), whose only privilege is reading /crux/system/env.
 # Per-run secrets never touch AWS — they are scp'd below and deleted on-box.
 
+if [[ "$ISOLATED_IDENTITY" = 1 ]]; then
+  python3 "$SCRIPT_DIR/workspace_identity.py" provision "$PROFILE" "$REGION" "$SLUG"
+fi
+
 # ====== AMI ======
 info "Ubuntu 24.04 AMI"
 AMI_ID="$(aws_ ssm get-parameters \
@@ -432,7 +453,7 @@ else
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
     --security-group-ids "$RUN_SG_ID" --subnet-id "$SUBNET_ID" \
     --associate-public-ip-address \
-    --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
+    --iam-instance-profile "Name=$RUN_PROFILE" \
     --metadata-options "HttpTokens=required" \
     --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT},\"DeleteOnTermination\":true}}]" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run},{Key=MonitorWithCruxMonitor,Value=1}]" \
@@ -443,6 +464,22 @@ fi
 info "Waiting for 'running'"
 aws_ ec2 wait instance-running --instance-ids "$INSTANCE_ID"
 ok "Running"
+
+# Reused instances do not pass through run-instances.
+if [[ "$ISOLATED_IDENTITY" = 1 ]]; then
+  current_profile="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text)"
+  if [[ "$current_profile" != "arn:aws:iam::${ACCOUNT_ID}:instance-profile/${RUN_PROFILE}" ]]; then
+    association="$(aws_ ec2 describe-iam-instance-profile-associations \
+      --filters "Name=instance-id,Values=$INSTANCE_ID" 'Name=state,Values=associating,associated' \
+      --query 'IamInstanceProfileAssociations[0].AssociationId' --output text)"
+    if [[ -z "$association" || "$association" = None ]]; then
+      aws_ ec2 associate-iam-instance-profile --instance-id "$INSTANCE_ID" --iam-instance-profile "Name=$RUN_PROFILE" >/dev/null
+    else
+      aws_ ec2 replace-iam-instance-profile-association --association-id "$association" --iam-instance-profile "Name=$RUN_PROFILE" >/dev/null
+    fi
+  fi
+fi
 
 # ====== ELASTIC IP ======
 # Allocate a stable public IP for the SSH alias, unless an existing one was
@@ -632,6 +669,7 @@ elif [ "$AGENT_PLATFORM" = codex ]; then
   scp -q -r "$SCRIPT_DIR/../../monitoring/tracing/codex/codex-flush-turns.py" "$SCRIPT_DIR/../../monitoring/tracing/codex/codex-live-trace.py" "$SCRIPT_DIR/../../monitoring/tracing/codex/live_trace" "$SLUG:/tmp/"
 fi
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
+  AUX_RESOURCE_ACCOUNT_ID='$AUX_ACCOUNT' AUX_RESOURCE_ROLE_ARN='$AUX_ROLE_ARN' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
   RUN_SLUG='$SLUG' AGENT_PLATFORM='$AGENT_PLATFORM' MODEL_PROVIDER='$MODEL_PROVIDER' \
   CLAUDE_MODEL='$CLAUDE_MODEL' CLAUDE_EFFORT='$CLAUDE_EFFORT' \

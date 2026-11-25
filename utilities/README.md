@@ -25,3 +25,5 @@ shellcheck bootstrap/bootstrap-gog.sh
 ```
 
 Secret scanning is owned by the TruffleHog CI workflow.
+
+[Auxiliary AWS access](aux-aws/README.md) configures a provisioned run box to use its dedicated AWS account.

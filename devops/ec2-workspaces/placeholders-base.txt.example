@@ -104,3 +104,6 @@ CODEX_TRACE_MODE=live
 
 # The control box's ssh alias, used to mint workspaces.
 CONTROL_SSH_ALIAS=crux-control
+
+# Dedicated main-account role/profile for this workspace. Keep 0 for shared identity.
+ISOLATED_RUN_IDENTITY=0
