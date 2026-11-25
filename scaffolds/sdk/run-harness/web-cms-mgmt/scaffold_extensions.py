@@ -95,7 +95,7 @@ class SnapshotOptions(Options):
     def origin(cls, value):
         """Normalize an HTTP(S) origin and reject embedded credentials or paths.
 
-        :param value: Value for this operation.
+        :param value: Candidate site origin from the snapshot tool configuration.
         """
         parsed = urlsplit(value)
         if (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password

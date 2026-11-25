@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1] / "run-harness/web-cms-mgmt"
 
 
 def extension():
-    """Extension."""
+    """Import the maintenance drop-in extension through its SDK module path."""
     spec = importlib.util.spec_from_file_location("crux_drop_in.scaffold_extensions", ROOT / "scaffold_extensions.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -28,7 +28,7 @@ def extension():
 def test_unconfigured_maintenance_run_fails_before_model_calls(tmp_path):
     """Verify unconfigured maintenance run fails before model calls.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     assert main(["check", "--drop-in", str(ROOT), "--state-dir", str(tmp_path / "state")],
                 env={"CRUX_MODEL": "test", "SLACK_BOT_TOKEN": "test", "WAVE_API_KEY": "test", "COST_TRACKER_URL": "https://cost.test", "COST_TRACKER_TOKEN": "test", "RUN_SLUG": "test"}) == 2
@@ -37,7 +37,7 @@ def test_unconfigured_maintenance_run_fails_before_model_calls(tmp_path):
 def test_resolved_dropin_assembles(tmp_path):
     """Verify resolved dropin assembles.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     drop = tmp_path / "drop"
     shutil.copytree(ROOT, drop)
@@ -56,7 +56,7 @@ def test_resolved_dropin_assembles(tmp_path):
 def test_events_append_without_rewriting_and_reference_snapshots(tmp_path):
     """Verify events append without rewriting and reference snapshots.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     module = extension()
     ctx = SimpleNamespace(workspace=Workspace(tmp_path))
@@ -73,7 +73,7 @@ def test_events_append_without_rewriting_and_reference_snapshots(tmp_path):
 def test_snapshot_rejects_unconfigured_origin_or_credential_url(tmp_path):
     """Verify snapshot rejects unconfigured origin or credential url.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     module = extension()
     tool = module.MaintenanceSnapshot("snapshot", module.SnapshotOptions(
@@ -116,7 +116,7 @@ def test_ledger_never_accepts_fabricated_approval_events():
 def test_history_checkpoint_detects_rewritten_log(tmp_path):
     """Verify history checkpoint detects rewritten log.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     module = extension()
     state = tmp_path / "state"
@@ -132,16 +132,16 @@ def test_history_checkpoint_detects_rewritten_log(tmp_path):
 def test_snapshot_saves_both_viewports_and_appends_filepaths(tmp_path):
     """Verify snapshot saves both viewports and appends filepaths.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     module = extension()
     class BrowserWorkspace(Workspace):
         """Supply a deterministic browser capture for the snapshot tool."""
         async def run_shell_async(self, command, timeout):
-            """Run shell async.
+            """Write a fixture PNG at the requested screenshot path and report success.
 
-            :param command: Command for this operation.
-            :param timeout: Timeout for this operation.
+            :param command: Rendered browser screenshot command.
+            :param timeout: Time limit supplied to the real browser runner.
             """
             (self.root / shlex.split(command)[-1]).write_bytes(b"\x89PNG\r\n\x1a\nfixture")
             return "exit_code=0\n"
@@ -164,16 +164,16 @@ def test_snapshot_saves_both_viewports_and_appends_filepaths(tmp_path):
 def test_thread_approval_is_verified_via_transport_and_logged(tmp_path):
     """Verify thread approval is verified via transport and logged.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     module = extension()
     calls = []
     class Transport:
         """Supply stored Slack replies for approval verification."""
         async def call_tool(self, name, args):
-            """Call tool.
+            """Record the requested Slack operation and return a fixture thread reply.
 
-            :param name: Name for this operation.
+            :param name: Slack transport method requested by the approval tool.
             :param args: Operation arguments.
             """
             calls.append((name,args))
@@ -213,8 +213,8 @@ def test_approval_rejects_messages_at_or_before_run_start(message_ts):
 def test_completed_proactive_fix_requires_visual_evidence_and_both_approvals(tmp_path, missing):
     """Verify completed proactive fix requires visual evidence and both approvals.
 
-    :param tmp_path: Tmp path for this operation.
-    :param missing: Missing for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
+    :param missing: Evidence omitted from the fixture to exercise the completion gate.
     """
     module = extension()
     state = tmp_path / "state"
@@ -240,7 +240,7 @@ def test_completed_proactive_fix_requires_visual_evidence_and_both_approvals(tmp
 def test_idle_run_needs_stop_approval_closed_requests_and_completion_report(tmp_path):
     """Verify idle run needs stop approval closed requests and completion report.
 
-    :param tmp_path: Tmp path for this operation.
+    :param tmp_path: Isolated workspace or state directory supplied by pytest.
     """
     module = extension()
     state = tmp_path / "state"
