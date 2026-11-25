@@ -1,4 +1,4 @@
-# Contrastive RL SDK pilot
+# Contrastive RL SDK research run
 
 This guide provides instructions for reproducing the the Contrastive
 Reinforcement Learning (RL) research task.

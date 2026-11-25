@@ -2,9 +2,9 @@
 
 ## A drop-in directory
 
-The [contrastive RL example](run-harness/contrastive-rl-pilot/OPERATOR_GUIDE.md) uses Argon
+The [contrastive RL example](run-harness/contrastive-rl-full/OPERATOR_GUIDE.md) uses Gemini 4 Carbon
 and the standard workspace provisioner with private `placeholders.txt` and
-`secrets.json` operator files, six hours, $100 inference and $30 RunPod. Its pinned
+`secrets.json` operator files, seven days, $15,000 inference and $1,000 RunPod. Its pinned
 CRTR source, example datasets and checkpoints are checked in with the workspace;
 no source archive or preparation step is required.
 
@@ -18,10 +18,10 @@ workspace/               where agents work; AGENTS.md and other standing context
 OPERATOR_GUIDE.md        how to resolve placeholders and launch; operator notes live only here
 ```
 
-The [TabPFN research example](run-harness/tabpfn-pilot/OPERATOR_GUIDE.md) combines a PI,
+The [TabPFN research example](run-harness/tabpfn-full/OPERATOR_GUIDE.md) combines a PI,
 research assistants, background Codex workers, blind PDF reviews, compaction,
-Slack steering and resource-driven finalization. Its only resource caps are six
-hours, $200 model spend and $100 RunPod; it declares no token or delegation limits.
+Slack steering and resource-driven finalization. Its only resource caps are seven
+days, $15,000 model spend and $1,000 RunPod. It declares no token or delegation limits.
 Its local loop monitors reported resource caps during work and cancels unfinished
 turns at the deadline. Billing delays still allow dollar overshoot.
 
@@ -621,7 +621,7 @@ Set `CRUX_MODEL=google/gemini-4-argon` and `CRUX_REASONING_EFFORT=low`, `medium`
 
 Optionally set `max_request_bytes` in `[runtime.model_provider]` to a positive integer for either provider type. Omit it to disable the check. The complete serialized HTTP body is measured before sending; requests at the limit are allowed. This includes UTF-8 text, images, tool schemas/results, encrypted reasoning and `extra_body`, independently of the token context window. Both research pilots set `max_request_bytes = 20000000` for their current Google AI Studio route; this is not a universal provider limit. Proxies can transform the body downstream, so a conservative limit may be needed for the selected route.
 
-The Carbon research pilots and full runs use `google/gemini-4-carbon@preset/ai-studio-priority` for SDK agents and Codex workers. Create that preset in the OpenRouter workspace used by the run key with these provider preferences:
+The Carbon research runs use `google/gemini-4-carbon@preset/ai-studio-priority` for SDK agents and Codex workers. Create that preset in the OpenRouter workspace used by the run key with these provider preferences:
 
 ```json
 {"only": ["google-ai-studio"], "allow_fallbacks": false}

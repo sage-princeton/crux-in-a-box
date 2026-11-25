@@ -9,7 +9,7 @@
 - Scaffold baseline: the seven-day `tabpfn-full` configuration (agent/delegate
   topology, research loop, reviewer rubric and panel, review gate, 10% reserves,
   `restart_context`, the committed NeurIPS 2026 style), loaded through
-  `research_extensions.py` from `tabpfn-pilot/tabpfn_extensions.py` as
+  `research_extensions.py` from `tabpfn-full/tabpfn_extensions.py` as
   `contrastive-rl-full` does. Its pod cleanup does nothing without a RunPod key.
 - Model: `google/gemini-4-carbon@preset/ai-studio-priority`, high effort, for the
   PI, research assistants and Codex workers; the review panel is unchanged.

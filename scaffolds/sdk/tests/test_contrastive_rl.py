@@ -1,11 +1,9 @@
 import asyncio
 import hashlib
 import importlib.util
-import io
 import json
 import shutil
 import sys
-import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,7 +15,7 @@ from crux_scaffold.resources import ResourceMetric, ResourceSnapshot
 from crux_scaffold.scaffold import Scaffold
 from crux_scaffold.telemetry import NullTelemetry
 
-PILOT = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl-pilot"
+HARNESS = Path(__file__).resolve().parents[1] / "run-harness/contrastive-rl-full"
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "OPENROUTER_API_KEY": "test",
        "SLACK_BOT_TOKEN": "test",
        "RUN_SLUG": "contrastive-test", "RUNPOD_API_KEY": "test",
@@ -25,79 +23,57 @@ ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "OPENRO
 
 
 @pytest.fixture
-def pilot_dir(tmp_path):
-    root = tmp_path / "pilot"
-    shutil.copytree(PILOT, root, ignore=shutil.ignore_patterns(
+def harness_dir(tmp_path):
+    root = tmp_path / "contrastive-rl"
+    shutil.copytree(HARNESS, root, ignore=shutil.ignore_patterns(
         "placeholders.txt", "secrets.json", "__pycache__", "crtr", "SOURCE.json"))
     return root
 
 
 @pytest.fixture
-def scaffold(tmp_path, pilot_dir):
-    prepare(pilot_dir, "CTEST", "1.000000")
-    return Scaffold(DropInDirectory.load(pilot_dir), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
+def scaffold(tmp_path, harness_dir):
+    prepare(harness_dir, "CTEST", "1.000000")
+    return Scaffold(DropInDirectory.load(harness_dir), ENV, state_dir=tmp_path / "state", telemetry=NullTelemetry())
 
 
-def style_archive(style=b"% test venue style\n"):
-    """A stand-in for the pinned NeurIPS archive; prepare() is told to trust its digest."""
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr(zipfile.ZipInfo("Styles/neurips_2025.sty", date_time=(2025, 1, 1, 0, 0, 0)), style)
-    return buffer.getvalue()
-
-
-ARCHIVE = style_archive()
-
-
-def prepare(root, channel, after_ts, archive=ARCHIVE):
-    spec = importlib.util.spec_from_file_location("contrastive_prepare", PILOT / "prepare.py")
+def prepare(root, channel, after_ts):
+    spec = importlib.util.spec_from_file_location("contrastive_prepare", HARNESS / "prepare.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    module.TEMPLATE_SHA256 = hashlib.sha256(ARCHIVE).hexdigest()
-    module.prepare(root, channel, after_ts, archive)
+    module.prepare(root, channel, after_ts)
 
 
-def test_preparation_resolves_steering_and_preserves_existing_run(pilot_dir):
+def test_preparation_resolves_steering_and_preserves_existing_run(harness_dir):
     with pytest.raises(InvalidDropInError, match="unresolved placeholders"):
-        DropInDirectory.load(pilot_dir)
-    prepare(pilot_dir, "CTEST", "1.000000")
-    config = DropInDirectory.load(pilot_dir).config
+        DropInDirectory.load(harness_dir)
+    prepare(harness_dir, "CTEST", "1.000000")
+    config = DropInDirectory.load(harness_dir).config
     assert config.runtime["steering"]["channel_id"] == "CTEST"
     assert config.runtime["steering"]["after_ts"] == "1.000000"
     assert config.mcp_servers["slack"].env["SLACK_MCP_ADD_MESSAGE_TOOL"] == "CTEST"
-    assert (pilot_dir / "workspace/paper/neurips_2025.sty").read_bytes() == b"% test venue style\n"
-    assert (pilot_dir / "workspace/templates/paper_template.zip").read_bytes() == ARCHIVE
-    assert "\\usepackage{neurips_2025}" in (pilot_dir / "workspace/paper/paper.tex").read_text()
-    original = (pilot_dir / "scaffold.toml").read_bytes()
+    assert (harness_dir / "workspace/paper/neurips_2026.sty").is_file()
+    assert "\\usepackage{neurips_2026}" in (harness_dir / "workspace/paper/paper.tex").read_text()
+    original = (harness_dir / "scaffold.toml").read_bytes()
     with pytest.raises(ValueError, match="already resolved"):
-        prepare(pilot_dir, "COTHER", "2.000000")
-    assert (pilot_dir / "scaffold.toml").read_bytes() == original
+        prepare(harness_dir, "COTHER", "2.000000")
+    assert (harness_dir / "scaffold.toml").read_bytes() == original
 
 
 @pytest.mark.parametrize("channel,after_ts", [
     ("bad-channel", "0"), ("CTEST", "yesterday"),
 ])
-def test_preparation_rejects_invalid_steering_without_changing_config(pilot_dir, channel, after_ts):
-    original = (pilot_dir / "scaffold.toml").read_bytes()
+def test_preparation_rejects_invalid_steering_without_changing_config(harness_dir, channel, after_ts):
+    original = (harness_dir / "scaffold.toml").read_bytes()
     with pytest.raises(ValueError, match="Invalid"):
-        prepare(pilot_dir, channel, after_ts)
-    assert (pilot_dir / "scaffold.toml").read_bytes() == original
+        prepare(harness_dir, channel, after_ts)
+    assert (harness_dir / "scaffold.toml").read_bytes() == original
 
 
-def test_preparation_rejects_an_unpinned_venue_template_without_changing_anything(pilot_dir):
-    original = (pilot_dir / "scaffold.toml").read_bytes()
-    with pytest.raises(ValueError, match="checksum mismatch"):
-        prepare(pilot_dir, "CTEST", "1.000000", archive=style_archive(b"% altered\n"))
-    assert (pilot_dir / "scaffold.toml").read_bytes() == original
-    assert not (pilot_dir / "workspace/paper/neurips_2025.sty").exists()
-    assert not (pilot_dir / "workspace/templates").exists()
-
-
-def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffold):
+def test_full_run_assembles_with_confirmed_budgets_and_shared_research_loop(scaffold):
     config = scaffold.drop_in.config
-    assert config.budget.max_wall_seconds == 21600
-    assert config.budget.max_cost_usd == 100
-    assert config.resources["gpu"]["limits"] == {"cost_usd": 30}
+    assert config.budget.max_wall_seconds == 7 * 24 * 60 * 60
+    assert config.budget.max_cost_usd == 15_000
+    assert config.resources["gpu"]["limits"] == {"cost_usd": 1_000}
     assert scaffold.loop.type_name == "tabpfn_research"
     assert str(scaffold.runtime.options.model_provider.base_url) == "https://openrouter.ai/api/v1"
     assert not scaffold.runtime.options.model_provider.extra_body
@@ -117,8 +93,8 @@ def test_pilot_assembles_with_confirmed_budgets_and_shared_research_loop(scaffol
     assert scaffold.context.model == "google/gemini-4-carbon@preset/ai-studio-priority"
 
 
-def test_pilot_bundles_complete_pinned_source_without_archive_preparation():
-    workspace = PILOT / "workspace"
+def test_full_run_bundles_complete_pinned_source_without_archive_preparation():
+    workspace = HARNESS / "workspace"
     source = workspace / "crtr"
     provenance = json.loads((workspace / "SOURCE.json").read_text())
     assert provenance["archive_sha256"] == "9a1734f6e11608f2b4e235c752028657c01cd097beacc6c57d09bcda2cb38cc0"
@@ -133,16 +109,16 @@ def test_pilot_bundles_complete_pinned_source_without_archive_preparation():
             assert hashlib.file_digest(stream, "sha256").hexdigest() == expected_sha256, relative
 
 
-@pytest.mark.parametrize("resource,amount,reason", [("models", 90, "model spend reserve"),
-                                                  ("gpu", 27, "gpu reserve")])
-def test_pilot_enters_finalization_at_requested_spend_reserve(scaffold, resource, amount, reason):
+@pytest.mark.parametrize("resource,amount,reason", [("models", 13_500, "model spend reserve"),
+                                                  ("gpu", 900, "gpu reserve")])
+def test_full_run_enters_finalization_at_requested_spend_reserve(scaffold, resource, amount, reason):
     scaffold.context.usage.started_at = scaffold.context.now()
     scaffold.context.resources._snapshots[resource] = ResourceSnapshot(
         as_of=scaffold.context.now(), metrics={"cost_usd": ResourceMetric(value=amount, unit="USD")})
     assert scaffold.loop.reserve_reason(scaffold.context) == reason
 
 
-def test_pilot_deadline_cancels_work_and_requests_cleanup(scaffold, monkeypatch):
+def test_full_run_deadline_cancels_work_and_requests_cleanup(scaffold, monkeypatch):
     cleaned, cancelled = [], []
     monkeypatch.setattr(sys.modules["crux_drop_in.tabpfn_extensions"], "cleanup_pods",
                         lambda env: cleaned.append(env["RUN_SLUG"]) or {})

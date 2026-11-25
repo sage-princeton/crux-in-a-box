@@ -1,2 +1,0 @@
-# Preserve the upstream snapshot, including its original whitespace.
-workspace/crtr/** linguist-vendored -whitespace -text

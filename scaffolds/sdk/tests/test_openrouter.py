@@ -188,7 +188,7 @@ def test_preset_reaches_agents_judges_and_probe_without_request_overrides(router
                for request in requests)
 
 
-@pytest.mark.parametrize("name", ["tabpfn-pilot", "tabpfn-full", "contrastive-rl-pilot", "contrastive-rl-full"])
+@pytest.mark.parametrize("name", ["tabpfn-full", "contrastive-rl-full"])
 def test_carbon_drop_ins_use_the_preset_without_request_overrides(name):
     config = tomllib.loads((Path(__file__).resolve().parents[1] / "run-harness" / name / "scaffold.toml").read_text())
     provider = config["runtime"]["model_provider"]
