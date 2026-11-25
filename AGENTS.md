@@ -4,6 +4,8 @@ This repo provisions and steers **CRUX runs**: autonomous research agents (OpenC
 
 ## Engineering principles
 
+Apply these principles to all new code, including additions to existing files. Existing code will be brought into conformance in later work. A coding agent should make conformance changes to existing code, documentation, or CI workflows only when the user explicitly includes that work in the task.
+
 ### Software design
 
 - Introduce a shared abstraction, such as a base class or library, when you can name at least three concrete uses for it.
