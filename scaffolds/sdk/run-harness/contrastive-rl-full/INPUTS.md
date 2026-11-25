@@ -1,4 +1,4 @@
-# Pilot inputs and baseline
+# Research run inputs and baseline
 
 - Question/context: supplied directly by the operator; preserved in
   `workspace/RESEARCH.md`, plus one sentence describing the supplied source.
@@ -16,7 +16,7 @@
   `48caa0383bd7033bce04370bb86cb8719a1a0a06125512b09a5efdb0c086c7d8`.
 - Model: `google/gemini-4-carbon@preset/ai-studio-priority`, high effort: the
   preset pins Google AI Studio's priority tier (BYOK) and a 65,536-token output budget for SDK agents and Codex workers. Listed in the provider catalog on
-  2026-10-29; no inference probe has been performed for this pilot.
+  2026-10-29; no inference probe has been performed for this run.
 - Resource caps: 604800 seconds (seven days), $15,000 total agent/delegate/review
   inference, $1,000 RunPod. 10% time/spend reserves; AWS infrastructure separate.
 - Changes from the SDK example: task/context, model/routing, spend allowances,

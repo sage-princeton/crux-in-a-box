@@ -22,7 +22,7 @@ from crux_scaffold.telemetry import NullTelemetry
 
 from scripted import ScriptedModel, call, say
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "run-harness/tabpfn-pilot"
+EXAMPLE = Path(__file__).resolve().parents[1] / "run-harness/tabpfn-full"
 ENV = {"CRUX_MODEL": "google/gemini-4-carbon@preset/ai-studio-priority", "CRUX_REASONING_EFFORT": "high", "OPENROUTER_API_KEY": "test",
        "RUN_SLUG": "tabpfn-test", "SLACK_BOT_TOKEN": "test",
        "COST_TRACKER_URL": "https://cost.test/cost", "COST_TRACKER_TOKEN": "test", "RUNPOD_API_KEY": "test"}
@@ -55,14 +55,14 @@ def gate_context(scaffold, phase="research"):
 
 def test_only_requested_resource_caps(scaffold):
     config = scaffold.drop_in.config
-    assert config.budget.max_wall_seconds == 21600
-    assert config.budget.max_cost_usd == 200
+    assert config.budget.max_wall_seconds == 7 * 24 * 60 * 60
+    assert config.budget.max_cost_usd == 15_000
     assert config.budget.max_total_tokens is None
     assert config.delegation.max_concurrent is config.delegation.max_depth is None
     assert config.runtime["max_turns"] == "unlimited"
     assert all(p.max_iterations == "unlimited" for p in scaffold.loop.options.phases)
     assert all(g.options.max_turns == "unlimited" for g in scaffold.loop.gates.values())
-    assert config.resources["gpu"]["limits"] == {"cost_usd": 100}
+    assert config.resources["gpu"]["limits"] == {"cost_usd": 1_000}
     assert "run_shell" in config.agents["pi"].tools
 
 
@@ -183,7 +183,7 @@ def test_a_panel_with_a_failed_reviewer_decides_but_is_reviewed_again(scaffold):
     assert len(judges[PANEL[0]].inputs) == len(judges[PANEL[2]].inputs) == 4
 
 
-@pytest.mark.parametrize("harness", ["tabpfn-pilot", "contrastive-rl-pilot"])
+@pytest.mark.parametrize("harness", ["tabpfn-full", "contrastive-rl-full"])
 @pytest.mark.parametrize("formatting", ["inline", "multiline", "table", "bold_values"])
 def test_latest_review_survives_compaction(tmp_path, harness, formatting):
     root = tmp_path / harness
@@ -256,7 +256,7 @@ def test_latest_review_survives_compaction(tmp_path, harness, formatting):
 
 def test_finalization_reserve_does_not_claim_acceptance(scaffold):
     ctx = scaffold.context
-    ctx.usage.started_at = ctx.now() - timedelta(hours=5, minutes=1)
+    ctx.usage.started_at = ctx.now() - timedelta(days=6, hours=8)
     assert scaffold.loop.reserve_reason(ctx)
     assert not ctx.budget.exhausted(ctx.usage, now=ctx.now())
 
@@ -288,8 +288,8 @@ def test_reserve_interrupts_research_and_persists_final_phase(scaffold, monkeypa
     assert json.loads(ctx.workspace.read_file("FINALIZATION_REASON.json")) == {"reason": "time reserve"}
 
 
-@pytest.mark.parametrize("resource,amount,expected", [("models", 180, "model spend reserve"),
-                                                      ("gpu", 90, "gpu reserve")])
+@pytest.mark.parametrize("resource,amount,expected", [("models", 13_500, "model spend reserve"),
+                                                      ("gpu", 900, "gpu reserve")])
 def test_reported_spend_enters_reserve(scaffold, resource, amount, expected):
     from crux_scaffold.resources import ResourceMetric, ResourceSnapshot
 
@@ -324,7 +324,7 @@ def test_deadline_cancels_an_unlimited_inflight_turn_and_saves_state(scaffold, m
 
 def test_completed_run_stays_completed_after_deadline(scaffold, monkeypatch):
     monkeypatch.setattr(sys.modules["crux_drop_in.tabpfn_extensions"], "cleanup_pods", lambda env: {})
-    scaffold.context.usage.started_at = scaffold.context.now() - timedelta(hours=7)
+    scaffold.context.usage.started_at = scaffold.context.now() - timedelta(days=8)
     scaffold.state.phase_index = 2
     outcome = asyncio.run(scaffold.loop.run(SimpleNamespace(), scaffold.drop_in, scaffold.context,
                                             scaffold.state, scaffold.store))

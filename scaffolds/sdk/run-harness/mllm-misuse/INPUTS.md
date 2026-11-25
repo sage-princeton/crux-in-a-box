@@ -8,7 +8,7 @@
   cooperatively at about 2,000 searches); model weights come from Hugging Face
   with a read-only `HF_TOKEN`.
 - The shared SDK research loop, review gates and pod cleanup are loaded through
-  `research_extensions.py` from `tabpfn-pilot/tabpfn_extensions.py`. The seven-day
+  `research_extensions.py` from `tabpfn-full/tabpfn_extensions.py`. The seven-day
   schedule, direction archival/context restart and committed NeurIPS 2026 style
   and checklist follow `tabpfn-full`, as in the VFTTS rebuild. Compaction triggers
   at 400,000 tokens. No shared scaffold implementation changes are required.
