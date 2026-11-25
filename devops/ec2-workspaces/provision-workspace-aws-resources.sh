@@ -45,8 +45,19 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+REPO_DIR="$(git -C "$SCRIPT_DIR/../.." rev-parse --show-toplevel)"
+DEPLOY_GIT_SHA="$(git -C "$REPO_DIR" rev-parse --verify 'HEAD^{commit}')"
+git -C "$REPO_DIR" diff --quiet "$DEPLOY_GIT_SHA" -- devops/ec2-workspaces/provision-workspace-aws-resources.sh \
+  || die "Commit changes to provision-workspace-aws-resources.sh before deploying."
+DEPLOY_SOURCE="$(mktemp -d)"
+trap 'rm -rf "$DEPLOY_SOURCE"' EXIT
+# Freeze the scripts as well as the harness: local edits or a later checkout
+# must not change what the recorded revision identifies.
+git -C "$REPO_DIR" archive "$DEPLOY_GIT_SHA" devops/ec2-workspaces monitoring/tracing \
+  | tar -x -C "$DEPLOY_SOURCE"
+DEPLOY_SCRIPTS="$DEPLOY_SOURCE/devops/ec2-workspaces"
 # shellcheck source=devops/ec2-workspaces/agent-config.sh
-source "$SCRIPT_DIR/agent-config.sh"
+source "$DEPLOY_SCRIPTS/agent-config.sh"
 
 [ -n "$CONFIG_FILE" ] || die "Usage: $0 [--secrets <json>|--put-system-secrets <json>|--dry-run|--handshake] CONFIG_FILE"
 [ -f "$CONFIG_FILE" ] || die "Config file not found: $CONFIG_FILE"
@@ -299,7 +310,7 @@ if [ "$HANDSHAKE" = 1 ]; then
   exit $?
 fi
 
-load_drop_in_path "$SCRIPT_DIR/../.."
+load_drop_in_path "$REPO_DIR" "$DEPLOY_GIT_SHA"
 
 load_workspace_dir "$SCRIPT_DIR/../.."
 
@@ -326,6 +337,7 @@ if [ "$DRY_RUN" = 1 ]; then
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
   harness           $DROP_IN_PATH/ -> /srv/crux-run/run-harness (staged for run setup)
+  git revision      $DEPLOY_GIT_SHA -> EC2 tag CruxGitSha after successful setup
   workspace input   ${WORKSPACE_DIR:-committed workspace only} -> run-harness/workspace/
 $EIP_PLAN_LINE
   secrets           ${RUN_SECRETS_FILE:-<--secrets file>} -> scp to $BOX_SECRETS_PATH,
@@ -360,7 +372,7 @@ else
   ok "Per-run secrets file $RUN_SECRETS_FILE looks complete ($API_KEY_NAME, not echoed)"
 fi
 if [ "$AGENT_PLATFORM" = claude ]; then
-  [ -f "$SCRIPT_DIR/../../monitoring/tracing/claude/langfuse_hook.py" ] \
+  [ -f "$DEPLOY_SOURCE/monitoring/tracing/claude/langfuse_hook.py" ] \
     || die "The vendored Claude Langfuse hook is missing."
 fi
 
@@ -538,15 +550,16 @@ if [ "$SCAFFOLD_MODULE" = sdk ]; then
   fi'
 fi
 
+aws_ ec2 delete-tags --resources "$INSTANCE_ID" --tags "Key=CruxGitSha"
 info "Staging $DROP_IN_PATH/ on $SLUG"
 ssh "$SLUG" 'sudo install -d -o ubuntu -g ubuntu /srv/crux-run /srv/crux-run/run-harness'
-git -C "$SCRIPT_DIR/../.." archive --prefix=run-harness/ "HEAD:$DROP_IN_PATH" \
+git -C "$REPO_DIR" archive --prefix=run-harness/ "$DEPLOY_GIT_SHA:$DROP_IN_PATH" \
   | ssh "$SLUG" 'tar -x -C /srv/crux-run'
 ok "Harness staged at /srv/crux-run/run-harness; resolve run settings before launch"
 
 if [ "$SCAFFOLD_MODULE" = sdk ]; then
   info "Staging scaffolds/sdk/ on $SLUG at /opt/crux-sdk-scaffold"
-  git -C "$SCRIPT_DIR/../.." archive --prefix=crux-sdk-scaffold/ HEAD:scaffolds/sdk \
+  git -C "$REPO_DIR" archive --prefix=crux-sdk-scaffold/ "$DEPLOY_GIT_SHA:scaffolds/sdk" \
     | ssh "$SLUG" 'sudo tar -x --no-same-owner -C /opt'
   ok "Scaffold staged, root-owned so the agent cannot edit it"
 fi
@@ -554,17 +567,17 @@ fi
 # ====== INSTALL (software, bakeable) ======
 info "Staging the run's software declaration"
 ssh "$SLUG" 'sudo install -d -m 755 /usr/local/lib/crux'
-scp -q "$SCRIPT_DIR/run_provision.py" "$SLUG:/tmp/run_provision.py"
+scp -q "$DEPLOY_SCRIPTS/run_provision.py" "$SLUG:/tmp/run_provision.py"
 ssh "$SLUG" 'sudo install -m 644 /tmp/run_provision.py /usr/local/lib/crux/run_provision.py'
-if git -C "$SCRIPT_DIR/../.." cat-file -e "HEAD:$DROP_IN_PATH/provision.json" 2>/dev/null; then
-  git -C "$SCRIPT_DIR/../.." show "HEAD:$DROP_IN_PATH/provision.json"
+if git -C "$REPO_DIR" cat-file -e "$DEPLOY_GIT_SHA:$DROP_IN_PATH/provision.json" 2>/dev/null; then
+  git -C "$REPO_DIR" show "$DEPLOY_GIT_SHA:$DROP_IN_PATH/provision.json"
 else
   printf '{"version":1}\n'
 fi | ssh "$SLUG" 'sudo sh -c "umask 022; cat > /etc/crux-provision.json"'
 
 info "install-run.sh — software"
-scp -q "$SCRIPT_DIR/install-run.sh" "$SLUG:/tmp/install-run.sh"
-scp -q "$SCRIPT_DIR/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
+scp -q "$DEPLOY_SCRIPTS/install-run.sh" "$SLUG:/tmp/install-run.sh"
+scp -q "$DEPLOY_SCRIPTS/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
 ssh "$SLUG" "chmod +x /tmp/install-run.sh && sudo \
   AGENT_PLATFORM='$AGENT_PLATFORM' \
   ACP_GATEWAY_TARBALL_URL='$ACP_GATEWAY_TARBALL_URL' ACP_GATEWAY_SHA256='$ACP_GATEWAY_SHA256' \
@@ -624,12 +637,12 @@ ok "Copied (mode 600; configure-run.sh deletes it)"
 
 # ====== CONFIGURE (secrets, per-run) ======
 info "configure-run.sh — config and gateway"
-scp -q "$SCRIPT_DIR/configure-run.sh" "$SCRIPT_DIR/agent-config.sh" "$SCRIPT_DIR/sdk_config.py" "$SLUG:/tmp/"
-scp -q "$SCRIPT_DIR/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
+scp -q "$DEPLOY_SCRIPTS/configure-run.sh" "$DEPLOY_SCRIPTS/agent-config.sh" "$DEPLOY_SCRIPTS/sdk_config.py" "$SLUG:/tmp/"
+scp -q "$DEPLOY_SCRIPTS/scaffolds/$SCAFFOLD_MODULE.sh" "$SLUG:/tmp/scaffold.sh"
 if [ "$AGENT_PLATFORM" = claude ]; then
-  scp -q "$SCRIPT_DIR/../../monitoring/tracing/claude/langfuse_hook.py" "$SLUG:/tmp/langfuse_hook.py"
+  scp -q "$DEPLOY_SOURCE/monitoring/tracing/claude/langfuse_hook.py" "$SLUG:/tmp/langfuse_hook.py"
 elif [ "$AGENT_PLATFORM" = codex ]; then
-  scp -q -r "$SCRIPT_DIR/../../monitoring/tracing/codex/codex-flush-turns.py" "$SCRIPT_DIR/../../monitoring/tracing/codex/codex-live-trace.py" "$SCRIPT_DIR/../../monitoring/tracing/codex/live_trace" "$SLUG:/tmp/"
+  scp -q -r "$DEPLOY_SOURCE/monitoring/tracing/codex/codex-flush-turns.py" "$DEPLOY_SOURCE/monitoring/tracing/codex/codex-live-trace.py" "$DEPLOY_SOURCE/monitoring/tracing/codex/live_trace" "$SLUG:/tmp/"
 fi
 ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   RUN_SECRETS_PATH='$BOX_SECRETS_PATH' SYSTEM_SSM_PARAM='$SYSTEM_SSM_PARAM' \
@@ -642,6 +655,9 @@ ssh "$SLUG" "chmod +x /tmp/configure-run.sh && sudo AWS_REGION='$REGION' \
   TRACING_HOOK_TRUSTED_HASH='$TRACING_HOOK_TRUSTED_HASH' \
   CODEX_TRACE_MODE='$CODEX_TRACE_MODE' \
   /tmp/configure-run.sh"
+
+aws_ ec2 create-tags --resources "$INSTANCE_ID" \
+  --tags "Key=CruxGitSha,Value=$DEPLOY_GIT_SHA"
 
 if [ "$SCAFFOLD_MODULE" = sdk ]; then
   DIALS_DONE="nothing (no AgentRQ)"
@@ -659,6 +675,7 @@ cat <<DONE
 $(ok "Run box ready")
 
   instance   $INSTANCE_ID ($INSTANCE_TYPE) at $PUBLIC_IP
+  git sha    $DEPLOY_GIT_SHA (EC2 tag CruxGitSha)
   ssh        ssh $SLUG
   agent      $AGENT_PLATFORM, $MODEL, effort $EFFORT
   harness    /srv/crux-run/run-harness (unconfigured scaffold)
