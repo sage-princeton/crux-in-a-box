@@ -33,7 +33,7 @@ class Aws:
         :param operation: AWS CLI operation name.
         :param args: Additional CLI arguments.
         """
-        result = subprocess.run([*self.prefix, service, operation, *args], text=True, capture_output=True, timeout=180)
+        result = subprocess.run([*self.prefix, service, operation, *args], check=False, text=True, capture_output=True, timeout=180)
         if result.returncode:
             match = re.search(r"An error occurred \(([^)]+)\)", result.stderr)
             raise AwsError(operation, match[1] if match else f"exit {result.returncode}")
