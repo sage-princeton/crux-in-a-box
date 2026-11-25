@@ -16,7 +16,8 @@ python -m venv .venv
 ```
 
 Prepare inputs using the [configuration reference](configuration.md) and the
-selected Run's operator guide. [design.md](design.md) explains composition;
+selected Run's operator guide. For ongoing maintenance of the migrated CITP site,
+see the [CMS maintenance pilot](run-harness/web-cms-mgmt/OPERATOR_GUIDE.md). [design.md](design.md) explains composition;
 [docs/extending.md](docs/extending.md) defines extension contracts. The optional
 [Docker demo](docker/README.md) has its own dependencies and commands.
 
