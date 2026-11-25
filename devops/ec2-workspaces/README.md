@@ -6,8 +6,7 @@ instance profile, SSH key and SSM settings described in [operations.md](operatio
 
 ## Usage
 
-Prepare your Run inputs and set `DROP_IN_PATH` in the private configuration. The
-Codex/Claude harness directories are empty placeholders. From this directory:
+Prepare your Run inputs and set `DROP_IN_PATH` in the private configuration. For a Codex migration run, follow the [CITP pilot guide](../../scaffolds/codex/run-harness/citp-web-pilot/OPERATOR_GUIDE.md). From this directory:
 
 ```sh
 ./make-new-workspace.sh research --base-config /private/base.txt --base-secrets /private/secrets.json --dry-run
