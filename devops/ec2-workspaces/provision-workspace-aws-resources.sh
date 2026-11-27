@@ -303,6 +303,11 @@ load_drop_in_path "$SCRIPT_DIR/../.."
 
 load_workspace_dir "$SCRIPT_DIR/../.."
 
+RUN_PROFILE="$SYSTEM_IAM_PROFILE"
+if [[ -v 'CFG[ARCHIVE_READ_URIS]' ]]; then
+  RUN_PROFILE="crux-run-$SLUG"
+fi
+
 if [ "$DRY_RUN" = 1 ]; then
   if [ "$USE_ELASTIC_IP" != true ]; then
     EIP_PLAN_LINE="  elastic ip        disabled (USE_ELASTIC_IP=false) — uses the instance's ephemeral public IP"
@@ -320,8 +325,8 @@ if [ "$DRY_RUN" = 1 ]; then
   cat <<PLAN
 [dry-run] Would create/reuse, in account $ACCOUNT_ID / $REGION:
   security group    $RUN_SG                  22 from $OPERATOR_CIDR (break-glass only)
-  instance profile  $SYSTEM_IAM_PROFILE      shared; read-only on $SYSTEM_SSM_PARAM
-                                             (must exist: --put-system-secrets creates it)
+  instance profile  $RUN_PROFILE
+  archive reads     ${CFG[ARCHIVE_READ_URIS]:-none}
   instance          $SLUG                    $INSTANCE_TYPE, ${ROOT_DISK_GB}GB gp3 root
                                              ${ROOT_IOPS} IOPS / ${ROOT_THROUGHPUT} MB/s
   ssh config entry  Host $SLUG
@@ -401,10 +406,6 @@ RUN_SG_ID="$(aws_ ec2 describe-security-groups \
   || die "$RUN_SG does not exist. Run devops/ec2-control/make-control-box.sh first: it creates both SGs, and crux-control-sg's :2026 rule references this one."
 ok "$RUN_SG_ID"
 
-# No per-box IAM: the instance boots with the shared crux-system-profile
-# (verified in preflight), whose only privilege is reading /crux/system/env.
-# Per-run secrets never touch AWS — they are scp'd below and deleted on-box.
-
 # ====== AMI ======
 info "Ubuntu 24.04 AMI"
 AMI_ID="$(aws_ ssm get-parameters \
@@ -421,6 +422,18 @@ INSTANCE_ID="$(aws_ ec2 describe-instances \
   --query 'Reservations[].Instances[0].InstanceId' --output text)"
 
 if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
+  current_profile="$(aws_ ec2 describe-instances --instance-ids "$INSTANCE_ID" \
+    --query 'Reservations[0].Instances[0].IamInstanceProfile.Arn' --output text)"
+  if [[ "$RUN_PROFILE" == "crux-run-$SLUG" || "${current_profile##*/}" == "crux-run-$SLUG" ]]; then
+    [[ "${current_profile##*/}" == "$RUN_PROFILE" ]] \
+      || die "Existing instance profile differs from $RUN_PROFILE. Select its dedicated profile before reprovisioning; use ARCHIVE_READ_URIS= to revoke reads."
+  fi
+fi
+if [ "$RUN_PROFILE" != "$SYSTEM_IAM_PROFILE" ]; then
+  python3 "$SCRIPT_DIR/archival/archive_workspace.py" grant-read "$CONFIG_FILE"
+fi
+
+if [ -n "$INSTANCE_ID" ] && [ "$INSTANCE_ID" != "None" ]; then
   warn "Reusing existing instance $INSTANCE_ID tagged Name=$SLUG"
   aws_ ec2 create-tags --resources "$INSTANCE_ID" \
     --tags "Key=MonitorWithCruxMonitor,Value=1"
@@ -432,7 +445,7 @@ else
     --image-id "$AMI_ID" --instance-type "$INSTANCE_TYPE" --key-name "$KEY_NAME" \
     --security-group-ids "$RUN_SG_ID" --subnet-id "$SUBNET_ID" \
     --associate-public-ip-address \
-    --iam-instance-profile "Name=$SYSTEM_IAM_PROFILE" \
+    --iam-instance-profile "Name=$RUN_PROFILE" \
     --metadata-options "HttpTokens=required" \
     --block-device-mappings "[{\"DeviceName\":\"/dev/sda1\",\"Ebs\":{\"VolumeSize\":${ROOT_DISK_GB},\"VolumeType\":\"gp3\",\"Iops\":${ROOT_IOPS},\"Throughput\":${ROOT_THROUGHPUT},\"DeleteOnTermination\":true}}]" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$SLUG},{Key=CruxRole,Value=run},{Key=MonitorWithCruxMonitor,Value=1}]" \

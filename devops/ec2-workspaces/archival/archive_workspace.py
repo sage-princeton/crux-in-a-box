@@ -8,8 +8,9 @@ Usage from this directory::
     python archive_workspace.py redact CONFIG STAGE  # if upload requests redaction
     python archive_workspace.py upload CONFIG STAGE
     python archive_workspace.py verify CONFIG RECEIPT_URI
+    python archive_workspace.py restore CONFIG RECEIPT_URI NEW_DIRECTORY
 
-See ``README.md`` for redaction and retry instructions.
+See ``README.md`` for redaction, retry and provisioning instructions.
 """
 
 from __future__ import annotations
@@ -218,6 +219,66 @@ class Store:
         )
         if digest(destination) != receipt["sha256"]:
             raise ArchiveError("Downloaded archive checksum differs from the receipt.")
+
+
+def archive_prefix(uri: str) -> tuple[str, str]:
+    """Validate one exact archive directory, excluding wildcard grants.
+
+    :param uri: S3 URI ending in ``runs/slug/archive-id/``.
+    :returns: Bucket and key prefix.
+    :raises ArchiveError: The URI does not select a single archive directory.
+    """
+    match = re.fullmatch(r"s3://([a-z0-9.-]+)/runs/([A-Za-z0-9-]+)/([A-Za-z0-9-]+)/?", uri)
+    if not match:
+        raise ArchiveError("ARCHIVE_READ_URIS must contain exact s3://bucket/runs/slug/archive-id/ directories.")
+    return match[1], f"runs/{match[2]}/{match[3]}/"
+
+
+def grant_read(config: Mapping[str, str]) -> None:
+    """Grant the selected archive prefixes or revoke prior access for an explicit empty selection.
+
+    :param config: Workspace settings with optional comma-separated ARCHIVE_READ_URIS.
+    :raises ArchiveError: A selector, account or dedicated role is invalid, or an AWS request fails.
+    """
+    selectors = config.get("ARCHIVE_READ_URIS", "").strip()
+    if "ARCHIVE_READ_URIS" not in config:
+        return
+    prefixes = [archive_prefix(uri.strip()) for uri in selectors.split(",")] if selectors else []
+    store = Store(config)
+    if any(bucket != store.bucket for bucket, _ in prefixes):
+        raise ArchiveError("Selected archives must be in this main account and region's archive bucket.")
+    role = f"crux-run-{store.slug}"
+    profile = store.aws("iam", "get-instance-profile", "--instance-profile-name", role)["InstanceProfile"]
+    if [item["RoleName"] for item in profile["Roles"]] != [role]:
+        raise ArchiveError(f"Instance profile {role} must contain only its dedicated role of the same name.")
+    if not prefixes:
+        existing = store.aws("iam", "list-role-policies", "--role-name", role)
+        if "read-run-archives" in existing["PolicyNames"]:
+            store.aws("iam", "delete-role-policy", "--role-name", role, "--policy-name", "read-run-archives")
+        return
+    statements = [
+        {
+            "Effect": "Allow",
+            "Action": ["s3:GetObject", "s3:GetObjectVersion"],
+            "Resource": [f"arn:aws:s3:::{bucket}/{prefix}*" for bucket, prefix in prefixes],
+        },
+        {
+            "Effect": "Allow",
+            "Action": "s3:ListBucket",
+            "Resource": f"arn:aws:s3:::{store.bucket}",
+            "Condition": {"StringLike": {"s3:prefix": [prefix + "*" for _, prefix in prefixes]}},
+        },
+    ]
+    store.aws(
+        "iam",
+        "put-role-policy",
+        "--role-name",
+        role,
+        "--policy-name",
+        "read-run-archives",
+        "--policy-document",
+        json.dumps({"Version": "2012-10-17", "Statement": statements}),
+    )
 
 
 def read_receipt(store: Store, uri: str, directory: Path) -> ArchiveReceipt:
@@ -666,12 +727,13 @@ def archive_workspace(store: Store, directory: Path) -> str:
     return uri
 
 
-def verify_receipt(store: Store, uri: str, directory: Path) -> None:
-    """Verify Run ownership and extract the exact object version into temporary storage.
+def restore_receipt(store: Store, uri: str, directory: Path, destination: Path) -> None:
+    """Verify the receipt belongs to this Run and restore the exact object version.
 
     :param store: Archive bucket for the configured Run.
     :param uri: Remote receipt printed by upload.
     :param directory: Temporary space for downloads.
+    :param destination: New directory receiving the verified tree.
     :raises ArchiveError: The receipt belongs to another Run, or the download or verified restore fails.
     :raises OSError: The bundle, destination or receipt cannot be accessed.
     :raises tarfile.TarError: The downloaded bundle cannot be extracted.
@@ -689,7 +751,7 @@ def verify_receipt(store: Store, uri: str, directory: Path) -> None:
         raise ArchiveError("Receipt does not identify a verified archive for this workspace.")
     bundle = directory / "bundle.tar.gz"
     store.download(receipt, bundle)
-    restore(bundle, directory / "verified")
+    restore(bundle, destination)
 
 
 def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -701,7 +763,7 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-    for name in ("copy", "redact", "upload", "verify"):
+    for name in ("copy", "redact", "upload", "verify", "restore", "grant-read"):
         action = actions.add_parser(name)
         action.add_argument("config", type=Path)
         if name in ("redact", "upload"):
@@ -710,8 +772,10 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
             action.add_argument("stage", type=Path, nargs="?")
             action.add_argument("--dry-run", action="store_true", help="list paths and sizes without staging files")
             action.add_argument("--plan", type=Path, required=True)
-        if name == "verify":
+        if name in ("verify", "restore"):
             action.add_argument("receipt")
+        if name == "restore":
+            action.add_argument("destination", type=Path)
     args = parser.parse_args(argv)
     if args.action == "copy" and not args.dry_run and args.stage is None:
         parser.error("copy requires a staging directory unless --dry-run is set")
@@ -732,6 +796,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.action == "redact":
             ArchiveStage(args.stage, config, args.config.parent).redact()
             return 0
+        if args.action == "grant-read":
+            grant_read(config)
+            return 0
         with tempfile.TemporaryDirectory(prefix="crux-archive-") as temp:
             directory = Path(temp)
             if args.action == "copy":
@@ -740,7 +807,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             elif args.action == "upload":
                 print(ArchiveStage(args.stage, config, args.config.parent).upload(directory))
             else:
-                verify_receipt(Store(config), args.receipt, directory)
+                restore_receipt(
+                    Store(config), args.receipt, directory, getattr(args, "destination", directory / "verified")
+                )
     except (ArchiveError, OSError, KeyError, ValueError, TypeError, tarfile.TarError) as exc:
         print(
             str(exc) if isinstance(exc, ArchiveError) else "Invalid archive, destination or configuration.",

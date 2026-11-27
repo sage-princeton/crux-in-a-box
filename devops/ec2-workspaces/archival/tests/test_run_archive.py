@@ -227,6 +227,67 @@ class StoreTests(unittest.TestCase):
         for item in ("BucketOwnerEnforced", "BlockPublicAcls=true", "Status=Enabled", "AES256", "aws:SecureTransport"):
             self.assertIn(item, calls)
 
+    def test_granted_archive_access_is_read_only_and_specific(self) -> None:
+        """Verify granted archive access is read only and specific."""
+        config = dict(self.config, ARCHIVE_READ_URIS="s3://crux-run-archives-111111111111-us-east-1/runs/old/id/")
+
+        def aws(*args: str) -> dict[str, object]:
+            """Supply fixture identity and profile data for the requested AWS operation.
+
+            :param args: Operation arguments.
+            :returns: The requested synthetic response, or an empty object for a policy write.
+            """
+            if args[0] == "sts":
+                return {"Account": "111111111111"}
+            if args[1] == "get-instance-profile":
+                return {"InstanceProfile": {"Roles": [{"RoleName": "crux-run-test"}]}}
+            return {}
+
+        with patch.object(controller.Store, "aws", side_effect=aws) as run:
+            controller.grant_read(config)
+        policy = json.loads(run.call_args_list[-1].args[-1])
+        self.assertEqual(
+            policy["Statement"][0]["Resource"], ["arn:aws:s3:::crux-run-archives-111111111111-us-east-1/runs/old/id/*"]
+        )
+        self.assertNotIn("s3:Delete", json.dumps(policy))
+        with patch.object(controller.Store, "aws") as run:
+            controller.grant_read(self.config)
+            run.assert_not_called()
+
+    def test_shared_role_rejected_and_empty_selection_revokes_policy(self) -> None:
+        """Require the dedicated role and remove prior reads when provisioning an empty list."""
+        config = dict(self.config, ARCHIVE_READ_URIS="")
+        with (
+            patch.object(
+                controller.Store,
+                "aws",
+                side_effect=[
+                    {"Account": "111111111111"},
+                    {"InstanceProfile": {"Roles": [{"RoleName": "crux-system-role"}]}},
+                ],
+            ) as aws,
+            self.assertRaisesRegex(archive.ArchiveError, "dedicated"),
+        ):
+            controller.grant_read(config)
+        self.assertEqual(aws.call_count, 2)
+        for existing in ([], ["read-run-archives"]):
+            with (
+                self.subTest(existing=existing),
+                patch.object(
+                    controller.Store,
+                    "aws",
+                    side_effect=[
+                        {"Account": "111111111111"},
+                        {"InstanceProfile": {"Roles": [{"RoleName": "crux-run-test"}]}},
+                        {"PolicyNames": existing},
+                        {},
+                    ],
+                ) as aws,
+            ):
+                controller.grant_read(config)
+                writes = [c.args for c in aws.call_args_list if c.args[1] == "delete-role-policy"]
+                self.assertEqual(len(writes), bool(existing))
+
     def test_publish_retry_preserves_existing_version(self) -> None:
         """Replay the publication after an interrupted verification."""
         from unittest.mock import Mock
@@ -239,6 +300,11 @@ class StoreTests(unittest.TestCase):
     def test_trace_directories_are_included(self) -> None:
         """Verify trace directories are included."""
         self.assertFalse(any(archive.is_excluded(p) for p in (".codex/log", ".claude/log", "state/codex/log")))
+
+    def test_wildcard_archive_selection_is_rejected(self) -> None:
+        """Verify wildcard archive selection is rejected."""
+        with self.assertRaises(archive.ArchiveError):
+            controller.archive_prefix("s3://bucket/runs/*/")
 
 
 @unittest.skipUnless(shutil.which("trufflehog"), "install the official TruffleHog CLI")
