@@ -24,7 +24,7 @@ EXCLUDED = (
 class ArchivePlan(TypedDict):
     """Describe the workspace paths and restore checks declared by the operator."""
 
-    version: int
+    plan_version: int
     required_paths: list[str]
     restore_checks: list[str]
 
@@ -78,6 +78,21 @@ def is_excluded(path: str) -> bool:
     )
 
 
+def read_plan_version(plan: object) -> int:
+    """Read the format marker from a current or legacy v1 plan.
+
+    :param plan: Decoded plan, including a staged plan or a manifest's handoff.
+    :returns: The supported plan version.
+    :raises ArchiveError: The plan is malformed or its version is ambiguous or unsupported.
+    """
+    if not isinstance(plan, dict) or ("plan_version" in plan and "version" in plan):
+        raise ArchiveError("Expected one plan_version field in the archive plan.")
+    value = plan.get("plan_version", plan.get("version"))
+    if type(value) is not int or value != 1:
+        raise ArchiveError("Expected plan_version=1 in the archive plan.")
+    return value
+
+
 def validate_plan(root: Path, plan: object) -> None:
     """Check the restore contract against a copied or restored workspace.
 
@@ -88,14 +103,14 @@ def validate_plan(root: Path, plan: object) -> None:
     """
     if (
         not isinstance(plan, dict)
-        or plan.get("version") != 1
         or not isinstance(plan.get("required_paths"), list)
         or not plan["required_paths"]
         or not isinstance(plan.get("restore_checks"), list)
         or not plan["restore_checks"]
         or not all(isinstance(value, str) and value for value in plan["required_paths"] + plan["restore_checks"])
     ):
-        raise ArchiveError("ARCHIVE.json needs version=1, required_paths and restore_checks.")
+        raise ArchiveError("ARCHIVE.json needs nonempty required_paths and restore_checks.")
+    read_plan_version(plan)
     for value in plan["required_paths"]:
         path = relative(value)
         source = root / path

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "plan_version": 1,
   "required_paths": [
     "run-harness",
     "run-harness/workspace/site/.git",

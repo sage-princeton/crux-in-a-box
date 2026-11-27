@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copy a stopped workspace into the operator's private staging directory.
-# store_workspace_archive.py supplies the validated SSH alias, stage and rsync filters.
+# archive_workspace.py supplies the validated SSH alias, stage and rsync filters.
 set -euo pipefail
 umask 077
 slug=$1

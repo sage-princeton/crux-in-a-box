@@ -3,9 +3,9 @@
 
 Usage from this directory::
 
-    python store_workspace_archive.py copy CONFIG NEW_STAGE --plan PLAN.json
-    python store_workspace_archive.py upload CONFIG STAGE
-    python store_workspace_archive.py verify CONFIG RECEIPT_URI
+    python archive_workspace.py copy CONFIG NEW_STAGE --plan PLAN.json
+    python archive_workspace.py upload CONFIG STAGE
+    python archive_workspace.py verify CONFIG RECEIPT_URI
 
 See ``README.md`` for operator review and retry instructions.
 """
@@ -26,13 +26,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
-from create_archive import (
+from local_archive_utils import (
     EXCLUDED,
     EXCLUDED_NAMES,
     ArchiveError,
     ArchivePlan,
     create_bundle,
     digest,
+    read_plan_version,
     restore,
 )
 
@@ -352,13 +353,16 @@ class ArchiveStage:
         """Read the operator plan and its latest state from the staging directory.
 
         :returns: Staged archive settings and progress for this Run.
-        :raises ArchiveError: The state file is missing, is a link or identifies another Run.
+        :raises ArchiveError: The state file is missing, is a link, has an invalid plan version or identifies another Run.
         :raises OSError: The state file cannot be read.
         :raises json.JSONDecodeError: The state file is not valid JSON.
         """
         if self.state_file.is_symlink() or not self.state_file.is_file():
             raise ArchiveError("Expected an archive staging directory with a local ARCHIVE.json.")
-        plan: StagePlan = json.loads(self.state_file.read_text())
+        state = json.loads(self.state_file.read_text())
+        state["plan_version"] = read_plan_version(state)
+        state.pop("version", None)
+        plan: StagePlan = state
         if plan.get("run_slug") != self.slug:
             raise ArchiveError("Staged workspace belongs to a different RUN_SLUG.")
         return plan
@@ -394,7 +398,7 @@ class ArchiveStage:
             raise ArchiveError("Choose a private staging directory outside Git checkouts.")
         supplied = json.loads(plan_path.read_text())
         plan = StagePlan(
-            version=supplied["version"],
+            plan_version=read_plan_version(supplied),
             required_paths=supplied["required_paths"],
             restore_checks=supplied["restore_checks"],
             run_slug=self.slug,
@@ -442,7 +446,7 @@ class ArchiveStage:
             self.set_status(plan, "uploading")
             try:
                 handoff = ArchivePlan(
-                    version=plan["version"],
+                    plan_version=plan["plan_version"],
                     required_paths=plan["required_paths"],
                     restore_checks=plan["restore_checks"],
                 )

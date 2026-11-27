@@ -11,10 +11,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-MODULE_PATH = Path(__file__).resolve().parents[1] / "create_archive.py"
-sys.path.insert(0, str(MODULE_PATH.parent))
-import create_archive as archive
-import store_workspace_archive as controller
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import archive_workspace as controller
+import local_archive_utils as archive
 
 
 class WorkspaceFixture(unittest.TestCase):
@@ -29,7 +28,7 @@ class WorkspaceFixture(unittest.TestCase):
         (self.root / "project").mkdir()
         (self.root / "project/ignored.txt").write_text("required ignored asset\n")
         self.plan: archive.ArchivePlan = {
-            "version": 1,
+            "plan_version": 1,
             "required_paths": ["project/ignored.txt"],
             "restore_checks": ["cat project/ignored.txt"],
         }
@@ -48,6 +47,29 @@ class ArchiveTests(WorkspaceFixture):
         self.assertTrue((payload / "run/project/.git/HEAD").is_file())
         self.assertTrue((payload / "run/project/ignored.txt").is_file())
         self.assertGreater(archive.verify_tree(payload), 4)
+
+    def test_verified_tree_reads_legacy_plan_versions(self) -> None:
+        """Recover an existing v1 bundle and reject ambiguous or unsupported format markers."""
+        payload = Path(self.temp.name) / "payload"
+        archive.snapshot(self.root, payload, self.plan)
+        path = payload / "manifest.json"
+        manifest = json.loads(path.read_text())
+        plan = manifest["handoff"]
+        legacy_version = plan.pop("plan_version")
+        for fields, valid in (
+            ({"version": legacy_version}, True),
+            ({"plan_version": 2}, False),
+            ({"plan_version": True}, False),
+            ({"version": 1, "plan_version": 2}, False),
+            ({}, False),
+        ):
+            with self.subTest(fields=fields):
+                path.write_text(json.dumps({**manifest, "handoff": {**plan, **fields}}))
+                if valid:
+                    archive.verify_tree(payload)
+                else:
+                    with self.assertRaisesRegex(archive.ArchiveError, "plan_version"):
+                        archive.verify_tree(payload)
 
     def test_missing_or_empty_required_path_blocks_snapshot(self) -> None:
         """Verify missing or empty required path blocks snapshot."""
@@ -187,7 +209,7 @@ class ArchiveStageTests(unittest.TestCase):
         self.input_plan.write_text(
             json.dumps(
                 {
-                    "version": 1,
+                    "plan_version": 1,
                     "required_paths": ["trace"],
                     "restore_checks": ["read trace"],
                 }
@@ -220,6 +242,24 @@ class ArchiveStageTests(unittest.TestCase):
             self.assertEqual(self.stage.read_plan()["status"], "upload_failed")
             self.assertEqual(self.stage.upload(self.base), "s3://receipt")
             self.assertEqual(self.stage.read_plan()["status"], "verified")
+
+    def test_legacy_plan_and_stage_resume_with_plan_version(self) -> None:
+        """Read an older plan and resume its stage using the renamed field."""
+        plan = json.loads(self.input_plan.read_text())
+        plan["version"] = plan.pop("plan_version")
+        self.input_plan.write_text(json.dumps(plan))
+        self.copy_fixture()
+        state = json.loads(self.stage.state_file.read_text())
+        self.assertNotIn("version", state)
+        self.assertEqual(state["plan_version"], 1)
+        state["version"] = state.pop("plan_version")
+        self.stage.state_file.write_text(json.dumps(state))
+        plan["plan_version"] = plan.pop("version")
+        self.input_plan.write_text(json.dumps(plan))
+        with patch.object(controller, "command") as transfer:
+            self.stage.copy(self.input_plan)
+        transfer.assert_not_called()
+        self.assertEqual(self.stage.read_plan()["plan_version"], 1)
 
     def test_failed_copy_cannot_upload_and_can_resume(self) -> None:
         """Record incomplete transfers and allow the same copy command to finish them."""
