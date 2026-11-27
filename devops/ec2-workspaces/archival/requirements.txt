@@ -1,2 +1,2 @@
-trufflehog3==3.0.10
+PyYAML==6.0.3
 trufflehog-redactor==0.1.0

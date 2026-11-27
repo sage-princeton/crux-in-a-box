@@ -24,7 +24,6 @@ import tarfile
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any, NotRequired, TypedDict
 
@@ -39,6 +38,7 @@ from local_archive_utils import (
     read_plan_version,
     redact_files,
     restore,
+    scanner_config,
 )
 
 
@@ -324,13 +324,15 @@ def check_shared_detectors(plan: Mapping[str, object], *, staged: bool = False) 
 class ArchiveStage:
     """Keep the local copy, scan plan and retry state together in a private directory."""
 
-    def __init__(self, directory: Path, config: Mapping[str, str]) -> None:
+    def __init__(self, directory: Path, config: Mapping[str, str], config_dir: Path) -> None:
         """Bind a staging directory to the configured Run and its storage settings.
 
         :param directory: Private directory on the laptop.
         :param config: Parsed operator workspace configuration.
+        :param config_dir: Directory containing the generated workspace config and its companion secrets.
         :raises ArchiveError: RUN_SLUG is missing or invalid.
         """
+        self.config_dir = config_dir
         self.directory = directory.absolute()
         self.config = config
         self.slug = config.get("RUN_SLUG", "")
@@ -445,6 +447,50 @@ class ArchiveStage:
                 ) from None
             self.set_status(plan, "copied")
 
+    def detectors(self) -> bytes:
+        """Load the run and system credentials for exact matching during this scan.
+
+        :returns: An in-memory native detector configuration.
+        :raises ArchiveError: Either credential source, AWS configuration or shared rules are unavailable.
+        """
+        profile, region = (self.config.get(key) for key in ("AWS_PROFILE", "AWS_REGION"))
+        if not profile or not region:
+            raise ArchiveError("Secret scanning requires AWS_PROFILE and AWS_REGION.")
+        try:
+            run = json.loads((self.config_dir / f"run-secrets-{self.slug}.json").read_text())
+            response = command(
+                [
+                    "aws",
+                    "--profile",
+                    profile,
+                    "--region",
+                    region,
+                    "--no-cli-pager",
+                    "--output",
+                    "json",
+                    "ssm",
+                    "get-parameter",
+                    "--name",
+                    "/crux/system/env",
+                    "--with-decryption",
+                ]
+            ).stdout
+            system = json.loads(json.loads(response)["Parameter"]["Value"])
+            values = []
+            for source in (run, system):
+                if not isinstance(source, dict) or not source:
+                    raise ValueError
+                for key, value in source.items():
+                    if not isinstance(value, str):
+                        raise TypeError
+                    if value and key not in {"AGENTRQ_WORKSPACE_ID", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_BASE_URL"}:
+                        values.append(value)
+        except (ArchiveError, KeyError, OSError, ValueError, TypeError):
+            raise ArchiveError(
+                "Cannot read run-secrets-<slug>.json or decrypt /crux/system/env. Check both sources."
+            ) from None
+        return scanner_config(values)
+
     def redact(self) -> None:
         """Review working-file findings in trufflehog-redactor and retain the mandatory rescan.
 
@@ -456,7 +502,7 @@ class ArchiveStage:
             plan = self.read_plan()
             if plan.get("status") != "redaction_required":
                 raise ArchiveError("Run upload first to scan the staged archive.")
-            redact_files(self.directory / "run")
+            redact_files(self.directory / "run", self.detectors())
 
     def upload(self, scratch: Path) -> str:
         """Rescan the staged bytes, publish them, verify restoration and record the receipt.
@@ -468,7 +514,6 @@ class ArchiveStage:
         :raises OSError: Local state, scratch files or the verified bundle cannot be accessed.
         :raises ValueError: Staged metadata or a receipt cannot be decoded.
         :raises KeyError: A required plan, receipt or service-response field is absent.
-        :raises PackageNotFoundError: The pinned scanner is not installed.
         :raises tarfile.TarError: The bundle cannot be written or restored.
         """
         with self.lock():
@@ -495,12 +540,13 @@ class ArchiveStage:
                     path = self.directory / "provenance" / name
                     if path.is_file() and not path.is_symlink():
                         provenance[key] = json.loads(path.read_text())
-                provenance["scanner"] = version("trufflehog3")
+                provenance["scanner"] = command(["trufflehog", "--version"]).stdout.decode().strip()
                 create_bundle(
                     self.directory / "run",
                     scratch / "bundle.tar.gz",
                     handoff,
                     provenance,
+                    self.detectors(),
                 )
             except SecretsFound:
                 self.set_status(plan, "redaction_required")
@@ -620,18 +666,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_config(args.config)
         if args.action == "copy":
-            ArchiveStage(args.stage, config).copy(args.plan)
+            ArchiveStage(args.stage, config, args.config.parent).copy(args.plan)
             return 0
         if args.action == "redact":
-            ArchiveStage(args.stage, config).redact()
+            ArchiveStage(args.stage, config, args.config.parent).redact()
             return 0
         with tempfile.TemporaryDirectory(prefix="crux-archive-") as temp:
             directory = Path(temp)
             if args.action == "upload":
-                print(ArchiveStage(args.stage, config).upload(directory))
+                print(ArchiveStage(args.stage, config, args.config.parent).upload(directory))
             else:
                 verify_receipt(Store(config), args.receipt, directory)
-    except (ArchiveError, OSError, KeyError, ValueError, TypeError, PackageNotFoundError, tarfile.TarError) as exc:
+    except (ArchiveError, OSError, KeyError, ValueError, TypeError, tarfile.TarError) as exc:
         print(
             str(exc) if isinstance(exc, ArchiveError) else "Invalid archive, destination or configuration.",
             file=sys.stderr,

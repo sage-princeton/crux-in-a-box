@@ -12,10 +12,11 @@ The archive includes ignored files, self-contained Git history and local coding-
 
 **Software**
 
-The following is needed in the local environment: Python 3.12+, Git, OpenSSH, rsync, AWS CLI v2 with conditional S3 writes. The Box also needs rsync. Run the commands below from `devops/ec2-workspaces/archival/`.
+The following is needed in the local environment: Python 3.12+, Git, OpenSSH, rsync, the [official TruffleHog CLI v3.99.7](https://github.com/trufflesecurity/trufflehog/releases/tag/v3.99.7), AWS CLI v2 with conditional S3 writes. The Box also needs rsync. Run the commands below from `devops/ec2-workspaces/archival/`.
 
 ```sh
-# Install the scanner and interactive redactor on the laptop.
+# Check the scanner and install the interactive redactor.
+trufflehog --version
 python3.12 -m venv ~/.venvs/crux-archive
 . ~/.venvs/crux-archive/bin/activate
 python -m pip install -r requirements.txt
@@ -57,7 +58,8 @@ stage=/private/archives/RUN          # private staging directory on the laptop
 # Copy the Run. Repeat to resume an interrupted copy. Use a new stage for a fresh copy.
 python archive_workspace.py copy "$config" "$stage" --plan "$plan"
 
-# Scan files, provisioning metadata and Git history before any AWS request.
+# Keep run-secrets-RUN.json beside the config. The configured profile must decrypt /crux/system/env.
+# Scan files, provisioning metadata and Git history before writing to S3.
 # On success, save the printed receipt URI.
 python archive_workspace.py upload "$config" "$stage"
 ```
@@ -74,7 +76,7 @@ python archive_workspace.py redact "$config" "$stage"
 python archive_workspace.py upload "$config" "$stage"
 ```
 
-Upload and redaction use the same rules. Add new patterns to [detectors.yml](detectors.yml).
+Upload and redaction run TruffleHog offline with its built-in detectors, shared patterns and literal values from the run and system secrets. Add shared patterns to [detectors.yml](detectors.yml).
 
 S3 retains bundles and receipts in a private, encrypted, versioned, HTTPS-only bucket named `crux-run-archives-<ACCOUNT>-<REGION>`. Repeating upload on the same content reuses the stored version and receipt.
 

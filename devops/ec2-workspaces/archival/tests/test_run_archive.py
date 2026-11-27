@@ -4,13 +4,18 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
+import secrets
+import shlex
+import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
 import unittest
+import uuid
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Literal
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -189,7 +194,7 @@ class StoreTests(unittest.TestCase):
         self.assertFalse(any(archive.is_excluded(p) for p in (".codex/log", ".claude/log", "state/codex/log")))
 
 
-@unittest.skipUnless(importlib.util.find_spec("trufflehog3"), "install archival/requirements.txt for scanner tests")
+@unittest.skipUnless(shutil.which("trufflehog"), "install the official TruffleHog CLI")
 class NativeScannerTests(WorkspaceFixture):
     """Exercise the real native scanner on current files and deleted Git blobs."""
 
@@ -197,16 +202,16 @@ class NativeScannerTests(WorkspaceFixture):
         """Preserve useful trace text while scanning it like source."""
         (self.root / ".codex").mkdir()
         (self.root / ".codex/session.jsonl").write_text('{"event":"read source file"}\n')
-        archive.scan(self.root)
+        archive.scan(self.root, archive.scanner_config([]))
 
     def test_current_and_deleted_secret_block_without_values(self) -> None:
         """Detect a key in the working tree and after deletion from Git HEAD."""
-        secret = "-----BEGIN " + "RSA PRIVATE KEY-----\nfixture\n"
+        secret = "fixture.quoted?[*]" + secrets.token_hex(12)
         path = self.root / "project/key.txt"
         path.write_text(secret)
-        with self.assertRaises(archive.ArchiveError) as error:
-            archive.scan(self.root)
-        self.assertNotIn("BEGIN", str(error.exception))
+        with self.assertRaises(archive.SecretsFound) as error:
+            archive.scan(self.root, archive.scanner_config([secret]))
+        self.assertNotIn(secret, str(error.exception))
         for args in (
             ["init", "-q"],
             ["add", "."],
@@ -232,23 +237,27 @@ class NativeScannerTests(WorkspaceFixture):
         )
         subprocess.run(["git", "-C", str(path.parent), "gc"], check=True)
         with self.assertRaisesRegex(archive.SecretsFound, "trufflehog-redactor"):
-            archive.scan(self.root)
+            archive.scan(self.root, archive.scanner_config([secret]))
 
     def test_provider_tokens_block_upload(self) -> None:
         """Block synthetic provider tokens without exposing their value in the exception."""
-        for prefix, length in (
-            ("rp_", 42),
-            ("rpa_", 46),
-            ("hf_", 34),
-            ("api_org_", 34),
-            ("tgp_v1_", 43),
-            ("TOGETHER_API_KEY=", 64),
+        for token in (
+            "rp_" + secrets.token_hex(21),
+            "rpa_" + secrets.token_hex(23),
+            "hf_" + secrets.token_hex(17),
+            "api_org_" + secrets.token_hex(17),
+            "tgp_v1_" + secrets.token_urlsafe(33),
+            "TOGETHER_API_KEY=" + secrets.token_hex(32),
+            "sk-or-v1-" + secrets.token_hex(32),
+            "sk-proj-" + secrets.token_hex(24) + "T3BlbkFJ" + secrets.token_hex(23)[:45],
+            "sk-ant-api03-" + secrets.token_hex(47)[:93] + "AA",
+            "xoxb-" + "13725946810-21987654321-" + secrets.token_hex(12),
+            "sk-lf-" + str(uuid.uuid4()),
         ):
-            with self.subTest(prefix=prefix):
-                token = prefix + "a" * length
+            with self.subTest(prefix=token[:5]):
                 (self.root / "trace").write_text(token)
                 with self.assertRaisesRegex(archive.SecretsFound, "trufflehog-redactor") as error:
-                    archive.scan(self.root)
+                    archive.scan(self.root, archive.scanner_config([]))
                 self.assertNotIn(token, str(error.exception))
 
 
@@ -260,7 +269,18 @@ class ArchiveStageTests(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.base = Path(temp.name)
-        self.stage = controller.ArchiveStage(self.base / "stage", {"RUN_SLUG": "fixture"})
+        self.stage = controller.ArchiveStage(
+            self.base / "stage", {"RUN_SLUG": "fixture", "AWS_PROFILE": "fixture", "AWS_REGION": "us-east-1"}, self.base
+        )
+        self.run_token = r"Run?[*]\E." + secrets.token_hex(12)
+        self.system_token = "Sys+?" + secrets.token_hex(12)
+        self.run_secrets = self.base / "run-secrets-fixture.json"
+        self.run_secrets.write_text(json.dumps({"TABPFN_TOKEN": self.run_token}))
+        self.system_json = json.dumps(
+            {"COST_TRACKER_TOKEN": self.system_token, "LANGFUSE_BASE_URL": "https://public.test"}
+        )
+        self.original_command = controller.command
+        self.enterContext(patch.object(controller, "command", side_effect=self.fixture_command))
         self.input_plan = self.base / "plan.json"
         self.input_plan.write_text(
             json.dumps(
@@ -271,6 +291,37 @@ class ArchiveStageTests(unittest.TestCase):
                 }
             )
         )
+
+    def fixture_command(self, args: Sequence[str]) -> subprocess.CompletedProcess[bytes]:
+        """Serve only the expected decrypted parameter and delegate local commands.
+
+        :param args: Command issued by the operator CLI.
+        :returns: Synthetic AWS response or local command result.
+        :raises AssertionError: The AWS request has the wrong account, region or parameter.
+        :raises archive.ArchiveError: A local command fails.
+        """
+        if args[0] == "aws":
+            self.assertEqual(
+                list(args[1:]),
+                [
+                    "--profile",
+                    "fixture",
+                    "--region",
+                    "us-east-1",
+                    "--no-cli-pager",
+                    "--output",
+                    "json",
+                    "ssm",
+                    "get-parameter",
+                    "--name",
+                    "/crux/system/env",
+                    "--with-decryption",
+                ],
+            )
+            return subprocess.CompletedProcess(args, 0, json.dumps({"Parameter": {"Value": self.system_json}}).encode())
+        if args == ["trufflehog", "--version"]:
+            return subprocess.CompletedProcess(args, 0, b"trufflehog 3.99.7")
+        return self.original_command(args)
 
     def copy_fixture(self) -> Path:
         """Stub the transfer and populate the stage with a synthetic trace.
@@ -288,7 +339,6 @@ class ArchiveStageTests(unittest.TestCase):
         self.copy_fixture().write_text("clean")
         with (
             patch.object(controller, "create_bundle"),
-            patch.object(controller, "version", return_value="fixture"),
             patch.object(controller, "Store"),
             patch.object(
                 controller, "archive_workspace", side_effect=[archive.ArchiveError("storage failure"), "s3://receipt"]
@@ -314,7 +364,7 @@ class ArchiveStageTests(unittest.TestCase):
         self.copy_fixture()
         self.assertEqual(self.stage.read_plan()["status"], "copied")
 
-    @unittest.skipUnless(importlib.util.find_spec("trufflehog3"), "install archival/requirements.txt")
+    @unittest.skipUnless(shutil.which("trufflehog"), "install the official TruffleHog CLI")
     def test_shared_finding_blocks_storage_and_redacted_retry_rescans(self) -> None:
         """Keep reported secrets private and preserve staged redactions across retries."""
         trace = self.copy_fixture()
@@ -338,32 +388,28 @@ class ArchiveStageTests(unittest.TestCase):
             self.stage.upload(self.base)
         store.assert_not_called()
 
-    @unittest.skipUnless(importlib.util.find_spec("trufflehog_redactor"), "install archival/requirements.txt")
+    @unittest.skipUnless(
+        shutil.which("trufflehog") and importlib.util.find_spec("trufflehog_redactor"),
+        "install archival/requirements.txt",
+    )
     def test_redactor_applies_shared_rules_in_staged_files(self) -> None:
         """Use the real redactor on synthetic working files and keep upload gated on a rescan."""
         trace = self.copy_fixture()
         trace.write_text(trace.read_text() + "\n" + "hf_" + "a" * 34)
         with self.assertRaises(archive.SecretsFound):
             self.stage.upload(self.base)
-        popen = subprocess.Popen
-
-        def confirm_fixture(argv: list[str], *, stdin: int, text: Literal[True]) -> subprocess.Popen[str]:
-            """Auto-confirm the synthetic replacements in the redactor subprocess.
-
-            :param argv: Redactor executable and arguments.
-            :param stdin: Pipe requested by the archive code for transmitting findings.
-            :param text: Enable text mode for the redactor input.
-            :returns: The running redactor with confirmation disabled for the synthetic fixture.
-            :raises OSError: The redactor cannot be started.
-            """
-            return popen([*argv, "--no-confirm"], stdin=stdin, text=text)
-
-        with patch.object(subprocess, "Popen", side_effect=confirm_fixture):
+        real_redactor = shutil.which("trufflehog-redactor")
+        assert real_redactor is not None
+        wrapper = self.base / "trufflehog-redactor"
+        wrapper.write_text(f'#!/bin/sh\nexec {shlex.quote(real_redactor)} "$@" --no-confirm\n')
+        wrapper.chmod(0o700)
+        trace.write_text(trace.read_text() + "\n" + self.run_token)
+        with patch.dict(os.environ, PATH=str(self.base) + os.pathsep + os.environ["PATH"]):
             self.stage.redact()
-        self.assertEqual(trace.read_text().splitlines(), ["*" * 34, "*" * 37])
+        self.assertEqual(trace.read_text().splitlines(), ["*" * 34, "*" * 37, "*" * len(self.run_token)])
         self.assertEqual(self.stage.read_plan()["status"], "redaction_required")
 
-    @unittest.skipUnless(importlib.util.find_spec("trufflehog3"), "install archival/requirements.txt")
+    @unittest.skipUnless(shutil.which("trufflehog"), "install the official TruffleHog CLI")
     def test_missing_or_invalid_detector_blocks_storage(self) -> None:
         """Reject missing rules and malformed files before making any remote request."""
         self.copy_fixture().write_text("clean")
@@ -382,6 +428,37 @@ class ArchiveStageTests(unittest.TestCase):
                     self.stage.upload(self.base)
                 store.assert_not_called()
                 self.assertEqual(self.stage.read_plan()["status"], "scan_failed")
+
+    @unittest.skipUnless(shutil.which("trufflehog"), "install the official TruffleHog CLI")
+    def test_exact_values_in_binary_and_provenance(self) -> None:
+        """Catch unlabeled secrets in binary files and metadata, with literal punctuation."""
+        trace = self.copy_fixture()
+        trace.write_bytes(b"\x00\xff" + self.run_token.encode() + b"\x00")
+        with self.assertRaises(archive.SecretsFound) as found:
+            self.stage.upload(self.base)
+        self.assertNotIn(self.run_token, str(found.exception))
+        trace.write_text(self.run_token.replace("?", "X") + " https://public.test")
+        provenance = self.stage.directory / "provenance/crux-source.json"
+        provenance.write_text(json.dumps({"value": self.system_token}))
+        with self.assertRaises(archive.SecretsFound):
+            self.stage.upload(self.base)
+        provenance.unlink()
+        with patch.object(controller, "Store"), patch.object(controller, "archive_workspace", return_value="receipt"):
+            self.assertEqual(self.stage.upload(self.base), "receipt")
+
+    def test_missing_or_malformed_secret_sources_block_publication(self) -> None:
+        """Fail closed on each secret source without publishing or leaking its contents."""
+        self.copy_fixture()
+        self.system_json = "invalid " + self.system_token
+        for missing in (False, True):
+            with self.subTest(missing_run=missing), patch.object(controller, "Store") as store:
+                if missing:
+                    self.run_secrets.unlink()
+                with self.assertRaises(archive.ArchiveError) as error:
+                    self.stage.upload(self.base)
+                self.assertNotIn(self.system_token, str(error.exception))
+                self.assertEqual(self.stage.read_plan()["status"], "scan_failed")
+                store.assert_not_called()
 
     def test_per_archive_rules_require_migration_before_copy_or_upload(self) -> None:
         """Fail before transfer or publication when legacy metadata selects a private rule file."""
