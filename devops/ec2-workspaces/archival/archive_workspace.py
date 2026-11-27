@@ -3,6 +3,7 @@
 
 Usage from this directory::
 
+    python archive_workspace.py copy CONFIG --plan PLAN.json --dry-run
     python archive_workspace.py copy CONFIG NEW_STAGE --plan PLAN.json
     python archive_workspace.py redact CONFIG STAGE  # if upload requests redaction
     python archive_workspace.py upload CONFIG STAGE
@@ -33,6 +34,7 @@ from local_archive_utils import (
     ArchiveError,
     ArchivePlan,
     SecretsFound,
+    copy_options,
     create_bundle,
     digest,
     read_plan_version,
@@ -321,6 +323,35 @@ def check_shared_detectors(plan: Mapping[str, object], *, staged: bool = False) 
         )
 
 
+def print_preview(listing: bytes) -> None:
+    """Print the selected paths and regular-file counts and bytes by top-level directory.
+
+    :param listing: Itemized rsync dry-run output for an empty receiver.
+    :raises ValueError: An itemized record is malformed.
+    """
+    totals: dict[str, tuple[int, int]] = {}
+    print("Selected paths under /srv/crux-run/")
+    for line in listing.split(b"\n"):
+        if not line.startswith(b"ENTRY|"):
+            continue
+        _, kind, length, raw_name = line.split(b"|", 3)
+        name = os.fsdecode(raw_name)
+        if name == "./":
+            continue
+        print(json.dumps(name))
+        folder, slash, _ = name.partition("/")
+        group = folder if slash else "."
+        files, size = totals.get(group, (0, 0))
+        if kind[1:2] == b"f":
+            files += 1
+            size += int(length)
+        totals[group] = files, size
+    print("\nRegular files\tUncompressed bytes\tTop-level directory")
+    for group, (files, size) in sorted(totals.items()):
+        print(files, size, json.dumps(group), sep="\t")
+    print(sum(files for files, _ in totals.values()), sum(size for _, size in totals.values()), "TOTAL", sep="\t")
+
+
 class ArchiveStage:
     """Keep the local copy, scan plan and retry state together in a private directory."""
 
@@ -402,10 +433,11 @@ class ArchiveStage:
             stream.write("\n")
         os.replace(stream.name, self.state_file)
 
-    def copy(self, plan_path: Path) -> None:
+    def copy(self, plan_path: Path, *, dry_run: bool = False) -> None:
         """Copy the stopped Run, or resume an interrupted copy before redaction.
 
-        :param plan_path: Operator-authored JSON with required paths and restore checks.
+        :param plan_path: Operator-authored JSON with required paths, checks and optional copy settings.
+        :param dry_run: List selected source paths and sizes using an empty temporary receiver.
         :raises ArchiveError: The stage, plan or lock is invalid, or the transfer fails.
         :raises OSError: The plan or local staging state cannot be read or written.
         :raises json.JSONDecodeError: The supplied plan or existing staging state is not valid JSON.
@@ -416,20 +448,30 @@ class ArchiveStage:
             raise ArchiveError("Choose a private staging directory outside Git checkouts.")
         supplied = json.loads(plan_path.read_text())
         check_shared_detectors(supplied)
+        options = copy_options(supplied)
         plan = StagePlan(
             plan_version=read_plan_version(supplied),
             required_paths=supplied["required_paths"],
             restore_checks=supplied["restore_checks"],
             run_slug=self.slug,
         )
+        box_root = Path("/srv/crux-run")
+        filters = [f"--exclude={name}" for name in EXCLUDED_NAMES]
+        filters.extend(f"--exclude=/{name}" for name in (*EXCLUDED, *options.get("excluded_paths", [])))
+        transfer = ["bash", str(Path(__file__).with_name("copy_workspace.sh")), self.slug, str(stage), str(box_root)]
+        if dry_run:
+            print_preview(command([*transfer, "--dry-run", *filters]).stdout)
+            return
         stage.mkdir(mode=0o700, exist_ok=True)
         with self.lock():
             if any(stage.iterdir()):
                 previous = self.read_plan()
-                if any(previous.get(key) != value for key, value in plan.items()):
+                if copy_options(previous) != options or any(previous.get(key) != value for key, value in plan.items()):
                     raise ArchiveError("Stage already has a different plan. Use a new staging directory.")
                 if previous["status"] not in ("copying", "copy_failed"):
                     return
+            plan["excluded_paths"] = options.get("excluded_paths", [])
+            plan["portable_symlinks"] = options.get("portable_symlinks", False)
             self.set_status(plan, "copying")
             try:
                 for name in ("run", "provenance"):
@@ -437,9 +479,9 @@ class ArchiveStage:
                     if path.is_symlink():
                         raise ArchiveError("Unsafe staging directory.")
                     path.mkdir(exist_ok=True)
-                filters = [f"--exclude={name}" for name in EXCLUDED_NAMES]
-                filters.extend(f"--exclude=/{name}" for name in EXCLUDED)
-                command(["bash", str(Path(__file__).with_name("copy_workspace.sh")), self.slug, str(stage), *filters])
+                command([*transfer, *filters])
+                if options.get("portable_symlinks"):
+                    make_links_relative(stage / "run", box_root)
             except (OSError, ArchiveError):
                 self.set_status(plan, "copy_failed")
                 raise ArchiveError(
@@ -534,6 +576,7 @@ class ArchiveStage:
                     plan_version=plan["plan_version"],
                     required_paths=plan["required_paths"],
                     restore_checks=plan["restore_checks"],
+                    **copy_options(plan),
                 )
                 provenance = {}
                 for key, name in (("software", "crux-provision.json"), ("provision", "crux-source.json")):
@@ -562,6 +605,22 @@ class ArchiveStage:
                 raise
             self.set_status(plan, "verified", uri)
             return uri
+
+
+def make_links_relative(root: Path, box_root: Path) -> None:
+    """Relocate absolute in-Run symlinks in the private stage after transfer verification.
+
+    :param root: Local Run directory containing the copied links.
+    :param box_root: Absolute source directory used by rsync on the Box.
+    :raises OSError: A link cannot be inspected or replaced.
+    """
+    for link in root.rglob("*"):
+        if link.is_symlink():
+            target = link.readlink()
+            if target.is_relative_to(box_root) and ".." not in target.parts:
+                relative_target = os.path.relpath(root / target.relative_to(box_root), link.parent)
+                link.unlink()
+                link.symlink_to(relative_target)
 
 
 def archive_workspace(store: Store, directory: Path) -> str:
@@ -645,13 +704,18 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     for name in ("copy", "redact", "upload", "verify"):
         action = actions.add_parser(name)
         action.add_argument("config", type=Path)
-        if name in ("copy", "redact", "upload"):
+        if name in ("redact", "upload"):
             action.add_argument("stage", type=Path)
         if name == "copy":
+            action.add_argument("stage", type=Path, nargs="?")
+            action.add_argument("--dry-run", action="store_true", help="list paths and sizes without staging files")
             action.add_argument("--plan", type=Path, required=True)
         if name == "verify":
             action.add_argument("receipt")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.action == "copy" and not args.dry_run and args.stage is None:
+        parser.error("copy requires a staging directory unless --dry-run is set")
+    return args
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -665,15 +729,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_arguments(argv)
     try:
         config = load_config(args.config)
-        if args.action == "copy":
-            ArchiveStage(args.stage, config, args.config.parent).copy(args.plan)
-            return 0
         if args.action == "redact":
             ArchiveStage(args.stage, config, args.config.parent).redact()
             return 0
         with tempfile.TemporaryDirectory(prefix="crux-archive-") as temp:
             directory = Path(temp)
-            if args.action == "upload":
+            if args.action == "copy":
+                stage = directory if args.dry_run else args.stage
+                ArchiveStage(stage, config, args.config.parent).copy(args.plan, dry_run=args.dry_run)
+            elif args.action == "upload":
                 print(ArchiveStage(args.stage, config, args.config.parent).upload(directory))
             else:
                 verify_receipt(Store(config), args.receipt, directory)

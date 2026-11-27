@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import IO, NotRequired, TypedDict
 
@@ -25,7 +25,14 @@ EXCLUDED = (
 )
 
 
-class ArchivePlan(TypedDict):
+class CopyOptions(TypedDict, total=False):
+    """Describe optional selection and symlink handling during Run archival."""
+
+    excluded_paths: list[str]
+    portable_symlinks: bool
+
+
+class ArchivePlan(CopyOptions):
     """Describe the workspace paths and restore checks declared by the operator."""
 
     plan_version: int
@@ -94,6 +101,41 @@ def is_excluded(path: str) -> bool:
     )
 
 
+def copy_options(plan: Mapping[str, object]) -> CopyOptions:
+    """Validate optional transfer settings and check exclusions against required paths.
+
+    :param plan: Operator's archive plan or the handoff in a restored manifest.
+    :returns: Non-default settings to persist in the stage and verified manifest.
+    :raises ArchiveError: An option is malformed or a pattern is unsafe or omits required evidence.
+    """
+    paths = plan.get("excluded_paths", [])
+    required = plan.get("required_paths")
+    if (
+        not isinstance(paths, list)
+        or not isinstance(required, list)
+        or not all(isinstance(item, str) for item in required)
+    ):
+        raise ArchiveError("excluded_paths and required_paths must be lists of strings.")
+    required_paths = [Path("/") / relative(item) for item in required]
+    for name in paths:
+        if not isinstance(name, str) or not name.isprintable() or "**" in name or any(c in name for c in "?[]\\"):
+            raise ArchiveError("excluded_paths supports relative path components with a single-level '*' wildcard.")
+        path = relative(name)
+        if path.as_posix() != name or ".git" in path.parts:
+            raise ArchiveError("Use normalized relative exclusions outside Git metadata.")
+        if any(part.match("/" + name) for target in required_paths for part in (target, *target.parents)):
+            raise ArchiveError(f"Required archive path overlaps an exclusion: {name}")
+    portable = plan.get("portable_symlinks", False)
+    if not isinstance(portable, bool):
+        raise ArchiveError("portable_symlinks must be a boolean.")
+    options: CopyOptions = {}
+    if portable:
+        options["portable_symlinks"] = True
+    if paths:
+        options["excluded_paths"] = paths
+    return options
+
+
 def read_plan_version(plan: object) -> int:
     """Require the supported integer plan_version.
 
@@ -113,7 +155,7 @@ def validate_plan(root: Path, plan: object) -> None:
 
     :param plan: Archive plan supplied by the operator.
     :param root: Root directory of the workspace or snapshot.
-    :raises ArchiveError: The plan is malformed or a required path is unsafe, excluded, absent or empty.
+    :raises ArchiveError: The plan is malformed, an excluded path is present or required evidence is unsafe or missing.
     :raises OSError: A required path cannot be inspected.
     """
     if (
@@ -126,6 +168,9 @@ def validate_plan(root: Path, plan: object) -> None:
     ):
         raise ArchiveError("ARCHIVE.json needs nonempty required_paths and restore_checks.")
     read_plan_version(plan)
+    for omitted in copy_options(plan).get("excluded_paths", []):
+        if next(root.glob(omitted), None) is not None:
+            raise ArchiveError(f"Excluded path is present in the archive: {omitted}")
     for value in plan["required_paths"]:
         path = relative(value)
         source = root / path
@@ -135,11 +180,14 @@ def validate_plan(root: Path, plan: object) -> None:
             raise ArchiveError(f"Required archive directory is empty: {path}")
 
 
-def inventory(root: Path, skip_operational: bool = False) -> dict[str, dict[str, str | int]]:
+def inventory(
+    root: Path, skip_operational: bool = False, *, allow_dangling: bool = False
+) -> dict[str, dict[str, str | int]]:
     """Describe files, directories and internal links for integrity verification.
 
     :param root: Root directory of the workspace or snapshot.
     :param skip_operational: Whether to omit excluded operational stores.
+    :param allow_dangling: Whether to record internal links whose targets are absent.
     :returns: Relative names mapped to entry types, file sizes and hashes, or symlink targets.
     :raises ArchiveError: An entry is unsupported or a symlink is broken or escapes the root.
     :raises OSError: An entry cannot be inspected or read.
@@ -153,7 +201,7 @@ def inventory(root: Path, skip_operational: bool = False) -> dict[str, dict[str,
             target = os.readlink(path)
             if Path(target).is_absolute() or not path.resolve().is_relative_to(root.resolve()):
                 raise ArchiveError(f"Symlink escapes archive boundary: {name}.")
-            if not path.exists():
+            if not allow_dangling and not path.exists():
                 raise ArchiveError(f"Broken symlink: {name}")
             result[name] = {"type": "link", "target": target}
         elif path.is_file():
@@ -195,8 +243,9 @@ def snapshot(root: Path, payload: Path, plan: ArchivePlan, provenance: dict[str,
 
     shutil.copytree(root, payload / "run", symlinks=True, ignore=ignore)
     # Compare both sides after copying: another writer must not change the run during archival.
-    before = inventory(root, skip_operational=True)
-    after = inventory(payload / "run")
+    portable = plan.get("portable_symlinks", False)
+    before = inventory(root, skip_operational=True, allow_dangling=portable)
+    after = inventory(payload / "run", allow_dangling=portable)
     if before != after:
         raise ArchiveError("Run changed while copying. Stop all writers and retry.")
     metadata: Manifest = {
@@ -204,7 +253,7 @@ def snapshot(root: Path, payload: Path, plan: ArchivePlan, provenance: dict[str,
         "excluded_operational_paths": [*EXCLUDED_NAMES, *EXCLUDED],
         "handoff": plan,
         "provenance": provenance or {},
-        "files": inventory(payload),
+        "files": inventory(payload, allow_dangling=portable),
     }
     (payload / "manifest.json").write_text(json.dumps(metadata, indent=2) + "\n")
     return metadata
@@ -221,7 +270,7 @@ def verify_tree(root: Path) -> int:
     :raises KeyError: A required manifest field is missing.
     """
     manifest = json.loads((root / "manifest.json").read_text())
-    actual = inventory(root)
+    actual = inventory(root, allow_dangling=manifest["handoff"].get("portable_symlinks") is True)
     actual.pop("manifest.json", None)
     if actual != manifest["files"]:
         raise ArchiveError("Restored content does not match the file manifest.")

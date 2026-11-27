@@ -5,7 +5,8 @@ set -euo pipefail
 umask 077
 slug=$1
 stage=$2
-shift 2
+box_root=$3
+shift 3
 
 # Check known systemd writers over SSH. Return failure for an active or unknown service-manager response.
 check_stopped() {
@@ -15,11 +16,14 @@ check_stopped() {
   done'
 }
 
-check_stopped
 transfer=(-rlpt -e 'ssh -o BatchMode=yes' "$@")
-rsync "${transfer[@]}" --delete -- "$slug:/srv/crux-run/" "$stage/run/"
+if [[ ${1:-} == --dry-run ]]; then
+  exec rsync "${transfer[@]}" --out-format='ENTRY|%i|%l|%n' -- "$slug:$box_root/" "$stage/"
+fi
+check_stopped
+rsync "${transfer[@]}" --delete -- "$slug:$box_root/" "$stage/run/"
 # Compare the source and destination after the transfer, including deletions.
-changes=$(rsync "${transfer[@]}" --dry-run --checksum --itemize-changes --devices --specials --delete -- "$slug:/srv/crux-run/" "$stage/run/")
+changes=$(rsync "${transfer[@]}" --dry-run --checksum --itemize-changes --devices --specials --delete -- "$slug:$box_root/" "$stage/run/")
 [[ -z "$changes" ]] || { echo "The workspace changed during copy." >&2; exit 1; }
 rsync -rt -e 'ssh -o BatchMode=yes' --include=/crux-provision.json --include=/crux-source.json \
   --exclude='*' -- "$slug:/etc/" "$stage/provenance/"
