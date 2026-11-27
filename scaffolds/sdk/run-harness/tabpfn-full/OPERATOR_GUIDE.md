@@ -106,7 +106,7 @@ journalctl -u crux-sdk-run -f # follow the logs; Ctrl+C if no errors within ~3 m
 
 ## Archive a stopped run
 
-Finish the active turn, stop the service and any other writers, and keep the Box available until upload verifies the restore. On your laptop, install the [archive prerequisites](../../../../devops/ec2-workspaces/archival/README.md#prerequisites). From the repository root, set `slug` to the Box's SSH alias and use a fresh private stage outside Git.
+Finish the active turn, stop the service and any other writers, and keep the Box available until upload verifies the restore. Install the [archive prerequisites](../../../../devops/ec2-workspaces/archival/README.md#prerequisites) on your laptop or a [temporary EC2 host](../../../../devops/ec2-workspaces/archival/README.md#archive-from-a-temporary-ec2-host). From the repository root, set `slug` to the Box's SSH alias and use a fresh private stage outside Git.
 
 ```bash
 slug=YOUR_RUN_SLUG
@@ -115,7 +115,10 @@ archive=devops/ec2-workspaces/archival/archive_workspace.py
 stage="$HOME/crux-archives/$slug"
 umask 077
 mkdir -p "$HOME/crux-archives"
-python "$archive" copy "$config" "$stage" --plan scaffolds/sdk/run-harness/tabpfn-full/archive.json
+plan=scaffolds/sdk/run-harness/tabpfn-full/archive.json
+# Check the selection and disk estimate before copying.
+python "$archive" copy "$config" --plan "$plan" --dry-run
+python "$archive" copy "$config" "$stage" --plan "$plan"
 mkdir -p "$stage/run/operator-evidence"
 ssh "$slug" 'journalctl -u crux-sdk-run -u crux-codex-live-trace --utc --no-pager -o short-iso-precise' > "$stage/run/operator-evidence/services.log"
 ```

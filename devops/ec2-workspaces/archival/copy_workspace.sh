@@ -16,8 +16,11 @@ check_stopped() {
   done'
 }
 
-check_stopped
 transfer=(-rlpt -e 'ssh -o BatchMode=yes' "$@")
+if [[ ${1:-} == --dry-run ]]; then
+  exec rsync "${transfer[@]}" --out-format='ENTRY|%i|%l|%n' -- "$slug:$box_root/" "$stage/"
+fi
+check_stopped
 rsync "${transfer[@]}" --delete -- "$slug:$box_root/" "$stage/run/"
 # Compare the source and destination after the transfer, including deletions.
 changes=$(rsync "${transfer[@]}" --dry-run --checksum --itemize-changes --devices --specials --delete -- "$slug:$box_root/" "$stage/run/")

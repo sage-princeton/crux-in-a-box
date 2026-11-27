@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
 import os
 import secrets
@@ -15,6 +16,7 @@ import tempfile
 import unittest
 import uuid
 from collections.abc import Sequence
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -408,6 +410,39 @@ class ArchiveStageTests(unittest.TestCase):
         store.assert_not_called()
         self.copy_fixture()
         self.assertEqual(self.stage.read_plan()["status"], "copied")
+
+    def test_dry_run_reports_selection_without_touching_stage(self) -> None:
+        """Use the same filters for preview and copy, even when an existing stage is supplied."""
+        plan = json.loads(self.input_plan.read_text())
+        plan["excluded_paths"] = ["downloads/*/raw"]
+        self.input_plan.write_text(json.dumps(plan))
+        config = self.base / "config"
+        config.write_text("RUN_SLUG=fixture")
+        output = io.StringIO()
+        listing = b"ENTRY|>f+++++++++|7|root file\nENTRY|>f+++++++++|11|data/a|b\nENTRY|cL+++++++++|4|data/link\n"
+        stage = self.base / "existing"
+        stage.mkdir()
+        marker = stage / "marker"
+        marker.write_text("original")
+        with patch.object(controller, "command", return_value=subprocess.CompletedProcess([], 0, listing)) as transfer:
+            with redirect_stdout(output):
+                self.assertEqual(
+                    controller.main(["copy", str(config), str(stage), "--plan", str(self.input_plan), "--dry-run"]), 0
+                )
+            preview = transfer.call_args.args[0]
+            self.stage.copy(self.input_plan)
+            actual = transfer.call_args.args[0]
+        self.assertEqual(
+            [x for x in preview if x.startswith("--exclude=")], [x for x in actual if x.startswith("--exclude=")]
+        )
+        self.assertIn("--exclude=/downloads/*/raw", preview)
+        self.assertIn('"data/a|b"', output.getvalue())
+        self.assertIn('1\t11\t"data"', output.getvalue())
+        self.assertIn("2\t18\tTOTAL", output.getvalue())
+        self.assertEqual(list(stage.iterdir()), [marker])
+        self.assertEqual(marker.read_text(), "original")
+        with self.assertRaises(SystemExit):
+            controller.parse_arguments(["copy", str(config), "--plan", str(self.input_plan)])
 
     def test_plan_filters_copy_and_rejects_changed_selection_on_resume(self) -> None:
         """Copy with anchored exclusions and bind the stage to the same selection on retry."""
