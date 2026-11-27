@@ -79,18 +79,17 @@ def is_excluded(path: str) -> bool:
 
 
 def read_plan_version(plan: object) -> int:
-    """Read the format marker from a current or legacy v1 plan.
+    """Require the supported integer plan_version.
 
     :param plan: Decoded plan, including a staged plan or a manifest's handoff.
     :returns: The supported plan version.
-    :raises ArchiveError: The plan is malformed or its version is ambiguous or unsupported.
+    :raises ArchiveError: The plan is malformed, uses an obsolete field or has an unsupported version.
     """
-    if not isinstance(plan, dict) or ("plan_version" in plan and "version" in plan):
-        raise ArchiveError("Expected one plan_version field in the archive plan.")
-    value = plan.get("plan_version", plan.get("version"))
-    if type(value) is not int or value != 1:
-        raise ArchiveError("Expected plan_version=1 in the archive plan.")
-    return value
+    if isinstance(plan, dict) and "version" not in plan:
+        value = plan.get("plan_version")
+        if type(value) is int and value == 1:
+            return value
+    raise ArchiveError("Expected plan_version=1 as the archive plan's only version field.")
 
 
 def validate_plan(root: Path, plan: object) -> None:

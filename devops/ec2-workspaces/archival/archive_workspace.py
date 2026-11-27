@@ -359,10 +359,8 @@ class ArchiveStage:
         """
         if self.state_file.is_symlink() or not self.state_file.is_file():
             raise ArchiveError("Expected an archive staging directory with a local ARCHIVE.json.")
-        state = json.loads(self.state_file.read_text())
-        state["plan_version"] = read_plan_version(state)
-        state.pop("version", None)
-        plan: StagePlan = state
+        plan: StagePlan = json.loads(self.state_file.read_text())
+        read_plan_version(plan)
         if plan.get("run_slug") != self.slug:
             raise ArchiveError("Staged workspace belongs to a different RUN_SLUG.")
         return plan
