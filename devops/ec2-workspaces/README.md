@@ -15,7 +15,7 @@ Codex/Claude harness directories are empty placeholders. From this directory:
 ```
 
 Follow the printed start/observation instructions for the selected Scaffold.
-Before teardown, preserve the Run's results, then follow the teardown command in
+To preserve a Run, [archive and verify it](archival/README.md) before invoking the teardown command in
 [operations.md](operations.md#teardown-a-workspace). SDK Run software declarations
 are documented in [provisioning.md](provisioning.md).
 
@@ -30,7 +30,7 @@ After installing the [shared check tools](../../README.md#development), run from
 the repository root:
 
 ```sh
-python -m pytest -q devops/ec2-workspaces/tests
+python -m pytest -q devops/ec2-workspaces/tests devops/ec2-workspaces/archival/tests
 python -m unittest discover -s devops/ec2-workspaces -p 'test_*.py'
 shellcheck -x -e SC2029,SC2088 devops/ec2-workspaces/*.sh devops/ec2-workspaces/scaffolds/*.sh
 ```
