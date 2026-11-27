@@ -1,0 +1,22 @@
+# Shared additions to the official TruffleHog detector set.
+detectors:
+  - name: LangfuseSecret
+    keywords: [sk-lf-]
+    regex:
+      token: 'sk-lf-[[:xdigit:]]{8}(-[[:xdigit:]]{4}){3}-[[:xdigit:]]{12}\b'
+  - name: RunPodKey
+    keywords: [rp_, rpa_]
+    regex:
+      token: 'rpa?_[A-Za-z0-9_-]{20,}'
+  - name: HuggingFaceToken
+    keywords: [hf_, api_org_]
+    regex:
+      token: '(hf_|api_org_)[A-Za-z0-9]{30,}'
+  - name: TogetherKey
+    keywords: [tgp_v1_]
+    regex:
+      token: 'tgp_v1_[A-Za-z0-9_-]{43,}'
+  - name: TogetherLegacyKey
+    keywords: [together]
+    regex:
+      token: '(?i)together(ai)?[_-]?(api[_-]?)?key["\x27]?\s*[:=]\s*["\x27]?[0-9a-f]{64}\b'

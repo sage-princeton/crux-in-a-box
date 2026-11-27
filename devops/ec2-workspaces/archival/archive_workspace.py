@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Copy a stopped workspace to the laptop and store a verified S3 version.
+"""Copy a stopped workspace to the laptop, scan locally and store a verified S3 version.
 
 Usage from this directory::
 
     python archive_workspace.py copy CONFIG NEW_STAGE --plan PLAN.json
+    python archive_workspace.py redact CONFIG STAGE  # if upload requests redaction
     python archive_workspace.py upload CONFIG STAGE
     python archive_workspace.py verify CONFIG RECEIPT_URI
 
-See ``README.md`` for operator review and retry instructions.
+See ``README.md`` for redaction and retry instructions.
 """
 
 from __future__ import annotations
@@ -31,10 +32,13 @@ from local_archive_utils import (
     EXCLUDED_NAMES,
     ArchiveError,
     ArchivePlan,
+    SecretsFound,
     create_bundle,
     digest,
     read_plan_version,
+    redact_files,
     restore,
+    scanner_config,
 )
 
 
@@ -304,16 +308,31 @@ def publish_once(store: Store, key: str, path: Path) -> None:
             raise
 
 
-class ArchiveStage:
-    """Keep the local copy, archive plan and retry state together in a private directory."""
+def check_shared_detectors(plan: Mapping[str, object], *, staged: bool = False) -> None:
+    """Require migration of legacy per-archive rules before copying or uploading.
 
-    def __init__(self, directory: Path, config: Mapping[str, str]) -> None:
+    :param plan: Supplied archive plan or existing stage metadata.
+    :param staged: Accept an empty detector list written by an older stage.
+    :raises ArchiveError: A new plan declares per-archive rules or a legacy stage still selects them.
+    """
+    if "custom_detectors" in plan and not (staged and plan["custom_detectors"] == []):
+        raise ArchiveError(
+            "Move per-archive rules into archival/detectors.yml and remove custom_detectors from the plan and stage."
+        )
+
+
+class ArchiveStage:
+    """Keep the local copy, scan plan and retry state together in a private directory."""
+
+    def __init__(self, directory: Path, config: Mapping[str, str], config_dir: Path) -> None:
         """Bind a staging directory to the configured Run and its storage settings.
 
         :param directory: Private directory on the laptop.
         :param config: Parsed operator workspace configuration.
+        :param config_dir: Directory containing the generated workspace config and its companion secrets.
         :raises ArchiveError: RUN_SLUG is missing or invalid.
         """
+        self.config_dir = config_dir
         self.directory = directory.absolute()
         self.config = config
         self.slug = config.get("RUN_SLUG", "")
@@ -361,6 +380,7 @@ class ArchiveStage:
             raise ArchiveError("Expected an archive staging directory with a local ARCHIVE.json.")
         plan: StagePlan = json.loads(self.state_file.read_text())
         read_plan_version(plan)
+        check_shared_detectors(plan, staged=True)
         if plan.get("run_slug") != self.slug:
             raise ArchiveError("Staged workspace belongs to a different RUN_SLUG.")
         return plan
@@ -383,7 +403,7 @@ class ArchiveStage:
         os.replace(stream.name, self.state_file)
 
     def copy(self, plan_path: Path) -> None:
-        """Copy the stopped Run, or resume an interrupted transfer.
+        """Copy the stopped Run, or resume an interrupted copy before redaction.
 
         :param plan_path: Operator-authored JSON with required paths and restore checks.
         :raises ArchiveError: The stage, plan or lock is invalid, or the transfer fails.
@@ -395,6 +415,7 @@ class ArchiveStage:
         if any((parent / ".git").exists() for parent in (stage.resolve(), *stage.resolve().parents)):
             raise ArchiveError("Choose a private staging directory outside Git checkouts.")
         supplied = json.loads(plan_path.read_text())
+        check_shared_detectors(supplied)
         plan = StagePlan(
             plan_version=read_plan_version(supplied),
             required_paths=supplied["required_paths"],
@@ -426,12 +447,70 @@ class ArchiveStage:
                 ) from None
             self.set_status(plan, "copied")
 
+    def detectors(self) -> bytes:
+        """Load the run and system credentials for exact matching during this scan.
+
+        :returns: An in-memory native detector configuration.
+        :raises ArchiveError: Either credential source, AWS configuration or shared rules are unavailable.
+        """
+        profile, region = (self.config.get(key) for key in ("AWS_PROFILE", "AWS_REGION"))
+        if not profile or not region:
+            raise ArchiveError("Secret scanning requires AWS_PROFILE and AWS_REGION.")
+        try:
+            run = json.loads((self.config_dir / f"run-secrets-{self.slug}.json").read_text())
+            response = command(
+                [
+                    "aws",
+                    "--profile",
+                    profile,
+                    "--region",
+                    region,
+                    "--no-cli-pager",
+                    "--output",
+                    "json",
+                    "ssm",
+                    "get-parameter",
+                    "--name",
+                    "/crux/system/env",
+                    "--with-decryption",
+                ]
+            ).stdout
+            system = json.loads(json.loads(response)["Parameter"]["Value"])
+            values = []
+            for source in (run, system):
+                if not isinstance(source, dict) or not source:
+                    raise ValueError
+                for key, value in source.items():
+                    if not isinstance(value, str):
+                        raise TypeError
+                    if value and key not in {"AGENTRQ_WORKSPACE_ID", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_BASE_URL"}:
+                        values.append(value)
+        except (ArchiveError, KeyError, OSError, ValueError, TypeError):
+            raise ArchiveError(
+                "Cannot read run-secrets-<slug>.json or decrypt /crux/system/env. Check both sources."
+            ) from None
+        return scanner_config(values)
+
+    def redact(self) -> None:
+        """Review working-file findings in trufflehog-redactor and retain the mandatory rescan.
+
+        :raises ArchiveError: The stage cannot be locked, is not awaiting redaction, or the redactor fails.
+        :raises OSError: The staging directory or plan is inaccessible.
+        :raises json.JSONDecodeError: The stored plan is not valid JSON.
+        """
+        with self.lock():
+            plan = self.read_plan()
+            if plan.get("status") != "redaction_required":
+                raise ArchiveError("Run upload first to scan the staged archive.")
+            redact_files(self.directory / "run", self.detectors())
+
     def upload(self, scratch: Path) -> str:
-        """Package the staged bytes, publish them, verify restoration and record the receipt.
+        """Rescan the staged bytes, publish them, verify restoration and record the receipt.
 
         :param scratch: Private temporary directory for the bundle and verification.
         :returns: Verified remote receipt URI.
-        :raises ArchiveError: The stage is incomplete or locking, storage or verification fails.
+        :raises SecretsFound: A staged file or Git object needs redaction before upload.
+        :raises ArchiveError: The stage is incomplete or locking, scanning, storage or verification fails.
         :raises OSError: Local state, scratch files or the verified bundle cannot be accessed.
         :raises ValueError: Staged metadata or a receipt cannot be decoded.
         :raises KeyError: A required plan, receipt or service-response field is absent.
@@ -439,9 +518,17 @@ class ArchiveStage:
         """
         with self.lock():
             plan = self.read_plan()
-            if plan.get("status") not in {"copied", "uploading", "upload_failed", "verified"}:
+            if plan.get("status") not in {
+                "copied",
+                "scanning",
+                "scan_failed",
+                "redaction_required",
+                "uploading",
+                "upload_failed",
+                "verified",
+            }:
                 raise ArchiveError("A completed workspace copy is required before upload.")
-            self.set_status(plan, "uploading")
+            self.set_status(plan, "scanning")
             try:
                 handoff = ArchivePlan(
                     plan_version=plan["plan_version"],
@@ -453,12 +540,22 @@ class ArchiveStage:
                     path = self.directory / "provenance" / name
                     if path.is_file() and not path.is_symlink():
                         provenance[key] = json.loads(path.read_text())
+                provenance["scanner"] = command(["trufflehog", "--version"]).stdout.decode().strip()
                 create_bundle(
                     self.directory / "run",
                     scratch / "bundle.tar.gz",
                     handoff,
                     provenance,
+                    self.detectors(),
                 )
+            except SecretsFound:
+                self.set_status(plan, "redaction_required")
+                raise
+            except Exception:
+                self.set_status(plan, "scan_failed")
+                raise
+            self.set_status(plan, "uploading")
+            try:
                 uri = archive_workspace(Store(self.config), scratch)
             except Exception:
                 self.set_status(plan, "upload_failed")
@@ -468,7 +565,7 @@ class ArchiveStage:
 
 
 def archive_workspace(store: Store, directory: Path) -> str:
-    """Publish a local bundle and verify its exact stored version.
+    """Publish a freshly scanned bundle and verify its exact stored version.
 
     :param store: Authenticated destination.
     :param directory: Private workspace containing the bundle.
@@ -545,10 +642,10 @@ def parse_arguments(argv: Sequence[str] | None) -> argparse.Namespace:
     """
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_subparsers(dest="action", required=True)
-    for name in ("copy", "upload", "verify"):
+    for name in ("copy", "redact", "upload", "verify"):
         action = actions.add_parser(name)
         action.add_argument("config", type=Path)
-        if name in ("copy", "upload"):
+        if name in ("copy", "redact", "upload"):
             action.add_argument("stage", type=Path)
         if name == "copy":
             action.add_argument("--plan", type=Path, required=True)
@@ -569,12 +666,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_config(args.config)
         if args.action == "copy":
-            ArchiveStage(args.stage, config).copy(args.plan)
+            ArchiveStage(args.stage, config, args.config.parent).copy(args.plan)
+            return 0
+        if args.action == "redact":
+            ArchiveStage(args.stage, config, args.config.parent).redact()
             return 0
         with tempfile.TemporaryDirectory(prefix="crux-archive-") as temp:
             directory = Path(temp)
             if args.action == "upload":
-                print(ArchiveStage(args.stage, config).upload(directory))
+                print(ArchiveStage(args.stage, config, args.config.parent).upload(directory))
             else:
                 verify_receipt(Store(config), args.receipt, directory)
     except (ArchiveError, OSError, KeyError, ValueError, TypeError, tarfile.TarError) as exc:
